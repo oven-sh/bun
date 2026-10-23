@@ -78,6 +78,7 @@ function setServers(servers) {
 }
 
 const getRuntimeDefaultResultOrderOption = $bindgen("dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption");
+const setConnectResultOrder = $bindgen("dns_internals.bind.ts", "setConnectResultOrder");
 
 function newResolver(options) {
   if (!newResolver.native) {
@@ -103,6 +104,8 @@ declare namespace defaultResultOrder {
 function setDefaultResultOrder(order) {
   validateOrder(order);
   defaultResultOrder.value = order;
+  // fetch() and Bun.connect() resolve through the native DNS cache, not dns.lookup(). No-op in a Worker.
+  setConnectResultOrder(order);
 }
 
 function getDefaultResultOrder() {

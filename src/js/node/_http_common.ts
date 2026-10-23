@@ -219,7 +219,7 @@ function parserOnBody(b) {
   if (stream === null || stream[kSkipPendingData]) return;
 
   // Pretend this was the result of a stream._read call.
-  if (!stream._dumped) {
+  if (!stream._dumped && !stream.destroyed) {
     const ret = stream.push(b);
     if (!ret) readStop(this.socket);
   }
@@ -239,6 +239,10 @@ function parserOnMessageComplete() {
       parser._headers = [];
       parser._url = "";
     }
+
+    // Node's parser runs the tick queue between its callbacks, so a read that the 'request' listener scheduled has called _read() by now.
+    const state = stream._readableState;
+    if (state.resumeScheduled || state.readableListening) stream._consuming = true;
 
     // For emit end event
     stream.push(null);

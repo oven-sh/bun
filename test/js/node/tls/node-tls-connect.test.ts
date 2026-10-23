@@ -10,6 +10,7 @@ import {
   isASAN,
   isWindows,
   nodeExe,
+  nodeExeAtLeast,
   rejectUnauthorizedScope,
   tempDir,
 } from "harness";
@@ -175,6 +176,21 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
 
   expect(error).toBeDefined();
   expect((error as NodeJS.ErrnoException).code as string).toBe("ECONNRESET");
+});
+it("reports ECONNRESET when the peer closes during the handshake with a write pending", async () => {
+  await using server = net.createServer(c => {
+    c.on("error", () => {});
+    c.once("data", () => c.end());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = tls.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+  const events: string[] = [];
+  socket.on("end", () => events.push("end"));
+  socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+  socket.write("hello", (err?: NodeJS.ErrnoException | null) => events.push(`write ${err?.code}`));
+  await new Promise(resolve => socket.once("close", resolve));
+  // As in Node.
+  expect(events).toEqual(["end", "error ECONNRESET", "write ECANCELED"]);
 });
 it.each(["socket", "port"])(
   "write() and end() made before secureConnect call back when the connection is reset ({ %s })",
@@ -1030,9 +1046,7 @@ it("tls.DEFAULT_MAX_VERSION is honored by contexts built without explicit versio
 });
 
 it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls.connect({ socket }))", async () => {
-  // The TLS-over-duplex wrapper has no us_socket_t, so its parked
-  // new-session/keylog queues are drained by the Rust SSLWrapper instead of
-  // us_dispatch_session/us_dispatch_keylog - this covers that path end to end.
+  // The TLS engine over a stream has no us_socket_t: its own read loop has to hand over what the SSL parked.
   const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
     socket.on("data", () => socket.end());
   });
@@ -2745,6 +2759,64 @@ it("verifies against the CAs of its context when the TLS socket rides on a Duple
       none: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
     });
   } finally {
+    server.close();
+  }
+});
+
+it("tls.connect() and https.request() build their context with a replaced tls.createSecureContext", async () => {
+  const fixtures = join(import.meta.dir, "fixtures");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  const server = https.createServer(
+    {
+      key: readFileSync(join(fixtures, "agent1-key.pem"), "utf8"),
+      cert: readFileSync(join(fixtures, "agent1-cert.pem"), "utf8"),
+    },
+    (req, res) => res.end("hi"),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const target = { port: (server.address() as AddressInfo).port, host: "127.0.0.1", servername: "agent1" };
+
+  function connectOutcome(options: tls.ConnectionOptions = {}): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const client = tls.connect({ ...target, ...options }, () => resolve(`authorized=${client.authorized}`));
+    client.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    return promise.finally(() => client.destroy());
+  }
+  function requestOutcome(): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const req = https.get({ ...target, agent: false }, res => {
+      res.resume();
+      res.on("end", () => resolve(`status=${res.statusCode}`));
+    });
+    req.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    return promise;
+  }
+
+  // This is how win-ca, mac-ca and syswide-cas add their certificates to every client connection.
+  const createSecureContext = tls.createSecureContext;
+  const seenCiphers: unknown[] = [];
+  const addsCA = (options?: tls.SecureContextOptions) => {
+    seenCiphers.push(options?.ciphers);
+    const context = createSecureContext(options);
+    context.context.addCACert(ca1);
+    return context;
+  };
+  try {
+    const before = await connectOutcome();
+    tls.createSecureContext = addsCA;
+    const replaced = { connect: await connectOutcome(), request: await requestOutcome() };
+    const calls = seenCiphers.length;
+    const ownContext = await connectOutcome({ secureContext: createSecureContext() });
+    expect({ before, replaced, calls, seenCiphers, ownContext, callsAfterOwnContext: seenCiphers.length }).toEqual({
+      before: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      replaced: { connect: "authorized=true", request: "status=200" },
+      calls: 2,
+      seenCiphers: [tls.DEFAULT_CIPHERS, tls.DEFAULT_CIPHERS],
+      ownContext: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      callsAfterOwnContext: 2,
+    });
+  } finally {
+    tls.createSecureContext = createSecureContext;
     server.close();
   }
 });
@@ -5125,7 +5197,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
   });
 
   // Bun runs the functions of the fixture in this process. Node runs the same file as a
-  // script, so each expected report below is also node v26.3.0's.
+  // script, so each expected report below is also node v26.12.1's.
   async function underNode(mode: string) {
     await using proc = Bun.spawn({
       cmd: [nodeExe()!, join(import.meta.dir, "node-tls-client-wrap-fixture.mjs"), mode],
@@ -5143,7 +5215,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
   describe.concurrent.each([
     ["bun", false, clientWrap.shutdown, clientWrap.mysql, clientWrap.peerCloses, clientWrap.session],
     ["node", !nodeExe(), onNode("shutdown"), onNode("mysql"), onNode("peer-closes"), onNode("session")],
-  ] as const)("under %s", (_runtime, skip, shutdown, mysql, peerCloses, session) => {
+  ] as const)("under %s", (runtime, skip, shutdown, mysql, peerCloses, session) => {
     // Each cell calls the method and then destroy(): end() alone leaves a wrap open, on node too.
     it.skipIf(skip)(
       "end(), end(cb), destroySoon() and destroy() do not throw, and destroy() closes the wrap",
@@ -5178,7 +5250,9 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       expect(await session()).toEqual({
         "tls.connect({ port, session })": true,
         "tls.connect({ socket, session })": true,
-        "new TLSSocket(socket, { session })": true,
+        // Since v26.3.1 node's getSession() puts the host in front of the session, and its constructor is the one
+        // place that does not take it off again.
+        "new TLSSocket(socket, { session })": runtime === "bun" || !nodeExeAtLeast("26.3.1"),
         "tls.connect({ port }), then setSession()": true,
       });
     });
@@ -5241,6 +5315,8 @@ describe("negotiated parameters", () => {
   const x25519 = { type: "ECDH", name: "X25519", size: 253 };
   const p256 = { type: "ECDH", name: "prime256v1", size: 256 };
   const p384 = { type: "ECDH", name: "secp384r1", size: 384 };
+  const x25519mlkem768 = { type: "TLSGroup", name: "X25519MLKEM768", size: undefined };
+  const mlkem1024 = { type: "TLSGroup", name: "MLKEM1024", size: undefined };
 
   // The client holds an EC certificate: its long-term key is not the ephemeral key.
   describe.each(["fd", "Duplex"] as const)("getEphemeralKeyInfo() over a %s", engine => {
@@ -5251,11 +5327,12 @@ describe("negotiated parameters", () => {
       ["TLSv1.2", { ciphers: "AES128-SHA" }, none, none],
       ["TLSv1.3", { ecdhCurve: "X25519" }, x25519, x25519],
       ["TLSv1.3", { ecdhCurve: "secp384r1" }, p384, p384],
-      // X25519MLKEM768: not a key type Node maps.
-      ["TLSv1.3", {}, none, none],
+      ["TLSv1.3", {}, x25519mlkem768, x25519mlkem768],
+      ["TLSv1.3", { ecdhCurve: "MLKEM1024" }, mlkem1024, mlkem1024],
     ] as const)("%s %j", async (maxVersion, options, full, resumed) => {
       using server = await listen({ maxVersion, ...options });
-      const clientOptions = { ...ecClientCert, ciphers: (options as tls.TlsOptions).ciphers };
+      const { ciphers, ecdhCurve } = options as tls.TlsOptions;
+      const clientOptions = { ...ecClientCert, ciphers, ecdhCurve };
       using first = await connectTo(server.port, engine, clientOptions);
       expect(first.client.getProtocol()).toBe(maxVersion);
       expect(first.client.isSessionReused()).toBe(false);
@@ -6204,6 +6281,11 @@ describe.concurrent("a write that is the first to observe the peer's reset fails
           const deadline = Date.now() + 30000;
           while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
             Atomics.wait(cell, 0, 0, 5);
+          }
+          // The kernel can apply the RST after the peer's close() returns. _handle.remotePort calls getpeername(),
+          // which fails on POSIX once the socket is reset.
+          while (process.platform !== "win32" && socket._handle.remotePort !== undefined && Date.now() < deadline) {
+            Atomics.wait(cell, 0, 0, 1);
           }
           socket.write("ping", function onWritten(err) {
             write = err ? { code: err.code, syscall: err.syscall } : "ok";

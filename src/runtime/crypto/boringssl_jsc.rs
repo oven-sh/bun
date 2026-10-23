@@ -53,6 +53,8 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
 }
 
 pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
+    // `err_code` came off the thread's queue to report a failure. What that failure queued behind it goes too.
+    boring::ERR_clear_error();
     // The message is the raw ERR_error_string output
     // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
     // exactly what Node built against BoringSSL produces - no prefix.

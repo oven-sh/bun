@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { Request } from "../webcore/response.bind.ts";
 
 export const ServerProtocol = b.enumeration(["http", "https"]);
 
@@ -31,7 +32,8 @@ function server(name: string) {
       "onError",
       "onNodeHTTPRequest",
       "onClientError",
-      "onConnection",
+      "socketHandlers",
+      "socketData",
       "wsOnOpen",
       "wsOnMessage",
       "wsOnClose",
@@ -76,7 +78,8 @@ function server(name: string) {
         length: 2,
       },
       requestIP: {
-        args: { request: b.any },
+        args: { request: Request },
+        expected: { request: "Expected Request object" },
         returns: b.any,
         capability: "js",
         throws: true,

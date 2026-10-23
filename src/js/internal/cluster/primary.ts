@@ -214,6 +214,7 @@ cluster.disconnect = function (cb) {
 };
 
 const methodMessageMapping = {
+  __proto__: null,
   close,
   exitedAfterDisconnect,
   listening,
@@ -224,9 +225,16 @@ const methodMessageMapping = {
 function onmessage(message, _handle) {
   const worker = this;
 
-  const fn = methodMessageMapping[message.act];
+  // child.ts only writes strings, numbers, booleans and null outside `data`. Drop anything else, so that no coercion of a field can throw.
+  for (const name of ObjectKeys(message)) {
+    const value = message[name];
+    const type = typeof value;
+    if (name !== "data" && value !== null && type !== "string" && type !== "number" && type !== "boolean") {
+      message[name] = undefined;
+    }
+  }
 
-  if (typeof fn === "function") fn(worker, message);
+  methodMessageMapping[message.act]?.(worker, message);
 }
 
 function online(worker) {

@@ -1728,14 +1728,8 @@ pub(crate) fn download_outcome(
                 | http::Error::TooManyRedirects
         )
     );
-    // `connect_errno` is a Winsock code on Windows: WSAETIMEDOUT.
-    const CONNECT_TIMED_OUT: i32 = if cfg!(windows) {
-        10060
-    } else {
-        bun_errno::SystemErrno::ETIMEDOUT as i32
-    };
     let silence = matches!(response.fail, Some(http::Error::Timeout))
-        || response.connect_errno == CONNECT_TIMED_OUT;
+        || response.connect_errno == Some(bun_errno::SystemErrno::ETIMEDOUT);
     let retry = !is_final
         && !(blocking && (silence || status == Some(501)))
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));

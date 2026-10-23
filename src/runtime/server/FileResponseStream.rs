@@ -514,9 +514,7 @@ impl FileResponseStream {
                 self.as_ptr(),
             );
         }
-        self.resp.get().mark_needs_more();
-        // Re-arm now that the socket is marked blocked, so uWS records how much the peer has taken so far.
-        self.resp.get().reset_timeout();
+        self.resp.get().request_writable();
         true
     }
 

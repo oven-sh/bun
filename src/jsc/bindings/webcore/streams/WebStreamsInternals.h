@@ -142,8 +142,6 @@ QueuingStrategyDict convertQueuingStrategyDict(JSC::JSGlobalObject*, JSC::JSValu
 // (undefined / true / ...) are exempt. Do NOT "optimize" a fulfillment site to skip
 // re-validation on the grounds that the resolution value is internally constructed.
 JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
-// [bound-convention] wrapper: target(contextCell, ...callArgs). userJS: no — WebStreamsMisc.cpp
-JSC::JSBoundFunction* createStreamsBoundHandler(JSC::JSGlobalObject*, JSC::JSFunction* target, JSC::JSCell* context);
 // obj.name(...args); returns the EMPTY value when `name` is not callable. userJS: yes — WebStreamsMisc.cpp
 JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer&);
 // WebIDL "invoke a callback function" whose declared return type is Promise<T> (underlying
@@ -651,6 +649,7 @@ JSC::JSValue readableStreamToBytes(JSC::JSGlobalObject*, JSReadableStream*); // 
 JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
+JSC::JSValue readableStreamToBodyBlob(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
 
 // The buffered fast path: returns the native handle's own .text()/.arrayBuffer()/... promise,
 // or the EMPTY JSValue if the fast path does not apply. `method` is the property name to
@@ -732,7 +731,7 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObje
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue ZigGlobalObject__readableStreamToBodyBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 
 } // extern "C"

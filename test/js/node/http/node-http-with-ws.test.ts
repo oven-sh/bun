@@ -989,8 +989,8 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
           req.read();
           return upgrade();
         case "paused, resumed in the upgrade tick":
-          // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
-          req.read();
+          // As in Node, what came with the head is in the request's buffer when 'upgrade' is emitted.
+          events.push("read:" + req.read());
           req.pause();
           return setImmediate(() => {
             listenForData();
@@ -1081,16 +1081,13 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     });
   });
 
-  // This reader called read() before the pause, so nothing calls _read() again: resume() has to bring
-  // the bytes. They come after handleUpgrade() returned. A 'data' listener that closed the socket inside
-  // it left a closed WebSocket in wsServer.clients.
-  test("a reader that paused and resumes in the upgrade tick gets the buffered bytes", async () => {
+  test("a reader that paused and resumes in the upgrade tick gets 'end'", async () => {
     const sent = body.slice(0, 5);
     expect(await upgradeBeforeTheBodyIsComplete("upgrade", sent, "paused, resumed in the upgrade tick")).toEqual({
       ...upgraded,
       readerWaitedBeforeUpgrade: true,
       duringUpgrade: ["connection"],
-      events: ["connection", "data:" + sent, "end", "close"],
+      events: ["read:" + sent, "connection", "end", "close"],
       complete: true,
     });
   });

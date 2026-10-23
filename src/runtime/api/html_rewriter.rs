@@ -1653,13 +1653,11 @@ impl RewriterPipe {
         let Some(response) = self.response.get().as_deref() else {
             return;
         };
-        // For a waiting `.blob()`'s content type.
-        let headers = response.get_fetch_headers().map(NonNull::from);
         let bytes = self.output_buffer.replace(Vec::new());
         let context = self.global.bun_vm().context_of(self.script_context);
         let _ = response
             .get_body_value()
-            .fulfill(bytes, &self.global.js_thread(context), headers);
+            .fulfill(bytes, &self.global.js_thread(context));
     }
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,

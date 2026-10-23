@@ -4,18 +4,17 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
-use bun_http::{Headers, Method, header_has_token};
-use bun_http_types::ETag;
+use bun_http::{Headers, Method};
 use bun_ptr::{RefPtr, ThisPtr};
 
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
+use crate::server::file_route::{status_for_preconditions, write_route_headers};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::server::{AnyServer, HTTPStatusText, write_status};
+use crate::server::{AnyServer, HTTPStatusText, RangeRequest, write_status};
 use crate::webcore::blob::BodyFacts;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
@@ -35,9 +34,6 @@ pub(crate) struct StaticRoute {
     pub(crate) status_code: u16,
     pub(crate) blob: AnyBlob,
     pub(crate) cached_blob_size: u64,
-    pub(crate) has_date: bool,
-    pub(crate) has_connection: bool,
-    has_connection_close: bool,
     pub(crate) headers: Headers,
 }
 
@@ -70,11 +66,6 @@ impl StaticRoute {
             pending_ref: Cell::new(None),
             pending_responses: Cell::new(0),
             cached_blob_size: blob.size(),
-            has_date: headers.get(b"date").is_some(),
-            has_connection: headers.get(b"connection").is_some(),
-            has_connection_close: headers
-                .get(b"connection")
-                .is_some_and(|value| header_has_token(value, b"close")),
             blob,
             headers,
             server: Cell::new(server),
@@ -156,9 +147,6 @@ impl StaticRoute {
             pending_responses: Cell::new(0),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
-            has_date: self.has_date,
-            has_connection: self.has_connection,
-            has_connection_close: self.has_connection_close,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
@@ -233,11 +221,6 @@ impl StaticRoute {
                 }
             };
 
-            if let Some(h) = response.get_init_headers_mut() {
-                h.fast_remove(HTTPHeaderName::TransferEncoding);
-                h.fast_remove(HTTPHeaderName::ContentLength);
-            }
-
             // Consuming the body left a plain `Blob` behind, which no longer implies
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
@@ -279,11 +262,8 @@ impl StaticRoute {
 
     // HEAD requests have no body.
     pub(crate) fn on_head_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
-        // Evaluate conditional request preconditions for HEAD with 200 status
-        if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
-                return;
-            }
+        if Self::render_precondition(this, Method::HEAD, &mut req, resp) {
+            return;
         }
 
         // Continue with normal HEAD request handling
@@ -333,11 +313,8 @@ impl StaticRoute {
     }
 
     pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
-        // Evaluate conditional request preconditions for GET with 200 status
-        if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
-                return;
-            }
+        if Self::render_precondition(this, Method::GET, &mut req, resp) {
+            return;
         }
 
         // Continue with normal GET request handling
@@ -446,55 +423,13 @@ impl StaticRoute {
         resp.try_end(bytes, all_bytes.len(), resp.should_close_connection())
     }
 
-    fn do_write_status(&self, status: u16, resp: AnyResponse) {
-        match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(_) | AnyResponse::H2(_) => {
-                let mut b = bun_core::fmt::ItoaBuf::new();
-                resp.write_status(bun_core::fmt::itoa(&mut b, status));
-            }
-        }
-    }
-
-    fn do_write_headers(&self, resp: AnyResponse) {
-        use bun_http_types::ETag::HeaderEntryColumns;
-        // Date is a singleton field (RFC 9110 §6.6.1); when the snapshot already
-        // carries one, suppress uWS's auto-Date so only the user's value is sent.
-        if self.has_date {
-            resp.mark_wrote_date_header();
-        }
-        if self.has_connection {
-            resp.mark_wrote_connection_header(self.has_connection_close);
-        }
-        let entries = self.headers.entries.slice();
-        let names: &[StringPointer] = entries.items_name();
-        let values: &[StringPointer] = entries.items_value();
-        let buf = self.headers.buf.as_slice();
-
-        debug_assert_eq!(names.len(), values.len());
-        for (name, value) in names.iter().zip(values) {
-            resp.write_header(
-                &buf[name.offset as usize..][..name.length as usize],
-                &buf[value.offset as usize..][..value.length as usize],
-            );
-        }
-        if !matches!(resp, AnyResponse::H3(_)) {
-            if let Some(srv) = self.server.get() {
-                if let Some(alt) = srv.h3_alt_svc() {
-                    resp.write_header(b"alt-svc", alt);
-                }
-            }
-        }
-    }
-
     fn render_bytes(&self, resp: AnyResponse, did_finish: &mut bool) {
         *did_finish = self.on_writable_bytes(0, resp);
     }
 
     fn render_metadata(&self, resp: AnyResponse) {
-        self.do_write_status(self.status_code, resp);
-        self.do_write_headers(resp);
+        write_status(resp, self.status_code);
+        write_route_headers(&self.headers, self.server.get(), resp);
     }
 
     pub(crate) fn on_with_method(this: ThisPtr<Self>, method: Method, resp: AnyResponse) {
@@ -502,7 +437,7 @@ impl StaticRoute {
             Method::GET => Self::on(this, resp),
             Method::HEAD => Self::on_head(this, resp),
             _ => {
-                this.do_write_status(405, resp); // Method not allowed
+                write_status(resp, 405); // Method not allowed
                 resp.write_header(b"Allow", b"GET, HEAD");
                 resp.write_header_int(b"Content-Length", 0);
                 resp.end_without_body(resp.should_close_connection());
@@ -510,61 +445,27 @@ impl StaticRoute {
         }
     }
 
-    /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
-    /// and returns `true` when a precondition short-circuits the request.
-    fn render_precondition(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse) -> bool {
-        let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
-        // Deferred: `parse_http_date` allocates + calls into WTF; only run it
-        // when the client actually sent a date-based conditional header.
-        let last_modified = || {
-            this.headers
-                .get(b"last-modified")
-                .and_then(crate::jsc_hooks::parse_http_date)
-        };
-
-        // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
-        // (only when If-Match is absent).
-        let precondition_failed =
-            if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
-                !ETag::if_match(etag, im)
-            } else if let Some(ius) = req
-                .header(b"if-unmodified-since")
-                .and_then(crate::jsc_hooks::parse_http_date)
-            {
-                matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
-            } else {
-                false
-            };
-        if precondition_failed {
-            return Self::render_bodiless(this, req, resp, 412);
-        }
-
-        // Step 3: If-None-Match (weak comparison). Presence suppresses step 4.
-        let not_modified = if let Some(if_none_match) = req.header(b"if-none-match") {
-            match etag {
-                Some(etag) if !if_none_match.is_empty() => ETag::if_none_match(etag, if_none_match),
-                _ => false,
-            }
-        // Step 4: If-Modified-Since (only when If-None-Match is absent).
-        } else if let Some(ims) = req
-            .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
-        {
-            // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
-            // is second-granular, so compare at second precision.
-            match last_modified() {
-                Some(lm) => lm / 1000 <= ims / 1000,
-                None => false,
-            }
-        } else {
-            false
-        };
-
-        if !not_modified {
-            return false;
-        }
-
-        Self::render_bodiless(this, req, resp, 304)
+    /// Writes a 412 or 304 response and returns `true` when a precondition short-circuits the request.
+    fn render_precondition(
+        this: ThisPtr<Self>,
+        method: Method,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+    ) -> bool {
+        let status = status_for_preconditions(
+            req,
+            method,
+            this.status_code,
+            this.headers.get(b"etag").filter(|v| !v.is_empty()),
+            // `parse_http_date` allocates and calls into WTF.
+            || {
+                this.headers
+                    .get(b"last-modified")
+                    .and_then(crate::jsc_hooks::parse_http_date)
+            },
+            RangeRequest::Result::None,
+        );
+        status != this.status_code && Self::render_bodiless(this, req, resp, status)
     }
 
     /// May free `this`.
@@ -579,8 +480,8 @@ impl StaticRoute {
         if let Some(server) = this.server.get() {
             server.on_pending_request();
         }
-        this.do_write_status(status, resp);
-        this.do_write_headers(resp);
+        write_status(resp, status);
+        write_route_headers(&this.headers, this.server.get(), resp);
         if !HTTPStatusText::is_null_body(status) {
             resp.write_header_int(b"Content-Length", 0);
         }

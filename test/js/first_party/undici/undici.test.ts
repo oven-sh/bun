@@ -473,6 +473,7 @@ describe("undici dispatchers", () => {
         if (pathname === "/gzip") {
           return new Response(Bun.gzipSync("gzipped text"), { headers: { "content-encoding": "gzip" } });
         }
+        if (pathname === "/compress") return new Response("as sent", { headers: { "content-encoding": "compress" } });
         if (pathname === "/redirect") return Response.redirect("/echo?redirected", 302);
         if (pathname === "/204") return new Response(null, { status: 204 });
         if (pathname === "/first-chunk-only") {
@@ -597,6 +598,17 @@ describe("undici dispatchers", () => {
         expect(response.headers["content-encoding"]).toBeUndefined();
         expect(response.headers["content-length"]).toBeUndefined();
         expect(await response.body.text()).toBe("gzipped text");
+      }
+    });
+
+    it("keeps Content-Encoding and Content-Length of a response whose body was not decoded", async () => {
+      for (const response of [
+        await new Pool(origin).request({ path: "/compress", method: "GET" }),
+        await request(`${origin}/compress`),
+      ]) {
+        expect(response.headers["content-encoding"]).toBe("compress");
+        expect(response.headers["content-length"]).toBe("7");
+        expect(await response.body.text()).toBe("as sent");
       }
     });
 
@@ -800,6 +812,108 @@ describe("undici dispatchers", () => {
       const error = new Error("shutting down");
       await pool.destroy(error);
       expect(await text.catch(e => e)).toBe(error);
+    });
+  });
+
+  describe("connections", () => {
+    // A raw keep-alive origin that counts its connections and says when each one closes.
+    async function keepAliveOrigin() {
+      const sockets: net.Socket[] = [];
+      const listener = net.createServer(socket => {
+        sockets.push(socket);
+        socket.on("error", () => {});
+        socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+      });
+      listener.listen(0, "127.0.0.1");
+      await once(listener, "listening");
+      return {
+        origin: `http://127.0.0.1:${(listener.address() as net.AddressInfo).port}`,
+        sockets,
+        [Symbol.dispose]() {
+          for (const socket of sockets) socket.destroy();
+          listener.close();
+        },
+      };
+    }
+    const get = async (dispatcher: Agent, origin: string) =>
+      (await dispatcher.request({ origin, path: "/", method: "GET" })).body.text();
+
+    it.each(["close", "destroy"] as const)("%s() closes the dispatcher's idle connections", async method => {
+      using server = await keepAliveOrigin();
+      const agent = new Agent();
+      expect([await get(agent, server.origin), await get(agent, server.origin)]).toEqual(["ok", "ok"]);
+      expect(server.sockets.length).toBe(1);
+      const closed = once(server.sockets[0], "close");
+      await agent[method]();
+      await closed;
+    });
+
+    it("are not shared between dispatchers", async () => {
+      using server = await keepAliveOrigin();
+      const agents = [new Agent(), new Agent()];
+      for (const agent of [...agents, ...agents]) expect(await get(agent, server.origin)).toBe("ok");
+      expect(server.sockets.length).toBe(2);
+      await Promise.all(agents.map(agent => agent.close()));
+    });
+
+    it("of fetch() belong to its dispatcher", async () => {
+      using server = await keepAliveOrigin();
+      const dispatcher = new Agent();
+      expect(await (await undiciFetch(server.origin, { dispatcher })).text()).toBe("ok");
+      const closed = once(server.sockets[0], "close");
+      await dispatcher.close();
+      await closed;
+    });
+  });
+
+  describe("options that aren't own enumerable properties", () => {
+    const members = { method: "POST", headers: { "x-from": "options" }, body: "payload" };
+    const shapes: [string, (extra: object) => any][] = [
+      ["inherited", extra => Object.assign(Object.create(members), extra)],
+      [
+        "non-enumerable",
+        extra => {
+          const options = { ...extra };
+          for (const name in members) Object.defineProperty(options, name, { value: members[name], enumerable: false });
+          return options;
+        },
+      ],
+      [
+        "class getters",
+        extra =>
+          Object.assign(
+            new (class {
+              get method() {
+                return members.method;
+              }
+              get headers() {
+                return members.headers;
+              }
+              get body() {
+                return members.body;
+              }
+            })(),
+            extra,
+          ),
+      ],
+    ];
+    const sent = ({ method, headers, body }: any) => ({ method, from: headers["x-from"], body });
+    const expected = { method: "POST", from: "options", body: "payload" };
+
+    it.each(shapes)("%s: fetch() with a dispatcher that has connect options", async (_, shape) => {
+      const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+      expect(sent(await (await undiciFetch(`${origin}/echo`, shape({ dispatcher }))).json())).toEqual(expected);
+    });
+
+    it.each(shapes)("%s: pool.request()", async (_, shape) => {
+      const { body } = await new Pool(origin).request(shape({ path: "/echo" }));
+      expect(sent(await body.json())).toEqual(expected);
+    });
+
+    it("fetch() with a dispatcher that has connect options honors an inherited signal", async () => {
+      const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+      const init = Object.assign(Object.create({ signal: AbortSignal.abort(new Error("stop")) }), { dispatcher });
+      expect(await undiciFetch(`${origin}/echo`, init).catch(e => e.message)).toBe("stop");
     });
   });
 

@@ -980,6 +980,38 @@ function eachRequest(socket: Socket, onRequest: () => void) {
   });
 }
 
+const chunkedOk = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n";
+test.concurrent.each([
+  ["a 204 with Transfer-Encoding: chunked", "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\n\r\n"],
+  ["a 304 with Transfer-Encoding: chunked", "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\n\r\n"],
+  ["a chunked body", chunkedOk, "0\r\n\r\n"],
+  ["a chunked body", chunkedOk, "\r\n"],
+])("%s whose origin sends %j once the next request is out: the next response is read", async (_, first, late) => {
+  let connections = 0;
+  const sockets: Socket[] = [];
+  const server = createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    socket.on("error", () => {});
+    let requests = 0;
+    eachRequest(socket, () => {
+      if (requests++ === 0) return void socket.write(first);
+      // Two writes, so that the late bytes can be a read of their own.
+      socket.write(late);
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nnext");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    await (await fetch(url)).text();
+    expect({ next: await (await fetch(url)).text(), connections }).toEqual({ next: "next", connections: 1 });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 // An https origin that keeps its connections alive. It leaves the second request of its first connection, the one fetch
 // reuses, to `secondRequest`, which gets the TLS session and the TCP socket under it. `requests` is what arrived.
 async function originWithBrokenReuse(secondRequest: (session: TLSSocket, raw: Socket) => void) {

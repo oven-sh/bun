@@ -1,7 +1,7 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -162,6 +162,44 @@ describe.each([
       expect({ protocol, hostname, port, pathname }).toMatchObject(url);
     });
   });
+});
+
+// "localhost" usually resolves to both ::1 and 127.0.0.1.
+test("throws EADDRINUSE when another server holds the port on localhost", () => {
+  using occupant = serve({ hostname: "localhost", port: 0, fetch: () => new Response() });
+  const { port } = occupant;
+  for (const listen of [
+    () => serve({ hostname: "localhost", port, fetch: () => new Response() }),
+    () => Bun.listen({ hostname: "localhost", port, socket: { data() {} } }),
+  ]) {
+    expect(() => listen().stop(true)).toThrow(expect.objectContaining({ code: "EADDRINUSE" }));
+  }
+});
+
+// Linux refuses [::]:port while a listener holds [::1]:port.
+test.skipIf(!isLinux || !hasIPv6)(
+  "without a hostname, falls back to 0.0.0.0 when the port is only taken on IPv6",
+  () => {
+    using occupant = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+    using server = serve({ port: occupant.port, fetch: () => new Response() });
+    expect(server.address).toEqual({ address: "0.0.0.0", family: "IPv4", port: occupant.port });
+  },
+);
+
+test.skipIf(isWindows)("rejects a unix socket path with a null byte instead of truncating it", async () => {
+  const dir = tmpdirSync();
+  const unix = join(dir, "nul\0byte.sock");
+  for (const listen of [
+    () => serve({ unix, fetch: () => new Response() }),
+    () => Bun.listen({ unix, socket: { data() {} } }),
+  ]) {
+    expect(() => listen().stop(true)).toThrow(expect.objectContaining({ code: "EINVAL" }));
+  }
+  expect(existsSync(join(dir, "nul"))).toBe(false);
+
+  // A listener at the truncated path must not be reachable through the longer one.
+  using truncated = Bun.listen({ unix: join(dir, "nul"), socket: { data() {} } });
+  await expect(Bun.connect({ unix, socket: { data() {} } })).rejects.toMatchObject({ code: "EINVAL" });
 });
 
 // A name that cannot be a host name (a space, a colon, an empty label,
@@ -358,10 +396,7 @@ describe("Bun.serve() throws the error of the call that failed", () => {
     const missing = join(String(dir), "missing", "a.sock");
     const tooLong = join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
     const rows = [
-      [
-        { hostname: "127.0.0.1", port: occupant.port },
-        { code: "EADDRINUSE", address: "127.0.0.1", port: occupant.port },
-      ],
+      [{ hostname: "127.0.0.1", port: occupant.port }, { code: "EADDRINUSE", address: "127.0.0.1", port: occupant.port }],
       [{ unix: missing }, { code: "ENOENT", address: missing, path: missing }],
       [{ unix: tooLong }, { code: "ENAMETOOLONG", address: tooLong, path: tooLong }],
     ] as const;

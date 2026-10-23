@@ -31,8 +31,6 @@ extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS {
 
-/* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
- * allowed in HTTP/2 or HTTP/3 responses. */
 static inline bool asciiIEquals(std::string_view a, const char *lower) {
     for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != lower[i]) return false;
     return true;
@@ -64,6 +62,14 @@ static inline bool isKnownMethod(std::string_view method) {
     return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
 }
 
+/* What a request without a Content-Length has for one. */
+static constexpr uint64_t NO_CONTENT_LENGTH = UINT64_MAX;
+
+/* Such a request gets no automatic 100 Continue (RFC 9110 §10.1.1), and a handler that could read its body gets 413 sent for it. */
+static inline bool declaresBodyOverLimit(uint64_t contentLength, uint64_t maxRequestBodySize) {
+    return contentLength != NO_CONTENT_LENGTH && contentLength > maxRequestBodySize;
+}
+
 /* RFC 9110 §8.6: 1*DIGIT. Returns UINT64_MAX for anything else, and for more than 18 digits. */
 static inline uint64_t parseContentLength(std::string_view value) {
     if (value.empty() || value.length() > 18) return UINT64_MAX;
@@ -75,15 +81,32 @@ static inline uint64_t parseContentLength(std::string_view value) {
     return length;
 }
 
-static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {
+/* The response fields that the layer framing a response has to know. RFC 9113 §8.2.2 and RFC 9114 §4.2 forbid the last three kinds. */
+enum class ResponseField : uint8_t { Other, Date, ContentLength, Connection, TransferEncoding, HopByHop };
+static inline ResponseField classifyResponseField(std::string_view name, std::string_view value) {
     switch (name.size()) {
-    case 2: return asciiIEquals(name, "te") && !(value.size() == 8 && asciiIEquals(value, "trailers"));
-    case 7: return asciiIEquals(name, "upgrade");
-    case 10: return asciiIEquals(name, "connection") || asciiIEquals(name, "keep-alive");
-    case 16: return asciiIEquals(name, "proxy-connection");
-    case 17: return asciiIEquals(name, "transfer-encoding");
+    case 2: if (asciiIEquals(name, "te") && !(value.size() == 8 && asciiIEquals(value, "trailers"))) return ResponseField::HopByHop; break;
+    case 4: if (asciiIEquals(name, "date")) return ResponseField::Date; break;
+    case 7: if (asciiIEquals(name, "upgrade")) return ResponseField::HopByHop; break;
+    case 10: if (asciiIEquals(name, "connection")) return ResponseField::Connection; if (asciiIEquals(name, "keep-alive")) return ResponseField::HopByHop; break;
+    case 14: if (asciiIEquals(name, "content-length")) return ResponseField::ContentLength; break;
+    case 16: if (asciiIEquals(name, "proxy-connection")) return ResponseField::HopByHop; break;
+    case 17: if (asciiIEquals(name, "transfer-encoding")) return ResponseField::TransferEncoding; break;
     }
-    return false;
+    return ResponseField::Other;
+}
+
+/* RFC 9110 §5.6.1: whether `lowerToken` is an element of a comma-separated field value. */
+static inline bool fieldValueHasToken(std::string_view value, std::string_view lowerToken) {
+    while (true) {
+        size_t comma = value.find(',');
+        std::string_view element = value.substr(0, comma);
+        while (!element.empty() && (element.front() == ' ' || element.front() == '\t')) element.remove_prefix(1);
+        while (!element.empty() && (element.back() == ' ' || element.back() == '\t')) element.remove_suffix(1);
+        if (element.size() == lowerToken.size() && asciiIEquals(element, lowerToken.data())) return true;
+        if (comma == std::string_view::npos) return false;
+        value.remove_prefix(comma + 1);
+    }
 }
 
 namespace utils {

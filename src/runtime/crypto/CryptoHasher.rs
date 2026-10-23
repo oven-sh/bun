@@ -45,7 +45,6 @@ fn engine_of(heap: &JsHeap<'_>) -> *mut boring_ssl::ENGINE {
 fn crypto_error<'a>(heap: &JsHeap<'a>, code: u32) -> bindgen::Error<'a> {
     // SAFETY: makes an `Error`.
     let error = create_crypto_error(unsafe { heap.global() }, code);
-    boring_ssl::ERR_clear_error();
     bindgen::Error::from_value(JsLocal::new(heap, error))
 }
 

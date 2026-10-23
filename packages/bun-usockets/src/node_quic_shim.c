@@ -402,14 +402,6 @@ struct us_nq_tp {
     char     original_dcid[2 * MAX_CID_LEN + 1];
 };
 
-extern int lsquic_conn_transport_params(const lsquic_conn_t *c, int peer,
-                                        struct us_nq_tp *out);
-
-int us_nq_conn_transport_params(const lsquic_conn_t *c, int peer,
-                                struct us_nq_tp *out) {
-    return lsquic_conn_transport_params(c, peer, out);
-}
-
 size_t us_nq_tp_size(void) { return sizeof(struct us_nq_tp); }
 
 size_t us_nq_settings_size(void) { return sizeof(struct lsquic_engine_settings); }
@@ -424,9 +416,6 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;
     s->es_qpack_enc_max_blocked = 0;
-    /* lsquic then parses nothing past an unclaimed header block. A client's
-     * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
-    s->es_max_header_sets = 1;
     /* lsquic's default stream windows are for HTTP/3: 0 for a bidirectional
      * stream the server opens, 12 or 32 KiB for a unidirectional one. Use the
      * window for client-opened bidirectional streams for all three, as Node
@@ -483,10 +472,8 @@ NQ_SET(max_datagram_frame_size, unsigned short)
 NQ_SET(max_h3_header_pairs, unsigned short)
 NQ_SET(max_h3_header_bytes, unsigned)
 NQ_SET(allow_migration, int)
-NQ_SET(scid_len, unsigned)
 NQ_SET(silent_close, int)
 NQ_SET(cc_algo, unsigned)
-NQ_SET(delay_onclose, int)
 
 #define NQ_GET(f, ty) \
     ty us_nq_settings_get_##f(const struct lsquic_engine_settings *s) { return s->es_##f; }
@@ -513,9 +500,4 @@ lsquic_engine_t *us_nq_engine_new(us_quic_driver_t *driver, int is_server, int i
         &nq_stream_if, vt, is_http ? &nq_hset_if : NULL,
         NQ_HSI_CTX_PACK(settings->es_max_h3_header_pairs, settings->es_max_h3_header_bytes),
         is_server ? nq_lookup_cert : NULL, vt);
-}
-
-void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
-    /* RFC 9000 §3.1 allows RST in Data Sent state. */
-    lsquic_stream_force_reset_ext(s, code);
 }

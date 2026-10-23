@@ -81,13 +81,17 @@ function readableFromOldStyleStream(source: import("node:stream").Stream) {
   return passthrough;
 }
 
-// Pipes the source on the first read, so a Request that is only inspected leaves a form-data body unread.
 function webStreamFromOldStyleStream(source: import("node:stream").Stream) {
+  return require("node:stream").Readable.toWeb(readableFromOldStyleStream(source));
+}
+
+// Pipes the source on the first read, so a Request that is only inspected leaves a form-data body unread.
+function lazyWebStreamFromOldStyleStream(source: import("node:stream").Stream) {
   let reader: ReadableStreamDefaultReader | undefined;
   return new ReadableStream(
     {
       async pull(controller) {
-        reader ??= require("node:stream").Readable.toWeb(readableFromOldStyleStream(source)).getReader();
+        reader ??= webStreamFromOldStyleStream(source).getReader();
         const { done, value } = await reader!.read();
         if (done) controller.close();
         else controller.enqueue(value);
@@ -98,6 +102,21 @@ function webStreamFromOldStyleStream(source: import("node:stream").Stream) {
     },
     { highWaterMark: 0 },
   );
+}
+
+// `init` with one member replaced. A spread would drop its inherited and non-enumerable members.
+function withMember(init, name: string, value): any {
+  return { __proto__: init, [name]: value };
+}
+
+// An old-style Stream has no Symbol.asyncIterator, which is how native fetch() and Request read a node stream.
+function withWebBody(init, toWebStream: typeof webStreamFromOldStyleStream) {
+  const body = init?.body;
+  return typeof body?.pipe === "function" &&
+    !body[Symbol.asyncIterator] &&
+    body instanceof require("node:stream").Stream
+    ? withMember(init, "body", toWebStream(body))
+    : init;
 }
 
 class Response extends WebResponse {
@@ -190,14 +209,7 @@ class Request extends WebRequest {
   [kUrl]?: string;
 
   constructor(input, init) {
-    const body = init?.body;
-    if (
-      typeof body?.pipe === "function" &&
-      !body[Symbol.asyncIterator] &&
-      body instanceof require("node:stream").Stream
-    ) {
-      init = { ...init, body: webStreamFromOldStyleStream(body) };
-    }
+    init = withWebBody(init, lazyWebStreamFromOldStyleStream);
 
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
     // If it's not a valid URL, use a placeholder URL during construction.
@@ -230,21 +242,11 @@ async function fetch(
   // eslint-disable-next-line no-unused-vars
   init?: RequestInit & { body?: any },
 ) {
-  // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
-  // This is needed for libraries like `form-data` that use CombinedStream which extends
-  // Node.js Stream but doesn't implement Symbol.asyncIterator.
-  const initBody = init?.body;
-  if (initBody && typeof initBody === "object" && !initBody[Symbol.asyncIterator]) {
-    const { Readable, Stream } = require("node:stream");
-    if (initBody instanceof Stream || initBody instanceof Readable) {
-      const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
-      init = { ...init, body: Readable.toWeb(readable) };
-    }
-  }
   if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
     const tls = tlsFromAgent((init as any).agent, url);
-    if (tls !== undefined) init = { ...init, tls } as any;
+    if (tls !== undefined) init = withMember(init, "tls", tls);
   }
+  init = withWebBody(init, webStreamFromOldStyleStream);
   let response;
   try {
     response = await nativeFetch.$call(undefined, url, init);
@@ -273,8 +275,6 @@ function toNodeFetchError(error) {
     case "TooManyRedirects":
       return new FetchError(`maximum redirect reached at: ${path}`, "max-redirect");
     case "RedirectURLInvalid":
-    case "InvalidRedirectURL":
-    case "RedirectURLTooLong":
       return new FetchError(message, "invalid-redirect");
     case "UnsupportedRedirectProtocol":
       return error;

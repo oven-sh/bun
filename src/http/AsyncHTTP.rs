@@ -49,8 +49,6 @@ pub struct AsyncHTTP<'a> {
     pub async_http_id: u32,
 
     pub elapsed: u64,
-
-    pub(crate) signals: Signals,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -156,7 +154,6 @@ fn make_client<'a>(
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
     signals: Signals,
-    async_http_id: u32,
     http_proxy: Option<URL<'a>>,
     proxy_headers: Option<Headers>,
     redirect_type: FetchRedirect,
@@ -191,10 +188,9 @@ fn make_client<'a>(
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
-        transport: crate::Transport::None,
+        carrier: crate::Carrier::None,
         pending_h2: None,
         signals,
-        async_http_id,
         unix_socket_path: b"",
         compress: None,
         compressed_request_body: Vec::new(),
@@ -295,7 +291,7 @@ impl<'a> AsyncHTTP<'a> {
 
     /// A store into the shared signal `Store`, not into `self`.
     pub fn enable_response_body_streaming(&self) {
-        self.signals.store(
+        self.client.signals.store(
             crate::signals::Field::ResponseBodyStreaming,
             true,
             Ordering::Release,
@@ -358,7 +354,8 @@ impl Preconnect {
     }
 }
 
-pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
+/// `tls_props` is what the request this is for will pass: a pooled socket is only taken by a request with the same one.
+pub fn preconnect(url: URL<'static>, is_url_owned: bool, tls_props: Option<SSLConfigSharedPtr>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         if is_url_owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
@@ -395,7 +392,10 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
             b"",
             HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
             FetchRedirect::Manual,
-            Options::default(),
+            Options {
+                tls_props,
+                ..Default::default()
+            },
         ));
         async_http.client.flags.is_preconnect_only = true;
 
@@ -444,8 +444,6 @@ impl<'a> AsyncHTTP<'a> {
     ) -> AsyncHTTP<'a> {
         let async_http_id = crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed);
 
-        let signals = options.signals.unwrap_or_default();
-
         let client = make_client(
             method,
             url.clone(),
@@ -453,8 +451,7 @@ impl<'a> AsyncHTTP<'a> {
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
             headers.clone().expect("OOM"),
             headers_buf,
-            signals,
-            async_http_id,
+            options.signals.unwrap_or_default(),
             options.http_proxy,
             options.proxy_headers,
             redirect_type,
@@ -477,7 +474,6 @@ impl<'a> AsyncHTTP<'a> {
             err: None,
             async_http_id,
             elapsed: 0,
-            signals,
         };
         if let Some(val) = options.unix_socket_path {
             this.client.unix_socket_path = val;
@@ -759,8 +755,8 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
-                    client.close_proxy_tunnel(false);
-                    debug_assert!(matches!(client.transport, crate::Transport::None));
+                    drop(core::mem::take(&mut client.proxy_tunnel));
+                    debug_assert!(matches!(client.carrier, crate::Carrier::None));
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it

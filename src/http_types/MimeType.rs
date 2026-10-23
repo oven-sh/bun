@@ -297,7 +297,7 @@ impl MimeType {
         }
     }
 
-    pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
+    pub fn init(str_: &[u8], dupe: bool) -> MimeType {
         let mut str = str_;
         if let Some(slash) = strings::index_of_char_usize(str, b'/') {
             let category_ = &str[0..slash];
@@ -327,12 +327,6 @@ impl MimeType {
                     if str == b"wasm" {
                         return WASM;
                     }
-
-                    if let Some(a) = allocated {
-                        if dupe {
-                            *a = true;
-                        }
-                    }
                     return MimeType {
                         value: Self::maybe_dupe(str_, dupe),
                         category: Category::Application,
@@ -340,11 +334,6 @@ impl MimeType {
                 }
                 len if len == b"font".len() => {
                     if strings::eql_comptime_ignore_len(category_, b"font") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Font,
@@ -367,12 +356,6 @@ impl MimeType {
                         if str == b"plain" {
                             return TEXT;
                         }
-
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Text,
@@ -381,11 +364,6 @@ impl MimeType {
                 }
                 len if len == b"image".len() => {
                     if strings::eql_comptime_ignore_len(category_, b"image") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Image,
@@ -393,11 +371,6 @@ impl MimeType {
                     }
 
                     if strings::eql_comptime_ignore_len(category_, b"audio") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Audio,
@@ -405,11 +378,6 @@ impl MimeType {
                     }
 
                     if strings::eql_comptime_ignore_len(category_, b"video") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Video,
@@ -417,12 +385,6 @@ impl MimeType {
                     }
                 }
                 _ => {}
-            }
-        }
-
-        if let Some(a) = allocated {
-            if dupe {
-                *a = true;
             }
         }
         MimeType {
@@ -454,7 +416,7 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
 // TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {
-    MimeType::init(name, false, None)
+    MimeType::init(name, false)
 }
 
 // Duplicate keys are rejected at compile time. The original table

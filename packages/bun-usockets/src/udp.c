@@ -175,13 +175,8 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     int *err,
     void *user
 ) {
-    if (bsd_adopt_socket(fd)) {
-        if (err != NULL) {
-            *err = errno;
-        }
-        return 0;
-    }
-    if (bsd_prepare_adopted_udp_socket(fd)) {
+    int adopted = bsd_adopt_socket(fd, SOCK_DGRAM) == 0;
+    if (!adopted || bsd_prepare_adopted_udp_socket(fd)) {
         if (err != NULL) {
 #ifdef _WIN32
             *err = WSAGetLastError();
@@ -189,7 +184,9 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
             *err = errno;
 #endif
         }
-        bsd_disown_socket(fd);
+        if (adopted) {
+            bsd_disown_socket(fd);
+        }
         return 0;
     }
 

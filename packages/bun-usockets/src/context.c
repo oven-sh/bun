@@ -169,10 +169,6 @@ __attribute__((always_inline)) void *us_socket_group_ext(struct us_socket_group_
     return group->ext;
 }
 
-struct us_socket_group_t *us_socket_group_next(struct us_socket_group_t *group) {
-    return group->next;
-}
-
 /* ── Link / unlink ──────────────────────────────────────────────────────── */
 
 static inline int us_internal_group_is_empty(struct us_socket_group_t *group) {
@@ -363,6 +359,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    ls->shared = 0;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -401,7 +398,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    if (bsd_adopt_socket(fd)) {
+    if (bsd_adopt_socket(fd, SOCK_STREAM)) {
         *error = LIBUS_ERR;
         return 0;
     }
@@ -430,6 +427,8 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+    /* The process that handed over the descriptor can still hold it. */
+    ls->shared = 1;
 
     if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
         ls->deferred_accept = bsd_set_defer_accept(fd);
@@ -441,7 +440,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, options, error);
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -486,10 +485,6 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
 }
 
-__attribute__((always_inline)) void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
-    return ls + 1;
-}
-
 struct us_listen_socket_t *us_socket_group_head_listen_socket(struct us_socket_group_t *group) {
     return group->head_listen_sockets;
 }
@@ -498,16 +493,8 @@ struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) 
     return ls->next;
 }
 
-LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) {
-    return us_poll_fd(&ls->s.p);
-}
-
-int us_listen_socket_port(struct us_listen_socket_t *ls) {
-    return us_socket_local_port(&ls->s);
-}
-
-struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) {
-    return ls->accept_group;
+void us_listen_socket_set_shared(struct us_listen_socket_t *ls) {
+    ls->shared = 1;
 }
 
 /* ── Connect ────────────────────────────────────────────────────────────── */
@@ -515,12 +502,10 @@ struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) 
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr, options);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
-
-    bsd_socket_nodelay(connect_socket_fd, 1);
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
@@ -596,7 +581,12 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
                 init_addr_with_port(&entries->info, port, &a);
                 *has_dns_resolved = 1;
                 struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
-                Bun__addrinfo_freeRequest(ai_req, s == NULL);
+                if (s == NULL) {
+                    Bun__addrinfo_freeRequest(ai_req, 1);
+                    return NULL;
+                }
+                /* Held until the connect has an outcome, so a failure can evict the entry. */
+                s->connect_addrinfo_req = ai_req;
                 return s;
             }
         }
@@ -633,7 +623,8 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
 struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *server_path, size_t pathlen, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
+    int connected = 0;
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, &connected);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -650,6 +641,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
     us_internal_socket_init(connect_socket, group, kind, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    connect_socket->connect_returned_zero = connected;
 
     if (ssl_ctx) {
         us_internal_ssl_attach(connect_socket, ssl_ctx, 1, NULL, NULL);
@@ -667,15 +659,16 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
         /* The deferred-DNS path does not carry a local binding. */
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            c->last_candidate_error = LIBUS_ERR;
             continue;
         }
-        bsd_socket_nodelay(connect_socket_fd, 1);
         struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            c->last_candidate_error = LIBUS_ERR;
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
             continue;
@@ -693,6 +686,13 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->connect_state = c;
     }
     return opened;
+}
+
+/* Every address failed. Without an error here, us_connecting_socket_close reports a caller abort
+ * (ECANCELED) and keeps the DNS cache entry for the dead host. */
+static void us_internal_connecting_socket_exhausted(struct us_connecting_socket_t *c) {
+    c->error = c->last_candidate_error ? c->last_candidate_error : LIBUS_ECONNREFUSED;
+    us_connecting_socket_close(c);
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
@@ -733,10 +733,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
-        /* Same as the exhausted path in us_internal_socket_after_open: a
-         * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
-        us_connecting_socket_close(c);
+        us_internal_connecting_socket_exhausted(c);
     }
 }
 
@@ -758,6 +755,8 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     int so_error = us_socket_get_error(s);
                     if (so_error > 0) {
                         error = so_error;
+                    } else if (error == WSAENOTCONN) {
+                        error = LIBUS_ECONNREFUSED;
                     }
                     break;
                 }
@@ -767,6 +766,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     #endif
     if (error) {
         if (c) {
+            c->last_candidate_error = error;
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
                 if (*next == s) {
                     *next = s->connect_next;
@@ -775,16 +775,10 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
 
-            if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
-                int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
-                if (opened == 0 && c->connecting_head == NULL) {
-                    /* Every resolved address failed to connect. Without this,
-                     * us_connecting_socket_close defaults c->error to
-                     * ECANCELED (caller abort) and never invalidates the
-                     * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
-                    us_connecting_socket_close(c);
-                }
+            /* Replace the failed attempt right away. The ones still pending may be black holes. */
+            int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
+            if (opened == 0 && c->connecting_head == NULL) {
+                us_internal_connecting_socket_exhausted(c);
             }
         } else {
             us_internal_socket_connect_failed(s, error);
@@ -808,6 +802,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             us_connecting_socket_free(c);
             s->connect_state = NULL;
+            s->connect_next = NULL;
+        } else {
+            us_internal_socket_release_addrinfo(s, 0);
         }
 
         if (s->ssl) {
@@ -816,20 +813,4 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             us_dispatch_open(s, 1, 0, 0);
         }
     }
-}
-
-/* ── Misc ───────────────────────────────────────────────────────────────── */
-
-struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s) {
-    if (s->ssl) {
-        return us_internal_ssl_verify_error(s);
-    }
-    return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
-}
-
-const char *us_socket_sni_servername(struct us_socket_t *s) {
-    if (s->ssl) {
-        return us_internal_ssl_sni_servername(s);
-    }
-    return NULL;
 }

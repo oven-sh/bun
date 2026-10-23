@@ -33,37 +33,43 @@ describe("an Upgrade request with a body", () => {
 
   const exited = { stderr: "", exitCode: 0, signalCode: null };
   const ended = ["req data 100", "req end", "req close"];
-  // Node.js v26.3.0 emits 'end' before this 'close': it has parsed the whole body when it emits 'upgrade'.
-  const destroyed = (read: string) => [`req ${read} 100`, "req aborted", "req close", "socket close"];
+  // As in Node.js, the whole body is parsed when 'upgrade' is emitted, so the request has its EOF by then.
+  const destroyed = (read: string) => [`req ${read} 100`, "req aborted", "req end", "req close", "socket close"];
 
   describe("gets its EOF once when the listener lets go inside the last chunk", () => {
     const rows: [name: string, options: Options, expected: { events: string[]; eofs: number }][] = [
-      ["req.destroy() in 'data'", { act: "req.destroy()" }, { events: destroyed("data"), eofs: 1 }],
+      ["req.destroy() in 'data'", { act: "req.destroy()" }, { events: destroyed("data"), eofs: 0 }],
       [
         "req.destroy() in 'readable'",
         { act: "req.destroy()", read: "readable" },
-        { events: destroyed("readable"), eofs: 1 },
+        { events: destroyed("readable"), eofs: 0 },
       ],
-      ["req.destroy() over TLS", { act: "req.destroy()", secure: true }, { events: destroyed("data"), eofs: 1 }],
+      ["req.destroy() over TLS", { act: "req.destroy()", secure: true }, { events: destroyed("data"), eofs: 0 }],
       [
         "req.destroy(err)",
         { act: "req.destroy(err)" },
         {
-          events: ["req data 100", "req aborted", "req error: stop", "req close", "socket error: stop", "socket close"],
-          eofs: 1,
+          events: ["req data 100", "req aborted", "socket error: stop", "req error: stop", "req close", "socket close"],
+          eofs: 0,
         },
       ],
       [
         "socket.destroy(), then req.destroy()",
         { act: "socket.destroy() then req.destroy()" },
-        { events: destroyed("data"), eofs: 1 },
+        { events: destroyed("data"), eofs: 0 },
       ],
       [
         "req.destroy(), then a throw",
         { act: "req.destroy() then throw" },
         {
-          events: ["req data 100", "req aborted", "uncaughtException: listener threw", "req close", "socket close"],
-          // The throw leaves the callback before it gives the request its EOF.
+          events: [
+            "req data 100",
+            "req aborted",
+            "uncaughtException: listener threw",
+            "req end",
+            "req close",
+            "socket close",
+          ],
           eofs: 0,
         },
       ],
@@ -72,17 +78,13 @@ describe("an Upgrade request with a body", () => {
         { act: "req.destroy()", split: true },
         { events: ["req data 50", "req data 50", "req aborted", "req close", "socket close"], eofs: 1 },
       ],
-      ["socket.destroy()", { act: "socket.destroy()" }, { events: [...ended, "socket close"], eofs: 1 }],
+      ["socket.destroy()", { act: "socket.destroy()" }, { events: [...ended, "socket close"], eofs: 0 }],
       [
         "socket.resetAndDestroy()",
         { act: "socket.resetAndDestroy()" },
-        { events: [...ended, "socket close"], eofs: 1 },
+        { events: [...ended, "socket close"], eofs: 0 },
       ],
-      [
-        "socket.destroySoon()",
-        { act: "socket.destroySoon()" },
-        { events: [...ended, "socket end", "socket close"], eofs: 1 },
-      ],
+      ["socket.destroySoon()", { act: "socket.destroySoon()" }, { events: [...ended, "socket close"], eofs: 0 }],
     ];
 
     let shared: ReturnType<typeof run>;
@@ -102,7 +104,7 @@ describe("an Upgrade request with a body", () => {
       expect(await shared).toEqual({ rows: expect.any(Array), native: [], ...exited });
     });
     test("req.destroy() in 'readable', while a TLS write that spilled defers the close", async () => {
-      expect(await spilled).toEqual({ rows: [{ events: destroyed("readable"), eofs: 1 }], native: [], ...exited });
+      expect(await spilled).toEqual({ rows: [{ events: destroyed("readable"), eofs: 0 }], native: [], ...exited });
     });
   });
 
@@ -123,7 +125,7 @@ describe("an Upgrade request with a body", () => {
         const result = await run([options], { ...bunEnv, BUN_DEBUG: "", BUN_DEBUG_NodeHTTPResponse: "1" });
         const native = result.native.filter(line => line.startsWith("onData("));
         expect({ ...result, native }).toEqual({
-          rows: [{ events, eofs: 1 }],
+          rows: [{ events, eofs: 0 }],
           native: ["onData(100 bytes, is_last = 1)"],
           ...exited,
         });

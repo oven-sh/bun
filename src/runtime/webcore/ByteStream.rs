@@ -424,14 +424,7 @@ impl ByteStream {
 
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
+    /// Seeds a new stream from the drain result.
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {

@@ -1490,7 +1490,6 @@ pub(crate) fn readable_stream(
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
     let reader_mut = unsafe { &mut *reader };
 
-    reader_mut.context.setup();
     let readable_value = reader_mut.to_readable_stream(cx)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {

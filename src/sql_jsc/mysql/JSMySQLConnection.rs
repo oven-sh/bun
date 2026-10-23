@@ -326,14 +326,7 @@ impl JSMySQLConnection {
             // group after the SSLRequest exchange.
             let group = vm.mysql_socket_group::<false>(context);
             let result = if !path.is_empty() {
-                SocketTCP::connect_unix_group(
-                    group,
-                    uws::DispatchKind::Mysql,
-                    None,
-                    &path[..],
-                    ptr,
-                    false,
-                )
+                SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, &path[..], ptr)
             } else {
                 SocketTCP::connect_group(
                     group,
@@ -342,7 +335,6 @@ impl JSMySQLConnection {
                     hostname.slice(),
                     args.port,
                     ptr,
-                    false,
                 )
             };
             let socket = match result {

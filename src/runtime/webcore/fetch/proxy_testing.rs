@@ -35,6 +35,12 @@ pub(crate) fn proxy_for(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     }
 }
 
+/// `tunnelLiveCount()`
+pub(crate) fn tunnel_live_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    let count = bun_http::proxy_tunnel::LIVE_TUNNELS.load(core::sync::atomic::Ordering::Relaxed);
+    Ok(JSValue::js_number_from_uint64(u64::from(count)))
+}
+
 /// `parseURL(href)`: what the HTTP client's URL parser makes of `href`.
 pub(crate) fn parse_url(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let href = frame.argument(0).to_utf8(global)?;

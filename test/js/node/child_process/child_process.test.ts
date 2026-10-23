@@ -29,6 +29,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import { createInterface } from "node:readline";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -621,6 +622,111 @@ describe("spawn()", () => {
       }
     });
 
+    // Windows: spawn() rejects a socket handle (EBADF from uv_spawn).
+    describe.skipIf(isWindows)("a net.Socket as the child's stdin", () => {
+      const size = 200_000;
+      const payload = Buffer.alloc(size, "a");
+      const countStdin = `let n = 0; process.stdin.on("data", d => (n += d.length)).on("end", () => console.log(n));`;
+
+      // Call this from the listener that receives the socket. Resolves once the child has read to EOF.
+      async function handOff(socket: net.Socket) {
+        const child = spawn(bunExe(), ["-e", countStdin], { env: bunEnv, stdio: [socket, "pipe", "inherit"] });
+        try {
+          let stdout = "";
+          child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+          const [exitCode] = await once(child, "close");
+          return { childRead: Number(stdout), parentRead: socket.bytesRead, exitCode };
+        } finally {
+          socket.destroy();
+        }
+      }
+
+      it.concurrent("the child reads every byte of an accepted socket", async () => {
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(socket => {
+          socket.on("error", handedOff.reject);
+          handOff(socket).then(handedOff.resolve, handedOff.reject);
+        });
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", handedOff.reject).end(payload);
+          expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 0, exitCode: 0 });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      it.concurrent("the child reads every byte of a client socket", async () => {
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(peer => peer.on("error", handedOff.reject).end(payload));
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        try {
+          const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1", () =>
+            handOff(socket).then(handedOff.resolve, handedOff.reject),
+          );
+          socket.on("error", handedOff.reject);
+          expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 0, exitCode: 0 });
+        } finally {
+          server.close();
+        }
+      });
+
+      // Serial: bun:test only kills a timed-out test's child processes when the test is serial.
+      it("the parent reads the rest with resume() after the child exits", async () => {
+        const done = Promise.withResolvers<{ childRead: number; parentRead: number }>();
+        const readFirstChunk = `process.stdin.once("data", d => { console.log(d.length); process.exit(0); });`;
+        const server = net.createServer(socket => {
+          socket.on("error", done.reject);
+          let parentRead = 0;
+          const child = spawn(bunExe(), ["-e", readFirstChunk], { env: bunEnv, stdio: [socket, "pipe", "inherit"] });
+          let stdout = "";
+          child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+          child.on("close", () => {
+            socket.on("end", () => done.resolve({ childRead: Number(stdout), parentRead }));
+            socket.on("data", chunk => (parentRead += chunk.length)).resume();
+            peer.end(payload);
+          });
+        });
+        server.on("error", done.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", done.reject).write("head");
+          expect(await done.promise).toEqual({ childRead: 4, parentRead: size });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      // The peer never closes, so a parent that still reads the socket never exits. Serial for the same reason.
+      it("the socket doesn't keep the parent alive after the child exits", async () => {
+        const parentSource = `
+          const net = require("net");
+          const { spawn } = require("child_process");
+          const server = net.createServer(socket => {
+            const child = spawn("sh", ["-c", "exit 0"], { stdio: [socket, "inherit", "inherit"] });
+            child.on("close", code => console.log("child closed", code));
+            server.close();
+          });
+          server.listen(0, "127.0.0.1", () => net.connect(server.address().port, "127.0.0.1").unref());
+        `;
+        await using parent = Bun.spawn({
+          cmd: [bunExe(), "-e", parentSource],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([parent.stdout.text(), parent.exited]);
+        expect(stdout).toBe("child closed 0\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     it("overlapped string shorthand behaves like pipe", async () => {
       const child = spawn(bunExe(), ["-e", "process.stdin.on('data', d => process.stdout.write('out:' + d))"], {
         env: bunEnv,
@@ -651,6 +757,92 @@ describe("spawn()", () => {
       });
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
+    });
+
+    // child_process wraps each extra pipe in net.connect({ fd }), which adopts the descriptor synchronously.
+    describe.concurrent("extra pipes (stdio[3+])", () => {
+      // The children read with blocking fs.readSync loops. The parent's sockets are under test.
+      function spawnWithExtraPipes(script: string, count: number) {
+        const child = spawn(bunExe(), ["-e", script], {
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "inherit", ...Array(count).fill("pipe")],
+        });
+        return { child, exited: once(child, "exit"), [Symbol.dispose]: () => void child.kill() };
+      }
+      const readLines = (socket: net.Socket) => createInterface({ input: socket })[Symbol.asyncIterator]();
+      const connectionState = ({ connecting, pending, readyState }: net.Socket) => ({
+        connecting,
+        pending,
+        readyState,
+      });
+      const connected = { connecting: false, pending: false, readyState: "open" };
+
+      // Playwright's --remote-debugging-pipe sends requests to the browser's fd 3 and reads replies from fd 4.
+      it("are connected when spawn() returns and carry requests on stdio[3] and replies on stdio[4]", async () => {
+        using spawned = spawnWithExtraPipes(
+          `const fs = require("fs"), buf = Buffer.alloc(1024);
+           for (let n; (n = fs.readSync(3, buf)) > 0; ) fs.writeSync(4, "reply:" + buf.toString("utf8", 0, n) + "\\n");
+           fs.writeSync(4, "eof\\n");`,
+          2,
+        );
+        const [requests, replies] = spawned.child.stdio.slice(3) as net.Socket[];
+        expect([connectionState(requests), connectionState(replies)]).toEqual([connected, connected]);
+
+        const lines = readLines(replies);
+        // Wait for each reply before the next request so the child reads one chunk per write.
+        for (const request of ["Target.getTargets", "Browser.close"]) {
+          const written = Promise.withResolvers<Error | null>();
+          requests.write(request, err => written.resolve(err ?? null));
+          expect(await lines.next()).toEqual({ value: "reply:" + request, done: false });
+          expect(await written.promise).toBeNull();
+        }
+        requests.end();
+        expect(await lines.next()).toEqual({ value: "eof", done: false });
+        expect((await lines.next()).done).toBe(true);
+        expect((await spawned.exited)[0]).toBe(0);
+      });
+
+      it("carry both directions over a single pipe", async () => {
+        using spawned = spawnWithExtraPipes(
+          `const fs = require("fs"), buf = Buffer.alloc(1024);
+           fs.writeSync(3, "ready\\n");
+           for (let n; (n = fs.readSync(3, buf)) > 0; ) {
+             const request = buf.toString("utf8", 0, n);
+             fs.writeSync(3, "reply:" + request + "\\n");
+             if (request === "bye") break;
+           }`,
+          1,
+        );
+        const pipe = spawned.child.stdio[3] as net.Socket;
+        expect(connectionState(pipe)).toEqual(connected);
+
+        const lines = readLines(pipe);
+        expect(await lines.next()).toEqual({ value: "ready", done: false });
+        for (const request of ["hello", "bye"]) {
+          pipe.write(request);
+          expect(await lines.next()).toEqual({ value: "reply:" + request, done: false });
+        }
+        expect((await spawned.exited)[0]).toBe(0);
+      });
+
+      it("deliver a write larger than the pipe buffer", async () => {
+        using spawned = spawnWithExtraPipes(
+          `const fs = require("fs"), buf = Buffer.alloc(65536);
+           let bytes = 0;
+           for (let n; (n = fs.readSync(3, buf)) > 0; ) bytes += n;
+           fs.writeSync(4, bytes + "\\n");`,
+          2,
+        );
+        const [input, output] = spawned.child.stdio.slice(3) as net.Socket[];
+        const lines = readLines(output);
+        const size = 1024 * 1024;
+        const written = Promise.withResolvers<Error | null>();
+        input.write(Buffer.alloc(size, "x"), err => written.resolve(err ?? null));
+        input.end();
+        expect(await lines.next()).toEqual({ value: String(size), done: false });
+        expect(await written.promise).toBeNull();
+        expect((await spawned.exited)[0]).toBe(0);
+      });
     });
 
     describe("a socket as a stdio entry", () => {

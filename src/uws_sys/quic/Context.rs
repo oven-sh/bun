@@ -2,7 +2,7 @@
 //! For the client there is exactly one of these per HTTP-thread loop and it
 //! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
-use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint};
 
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
@@ -33,10 +33,9 @@ unsafe extern "C" {
         ssl_ctx: *mut SSL_CTX,
         out_qs: *mut *mut Socket,
         out_pending: *mut *mut PendingConnect,
-        user: *mut c_void,
     ) -> c_int;
 
-    fn us_quic_prepare_client_ssl_ctx(ssl_ctx: *mut SSL_CTX) -> c_int;
+    fn us_quic_prepare_client_ssl_ctx(ssl_ctx: *mut SSL_CTX);
 
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
@@ -82,9 +81,9 @@ pub enum ConnectResult {
 }
 
 /// Prepares a context for [`Context::connect`]: TLS 1.3 only, and the verify step that reads each connection's `reject_unauthorized`.
-pub fn prepare_client_ssl_ctx(ssl_ctx: &OwnedSslCtx) -> bool {
+pub fn prepare_client_ssl_ctx(ssl_ctx: &OwnedSslCtx) {
     // SAFETY: `ssl_ctx` is a live SSL_CTX.
-    unsafe { us_quic_prepare_client_ssl_ctx(ssl_ctx.as_ptr()) != 0 }
+    unsafe { us_quic_prepare_client_ssl_ctx(ssl_ctx.as_ptr()) }
 }
 
 impl Context {
@@ -121,7 +120,6 @@ impl Context {
         sni: &CStr,
         reject_unauthorized: bool,
         ssl_ctx: Option<&OwnedSslCtx>,
-        user: *mut c_void,
     ) -> ConnectResult {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc: *mut PendingConnect = core::ptr::null_mut();
@@ -136,7 +134,6 @@ impl Context {
                 ssl_ctx.map_or(core::ptr::null_mut(), OwnedSslCtx::as_ptr),
                 &raw mut qs,
                 &raw mut pc,
-                user,
             )
         };
         match rc {

@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, nodeExeAtLeast, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5430,32 +5430,6 @@ describe("http2 session stays usable after a header call throws", () => {
     expect(blocks).toEqual([sent, sent]);
     expect(sessionErrors).toEqual([]);
   });
-
-  it("request() over maxSendHeaderBlockLength", async () => {
-    const server = http2.createServer();
-    server.on("stream", (stream, headers) => {
-      stream.respond({ ":status": 200, "x-a": headers["x-a"], "x-b": headers["x-b"] });
-      stream.end();
-    });
-    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, { maxSendHeaderBlockLength: 200 });
-    try {
-      const outcome = headers => {
-        const { promise, resolve } = Promise.withResolvers();
-        const req = client.request({ ":path": "/", ...headers });
-        req.on("response", headers => resolve({ a: headers["x-a"], b: headers["x-b"] }));
-        req.on("error", err => resolve(err.code));
-        client.on("error", err => resolve(err.code));
-        req.resume();
-        return promise;
-      };
-      expect(await outcome({ ...good, "x-big": Buffer.alloc(300, "z").toString() })).toBe("ERR_HTTP2_STREAM_ERROR");
-      expect(await outcome(good)).toEqual(sent);
-    } finally {
-      client.destroy();
-      server.close();
-    }
-  });
 });
 
 // Every kind of field name the native header-block materializer distinguishes, in one request and
@@ -5689,6 +5663,9 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
 { remoteCustomSettings: "x", strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
     every entry point
+{ strictSingleValueFields: "yes", maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
 { remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
   Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
     every entry point
@@ -5703,9 +5680,7 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
     connect(https), createServer, createSecureServer, performServerHandshake
 { unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
-    connect(http), connect(https), connect(createConnection)
-  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
-    createServer, createSecureServer, performServerHandshake
+    every entry point
 other calls
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
     connect("not a url", { strictSingleValueFields: "yes" })
@@ -5726,13 +5701,8 @@ other calls
   rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
     promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
 `;
-// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
-const optionChecksNode = (() => {
-  const node = nodeExe();
-  if (!node) return null;
-  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
-})();
+// Before v26.11.0 node checked the options in another order.
+const optionChecksNode = nodeExeAtLeast("26.11.0");
 
 for (const [name, runtime] of [
   ["bun", bunExe()],
@@ -5934,7 +5904,7 @@ it("http2 respondWithFile/respondWithFD send an empty range and reset the stream
   });
   expect(exitCode).toBe(0);
 }, 15_000);
-it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments", async () => {
+it("http2 native pushPromise and altsvc throw for bad arguments", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -5957,13 +5927,9 @@ it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments
       // U+4E2D is three bytes in UTF-8.
       const wide = bytes => fill(bytes % 3) + Buffer.alloc(bytes - (bytes % 3), "\u4e2d").toString();
       console.log(JSON.stringify([
-        outcome(() => native.setNextStreamID()),
-        outcome(() => native.setNextStreamID("3")),
-        outcome(() => native.setNextStreamID(3)),
         outcome(() => native.pushPromise("1", 2, {}, {})),
         outcome(() => native.pushPromise(1, undefined, {}, {})),
         outcome(() => native.pushPromise(NaN, 2, {}, {})),
-        outcome(() => native.pushPromise(1, 0, {}, {})),
         outcome(() => native.altsvc(fill(16382 - value.length), value, 0)),
         outcome(() => native.altsvc(fill(16383 - value.length), value, 0)),
         outcome(() => native.altsvc(fill(65536), value, 0)),
@@ -5979,13 +5945,9 @@ it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const tooLong = "ERR_HTTP2_ALTSVC_LENGTH: HTTP/2 ALTSVC frames are limited to 16382 bytes";
   expect(JSON.parse(stdout || "[]")).toEqual([
-    "Error: Expected stream_id to be a number",
-    "Error: Expected stream_id to be a number",
-    "returned undefined",
-    "Error: Expected parentId to be a number",
-    "Error: Expected promisedId to be a number",
-    "Error: Invalid stream id",
-    "Error: Invalid stream id",
+    "ERR_INVALID_ARG_TYPE: parentId must be a number",
+    "ERR_INVALID_ARG_TYPE: promisedId must be a number",
+    "ERR_OUT_OF_RANGE: parentId must be an integer (received NaN)",
     "returned undefined",
     tooLong,
     tooLong,
@@ -6803,6 +6765,48 @@ it("http2 allowHTTP1 fallback answers an HTTP/1.1 request without a Host header 
   );
 });
 
+it.each([
+  [{ keepAliveTimeout: "abc" }, "ERR_INVALID_ARG_TYPE"],
+  [{ keepAliveTimeout: "" }, "ERR_INVALID_ARG_TYPE"],
+  [{ keepAliveTimeout: "-1" }, "ERR_OUT_OF_RANGE"],
+  [{ keepAliveTimeout: 1.5 }, "ERR_OUT_OF_RANGE"],
+  [{ headersTimeout: -1 }, "ERR_OUT_OF_RANGE"],
+  [{ headersTimeout: 2000, requestTimeout: 1000 }, "ERR_OUT_OF_RANGE"],
+  [{ http1Options: { maxHeaderSize: {} } }, "ERR_INVALID_ARG_TYPE"],
+  [{ http1Options: { insecureHTTPParser: "false" } }, "ERR_INVALID_ARG_TYPE"],
+])(
+  "http2 createSecureServer validates the HTTP/1 options %j only when allowHTTP1 is set, like http.createServer",
+  (options, code) => {
+    expect(() => http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options })).toThrow(
+      expect.objectContaining({ code }),
+    );
+    http2.createSecureServer({ ...TLS_CERT, ...options });
+  },
+);
+
+// Node throws ERR_INVALID_ARG_TYPE. Bun 1.4 started, so a server configured from process.env still does.
+it("http2 createSecureServer with allowHTTP1 takes numeric strings for the HTTP/1 timeouts and sizes", () => {
+  const server = http2.createSecureServer({
+    ...TLS_CERT,
+    allowHTTP1: true,
+    keepAliveTimeout: "7000",
+    keepAliveTimeoutBuffer: "500",
+    headersTimeout: "8000",
+    requestTimeout: "9000",
+    connectionsCheckingInterval: "100",
+    http1Options: { maxHeaderSize: "60000", insecureHTTPParser: 1 },
+  });
+  expect(server).toMatchObject({
+    keepAliveTimeout: 7000,
+    keepAliveTimeoutBuffer: 500,
+    headersTimeout: 8000,
+    requestTimeout: 9000,
+    connectionsCheckingInterval: 100,
+    maxHeaderSize: 60000,
+    insecureHTTPParser: true,
+  });
+});
+
 // Sends a request with two Authorization and two Cookie lines over a TLS connection that negotiated
 // http/1.1 (the allowHTTP1 fallback) and returns what the handler saw, plus the option as stored on
 // the server.
@@ -6905,6 +6909,22 @@ it("close() completes when the peer never ACKs an outstanding SETTINGS", async (
   client.close();
   await closed; // hangs before this fix
   server.close();
+});
+
+it("pendingSettingsAck stays true until every SETTINGS frame is acknowledged", async () => {
+  const server = http2.createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const seen = [];
+    client.on("localSettings", () => seen.push(client.pendingSettingsAck));
+    client.settings({ enablePush: false });
+    while (seen.length < 2) await once(client, "localSettings");
+    expect(seen).toEqual([true, false]);
+  } finally {
+    client.destroy();
+    server.close();
+  }
 });
 
 describe("session teardown", () => {
@@ -7666,6 +7686,25 @@ describe("Http2Stream.setTimeout()", () => {
       await once(client, "timeout");
       expect(onStreamTimeout).not.toHaveBeenCalled();
     });
+  });
+
+  it("a timeout of the socket under a session isn't the session's", async () => {
+    const server = http2.createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const socket = net.connect(port, "127.0.0.1");
+    const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+    try {
+      const onSessionTimeout = mock();
+      client.on("timeout", onSessionTimeout);
+      await once(client, "connect");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(onSessionTimeout).not.toHaveBeenCalled();
+    } finally {
+      client.destroy();
+      server.close();
+    }
   });
 });
 

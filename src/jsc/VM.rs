@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__collectAsyncForFinalizers(vm: &VM);
     safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
@@ -105,6 +106,11 @@ impl VM {
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.
     pub(crate) fn collect_async_idle(&self) {
         JSC__VM__collectAsyncIdle(self)
+    }
+
+    /// A full collection that finishes although this thread parks, unless one that does is already under way.
+    pub(crate) fn collect_async_for_finalizers(&self) {
+        JSC__VM__collectAsyncForFinalizers(self)
     }
 
     /// Let go of what JSC gets back cheaply, of functions that have no linked code any more (an idle collection has found

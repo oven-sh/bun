@@ -3,15 +3,15 @@ import { blackholePortSource, bunEnv, bunExe, isASAN, isMusl, isWindows } from "
 
 // Evicting a custom SSL context while it still has in-flight sockets closes
 // those sockets via no-op callbacks (cleanCallbacks runs first in
-// HTTPContext.deinit), so unregisterAbortTracker() never runs and
-// socket_async_http_abort_tracker is left pointing at freed sockets. The next
+// HTTPContext.deinit), so the requests on them never hear of it and
+// are left pointing at freed sockets. The next
 // drainQueuedShutdowns then UAF'd. Fix: skip eviction when the context has
 // active (non-pooled) sockets.
 //
 // This test fills the cache past ssl_context_cache_max_size (60) with distinct
 // TLS configs whose connects never complete, so every cache entry
 // has an active connecting socket. The 61st distinct config triggers
-// evictOldestSslContext. Aborting all requests then drains the tracker.
+// evictOldestSslContext. Aborting all requests then reaches every socket.
 //
 // In debug+ASAN builds the existing assertUnpoisoned check at
 // HTTPThread.processEvents catches the freed socket deterministically, so one

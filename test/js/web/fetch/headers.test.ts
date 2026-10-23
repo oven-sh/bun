@@ -986,26 +986,32 @@ describe("Headers", () => {
       });
       // Script did not ask for these, so unlike delete() they leave the iterator on the name it stood on.
       describe("a name that native code removes", () => {
-        const names = ["accept", "content-length", "content-type", "host", "x-custom"];
-        const response = () =>
-          new Response("ok", {
-            headers: { "Accept": "a", "Content-Length": "2", "Content-Type": "t/t", "Host": "h", "X-Custom": "x" },
+        const names = ["accept", "content-encoding", "content-type", "host", "x-custom"];
+        // fetch() decoded the body, so the server removes the Content-Encoding that no longer describes it.
+        async function response() {
+          using upstream = Bun.serve({
+            port: 0,
+            fetch: () => new Response(Bun.gzipSync("ok"), { headers: { "Content-Encoding": "gzip" } }),
           });
+          return new Response(await (await fetch(upstream.url)).blob(), {
+            headers: { "Accept": "a", "Content-Encoding": "gzip", "Content-Type": "t/t", "Host": "h", "X-Custom": "x" },
+          });
+        }
         function take(iterator: Iterator<string>, steps: number) {
           const seen: string[] = [];
           for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
           return seen;
         }
-        // Content-Length is only seen by an iterator that got to it before it went away. Nothing else is lost.
-        const expected = (steps: number) => (steps >= 2 ? names : names.filter(name => name !== "content-length"));
+        // Content-Encoding is only seen by an iterator that got to it before it went away. Nothing else is lost.
+        const expected = (steps: number) => (steps >= 2 ? names : names.filter(name => name !== "content-encoding"));
 
         test.each([0, 1, 2, 3, 4, 5])("as the server writes the response, after %d steps", async steps => {
           let iterator: Iterator<string> & Iterable<string>;
           let seen: string[] = [];
           using server = Bun.serve({
             port: 0,
-            fetch() {
-              const res = response();
+            async fetch() {
+              const res = await response();
               iterator = res.headers.keys();
               seen = take(iterator, steps);
               return res;
@@ -1015,8 +1021,8 @@ describe("Headers", () => {
           expect([...seen, ...iterator!]).toEqual(expected(steps));
         });
 
-        test.each([0, 1, 2, 3, 4, 5])("as a static route takes the response, after %d steps", steps => {
-          const res = response();
+        test.each([0, 1, 2, 3, 4, 5])("as a static route takes the response, after %d steps", async steps => {
+          const res = await response();
           const iterator = res.headers.keys();
           const seen = take(iterator, steps);
           using server = Bun.serve({ port: 0, routes: { "/": res }, fetch: () => new Response() });
@@ -1064,8 +1070,8 @@ describe("Headers", () => {
           let seen: string[] = [];
           using server = Bun.serve({
             port: 0,
-            fetch() {
-              res = response();
+            async fetch() {
+              res = await response();
               iterator = res.headers.keys();
               seen = take(iterator, 2);
               return res;
@@ -1074,7 +1080,7 @@ describe("Headers", () => {
           expect(await (await fetch(server.url)).text()).toBe("ok");
           res!.headers.set("X-Later", "l");
           // The index is kept, as after any change by script: one name fewer before it, so "content-type" is passed over.
-          expect([...seen, ...iterator!]).toEqual(["accept", "content-length", "host", "x-custom", "x-later"]);
+          expect([...seen, ...iterator!]).toEqual(["accept", "content-encoding", "host", "x-custom", "x-later"]);
         });
       });
       test("forEach sees what its callback changes", () => {

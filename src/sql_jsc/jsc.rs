@@ -117,12 +117,14 @@ pub(crate) fn create_bun_socket_error_to_js(
     global: &JSGlobalObject,
 ) -> JSValue {
     use bun_uws::create_bun_socket_error_t as E;
+    let queued = bun_boringssl_sys::ERR_get_error();
+    bun_boringssl_sys::ERR_clear_error();
     match err {
         // `us_ssl_ctx_from_options` only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with `.none` and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `getOrCreateOpts(...) orelse return err.toJS()` site correct.
-        E::none => boringssl_err_to_js(global, bun_boringssl_sys::ERR_get_error()),
+        E::none => boringssl_err_to_js(global, queued),
         E::load_ca_file => global
             .err(ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
             .to_js(),
@@ -167,7 +169,7 @@ pub use bun_io::KeepAlive;
 pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
 pub use bun_jsc::virtual_machine::VirtualMachine;
 
-// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache, SSLConfig parser) and
+// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLConfig parser) and
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
@@ -179,18 +181,9 @@ pub struct SqlRuntimeHooks {
     pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
     /// `Timer.All.remove`.
     pub timer_remove: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
-    /// `&mut runtime_state().ssl_ctx_cache` — opaque `SSLContextCache`.
-    pub ssl_ctx_cache: unsafe fn(*mut VirtualMachine) -> *mut c_void,
-    /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
-    pub ssl_ctx_get_or_create: unsafe fn(
-        cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx>,
-    /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
+    /// Parses a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
-    /// or null when the value contained no TLS config / threw (caller checks
-    /// `global.has_exception()`).
+    /// or null when it threw.
     pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
     /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
     pub ssl_config_free: unsafe fn(*mut c_void),
@@ -237,8 +230,6 @@ pub(crate) trait VirtualMachineSqlExt {
     fn sql_state(&mut self) -> &mut RareData;
     /// vm.timer — the Timer::All heap, owned by RuntimeState.
     fn timer(&mut self) -> &mut TimerHeap;
-    /// RareData.ssl_ctx_cache — owned by RuntimeState.
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
@@ -265,12 +256,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
         // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
         // `*mut c_void` so callers stay typed.
         unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
-    }
-    #[inline]
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
-        // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
-        // after `init_runtime_state`.
-        unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
     }
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
@@ -378,9 +363,7 @@ pub mod api {
     pub mod server_config {
         use super::*;
 
-        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
-        /// the default-constructed config — callers that pass
-        /// `tls: true` get an SSLConfig with no overrides.
+        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` is a connection without TLS.
         #[derive(Default)]
         pub struct SSLConfig(Option<NonNull<c_void>>);
 
@@ -447,35 +430,25 @@ pub mod api {
                 (!bracketed && !bun_core::ip_address::is_ip_host(bare)).then_some(name)
             }
 
-            pub(crate) fn from_js(
-                global: &JSGlobalObject,
-                value: JSValue,
-            ) -> JsResult<Option<Self>> {
+            pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
                 // SAFETY: hook contract — may run JS getters / throw.
-                let p = unsafe { (hooks().ssl_config_from_js)(global, value) };
-                if global.has_exception() {
-                    debug_assert!(p.is_null());
-                    return Err(JsError::Thrown);
+                let config = unsafe { (hooks().ssl_config_from_js)(global, value) };
+                match NonNull::new(config) {
+                    Some(config) => Ok(Self(Some(config))),
+                    None => Err(JsError::Thrown),
                 }
-                Ok(NonNull::new(p).map(|p| Self(Some(p))))
             }
 
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
             /// `#[repr(C)]` `us_bun_socket_context_options_t` for client mode
             /// (request_cert=1, reject_unauthorized=0; SQL re-verifies hostname
-            /// itself). Returns `Default` for the empty/`tls:true` config.
+            /// itself).
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
-            ) -> bun_uws::us_bun_socket_context_options_t {
-                match self.0 {
-                    None => bun_uws::us_bun_socket_context_options_t {
-                        request_cert: 1,
-                        reject_unauthorized: 0,
-                        ..Default::default()
-                    },
-                    // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
-                }
+            ) -> Option<bun_uws::us_bun_socket_context_options_t> {
+                let config = self.0?;
+                // SAFETY: live boxed SSLConfig.
+                Some(unsafe { (hooks().ssl_config_as_usockets_client)(config.as_ptr()) })
             }
         }
     }
@@ -653,23 +626,5 @@ impl JSFunction {
             opts.intrinsic,
             opts.constructor,
         )
-    }
-}
-
-// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
-// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
-// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
-use bun_boringssl_sys::OwnedSslCtx;
-
-bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
-impl SslCtxCache {
-    pub(crate) fn get_or_create_opts(
-        &mut self,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx> {
-        // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
-        // are caller stack locals.
-        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
     }
 }

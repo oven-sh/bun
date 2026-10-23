@@ -15,8 +15,6 @@ import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 
-export const BREAKING_CHANGES_BUN_1_2 = false;
-
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
@@ -51,7 +49,6 @@ export const libcFamily: "glibc" | "musl" =
 export const isMusl = isLinux && libcFamily === "musl";
 export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";
-export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.
 // This will help us keep track of these tests.
@@ -215,6 +212,22 @@ await new Promise((resolve, reject) => filler.on("connect", resolve).on("error",
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;

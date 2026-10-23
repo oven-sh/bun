@@ -51,19 +51,8 @@ pub struct us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
     pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
-    /// `error` of [`Self::peer_disconnected`]. Not an X509 code.
+    /// `error` of openssl.c's `us_ssl_peer_disconnected_error`. Not an X509 code.
     pub const PEER_DISCONNECTED: core::ffi::c_int = -46;
-
-    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.c.
-    pub const fn peer_disconnected() -> Self {
-        Self {
-            error_no: Self::PEER_DISCONNECTED,
-            code: c"ECONNRESET".as_ptr(),
-            reason:
-                c"Client network socket disconnected before secure TLS connection was established"
-                    .as_ptr(),
-        }
-    }
 }
 
 impl Default for us_bun_verify_error_t {
@@ -178,12 +167,67 @@ pub enum SendStatus {
 /// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
 pub use bun_core::Timespec;
 
-// Opaque FFI handles (Nomicon pattern) — what higher tiers reach for when the
-// real module body isn't needed. See `bun_core::opaque_extern!` doc for the
-// `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
-// ABI-identical to a non-null pointer, which lets us declare value-typed shims
-// as `safe fn` and drop per-call-site `unsafe { }`.
-bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe);
+/// openssl.c's functions that need only an `SSL*`: what the TLS engine over a `us_socket_t` and `SSLWrapper` share.
+pub mod ssl {
+    use super::{SslCtx, us_bun_verify_error_t};
+    use bun_boringssl_sys::{SSL, SSL_SESSION};
+    use core::ffi::{c_char, c_int, c_uint, c_void};
+    unsafe extern "C" {
+        /// `SSL_new` and the setup of a client or a server. Never null.
+        pub fn us_ssl_new(ctx: *mut SslCtx, is_client: c_int) -> *mut SSL;
+        /// `requestCert` / `rejectUnauthorized` as BoringSSL's verify mode.
+        pub safe fn us_ssl_set_verify_mode(
+            ssl: &SSL,
+            request_cert: c_int,
+            reject_unauthorized: c_int,
+        );
+        /// A client refuses a bad server chain during the handshake, before its own certificate goes out.
+        pub safe fn us_ssl_set_inline_reject(ssl: &SSL);
+        pub safe fn us_ssl_inline_reject_tripped(ssl: &SSL) -> c_int;
+        /// `check(owner, ssl)` gives the verify step's `US_IDENTITY_*` verdict. `owner` must outlive `ssl`.
+        pub fn us_ssl_set_identity_check(
+            ssl: &SSL,
+            check: extern "C" fn(*mut c_void, *mut SSL) -> c_int,
+            owner: *mut c_void,
+        );
+        /// 1 when the verify step of this handshake asked the owner for the server's name.
+        pub safe fn us_ssl_identity_checked(ssl: &SSL) -> c_int;
+        /// The X509 verdict on the peer's chain, as it stands now.
+        pub safe fn us_ssl_socket_verify_error_from_ssl(ssl: &SSL) -> us_bun_verify_error_t;
+        pub fn us_ssl_protocol_error(reason: *const c_char) -> us_bun_verify_error_t;
+        pub safe fn us_ssl_peer_disconnected_error() -> us_bun_verify_error_t;
+        /// Formats why the last `SSL_*` call failed into `reason[..length]`, NUL-terminated. 0 when nothing is queued.
+        pub fn us_ssl_take_error_reason(reason: *mut c_char, length: usize) -> c_int;
+        /// Answers `SSL_ERROR_WANT_RENEGOTIATE` within the context's budget. 0 if refused.
+        pub safe fn us_ssl_renegotiate(ssl: &SSL) -> c_int;
+        /// The `TLSSocket` that BoringSSL's callbacks on `ssl` report to. Stored verbatim, never dereferenced there.
+        pub safe fn us_ssl_set_bun_socket(ssl: &SSL, bun_socket: *mut c_void);
+        pub safe fn us_ssl_bun_socket(ssl: &SSL) -> *mut c_void;
+        /// Hands what the new-session and keylog callbacks parked to that socket. Runs JS.
+        pub safe fn us_ssl_flush_pending_events(ssl: &SSL);
+        /// The session the new-session callback delivered last, borrowed. Null if none.
+        pub safe fn us_ssl_latest_session(ssl: &SSL) -> *mut SSL_SESSION;
+        /// Asks `us_dispatch_server_name` for the context of this SSL's server name.
+        pub safe fn us_ssl_on_server_name(ssl: &SSL);
+        /// Takes the reference `ctx` carries. 1 if the handshake waited for this answer: drive it again.
+        pub fn us_ssl_sni_resolve(ssl: &SSL, ctx: *mut SslCtx, error: c_int) -> c_int;
+        /// How many bytes may wait behind the ClientHello of a suspended handshake.
+        pub safe fn us_ssl_sni_held_max() -> c_uint;
+        /// 1 while an asynchronous SNICallback has the handshake suspended.
+        pub safe fn us_ssl_sni_waiting(ssl: &SSL) -> c_int;
+        /// 1 once the SNICallback refused the server name.
+        pub safe fn us_ssl_sni_refused(ssl: &SSL) -> c_int;
+        /// Hands the ALPN protocols of this SSL's ClientHello to `us_dispatch_alpn_offer`.
+        pub safe fn us_ssl_on_alpn_offer(ssl: &SSL);
+        /// `setKeyCert()` on a server. Returns 0 if `ctx` has no certificate.
+        pub fn us_ssl_set_key_cert(
+            ssl: *mut SSL,
+            ctx: *mut SslCtx,
+            sid_ctx: *const u8,
+            sid_ctx_length: usize,
+        ) -> c_int;
+    }
+}
 
 pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
@@ -204,220 +248,11 @@ pub mod socket_transfer {
             out_port: *mut c_int,
             error: *mut c_int,
         ) -> LIBUS_SOCKET_DESCRIPTOR;
-    }
-}
-
-// ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
-// The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
-// here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
-// upward dep, the opaque handle gets thin inherent methods that forward to
-// `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
-// This is the same link-time-dispatch pattern as other `*_sys` crates use for
-// their C backends — only here the "backend" is Rust in a higher tier.
-// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
-// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
-// via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
-// ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
-// scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
-unsafe extern "C" {
-    safe fn UpgradedDuplex__ssl_error(this: &UpgradedDuplex) -> us_bun_verify_error_t;
-    safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
-    safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
-    safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
-    safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
-    safe fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex);
-    safe fn UpgradedDuplex__latest_session(
-        this: &UpgradedDuplex,
-    ) -> *mut bun_boringssl_sys::SSL_SESSION;
-    safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
-    safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
-    fn UpgradedDuplex__encode_and_write(
-        this: *mut UpgradedDuplex,
-        ptr: *const u8,
-        len: usize,
-    ) -> i32;
-    fn UpgradedDuplex__raw_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
-    safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
-    safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
-    safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
-    safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
-    safe fn UpgradedDuplex__pause_stream(this: &mut UpgradedDuplex) -> bool;
-    safe fn UpgradedDuplex__resume_stream(this: &mut UpgradedDuplex) -> bool;
-}
-impl UpgradedDuplex {
-    #[inline]
-    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
-        UpgradedDuplex__ssl_error(self)
-    }
-    #[inline]
-    pub(crate) fn is_established(&self) -> bool {
-        UpgradedDuplex__is_established(self)
-    }
-    #[inline]
-    pub(crate) fn is_closed(&self) -> bool {
-        UpgradedDuplex__is_closed(self)
-    }
-    #[inline]
-    pub(crate) fn is_shutdown(&self) -> bool {
-        UpgradedDuplex__is_shutdown(self)
-    }
-    #[inline]
-    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = UpgradedDuplex__ssl(self);
-        if p.is_null() { None } else { Some(p) }
-    }
-    #[inline]
-    pub(crate) fn set_inline_reject(&self) {
-        UpgradedDuplex__set_inline_reject(self)
-    }
-    #[inline]
-    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
-        UpgradedDuplex__latest_session(self)
-    }
-    #[inline]
-    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
-        UpgradedDuplex__set_timeout(self, seconds)
-    }
-    #[inline]
-    pub(crate) fn flush(&mut self) {
-        UpgradedDuplex__flush(self)
-    }
-    #[inline]
-    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
-        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
-        // borrowed for the call's duration; the callee only reads from it.
-        unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
-    }
-    #[inline]
-    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
-        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
-        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
-        // borrowed for the call's duration; the callee only reads from it.
-        unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
-    }
-    #[inline]
-    pub(crate) fn shutdown(&mut self) {
-        UpgradedDuplex__shutdown(self)
-    }
-    #[inline]
-    pub(crate) fn shutdown_read(&mut self) {
-        UpgradedDuplex__shutdown_read(self)
-    }
-    #[inline]
-    pub(crate) fn close(&mut self) {
-        UpgradedDuplex__close(self)
-    }
-    #[inline]
-    pub(crate) fn abandon_js_side(&mut self) {
-        UpgradedDuplex__abandon_js_side(self)
-    }
-    #[inline]
-    pub(crate) fn pause_stream(&mut self) -> bool {
-        UpgradedDuplex__pause_stream(self)
-    }
-    #[inline]
-    pub(crate) fn resume_stream(&mut self) -> bool {
-        UpgradedDuplex__resume_stream(self)
-    }
-}
-
-// ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
-// Same link-time-dispatch as `UpgradedDuplex` above: the real
-// `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
-// forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`.
-#[cfg(windows)]
-unsafe extern "C" {
-    safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
-    safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
-    safe fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe);
-    safe fn WindowsNamedPipe__latest_session(
-        this: &WindowsNamedPipe,
-    ) -> *mut bun_boringssl_sys::SSL_SESSION;
-    safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
-    safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
-    fn WindowsNamedPipe__encode_and_write(
-        this: *mut WindowsNamedPipe,
-        ptr: *const u8,
-        len: usize,
-    ) -> i32;
-    fn WindowsNamedPipe__raw_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
-    safe fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe);
-    safe fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe);
-    safe fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe);
-    safe fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool;
-}
-#[cfg(windows)]
-impl WindowsNamedPipe {
-    #[inline]
-    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
-        WindowsNamedPipe__ssl_error(self)
-    }
-    #[inline]
-    pub(crate) fn is_established(&self) -> bool {
-        WindowsNamedPipe__is_established(self)
-    }
-    #[inline]
-    pub(crate) fn is_closed(&self) -> bool {
-        WindowsNamedPipe__is_closed(self)
-    }
-    #[inline]
-    pub(crate) fn is_shutdown(&self) -> bool {
-        WindowsNamedPipe__is_shutdown(self)
-    }
-    #[inline]
-    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = WindowsNamedPipe__ssl(self);
-        if p.is_null() { None } else { Some(p) }
-    }
-    #[inline]
-    pub(crate) fn set_inline_reject(&self) {
-        WindowsNamedPipe__set_inline_reject(self)
-    }
-    #[inline]
-    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
-        WindowsNamedPipe__latest_session(self)
-    }
-    #[inline]
-    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
-        WindowsNamedPipe__set_timeout(self, seconds)
-    }
-    #[inline]
-    pub(crate) fn flush(&mut self) {
-        WindowsNamedPipe__flush(self)
-    }
-    #[inline]
-    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
-    }
-    #[inline]
-    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
-    }
-    #[inline]
-    pub(crate) fn shutdown(&mut self) {
-        WindowsNamedPipe__shutdown(self)
-    }
-    #[inline]
-    pub(crate) fn shutdown_read(&mut self) {
-        WindowsNamedPipe__shutdown_read(self)
-    }
-    #[inline]
-    pub(crate) fn close(&mut self) {
-        WindowsNamedPipe__close(self)
-    }
-    #[inline]
-    pub(crate) fn pause_stream(&mut self) -> bool {
-        WindowsNamedPipe__pause_stream(self)
-    }
-    #[inline]
-    pub(crate) fn resume_stream(&mut self) -> bool {
-        WindowsNamedPipe__resume_stream(self)
+        pub fn bsd_create_bound_socket_unix(
+            path: *const c_char,
+            len: usize,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
     }
 }
 
@@ -524,6 +359,7 @@ pub mod fault_inject {
 }
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
+    Transport, TransportHandle,
 };
 
 // ───────────────────────────── re-exports ────────────────────────────────────
@@ -545,7 +381,7 @@ pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
+pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.

@@ -88,12 +88,6 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
-    // The descriptor dies with the socket: prune the registry entry so a
-    // recycled fd number isn't refused (or worse, accepted) later.
-    #[cfg(not(windows))]
-    if let Some(fd) = this.registered_fd.take() {
-        dgram_remove_fd(fd, DgramFdState::Adopted);
-    }
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errqueue: c_int) {
@@ -149,6 +143,25 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
         this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
     }
     event_loop.exit();
+}
+
+/// `address%scope`. The scope is the interface's name where the platform has one for the index.
+fn scoped_address(address: &[u8], scope_id: u32) -> BunString {
+    #[cfg(not(windows))]
+    {
+        let mut buffer = [0u8; IF_NAMESIZE + 1];
+        // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
+        if !unsafe { if_indextoname(scope_id, buffer.as_mut_ptr().cast::<c_char>()) }.is_null() {
+            // SAFETY: if_indextoname wrote a NUL-terminated string.
+            let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }.to_bytes();
+            return BunString::create_format(format_args!(
+                "{}%{}",
+                bstr::BStr::new(address),
+                bstr::BStr::new(name)
+            ));
+        }
+    }
+    BunString::create_format(format_args!("{}%{}", bstr::BStr::new(address), scope_id))
 }
 
 extern "C" fn on_data(
@@ -235,31 +248,9 @@ extern "C" fn on_data(
         let slice = unsafe { (*buf).get_payload(i) };
 
         let span = hostname.unwrap();
-        #[allow(unused_labels)]
-        let hostname_string = if let Some(id) = scope_id {
-            'blk: {
-                #[cfg(not(windows))]
-                {
-                    let mut buffer = [0u8; IF_NAMESIZE + 1];
-                    // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
-                        .is_null()
-                    {
-                        // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
-                            .to_bytes();
-                        break 'blk BunString::create_format(format_args!(
-                            "{}%{}",
-                            bstr::BStr::new(span),
-                            bstr::BStr::new(name)
-                        ));
-                    }
-                }
-
-                BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
-            }
-        } else {
-            BunString::from_bytes(span)
+        let hostname_string = match scope_id {
+            Some(id) => scoped_address(span, id),
+            None => BunString::from_bytes(span),
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();
@@ -525,11 +516,6 @@ pub(crate) struct UDPSocket {
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
     connect_info: Cell<Option<ConnectInfo>>,
-    /// This socket's descriptor in the raw-fd registry (adopted or created),
-    /// tracked on the socket so close can prune the entry even if `reload()`
-    /// replaces the config. POSIX-only, like the registry itself.
-    #[cfg(not(windows))]
-    registered_fd: Cell<Option<c_int>>,
     /// Armed while open: the socket closes with the context that opened it.
     abort_handle: bun_jsc::AbortHandle,
 }
@@ -583,8 +569,6 @@ impl UDPSocket {
             poll_ref: JsCell::new(KeepAlive::init()),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
-            #[cfg(not(windows))]
-            registered_fd: Cell::new(None),
             abort_handle: bun_jsc::AbortHandle::for_owner::<UDPSocket>(),
         }
         .into_js_wrapper(cx.global());
@@ -639,25 +623,9 @@ impl UDPSocket {
             }
         }
 
-        // Reserve an adopted descriptor before creating the socket so a
-        // concurrent adoption of the same number fails with EEXIST (like
-        // libuv's uv_udp_open) instead of double-owning it.
+        // A wrap hands its descriptor over to the socket that adopts it.
         #[cfg(not(windows))]
-        let reservation = match config.fd {
-            Some(fd) => match dgram_begin_adoption(fd) {
-                Some(previous) => Some((fd, previous)),
-                None => {
-                    return Err(cx.global().throw_value(
-                        bun_sys::Error::from_code_int(
-                            SystemErrno::EEXIST as c_int,
-                            bun_sys::Tag::open,
-                        )
-                        .to_js(cx.global()),
-                    ));
-                }
-            },
-            None => None,
-        };
+        let from_wrap = config.fd.filter(|fd| dgram_take_fd(*fd));
 
         let created = if let Some(fd) = config.fd {
             uws::udp::Socket::create_from_fd(
@@ -701,8 +669,8 @@ impl UDPSocket {
         if this.socket.get().is_none() {
             // The caller keeps the descriptor when adoption fails.
             #[cfg(not(windows))]
-            if let Some((fd, previous)) = reservation {
-                dgram_rollback_adoption(fd, previous);
+            if let Some(fd) = from_wrap {
+                dgram_register_fd(fd);
             }
             this.closed.set(true);
             if err != 0 {
@@ -723,7 +691,7 @@ impl UDPSocket {
                     ))
                 };
                 let sys_err = SystemError {
-                    errno: err,
+                    errno: if is_fd { -err } else { err },
                     code: BunString::static_(code),
                     message,
                     syscall: BunString::static_(syscall),
@@ -738,19 +706,6 @@ impl UDPSocket {
             }
 
             return Err(cx.global().throw(format_args!("Failed to bind socket")));
-        }
-
-        // Register this socket's live descriptor (adopted or freshly created)
-        // so a later adoption of the same number fails with EEXIST; a wrap
-        // that carried it here may still read its address, but must not close
-        // it out from under the socket.
-        #[cfg(not(windows))]
-        {
-            let fd = uws::udp::Socket::opaque_mut(created).fd();
-            if reservation.is_none() {
-                dgram_mark_fd_adopted(fd);
-            }
-            this.registered_fd.set(Some(fd));
         }
 
         if let Some(connect) = &this.config.get().connect {
@@ -1525,12 +1480,6 @@ impl UDPSocket {
             // shared borrow is sound; the (idempotent) downgrade is hoisted
             // because `on_close` repeats it.
             self.this_value.with_mut(|r| r.downgrade());
-            // Unregister before close(2) so no other thread can observe a
-            // stale entry for the recycled number (on_close is the backstop).
-            #[cfg(not(windows))]
-            if let Some(fd) = self.registered_fd.take() {
-                dgram_remove_fd(fd, DgramFdState::Adopted);
-            }
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             uws::udp::Socket::opaque_mut(socket).close();
         }
@@ -1670,10 +1619,6 @@ impl Drop for UDPSocket {
         // At VM shutdown the wrapper can die with the socket open: close it so that `drain_closed_sockets()` frees it.
         if let Some(socket) = this.socket.take() {
             this.closed.set(true);
-            #[cfg(not(windows))]
-            if let Some(fd) = this.registered_fd.take() {
-                dgram_remove_fd(fd, DgramFdState::Adopted);
-            }
             uws::udp::Socket::opaque_mut(socket).close();
         }
         this.poll_ref.with_mut(|p| p.disable());
@@ -1773,112 +1718,23 @@ fn bad_fd() -> bun_sys::Error {
 // type check, and cluster-shared sockets. POSIX-only; Windows reports ENOTSUP,
 // matching Node's cluster behavior for shared dgram handles.
 
-/// Whether the raw helpers may close a registered descriptor. `Owned` means
-/// the wrap layer created or received it; `Adopted` means a live `UDPSocket`
-/// owns it now (read-only for the helpers, pruned when that socket closes).
+/// The raw descriptors the wrap layer created or received, so builtin JS can never bind or close any other. Process-wide: threads share the descriptor space.
 #[cfg(not(windows))]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DgramFdState {
-    Owned,
-    Adopted,
-}
-
-/// One registry with atomic state transitions so builtin JS can never close a
-/// descriptor this module does not own. A process-wide mutex because worker
-/// threads share the descriptor space; the set stays tiny so a Vec is enough.
-#[cfg(not(windows))]
-static DGRAM_FDS: bun_threading::Guarded<Vec<(c_int, DgramFdState)>> =
-    bun_threading::Guarded::new(Vec::new());
+static DGRAM_FDS: bun_threading::Guarded<Vec<c_int>> = bun_threading::Guarded::new(Vec::new());
 
 #[cfg(not(windows))]
-fn dgram_fd_state(fd: c_int) -> Option<DgramFdState> {
-    DGRAM_FDS
-        .lock()
-        .iter()
-        .find(|(known_fd, _)| *known_fd == fd)
-        .map(|(_, state)| *state)
-}
-
-/// Registers a descriptor the wrap layer owns; no-op if already tracked (an
-/// adopted descriptor stays read-only).
-#[cfg(not(windows))]
-fn dgram_register_owned_fd(fd: c_int) {
+fn dgram_register_fd(fd: c_int) {
     let mut fds = DGRAM_FDS.lock();
-    if !fds.iter().any(|(known_fd, _)| *known_fd == fd) {
-        fds.push((fd, DgramFdState::Owned));
+    if !fds.contains(&fd) {
+        fds.push(fd);
     }
 }
 
-/// A live `UDPSocket` owns `fd`: no longer closable through the raw helpers,
-/// but still known for read-only ones. Any prior entry for a number the
-/// kernel just handed out is stale by construction and is overwritten.
+/// Removes `fd` from the registry. Returns true if it was there, and the caller owns it now.
 #[cfg(not(windows))]
-fn dgram_mark_fd_adopted(fd: c_int) {
+fn dgram_take_fd(fd: c_int) -> bool {
     let mut fds = DGRAM_FDS.lock();
-    match fds.iter_mut().find(|(known_fd, _)| *known_fd == fd) {
-        Some(entry) => entry.1 = DgramFdState::Adopted,
-        None => fds.push((fd, DgramFdState::Adopted)),
-    }
-}
-
-/// Atomically reserves `fd` for adoption unless a live socket already owns
-/// it, returning the previous state for `dgram_rollback_adoption`; `None`
-/// means the descriptor is already adopted.
-#[cfg(not(windows))]
-fn dgram_begin_adoption(fd: c_int) -> Option<Option<DgramFdState>> {
-    let mut fds = DGRAM_FDS.lock();
-    match fds.iter_mut().find(|(known_fd, _)| *known_fd == fd) {
-        Some(entry) => match entry.1 {
-            DgramFdState::Adopted => None,
-            DgramFdState::Owned => {
-                entry.1 = DgramFdState::Adopted;
-                Some(Some(DgramFdState::Owned))
-            }
-        },
-        None => {
-            fds.push((fd, DgramFdState::Adopted));
-            Some(None)
-        }
-    }
-}
-
-/// Restores the registry entry recorded by `dgram_begin_adoption` after a
-/// failed socket create.
-#[cfg(not(windows))]
-fn dgram_rollback_adoption(fd: c_int, previous: Option<DgramFdState>) {
-    let mut fds = DGRAM_FDS.lock();
-    let index = fds.iter().position(|(known_fd, _)| *known_fd == fd);
-    match (index, previous) {
-        (Some(index), Some(state)) => fds[index].1 = state,
-        (Some(index), None) => {
-            fds.swap_remove(index);
-        }
-        (None, Some(state)) => fds.push((fd, state)),
-        (None, None) => {}
-    }
-}
-
-/// Registers a descriptor `socket(2)` just returned to the wrap layer: any
-/// existing entry for that number is stale by construction.
-#[cfg(not(windows))]
-fn dgram_register_created_fd(fd: c_int) {
-    let mut fds = DGRAM_FDS.lock();
-    match fds.iter_mut().find(|(known_fd, _)| *known_fd == fd) {
-        Some(entry) => entry.1 = DgramFdState::Owned,
-        None => fds.push((fd, DgramFdState::Owned)),
-    }
-}
-
-/// Removes `fd` from the registry if it is in `state`, returning whether it
-/// was: a removed `Owned` descriptor becomes closable by the caller, a
-/// removed `Adopted` one is just forgotten when its owning socket closes.
-#[cfg(not(windows))]
-fn dgram_remove_fd(fd: c_int, state: DgramFdState) -> bool {
-    let mut fds = DGRAM_FDS.lock();
-    match fds
-        .iter()
-        .position(|(known_fd, known_state)| *known_fd == fd && *known_state == state)
-    {
+    match fds.iter().position(|known_fd| *known_fd == fd) {
         Some(index) => {
             fds.swap_remove(index);
             true
@@ -1889,20 +1745,7 @@ fn dgram_remove_fd(fd: c_int, state: DgramFdState) -> bool {
 
 #[cfg(not(windows))]
 fn dgram_owned_fd(fd: c_int) -> bun_sys::Result<c_int> {
-    if fd < 0 || dgram_fd_state(fd) != Some(DgramFdState::Owned) {
-        return Err(bun_sys::Error::from_code_int(
-            SystemErrno::EBADF as c_int,
-            bun_sys::Tag::open,
-        ));
-    }
-    Ok(fd)
-}
-
-/// Like `dgram_owned_fd`, but also accepts descriptors a `UDPSocket` has
-/// adopted — a wrap that shared its fd may still ask for its address.
-#[cfg(not(windows))]
-fn dgram_known_fd(fd: c_int) -> bun_sys::Result<c_int> {
-    if fd < 0 || dgram_fd_state(fd).is_none() {
+    if !DGRAM_FDS.lock().contains(&fd) {
         return Err(bun_sys::Error::from_code_int(
             SystemErrno::EBADF as c_int,
             bun_sys::Tag::open,
@@ -1914,23 +1757,6 @@ fn dgram_known_fd(fd: c_int) -> bun_sys::Result<c_int> {
 #[cfg(windows)]
 fn dgram_not_supported() -> bun_sys::Error {
     bun_sys::Error::from_code_int(SystemErrno::ENOTSUP as c_int, bun_sys::Tag::open)
-}
-
-/// `(fd)` → whether a live `UDPSocket` already owns this descriptor. Backs
-/// node:dgram's synchronous EEXIST check on `bind({ fd })` so it does not have
-/// to keep a second, per-VM copy of DGRAM_FDS.
-pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
-    #[cfg(not(windows))]
-    {
-        fd >= 0 && dgram_fd_state(fd) == Some(DgramFdState::Adopted)
-    }
-    #[cfg(windows)]
-    {
-        // The registry is POSIX-only; on Windows the async adoption path
-        // reports EEXIST itself and Node skips the sync-throw test.
-        let _ = fd;
-        false
-    }
 }
 
 /// `(isIPv6, isStream)` → a fresh unbound SOCK_DGRAM (or SOCK_STREAM)
@@ -1958,7 +1784,7 @@ pub(crate) fn dgram_new_socket_fd(is_ipv6: bool, is_stream: bool) -> bun_sys::Re
         // No socket owns a raw descriptor, so one can adopt it later.
         uws::udp::raw::bsd_disown_socket(fd);
 
-        dgram_register_created_fd(fd);
+        dgram_register_fd(fd);
         Ok(fd)
     }
     #[cfg(windows)]
@@ -1975,15 +1801,15 @@ pub(crate) fn dgram_new_socket_fd(is_ipv6: bool, is_stream: bool) -> bun_sys::Re
 pub(crate) fn dgram_adopt_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        if fd < 0 {
+        if uws::udp::raw::bsd_adopt_socket(fd, libc::SOCK_DGRAM) != 0 {
             return Err(bun_sys::Error::from_code_int(
-                SystemErrno::EBADF as c_int,
+                bun_sys::last_errno(),
                 bun_sys::Tag::open,
             ));
         }
-        // No-op for tracked descriptors: an adopted fd stays read-only rather
-        // than becoming closable again through a second wrap.
-        dgram_register_owned_fd(fd);
+        // An idle wrap isn't the owner: the socket that adopts its descriptor is.
+        uws::udp::raw::bsd_disown_socket(fd);
+        dgram_register_fd(fd);
         // libuv's uv_udp_open unconditionally sets SO_REUSEADDR (kept for
         // backwards compat, libuv#4551); best-effort like it is there.
         let _ = uws::udp::raw::bsd_set_reuseaddr(fd);
@@ -2053,7 +1879,6 @@ pub(crate) fn dgram_get_sock_name_fd<'a>(
 ) -> bindgen::Result<'a, JSValue> {
     #[cfg(not(windows))]
     {
-        let fd = dgram_known_fd(fd).map_err(|err| err.into_error(&cx.heap))?;
         let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
         let mut len = size_of::<sockaddr_storage>() as libc::socklen_t;
         // SAFETY: getsockname(2) writes at most `len` bytes into storage.
@@ -2203,9 +2028,7 @@ pub(crate) fn dgram_listen_fd(fd: i32) -> bun_sys::Result<()> {
 pub(crate) fn dgram_close_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        // Adopted descriptors belong to a live UDPSocket (its close prunes
-        // them); only owned ones are closed here.
-        if dgram_remove_fd(fd, DgramFdState::Owned) {
+        if dgram_take_fd(fd) {
             uws::udp::raw::bsd_close_socket(fd);
         }
         Ok(())

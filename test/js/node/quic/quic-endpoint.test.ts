@@ -1,6 +1,4 @@
-// lsquic fixes HTTP/3-vs-raw framing per client *engine*, set by the first
-// connect() through an endpoint; a later connect in the other mode must fail
-// loudly instead of silently reusing an engine that cannot frame it.
+// lsquic's settings, HTTP/3 framing among them, belong to an engine. Node's options belong to a session.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -19,36 +17,58 @@ const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
-describe("QuicEndpoint client-engine mode", () => {
-  test("an explicit endpoint rejects a connect() in the other mode", async () => {
-    await using server = await listen(
-      s => {
-        s.onerror = () => {};
-        s.closed.catch(() => {});
+describe("sessions that share an endpoint", () => {
+  test("can be HTTP/3 and raw QUIC", async () => {
+    const onsession = (session: any) => session.closed.catch(() => {});
+    const sni = { "*": { keys: [key], certs: [cert] } };
+    const text = async (stream: any) => {
+      let text = "";
+      for await (const batch of stream) for (const chunk of batch) text += Buffer.from(chunk).toString();
+      return text;
+    };
+    await using rawServer = await listen(onsession, {
+      sni,
+      alpn: ["quic-test"],
+      async onstream(this: any, stream: any) {
+        stream.closed.catch(() => {});
+        stream.setBody(Buffer.from("echo " + (await text(stream))));
       },
-      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: { maxIdleTimeout: 1 } },
-    );
+    } as SessionOptions);
+    await using h3Server = await listen(onsession, {
+      sni,
+      onstream: (stream: any) => stream.closed.catch(() => {}),
+      onheaders(this: any, headers: Record<string, string>) {
+        this.sendHeaders({ ":status": "200", "x-path": headers[":path"] }, { terminal: true });
+      },
+    } as SessionOptions);
 
-    const endpoint = new QuicEndpoint();
-    const raw = await connect(server.address!, {
+    await using endpoint = new QuicEndpoint();
+    const raw: any = await connect(rawServer.address!, {
       endpoint,
       alpn: "quic-test",
       verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 1 },
     } as SessionOptions);
-    await raw.opened;
+    const h3: any = await connect(h3Server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions);
+    const protocols = [(await raw.opened).protocol, (await h3.opened).protocol];
+
+    const echo = await raw.createBidirectionalStream({ body: Buffer.from("raw bytes") });
+    const response = Promise.withResolvers<Record<string, string>>();
+    const request = await h3.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/h3", ":scheme": "https", ":authority": "localhost" },
+      onheaders: (headers: Record<string, string>) => response.resolve({ ...headers }),
+    });
+    request.closed.catch(response.reject);
+    const seen = { protocols, echo: await text(echo), response: await response.promise };
     raw.close();
-
-    // The engine is raw now; an h3 (default-ALPN) connect cannot reuse it.
-    expect(() => connect(server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_STATE" }),
-    );
-    await endpoint.close();
+    h3.close();
+    expect(seen).toEqual({
+      protocols: ["quic-test", "h3"],
+      echo: "echo raw bytes",
+      response: { ":status": "200", "x-path": "/h3" },
+    });
   });
-});
 
-describe("connect() without an endpoint option", () => {
-  test("only shares an endpoint between sessions with the same engine options", async () => {
+  test("each advertise their own transport parameters", async () => {
     let serverSaw: (initialMaxStreamsBidi: bigint) => void;
     await using server = await listen(
       async (session: any) => {
@@ -73,7 +93,7 @@ describe("connect() without an endpoint option", () => {
     }
     const [a, b, c] = sessions.map(session => session.endpoint);
     for (const session of sessions) session.close();
-    expect({ advertised, shared: [a === b, b === c] }).toEqual({ advertised: [10n, 50n, 50n], shared: [false, true] });
+    expect({ advertised, shared: [a === b, b === c] }).toEqual({ advertised: [10n, 50n, 50n], shared: [true, true] });
   });
 });
 

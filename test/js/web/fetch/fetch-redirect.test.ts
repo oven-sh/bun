@@ -509,10 +509,7 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   expect(secondHalfMiB).toBeLessThan(isASAN ? 400 : 12);
 }, 60_000);
 
-// RFC 3986 §3.1: the URL scheme is case-insensitive. The Location header is
-// taken from the response verbatim and its scheme sliced out before WHATWG
-// normalization runs, so the http/https check has to compare case-insensitively
-// or `Location: HTTPS://host/...` is rejected with UnsupportedRedirectProtocol.
+// RFC 3986 §3.1: the URL scheme is case-insensitive.
 describe("fetch() follows a redirect whose Location scheme is not lowercase", () => {
   it.concurrent.each(["HTTP", "Http", "hTtP"])("Location: %s://...", async scheme => {
     await using final = Bun.serve({
@@ -588,6 +585,105 @@ describe("fetch() resolves a relative Location that contains '://'", () => {
     });
     await expect(fetch(server.url)).rejects.toMatchObject({ code: "UnsupportedRedirectProtocol" });
   });
+});
+
+// https://fetch.spec.whatwg.org/#concept-response-location-url
+describe("fetch() resolves Location like new URL(location, currentURL)", () => {
+  type Seen = { port: number; target: string; headers: string[] };
+
+  /** Answers the first request with a 302 and `location(port)` as it is, and records the other requests. */
+  async function listen(seen: Seen[], location?: () => string) {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("data", data => {
+        const [requestLine, ...fields] = data.toString("latin1").split("\r\n\r\n")[0].split("\r\n");
+        if (location) {
+          socket.write(`HTTP/1.1 302 Found\r\nLocation: ${location()}\r\nContent-Length: 0\r\n\r\n`);
+          location = undefined;
+          return;
+        }
+        const names = fields.map(field => field.slice(0, field.indexOf(":")).toLowerCase());
+        seen.push({
+          port: (server.address() as net.AddressInfo).port,
+          target: requestLine.split(" ")[1],
+          headers: ["authorization", "cookie", "x-custom"].filter(name => names.includes(name)),
+        });
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      host: `127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+      [Symbol.dispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+  }
+  const headers = { authorization: "Basic c2VjcmV0", cookie: "a=1", "x-custom": "1" };
+
+  // "other" stands for the host and port of a second server.
+  it.concurrent.each([
+    "://other/x",
+    ":///other/x",
+    "://user:pw@other/x",
+    "1a://other/x",
+    ":x",
+    ":",
+    "//other/x",
+    "///other/x",
+    "\\\\other\\x",
+    "/\\other/x",
+    "http:\\\\other\\x",
+    "http:///other/x",
+    "ht\ttp://other/x",
+    "/\t/other/x",
+    "HTTP://other/x",
+    "http://user:pw@other/x",
+    "http:/x",
+    "http:x",
+    "http:",
+    "http:?y",
+    "http:other/x",
+    "?y",
+    "#f",
+    ".",
+    "..",
+    "../x",
+    "x",
+    "/a b",
+  ])("%j", async template => {
+    const seen: Seen[] = [];
+    using other = await listen(seen);
+    const location = template.replace("other", other.host);
+    using first = await listen(seen, () => location);
+    const start = `http://${first.host}/dir/start?q=1`;
+
+    const expected = new URL(location, start);
+    expected.hash = "";
+    const res = await fetch(start, { headers });
+    expect({ url: res.url, body: await res.text(), seen }).toEqual({
+      url: expected.href,
+      body: "ok",
+      seen: [
+        {
+          port: Number(expected.port),
+          target: expected.pathname + expected.search,
+          headers: expected.host === first.host ? ["authorization", "cookie", "x-custom"] : ["x-custom"],
+        },
+      ],
+    });
+  });
+
+  it.concurrent.each(["https:", "HTTPS:", "http://", "http:///", "http://other:x/", "//other:x/", "http://[::1/x"])(
+    "%j is not a URL",
+    async location => {
+      using first = await listen([], () => location);
+      await expect(fetch(`http://${first.host}/`)).rejects.toMatchObject({ code: "RedirectURLInvalid" });
+    },
+  );
 });
 
 it.concurrent.each([

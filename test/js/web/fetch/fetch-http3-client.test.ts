@@ -1963,11 +1963,12 @@ describe("per-request tls options over http3", () => {
       const servers = Array.from({ length: 4 }, () =>
         Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: () => new Response("ok") }),
       );
-      const before = sslCtxLiveCount();
+      const counts = new Set();
       for (const server of servers) {
         await fetch("https://127.0.0.1:" + server.port + "/", { protocol: "http3", tls: { ca: tls.cert } }).then(r => r.text());
+        counts.add(sslCtxLiveCount());
       }
-      console.log(fetchH3Internals.liveCounts().sessions, sslCtxLiveCount() - before);
+      console.log(fetchH3Internals.liveCounts().sessions, counts.size);
       process.exit(0);
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });

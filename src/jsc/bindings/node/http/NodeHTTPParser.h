@@ -97,7 +97,6 @@ struct StringPtr {
     size_t m_size;
 };
 
-#define HTTP_BOTH 0
 #define HTTP_REQUEST 1
 #define HTTP_RESPONSE 2
 

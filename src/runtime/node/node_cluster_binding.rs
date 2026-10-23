@@ -215,7 +215,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    if !message.is_object() || !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -419,51 +419,31 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             atype = 4;
         }
 
-        fn last_neg_errno() -> JSValue {
-            JSValue::js_number_from_int32(-bun_core::ffi::errno())
-        }
-
         use bun_uws::udp::raw::{bsd_close_socket, bsd_create_socket};
 
         if atype == -1 {
             if !address.is_string() {
-                return Err(global.throw_invalid_argument_type_value("address", "string", address));
+                return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
             }
             let path_view = address.to_js_string_view(global)?;
             let path_slice = path_view.to_utf8();
             let path_bytes = path_slice.slice();
-            // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
-            let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
-            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
-            if path_bytes.len() >= sun.sun_path.len() {
-                return Ok(JSValue::js_number_from_int32(-(libc::ENAMETOOLONG)));
+            let mut err: c_int = 0;
+            // SAFETY: `path_bytes` is readable for its length, and `err` is a live local.
+            let fd = unsafe {
+                bun_uws::socket_transfer::bsd_create_bound_socket_unix(
+                    path_bytes.as_ptr().cast(),
+                    path_bytes.len(),
+                    &raw mut err,
+                )
+            };
+            if fd < 0 {
+                return Ok(JSValue::js_number_from_int32(-err));
             }
-            for (i, b) in path_bytes.iter().enumerate() {
-                sun.sun_path[i] = *b as _;
-            }
-            // SAFETY: socket/bind FFI with a NUL-safe sockaddr built above;
-            unsafe {
-                let mut err: c_int = 0;
-                let fd = bsd_create_socket(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut err);
-                if fd < 0 {
-                    return Ok(JSValue::js_number_from_int32(-err));
-                }
-                // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
-                let len = if path_bytes.first() == Some(&0) {
-                    core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
-                } else {
-                    core::mem::size_of::<libc::sockaddr_un>()
-                } as libc::socklen_t;
-                if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
-                    let e = last_neg_errno();
-                    bsd_close_socket(fd);
-                    return Ok(e);
-                }
-                let obj = JSValue::create_empty_object(global, 2);
-                obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
-                obj.put(global, b"port", JSValue::js_number_from_int32(-1));
-                return Ok(obj);
-            }
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
+            obj.put(global, b"port", JSValue::js_number_from_int32(-1));
+            return Ok(obj);
         }
 
         let family: c_int = if atype == 6 {
@@ -726,26 +706,15 @@ pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        let mut ty: libc::c_int = 0;
-        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_TYPE,
-                (&raw mut ty).cast(),
-                &raw mut len,
-            )
-        };
-        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || ty != wanted {
-            return -bun_sys::UV_E::INVAL;
+        if bun_uws::udp::raw::bsd_adopt_socket(fd, wanted) != 0 {
+            // node's createServerHandle: EINVAL for anything that cannot listen, fd left untouched.
+            return if bun_core::ffi::errno() == libc::EEXIST {
+                -bun_sys::UV_E::EXIST
+            } else {
+                -bun_sys::UV_E::INVAL
+            };
         }
-        if bun_uws::udp::raw::bsd_adopt_socket(fd) != 0 {
-            return -bun_sys::UV_E::EXIST;
-        }
-        if ty == libc::SOCK_STREAM {
+        if !want_dgram {
             // SAFETY: sockaddr_storage is plain data; getpeername only writes within `peer_len`.
             let connected = unsafe {
                 let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();

@@ -20,6 +20,7 @@ export default class RoundRobinHandle {
   server;
   listening;
   inFlight;
+  errno = 0;
 
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     net ??= require("node:net");
@@ -35,22 +36,27 @@ export default class RoundRobinHandle {
       RoundRobinHandle.prototype.onServerConnection.bind(this),
     );
 
-    if (fd >= 0) this.server.listen({ fd, backlog });
-    else if (port >= 0) {
-      this.server.listen({
-        port,
-        host: address,
-        // Currently, net module only supports `ipv6Only` option in `flags`.
-        ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
-        backlog,
-      });
-    } else
-      this.server.listen({
-        path: address,
-        backlog,
-        readableAll,
-        writableAll,
-      }); // UNIX socket path.
+    try {
+      if (fd >= 0) this.server.listen({ fd, backlog });
+      else if (port >= 0) {
+        this.server.listen({
+          port,
+          host: address,
+          // Currently, net module only supports `ipv6Only` option in `flags`.
+          ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
+          backlog,
+        });
+      } else
+        this.server.listen({
+          path: address,
+          backlog,
+          readableAll,
+          writableAll,
+        }); // UNIX socket path.
+    } catch {
+      // net validates these in the worker, so only a message it didn't write gets here.
+      this.errno = UV_EINVAL;
+    }
     this.server.once("listening", RoundRobinHandle.prototype.onServerListening.bind(this));
   }
 
@@ -82,6 +88,8 @@ export default class RoundRobinHandle {
   add(worker, send) {
     $assert(this.all.has(worker.id) === false);
     this.all.set(worker.id, worker);
+    const { errno } = this;
+    if (errno) return send(errno, null, null);
 
     const done = () => {
       if (this.handle.getsockname && typeof this.server.address() === "object") {

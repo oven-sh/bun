@@ -12,7 +12,7 @@ pub fn is_malformed_name(name: &[u8]) -> bool {
 /// Returns true if `value` has a NUL, CR or LF (§8.2.1).
 #[inline]
 pub fn is_malformed_value(value: &[u8]) -> bool {
-    value.iter().any(|c| matches!(c, 0 | b'\r' | b'\n'))
+    bun_core::strings::contains_any(value, b"\0\r\n")
 }
 
 /// Returns true if `value` has a control byte other than HTAB (RFC 9110 §5.5).

@@ -117,8 +117,6 @@ static constexpr size_t MAX_QUEUED_CONTROL = 1u << 20;
 /* RST_STREAM token bucket (CVE-2023-44487 class): burst, refill per second. */
 static constexpr double RESET_BURST = 1000;
 static constexpr double RESET_REFILL_PER_SEC = 33;
-/* Seconds the peer has to answer the FIN of a graceful close. usockets waits as long for a TLS peer's close_notify. */
-static constexpr unsigned FIN_WAIT_TIMEOUT_S = 10;
 
 static constexpr char CLIENT_PREFACE[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 static constexpr uint32_t CLIENT_PREFACE_LEN = 24;
@@ -173,7 +171,7 @@ struct Http2Response {
     uint32_t unackedReceive = 0;
     uint32_t receiveWindow = http2::LOCAL_INITIAL_WINDOW_SIZE;
     bool wide = false;
-    uint64_t declaredContentLength = Http2Request::NO_CONTENT_LENGTH;
+    uint64_t declaredContentLength = NO_CONTENT_LENGTH;
     uint64_t receivedBodyBytes = 0;
 
     /* END_STREAM received / sent. A reset (either direction) closes both. */
@@ -211,16 +209,24 @@ struct Http2Response {
 
     Http2Response *writeHeader(std::string_view key, std::string_view value) {
         writeStatus("200");
-        /* §8.2.2: connection-specific fields must not appear in an HTTP/2 message. */
-        if (isConnectionSpecificResponseField(key, value)) return this;
+        switch (classifyResponseField(key, value)) {
+        case ResponseField::Other: break;
+        case ResponseField::Date: data.state |= Http2ResponseData::HTTP_WROTE_DATE_HEADER; break;
+        /* The body that is sent decides the length, and §8.2.2 forbids the connection-specific fields. */
+        default: return this;
+        }
         data.appendHeader(key.data(), (unsigned) key.size(), value.data(), (unsigned) value.size());
         return this;
     }
 
+    /* As content-length it declares the length of the body. */
     Http2Response *writeHeader(std::string_view key, uint64_t value) {
+        writeStatus("200");
+        if (key.size() == 14 && asciiIEquals(key, "content-length")) data.state |= Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         char buf[utils::U64_MAX_DIGITS];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
-        return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
+        data.appendHeader(key.data(), (unsigned) key.size(), buf, (unsigned) (r.ptr - buf));
+        return this;
     }
 
     inline void writeMark();
@@ -234,7 +240,10 @@ struct Http2Response {
         bool ok = internalEnd(body, total, true, closeConnection);
         return {ok, ok || hasResponded()};
     }
-    inline void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool closeConnection = false);
+    inline void endWithoutBody();
+    /* See HttpResponse. A refusal ends this stream and leaves the connection's other streams alone. */
+    inline bool acceptRequestBody();
+    inline void refuseRequestBody();
     inline bool sendTerminatingChunk(bool closeConnection = false);
 
     bool hasResponded() { return !(data.state & Http2ResponseData::HTTP_RESPONSE_PENDING); }
@@ -329,8 +338,6 @@ struct Http2Connection {
     uint32_t lastProcessedStreamId = 0;
     bool goawaySent = false;
     bool goawayReceived = false;
-    /* finish() ran. No frame is read or written after it. */
-    bool finSent = false;
     double resetTokens = http2::RESET_BURST;
     std::chrono::steady_clock::time_point resetRefilledAt = std::chrono::steady_clock::now();
 
@@ -364,9 +371,9 @@ struct Http2Connection {
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
-    /* Same as HTTP_DELIVERED_BYTES_RECORDED and HttpResponseData::deliveredBytes. */
-    bool deliveredBytesRecorded = false;
-    uint64_t deliveredBytes = 0;
+    /* An open stream has a timeout of its own, so idleTimeoutS depends on which streams are open. */
+    bool customTimeouts = false;
+    IdleTimeout idleTimer;
     int drainDepth = 0;
 
     Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
@@ -531,16 +538,14 @@ struct Http2Connection {
     inline void scheduleFlush();
 
     bool drainedAfterGoaway() {
-        return !closed && !finSent && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
+        return !closed && !us_socket_is_shut_down(s) && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
     }
 
     /* The graceful close, once drainedAfterGoaway() holds. The kernel may still hold the end of a response, and
-     * close(2) would drop it as soon as another frame (a WINDOW_UPDATE, say) arrives. So send a FIN behind it and
-     * drop input until the peer's FIN closes the socket, or onTimeout does. */
+     * close(2) would drop it as soon as another frame (a WINDOW_UPDATE, say) arrives. No frame is read or written after it. */
+    /* The connection counts as open until the peer has answered: a program that exits once stop() resolves would reset what the kernel hasn't delivered. */
     void finish() {
-        finSent = true;
-        us_socket_shutdown(s);
-        us_socket_timeout(s, http2::FIN_WAIT_TIMEOUT_S);
+        us_socket_close_lingering(s);
     }
 
     bool takeResetToken() {
@@ -598,6 +603,7 @@ struct Http2Context {
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
     unsigned idleTimeoutS = 0;
+    uint64_t maxRequestBodySize = UINT64_MAX;
     /* A graceful stop ran. A connection adopted after it (its TLS handshake or
      * cleartext preface was pending) sends GOAWAY with its first stream. */
     bool stopping = false;
@@ -626,10 +632,11 @@ struct Http2Context {
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
-    static Http2Context *create(Loop *loop, unsigned idleTimeoutS) {
+    static Http2Context *create(Loop *loop, unsigned idleTimeoutS, uint64_t maxRequestBodySize) {
         Http2Context *ctx = new Http2Context;
         ctx->loop = loop;
         ctx->idleTimeoutS = idleTimeoutS;
+        ctx->maxRequestBodySize = maxRequestBodySize;
         us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
         return ctx;
     }
@@ -757,7 +764,7 @@ struct Http2Context {
         if (closeWhenIdle) stopping = true;
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
-            if (conn->finSent || (!conn->streams.empty() && !closeWhenIdle)) return;
+            if (us_socket_is_shut_down(conn->s) || (!conn->streams.empty() && !closeWhenIdle)) return;
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
             if (conn->drainedAfterGoaway()) {
@@ -861,7 +868,7 @@ private:
 
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         Http2Connection *conn = connection(s);
-        if (conn->finSent || us_socket_is_shut_down(s)) return s;
+        if (us_socket_is_shut_down(s)) return s;
         conn->borrowSharedOut();
         conn->onData(data, (size_t) length);
         return s;
@@ -912,13 +919,7 @@ private:
      * connection): streams in flight are aborted through onClose. */
     static us_socket_t *onTimeout(us_socket_t *s) {
         Http2Connection *conn = connection(s);
-        if (conn->finSent) return us_socket_close_now(s);
-        /* Same rule as HttpContext::onTimeout. */
-        if (s->flags.last_write_failed && conn->deliveredBytesRecorded
-            && us_socket_delivered_since(s, &conn->deliveredBytes, (uint64_t) HttpContext<false>::HTTP_RECEIVE_THROUGHPUT_BYTES * conn->idleTimeoutS)) {
-            us_socket_timeout(s, conn->idleTimeoutS);
-            return s;
-        }
+        if (conn->idleTimer.rearmIfPeerStillReads(s, conn->idleTimeoutS)) return s;
         conn->busy++;
         std::vector<Http2Response *> open = conn->streams;
         for (Http2Response *stream : open) {
@@ -994,12 +995,8 @@ inline void Http2Connection::writeSettings() {
 }
 
 inline void Http2Connection::touch() {
-    if (finSent) return;
-    us_socket_timeout(s, idleTimeoutS);
-    /* See HttpResponse::resetTimeout. */
-    if (s->flags.last_write_failed) [[unlikely]] {
-        deliveredBytesRecorded = idleTimeoutS && us_socket_delivered_bytes(s, &deliveredBytes) == 0;
-    }
+    if (us_socket_is_shut_down(s)) return;
+    idleTimer.arm(s, idleTimeoutS);
 }
 
 inline void Http2Connection::recomputeIdleTimeout() {
@@ -1007,9 +1004,11 @@ inline void Http2Connection::recomputeIdleTimeout() {
      * asked counts as the context default, as does a connection with none. */
     unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
     bool never = streams.empty() && ctx->idleTimeoutS == 0;
+    customTimeouts = false;
     for (Http2Response *stream : streams) {
+        customTimeouts |= stream->timeoutS != 255;
         unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
-        if (s == 0) { never = true; break; }
+        never |= s == 0;
         t = std::max(t, s);
     }
     idleTimeoutS = never ? 0 : t;
@@ -1191,8 +1190,7 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
      * socket event, or from the deferred pass if we're outside one; never
      * under the API call that got us here. */
     if (busy == 0) ctx->scheduleSweep(this);
-    /* With no setTimeout() in effect, the streams that are left keep the context's value. */
-    if (stream->timeoutS != 255 || idleTimeoutS != ctx->idleTimeoutS) recomputeIdleTimeout();
+    if (customTimeouts) recomputeIdleTimeout();
     else touch();
 }
 
@@ -1270,7 +1268,7 @@ inline void Http2Connection::onData(const char *data, size_t length) {
             return;
         }
         if (avail - consumed < http2::FRAME_HEADER_SIZE + flen) break;
-        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || finSent) {
+        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || us_socket_is_shut_down(s)) {
             busy--;
             Http2Context::epilogue(this, s);
             return;
@@ -1505,7 +1503,7 @@ inline bool Http2Connection::handleData(Http2Response *stream, bool fin, uint32_
     /* §6.9.1: the peer may not send beyond what we advertised for this stream. */
     if (length > stream->receiveWindow - stream->unackedReceive) return streamError(stream->id, stream, http2::ERR_FLOW_CONTROL_ERROR);
     stream->receivedBodyBytes += bodyLength;
-    if (stream->declaredContentLength != Http2Request::NO_CONTENT_LENGTH &&
+    if (stream->declaredContentLength != NO_CONTENT_LENGTH &&
         (stream->receivedBodyBytes > stream->declaredContentLength ||
          (fin && stream->receivedBodyBytes != stream->declaredContentLength))) {
         return streamError(stream->id, stream, http2::ERR_PROTOCOL_ERROR);
@@ -1514,6 +1512,11 @@ inline bool Http2Connection::handleData(Http2Response *stream, bool fin, uint32_
     else if (length) replenishStreamWindow(stream, length);
 
     if (stream->data.inStream) {
+        if (bodyLength > stream->data.requestBodyBudget) {
+            stream->refuseRequestBody();
+            return !closed;
+        }
+        stream->data.requestBodyBudget -= bodyLength;
         if (fin) stream->finDelivered = true;
         stream->data.inStream(stream, (const char *) body, bodyLength, fin, stream->data.userData);
         if (closed) return false;
@@ -1584,7 +1587,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             return streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);
         }
         existing->remoteClosed = true;
-        if (existing->declaredContentLength != Http2Request::NO_CONTENT_LENGTH && existing->receivedBodyBytes != existing->declaredContentLength) {
+        if (existing->declaredContentLength != NO_CONTENT_LENGTH && existing->receivedBodyBytes != existing->declaredContentLength) {
             return streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);
         }
         if (existing->data.inStream && !existing->finDelivered) {
@@ -1628,7 +1631,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 
     Http2Request req(list.data(), (unsigned) list.size());
     const uint64_t contentLength = req.getContentLength();
-    if (req.isMalformed() || selfDependent || (endStream && contentLength != 0 && contentLength != Http2Request::NO_CONTENT_LENGTH)) {
+    if (req.isMalformed() || selfDependent || (endStream && contentLength != 0 && contentLength != NO_CONTENT_LENGTH)) {
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }
 
@@ -1643,7 +1646,9 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         stream->writeStatus("501 Not Implemented")->end();
         return !closed;
     }
-    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getExpectsContinue()) {
+    if (declaresBodyOverLimit(contentLength, ctx->maxRequestBodySize)) {
+        stream->data.state |= Http2ResponseData::HTTP_REQUEST_BODY_TOO_LARGE;
+    } else if (req.getExpectsContinue() && !(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler)) {
         stream->writeContinue();
     }
     ctx->dispatchDepth++;
@@ -1672,7 +1677,6 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 
 inline void Http2Response::writeMark() {
     if (data.state & Http2ResponseData::HTTP_WROTE_DATE_HEADER) return;
-    data.state |= Http2ResponseData::HTTP_WROTE_DATE_HEADER;
     LoopData *ld = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group(conn->s)));
     writeHeader("date", std::string_view{ld->date, 29});
 }
@@ -1716,12 +1720,8 @@ inline bool Http2Response::write(std::string_view chunk, size_t *writtenPtr) {
     return w == chunk.length();
 }
 
-inline void Http2Response::endWithoutBody(std::optional<size_t> reportedContentLength, bool) {
+inline void Http2Response::endWithoutBody() {
     if (dead) return;
-    if (reportedContentLength.has_value() && !(data.state & Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-        writeHeader("content-length", (uint64_t) *reportedContentLength);
-        data.state |= Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-    }
     if (data.state & Http2ResponseData::HTTP_WRITE_CALLED) {
         if (data.backpressure.length() != 0) {
             /* Body bytes still parked behind the window: END_STREAM follows them. */
@@ -1740,6 +1740,29 @@ inline void Http2Response::endWithoutBody(std::optional<size_t> reportedContentL
     Http2Connection *c = conn;
     c->streamMaybeClosed(this);
     c->scheduleFlush();
+}
+
+inline bool Http2Response::acceptRequestBody() {
+    if (data.state & Http2ResponseData::HTTP_REQUEST_BODY_TOO_LARGE) {
+        writeStatus("413");
+        endWithoutBody();
+        return false;
+    }
+    data.requestBodyBudget = conn->ctx->maxRequestBodySize;
+    return true;
+}
+
+inline void Http2Response::refuseRequestBody() {
+    data.state |= Http2ResponseData::HTTP_REQUEST_BODY_TOO_LARGE;
+    data.inStream = nullptr;
+    if (auto onAborted = std::exchange(data.onAborted, nullptr)) onAborted(this, data.userData);
+    if (dead || conn->closed) return;
+    if (data.state & Http2ResponseData::HTTP_STATUS_CALLED) {
+        close(http2::ERR_INTERNAL_ERROR);
+        return;
+    }
+    writeStatus("413");
+    endWithoutBody();
 }
 
 inline bool Http2Response::sendTerminatingChunk(bool) {
@@ -1767,7 +1790,6 @@ inline bool Http2Response::internalEnd(std::string_view body, uint64_t totalSize
         writeMark();
         if (!(data.state & Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
             writeHeader("content-length", totalSize);
-            data.state |= Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         }
         if (body.empty() && data.offset >= totalSize) {
             c->writeHeaderBlock(this, true);

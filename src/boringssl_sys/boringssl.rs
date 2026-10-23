@@ -870,6 +870,7 @@ pub const SSL_ERROR_WANT_READ: c_int = 2;
 pub const SSL_ERROR_WANT_WRITE: c_int = 3;
 pub const SSL_ERROR_SYSCALL: c_int = 5;
 pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
+pub const SSL_ERROR_PENDING_CERTIFICATE: c_int = 12;
 pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
 
 pub const SSL_VERIFY_NONE: c_int = 0x00;
@@ -889,7 +890,6 @@ pub const ssl_select_cert_success: c_int = 1;
 /// `enum ssl_renegotiate_mode_t` — passed to `SSL_set_renegotiate_mode`.
 pub type ssl_renegotiate_mode_t = c_uint;
 pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
-pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
 
 /// `SSL_OP_LEGACY_SERVER_CONNECT` — BoringSSL defines this as 0 (no-op flag);
 /// kept so callers can mirror the OpenSSL clear/set dance verbatim.
@@ -971,6 +971,13 @@ unsafe extern "C" {
         sid_ctx: *const u8,
         sid_ctx_len: usize,
     ) -> c_int;
+    pub fn SSL_CTX_get_tlsext_ticket_keys(ctx: *mut SSL_CTX, out: *mut c_void, len: usize)
+    -> c_int;
+    pub fn SSL_CTX_set_tlsext_ticket_keys(
+        ctx: *mut SSL_CTX,
+        r#in: *const c_void,
+        len: usize,
+    ) -> c_int;
     pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
     pub fn SSL_CTX_set1_groups_list(ctx: *mut SSL_CTX, groups: *const c_char) -> c_int;
@@ -983,8 +990,6 @@ unsafe extern "C" {
     // ── SSL ──────────────────────────────────────────────────────────────
     pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
     pub fn SSL_free(ssl: *mut SSL);
-    pub fn SSL_set_connect_state(ssl: *mut SSL);
-    pub fn SSL_set_accept_state(ssl: *mut SSL);
     pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
     pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
     pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
@@ -1000,17 +1005,17 @@ unsafe extern "C" {
         sid_ctx: *const u8,
         sid_ctx_len: usize,
     ) -> c_int;
-    pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
-    pub fn SSL_CTX_set_default_verify_paths(ctx: *mut SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_alpn_protos(
         ctx: *mut SSL_CTX,
         protos: *const u8,
         protos_len: usize,
     ) -> c_int;
     pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
+    /// Frees the context's current store and takes ownership of `store`.
+    pub fn SSL_CTX_set_cert_store(ctx: *mut SSL_CTX, store: *mut X509_STORE);
     pub fn SSL_CTX_add0_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
     pub fn SSL_CTX_clear_chain_certs(ctx: *mut SSL_CTX) -> c_int;
     pub fn PEM_read_bio_X509_AUX(
@@ -1039,8 +1044,6 @@ unsafe extern "C" {
     );
     pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
-    pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
-    pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);

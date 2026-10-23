@@ -1,6 +1,7 @@
-import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import type { Socket, SocketHandler } from "bun";
+import { socketFaultInjection as fault, setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -74,10 +75,10 @@ test.concurrent.skipIf(skip)(
         // 2 rounds x (1 primer + 2 waves x 32).
         opened: 130,
         closed: 130,
-        // Every wave socket is closed mid-handshake by the unread-ciphertext
-        // guard, which reports the handshake as failed; the primers are
-        // closed by stop(true) and report nothing.
-        handshakeFailed: 128,
+        // Every socket is closed mid-handshake, which reports the handshake as
+        // failed: the wave sockets by the unread-ciphertext guard, the primers
+        // by stop(true) with their flight still unsent after the peer's FIN.
+        handshakeFailed: 130,
         handshakeOk: 0,
         data: 0,
         errors: 0,
@@ -155,6 +156,57 @@ test.concurrent(
         pongs: 32,
         errors: 0,
       },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
+// The loop turned a parked socket's reads off, so its peer isn't idle and its timeouts must wait. The fixture parks 15
+// of 20 Bun.listen sockets, runs the timeout sweep by hand and counts `timeout` handlers as [while parked, after release].
+// Firing on a parked socket gives shortest [20, 0, 0], losing the timeout in the queue gives [5, 0, 0].
+test.concurrent(
+  "TLS low-prio queue: a parked socket's timeout fires after the queue releases it",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
+      summary: { opened: 20, shortest: [5, 0, 15], unarmed: [0, 0], parkedTooLong: [5, 15], errors: 0 },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
+// A parked socket's input can't wake the loop, so the loop must keep iterating until the queue is empty. The fixture
+// parks 59 of 64 sockets and pauses all but the one released last, so no readable event drives the next iteration.
+// Reaching that socket takes ceil(58 / 5) = 12 iterations, plus its handshake's round trips.
+test.concurrent(
+  "TLS low-prio queue: the loop releases parked sockets without an unrelated event",
+  async () => {
+    const result = await runFixture("tls-parked-handshake-turns-fixture.ts");
+    expect(result).toEqual({
+      summary: { opened: 64, clientHandshakes: 6, iterationsToHandshake: expect.any(Number), errors: 0 },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+    const { iterationsToHandshake } = result.summary as { iterationsToHandshake: number };
+    expect(iterationsToHandshake).toBeGreaterThanOrEqual(12);
+    expect(iterationsToHandshake).toBeLessThanOrEqual(24);
+  },
+  60_000,
+);
+
+// With a deferred accept (Linux) the accept path dispatches a new socket's first readable event itself. Of 12
+// connections that arrive with input, the server times out the 5 it read, and the 7 it parked only after their release.
+test.concurrent.skipIf(!isLinux)(
+  "TLS low-prio queue: Bun.serve parks an accepted connection that has input once the handshake budget is spent",
+  async () => {
+    expect(await runFixture("tls-serve-deferred-accept-fixture.ts")).toEqual({
+      summary: { clients: 12, closedWhileParked: 5, closedAfterRelease: 12 },
       signalCode: null,
       exitCode: 0,
       stderrTail: "",
@@ -251,6 +303,33 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
   );
 });
 
+test.concurrent.skipIf(skip).each(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EPERM", "ENOBUFS", "EMFILE"])(
+  "Bun.connect to a hostname reports %s when that's why its last address failed",
+  async errno => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { socketFaultInjection: fault, dnsCacheSeed } = require("bun:internal-for-testing");
+         dnsCacheSeed("two-addresses.test", ["127.0.0.1", "127.0.0.1"]);
+         fault.set({ syscall: "connect", action: "errno", errno: ${JSON.stringify(errno)}, repeat: -1 });
+         const result = await Bun.connect({ hostname: "two-addresses.test", port: 1, socket: { data() {} } }).then(
+           () => "connected",
+           e => e.code,
+         );
+         fault.clear();
+         console.log(result, Bun.dns.getCacheStats().size);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The failed connect also evicts the name from the DNS cache.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: errno + " 0\n", stderr: "", exitCode: 0 });
+  },
+);
+
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
@@ -332,10 +411,9 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
-// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
-// The close does not read for a paused socket: a peer that keeps sending would hold the loop.
+// What the peer sent before is still read, so the peer's FIN closes the socket.
 test.skipIf(skip).each(["reading", "paused"] as const)(
-  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more and closes",
+  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more, reads on and closes",
   async state => {
     let received = "";
     let read = "";
@@ -351,7 +429,10 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
           peerOpened.resolve();
         },
         data: (_, chunk) => void (received += chunk),
-        end: () => peerEnded.resolve(),
+        end(peer) {
+          peer.end();
+          peerEnded.resolve();
+        },
       },
     });
     try {
@@ -368,19 +449,99 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
       await peerOpened.promise;
       fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
       const writes = [socket.write("hello"), socket.write("again")];
-      const code = await closed.promise;
       await peerEnded.promise;
+      socket.resume();
+      const code = await closed.promise;
       expect({ writes, code, received, read }).toEqual({
         writes: [-1, -1],
         code: "ECONNRESET",
         received: "",
-        read: state === "paused" ? "" : expect.any(String),
+        read: "unread",
       });
     } finally {
       listener.stop(true);
     }
   },
 );
+
+// A reset that lands after the poll: the writable event carries no error flag, and the failed send takes the socket's error with it.
+describe.skipIf(skip)("a send that fails for the queued rest of end(data) on a socket that called pause()", () => {
+  const cases = (["listen", "connect"] as const).flatMap(side =>
+    (["tcp", "unix", "tls"] as const).flatMap(transport =>
+      (["unread bytes", "nothing unread"] as const).flatMap(input =>
+        (["ECONNRESET", "EPIPE"] as const).map(errno => {
+          // The TLS layer sends the records it held first, by itself. That send races the poll for a reset, so both report it alike.
+          const syscall = transport === "tls" && errno === "ECONNRESET" ? "read" : "write";
+          return [side, transport, input, errno, syscall] as const;
+        }),
+      ),
+    ),
+  );
+  test.each(cases)(
+    "Bun.%s over %s with %s: %s closes as a failed %s",
+    async (side, transport, input, errno, syscall) => {
+      using dir = tempDir("paused-end", {});
+      const events: string[] = [];
+      const opened = Promise.withResolvers<Socket>();
+      const peerOpened = Promise.withResolvers<Socket>();
+      const peerSawTheEnd = Promise.withResolvers<void>();
+      const ready = transport === "tls" ? "handshake" : "open";
+      const underTest: SocketHandler = {
+        [ready]: (socket: Socket) => opened.resolve(socket),
+        data: (_, chunk) => void events.push(`data ${chunk.length}`),
+        drain: () => void events.push("drain"),
+        error: (_, error) => void events.push(`error ${(error as NodeJS.ErrnoException).code}`),
+        close: (_, error) => {
+          const { code, syscall } = (error ?? {}) as NodeJS.ErrnoException;
+          events.push(`close ${code} ${syscall}`);
+        },
+      };
+      const peerHandlers: SocketHandler = {
+        [ready](socket: Socket) {
+          socket.pause();
+          peerOpened.resolve(socket);
+        },
+        data() {},
+        error() {},
+        end: () => peerSawTheEnd.resolve(),
+        close: () => peerSawTheEnd.resolve(),
+      };
+      const unix = join(String(dir), "socket");
+      using listener = Bun.listen({
+        ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+        tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+        socket: side === "listen" ? underTest : peerHandlers,
+      });
+      await Bun.connect({
+        ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: listener.port }),
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: side === "connect" ? underTest : peerHandlers,
+      });
+      const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+      try {
+        // Small buffers on both ends, so most of the chunk waits in user space until the peer reads.
+        setSocketOptions(socket, 1, 4096);
+        setSocketOptions(peer, 2, 4096);
+        socket.pause();
+        // A TLS client has had the `drain` that follows its handshake.
+        events.length = 0;
+        const size = 1 << 20;
+        expect(socket.end(Buffer.alloc(size))).toBe(size);
+        if (input === "unread bytes") peer.write("unread");
+        fault.set({ syscall: "send", action: "errno", errno, repeat: -1, fd: (socket as any).fd });
+        peer.resume();
+        // The failed send shuts the write side down.
+        await peerSawTheEnd.promise;
+        for (let turn = 0; turn < 3; turn++) await new Promise(resolve => setImmediate(resolve));
+        expect(events).toEqual([`close ${errno} ${syscall}`]);
+      } finally {
+        fault.clear();
+        socket.terminate();
+        peer.terminate();
+      }
+    },
+  );
+});
 
 describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOTYPE)", () => {
   const H2_TIMEOUT_MS = 30_000;

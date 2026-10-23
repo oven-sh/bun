@@ -48,21 +48,12 @@ static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// External variable from Zig CLI arguments
-extern "C" bool Bun__Node__UseSystemCA;
-
-// Helper function to check if system CA should be used
-// Checks both CLI flag (--use-system-ca) and environment variable (NODE_USE_SYSTEM_CA=1)
-static bool us_should_use_system_ca() {
-  // Check CLI flag first
-  if (Bun__Node__UseSystemCA) {
-    return true;
-  }
-  
-  // Check environment variable
-  const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
-  return use_system_ca && strcmp(use_system_ca, "1") == 0;
-}
+// bun_core::Global decides from --use-*-ca and NODE_USE_SYSTEM_CA. tls.getCACertificates("default") lists the same sources.
+struct us_default_ca_sources_t {
+  bool bundled;
+  bool system;
+};
+extern "C" us_default_ca_sources_t Bun__defaultCASources();
 
 // Platform-specific system certificate loading implementations are separated:
 // - macOS: root_certs_darwin.cpp (Security framework with dynamic loading)
@@ -188,7 +179,8 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 // The file half of X509_STORE_set_default_paths ($SSL_CERT_FILE, else X509_get_default_cert_file(), usually
 // /etc/ssl/cert.pem), trusting exactly what X509_load_cert_crl_file would, but read once per process into a lazy set
 // (parsed per certificate on first use, shared by every store) rather than parsed whole into each store, and without
-// the certificates the bundled set already holds byte-for-byte — on most distros that is most of the file.
+// the certificates the bundled set already holds byte-for-byte — on most distros that is most of the file. With
+// --use-openssl-ca the store has no bundled set, so it needs the whole file.
 struct us_openssl_default_cert_file {
   X509_LAZY_CERT_SET *certs = nullptr;
   STACK_OF(X509) *trusted = nullptr; // TRUSTED CERTIFICATE blocks carry auxiliary data the lazy set does not model
@@ -206,9 +198,10 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       return;
     }
 
-    const uint8_t *const *bundled_certs;
-    const size_t *bundled_lens;
-    size_t bundled_count = us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
+    const uint8_t *const *bundled_certs = nullptr;
+    const size_t *bundled_lens = nullptr;
+    size_t bundled_count =
+        Bun__defaultCASources().bundled ? us_bundled_root_certs_der(&bundled_certs, &bundled_lens) : 0;
     std::unordered_set<std::string_view> bundled;
     bundled.reserve(bundled_count);
     for (size_t i = 0; i < bundled_count; i++) {
@@ -297,11 +290,15 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
   X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+  us_default_ca_sources_t sources = Bun__defaultCASources();
 
-  X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
-  if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
-    X509_STORE_free(store);
-    return NULL;
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099
+  if (sources.bundled) {
+    X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
+    if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
+      X509_STORE_free(store);
+      return NULL;
+    }
   }
 
   // What X509_STORE_set_default_paths(store) trusts: the default certificate file (above) and the default hashed
@@ -332,7 +329,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (us_should_use_system_ca()) {
+  if (sources.system) {
     const us_system_certs_t &system = us_get_root_system_certs();
     if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store, system.lazy)) {
       X509_STORE_free(store);

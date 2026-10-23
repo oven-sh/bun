@@ -110,6 +110,8 @@ bitflags::bitflags! {
         const STRING = 1 << 0;
         /// `fetch()` decoded them, so the response's `Content-Encoding` no longer describes them.
         const DECODED = 1 << 1;
+        /// They reach a reader through a stream that Bun made, not one the program made.
+        const NATIVE_STREAM = 1 << 2;
     }
 }
 
@@ -341,21 +343,6 @@ impl Blob {
     /// New view onto the same store, +1 ref.
     #[inline]
     pub fn dupe(&self) -> Blob {
-        self.dupe_with_content_type(false)
-    }
-
-    /// Alias for [`Self::dupe`].
-    #[inline]
-    pub fn borrowed_view(&self) -> Blob {
-        self.dupe()
-    }
-
-    /// Ignores
-    /// `include_content_type` and **always** deep-copies a heap-allocated
-    /// `content_type` so freeing one side does not dangle the other (the old
-    /// borrow path was removed because it dropped user-supplied parameters
-    /// like multipart boundaries on a static-mime miss).
-    pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),

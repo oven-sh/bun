@@ -1,13 +1,14 @@
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
-import { quicSendRawHeaders } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { Worker } from "node:worker_threads";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -570,20 +571,48 @@ describe("received HTTP/3 fields with CR or LF", () => {
     });
   });
 
-  // sendHeaders() rejects a name that isn't a token, so these blocks use the raw sender. Kind 1 is the initial block, flag 1 ends the stream.
+  // sendHeaders() rejects a name that isn't a token, so this peer drives the native binding, like Node's internal tests.
+  // The binding's callbacks are per VM, so it needs its own. Kind 1 is the initial block, flag 1 ends the stream.
+  const rawClient = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const quic = require("internal/test/binding").internalBinding("quic");
+    let open = workerData.requests.length;
+    const callbacks = {
+      onStreamClose: () => --open === 0 && session.gracefulClose(),
+      onSessionClose: () => parentPort.postMessage("closed"),
+    };
+    // setCallbacks() wants every callback, and its error names the first one that's missing.
+    for (;;) {
+      try {
+        quic.setCallbacks(callbacks);
+        break;
+      } catch (err) {
+        callbacks[err.message.slice("Missing Callback: ".length)] = () => {};
+      }
+    }
+    const session = new quic.Endpoint({}).connect(
+      new (require("node:net").SocketAddress)({ address: "127.0.0.1", port: workerData.port }),
+      { tls: { alpn: Buffer.from("\\x02h3"), servername: "localhost", groups: quic.DEFAULT_GROUPS }, verifyPeer: "manual" },
+    );
+    for (const pairs of workerData.requests) {
+      let block = "";
+      for (let i = 0; i < pairs.length; i += 2) block += pairs[i] + "\\0" + pairs[i + 1] + "\\0\\0";
+      session.openStream(0).sendHeaders(1, [block, pairs.length / 2], 1);
+    }
+  `;
+
   test("drops a field with CR or LF anywhere in its name or value, and keeps a tab", async () => {
     const seen: Record<string, Record<string, string>> = {};
     await using server = await listen(quietSession, {
       ...serverOptions,
+      // The client closes the session, and its thread can take a second to start.
+      transportParams: { maxIdleTimeout: 10 },
       onheaders(this: any, headers: Record<string, any>) {
         const { ":path": path, ...rest } = headers;
         seen[path] = rest;
         this.sendHeaders({ ":status": "200" }, { terminal: true });
       },
     });
-    const client = await connect(server.address!, clientOptions);
-    await client.opened;
-
     const rows: Record<string, Record<string, string>> = {
       "/name-cr-lf": { "x-a\r\nx-b": "v" },
       "/name-lf-first": { "\nx-b": "v" },
@@ -593,13 +622,15 @@ describe("received HTTP/3 fields with CR or LF", () => {
       "/value-is-lf": { "x-bad": "\n" },
       "/value-tab": { "x-tab": "a\tb", "x-bad": "a\rb" },
     };
-    for (const [path, fields] of Object.entries(rows)) {
-      const stream = await client.createBidirectionalStream();
-      stream.closed.catch(() => {});
-      quicSendRawHeaders(stream, Object.entries({ ...request, ":path": path, ...fields, "x-ok": "kept" }).flat(), 1, 1);
-      await stream.closed;
+    const requests = Object.entries(rows).map(([path, fields]) =>
+      Object.entries({ ...request, ":path": path, ...fields, "x-ok": "kept" }).flat(),
+    );
+    const client = new Worker(rawClient, { eval: true, workerData: { port: server.address!.port, requests } });
+    try {
+      await once(client, "message");
+    } finally {
+      await client.terminate();
     }
-    await client.close();
 
     const rest = { ":method": "POST", ":scheme": "https", ":authority": "localhost", "x-ok": "kept" };
     expect(seen).toEqual({

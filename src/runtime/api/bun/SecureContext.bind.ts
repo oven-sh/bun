@@ -11,6 +11,9 @@ export const SecureContext = b.class({
     /** Node's is an opaque V8 External of the `SSL_CTX`, for addons that link OpenSSL. Here it is `undefined`. */
     _external: { getter: b.any, capability: "heap" },
     addCACert: { args: { cert: b.any }, capability: "js", throws: true },
+    getTicketKeys: { returns: b.bufferSource, capability: "heap", throws: true },
+    /** `node:tls` has checked the type and the length, with Node's messages. */
+    setTicketKeys: { args: { keys: b.bytes({ from: ["buffer"] }) }, capability: "heap", throws: true },
   },
   static: {
     /** Owns its `SSL_CTX`, so `addCACert` affects nothing else. */

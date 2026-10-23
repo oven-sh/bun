@@ -294,7 +294,7 @@ Set `http1: false` to refuse HTTP/1.x clients. Over TLS, clients that offer ALPN
 
 By default, `Bun.serve` closes connections after **10 seconds** of inactivity. A connection is idle when no data is being sent or received. That includes in-flight requests where your handler is still running but hasn't written any bytes to the response yet. Browsers and `fetch()` clients see this as a connection reset.
 
-To configure this, set the `idleTimeout` field (in seconds). The maximum value is `255`, and `0` disables the timeout entirely.
+To configure this, set the `idleTimeout` field (in seconds). The maximum value is `255`, and `0` disables the timeout entirely. Bun checks for idle connections every 4 seconds, so a connection is closed up to 4 seconds after its `idleTimeout` has passed, and never before.
 
 ```ts
 Bun.serve({

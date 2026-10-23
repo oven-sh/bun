@@ -98,11 +98,11 @@ pub(crate) mod js_bun_spawn_bindings;
 #[path = "api/bun/Terminal.rs"]
 pub(crate) mod bun_terminal_body;
 
-// H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
-// From-scratch node:http2 engine rewrite (will replace h2_frame_parser.rs).
+// node:http2's protocol state and receive half.
 #[path = "api/bun/h2/mod.rs"]
 pub(crate) mod h2;
 
+// node:http2's JS binding, transport and send half.
 #[path = "api/bun/h2_frame_parser.rs"]
 pub(crate) mod h2_frame_parser_body;
 

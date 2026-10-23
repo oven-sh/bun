@@ -27,8 +27,6 @@
 extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
-extern X509_STORE *us_get_default_ca_store(void);
-extern int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx);
 extern int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose);
 extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
@@ -118,7 +116,6 @@ struct us_quic_socket_context_s {
      * the peer until idle timeout). */
     struct us_quic_socket_s *conns;
 
-    void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
     void (*on_goaway)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
@@ -168,7 +165,7 @@ struct us_quic_stream_s {
  *      the reactive path (packets arrived → handler ran → response written).
  *   2. lsquic's time-driven state (RTO retransmit, delayed ACK, idle
  *      timeout): the min earliest_adv_tick across engines is written to
- *      loop->data.quic_next_tick_us; Bun's getTimeout() folds it into the
+ *      loop->data.quic_next_tick_us; us_loop_run_bun_tick folds it into the
  *      epoll_pwait2 timeout. No timerfd, no scheduling syscall.
  *
  * There is no per-write kick. Http3Response writes call lsquic_stream_write
@@ -179,7 +176,7 @@ struct us_quic_stream_s {
 
 #ifdef LIBUS_USE_LIBUV
 static void us_quic_on_timer(struct us_timer_t *t) {
-    us_quic_loop_process(us_timer_loop(t));
+    us_quic_loop_process(us_timer_loop(t), US_QUIC_BEFORE_POLL);
 }
 #endif
 
@@ -234,11 +231,11 @@ static void us_quic_loop_end_walk(struct us_loop_t *loop) {
     }
 }
 
-void us_quic_loop_process(struct us_loop_t *loop) {
+void us_quic_loop_process(struct us_loop_t *loop, enum us_quic_pass_point point) {
     int min_diff = -1;
     loop->data.quic_walk_depth++;
     for (us_quic_driver_t *d = loop->data.quic_head; d; d = d->next) {
-        int diff = d->pass ? d->pass(d, 0) : -1;
+        int diff = d->pass ? d->pass(d, point) : -1;
         if (diff >= 0 && (min_diff < 0 || diff < min_diff)) min_diff = diff;
     }
     us_quic_loop_end_walk(loop);
@@ -260,7 +257,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
 void us_quic_loop_flush_if_pending(struct us_loop_t *loop) {
     loop->data.quic_walk_depth++;
     for (us_quic_driver_t *d = loop->data.quic_head; d; d = d->next) {
-        if (d->pass && d->pending && !d->processing) d->pass(d, 1);
+        if (d->pass && d->pending && !d->processing) d->pass(d, US_QUIC_AFTER_MICROTASKS);
     }
     us_quic_loop_end_walk(loop);
 }
@@ -741,7 +738,6 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     us_internal_enable_sweep_timer(ctx->driver->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;
-    if (ctx->on_open) ctx->on_open(qs);
     return (lsquic_conn_ctx_t *) qs;
 }
 
@@ -814,22 +810,18 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
-    /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
-     * the final response, trailers). lsquic_stream_get_hset returns the
-     * next undelivered one and lsquic_stream_read fails while one is
-     * queued, so re-dispatch on_stream_headers each time instead of
-     * latching after the first. */
-    if (us_quic_deliver_hset(stream, s) < 0) return;
-
     ssize_t r;
-    while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
-        if (ctx->on_stream_data)
+    int delivered;
+    do {
+        /* lsquic queues each HEADERS block (1xx, the final response, trailers). Until it's claimed, a read fails and sets no errno. */
+        if ((delivered = us_quic_deliver_hset(stream, s)) < 0) return;
+        r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF);
+        if (r > 0 && ctx->on_stream_data)
             ctx->on_stream_data(s, ctx->read_buf, (unsigned int) r, 0);
         if (!s->stream) return;
-    }
+    } while (r > 0 || delivered);
     if (r == 0 && !s->fin_delivered) {
         /* lsquic returns 0 even if this read decoded one more header block. */
-        int delivered;
         while ((delivered = us_quic_deliver_hset(stream, s)) > 0) {}
         if (delivered < 0) return;
         s->fin_delivered = 1;
@@ -840,6 +832,9 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         /* lsquic resets a request above the id of a GOAWAY without on_reset,
          * and calls on_read on every tick until the stream is closed. */
         lsquic_stream_close(stream);
+    } else if (r < 0 && errno == EBADMSG && lsquic_conn_status(lsquic_stream_conn(stream), NULL, 0) != LSCONN_ST_ERROR) {
+        /* No frame error, which closes the connection: there's no header block where one belongs (RFC 9114 §4.1). lsquic calls on_read on every tick for this too. */
+        us_quic_stream_reset(s, US_QUIC_H3_MESSAGE_ERROR);
     }
 }
 
@@ -956,13 +951,15 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
     if (!engines) return NULL;
     d->engines = engines;
 
+    struct lsquic_engine_settings ours = *settings;
     /* us_quic_packets_out sets no ECN bits, and every lsquic_engine_packet_in call passes 0 for them. */
-    struct lsquic_engine_settings no_ecn = *settings;
-    no_ecn.es_ecn = 0;
+    ours.es_ecn = 0;
+    /* lsquic then parses nothing past an unclaimed header block. A client's default of 2 lets data arrive ahead of the block before it. */
+    ours.es_max_header_sets = 1;
 
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
-    api.ea_settings = &no_ecn;
+    api.ea_settings = &ours;
     api.ea_stream_if = stream_if;
     api.ea_stream_if_ctx = stream_if_ctx;
     api.ea_packets_out = us_quic_packets_out;
@@ -979,8 +976,8 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
 
 static void us_quic_after_engine_call(us_quic_driver_t *d);
 
-static int us_quic_context_pass(us_quic_driver_t *d, int in_microtask_drain) {
-    (void) in_microtask_drain;
+static int us_quic_context_pass(us_quic_driver_t *d, enum us_quic_pass_point point) {
+    (void) point;
     us_quic_driver_process(d);
     return us_quic_driver_next_tick_us(d);
 }
@@ -1010,12 +1007,12 @@ static us_quic_socket_context_t *us_quic_context_create(struct us_loop_t *loop, 
     return NULL;
 }
 
-static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
+static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_alpn_select_cb(ssl, us_quic_alpn_select, NULL);
     SSL_CTX_set_early_data_enabled(ssl, 0);
-    us_ssl_ctx_set_sni_policy(ssl, options->request_cert, options->reject_unauthorized);
+    us_ssl_ctx_set_own_session_id_context(ssl);
 }
 
 us_quic_socket_context_t *us_create_quic_socket_context(
@@ -1025,7 +1022,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
-    us_quic_prepare_ssl_ctx(ssl, &options);
+    us_quic_prepare_ssl_ctx(ssl);
 
     struct lsquic_engine_settings settings;
     lsquic_engine_init_settings(&settings, LSENG_HTTP_SERVER);
@@ -1059,7 +1056,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return -1;
-    us_quic_prepare_ssl_ctx(ssl, &options);
+    us_quic_prepare_ssl_ctx(ssl);
     SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
         SSL_CTX_get_verify_callback(ssl));
     if (!ctx->sni) ctx->sni = sni_new();
@@ -1290,7 +1287,6 @@ int us_quic_listen_socket_local_address(us_quic_udp_t *ls, char *buf, int len) {
 
 #define DEF_CB(name, sig) \
     void us_quic_socket_context_##name(us_quic_socket_context_t *ctx, sig) { ctx->name = cb; }
-DEF_CB(on_open, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_hsk_done, void (*cb)(us_quic_socket_t *, int))
 DEF_CB(on_goaway, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_close, void (*cb)(us_quic_socket_t *))
@@ -1324,9 +1320,9 @@ void us_quic_stream_hold_window(us_quic_stream_t *s, int hold) {
     if (s->stream) lsquic_stream_hold_window(s->stream, hold);
 }
 
-int us_quic_stream_want_write(us_quic_stream_t *s, int want) {
+int us_quic_stream_want_write(us_quic_stream_t *s) {
     if (!s->stream) return -1;
-    return lsquic_stream_wantwrite(s->stream, want) < 0 ? -1 : 0;
+    return lsquic_stream_wantwrite(s->stream, 1) < 0 ? -1 : 0;
 }
 
 /* lsquic_stream_send_headers only buffers, and a flush is a no-op while lsquic
@@ -1410,15 +1406,6 @@ void us_quic_stream_shutdown(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_shutdown(s->stream, 1);
 }
 
-/* lsquic_stream_write buffers until a full packet or shutdown; force the
- * partial buffer into a packet so the peer sees streamed bytes promptly. */
-void us_quic_stream_flush(us_quic_stream_t *s) {
-    if (s->stream) {
-        lsquic_stream_flush(s->stream);
-        s->ctx->driver->pending = 1;
-    }
-}
-
 void us_quic_stream_shutdown_read(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_shutdown(s->stream, 0);
 }
@@ -1443,10 +1430,6 @@ void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code) {
     /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
     lsquic_stream_maybe_reset(s->stream, error_code, 0);
     lsquic_stream_close(s->stream);
-}
-
-int us_quic_stream_has_unacked(us_quic_stream_t *s) {
-    return s->stream ? lsquic_stream_has_unacked_data(s->stream) : 0;
 }
 
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
@@ -1485,7 +1468,6 @@ int us_quic_stream_headers_too_large(us_quic_stream_t *s) {
 }
 
 void *us_quic_socket_ext(us_quic_socket_t *s) { return s + 1; }
-us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s) { return s->ctx; }
 
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6) {
     const struct sockaddr *local, *peer;
@@ -1555,25 +1537,21 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     return ssl_verify_ok;
 }
 
-int us_quic_prepare_client_ssl_ctx(SSL_CTX *ssl) {
+void us_quic_prepare_client_ssl_ctx(SSL_CTX *ssl) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
-    return us_ssl_ctx_set_verify_signature_algorithms(ssl);
 }
 
 us_quic_socket_context_t *us_create_quic_client_context(
     struct us_loop_t *loop, unsigned int ext_size,
     unsigned int conn_ext_size, unsigned int stream_ext_size)
 {
-    SSL_CTX *ssl = SSL_CTX_new(TLS_method());
+    /* No options: the default trust store and no client certificate. */
+    enum create_bun_socket_error_t ssl_err = 0;
+    SSL_CTX *ssl = us_ssl_ctx_build_raw((struct us_bun_socket_context_options_t) {0}, &ssl_err);
     if (!ssl) return NULL;
-    X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
-    /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
-     * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
-     * the system store on macOS/Windows. */
-    SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
-    if (!us_quic_prepare_client_ssl_ctx(ssl)) { SSL_CTX_free(ssl); return NULL; }
+    us_quic_prepare_client_ssl_ctx(ssl);
 
     struct lsquic_engine_settings settings;
     lsquic_engine_init_settings(&settings, LSENG_HTTP);
@@ -1702,14 +1680,13 @@ struct us_quic_pending_connect_s {
     /* Owned. NULL for the context's own. */
     SSL_CTX *ssl_ctx;
     struct addrinfo_request *ai_req;
-    void *user;
 };
 
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, SSL_CTX *ssl_ctx,
     us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user)
+    struct us_quic_pending_connect_s **out_pending)
 {
     *out_qs = NULL;
     *out_pending = NULL;
@@ -1745,13 +1722,8 @@ int us_quic_socket_context_connect(
     if (ssl_ctx) SSL_CTX_up_ref(ssl_ctx);
     pc->ssl_ctx = ssl_ctx;
     pc->ai_req = ai_req;
-    pc->user = user;
     *out_pending = pc;
     return 0;
-}
-
-void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc) {
-    return pc->user;
 }
 
 struct addrinfo_request *us_quic_pending_connect_addrinfo(

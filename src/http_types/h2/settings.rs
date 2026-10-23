@@ -5,7 +5,7 @@ use super::frame::{ErrorCode, FrameError};
 
 pub const ENTRY_SIZE: usize = 6;
 pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16_384;
-pub const MAX_MAX_FRAME_SIZE: u32 = 0xff_ffff;
+const MAX_MAX_FRAME_SIZE: u32 = 0xff_ffff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]

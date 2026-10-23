@@ -371,20 +371,44 @@ describe("a late end() or write() answers its callback like Node.js", () => {
     });
   });
 
-  // Only the empty string is a chunk that write() accepts and end() ignores.
-  test("write() of a chunk that is not a string still throws on a destroyed response without a socket", () => {
-    const res = new ServerResponse(new IncomingMessage(null as any));
-    res.destroy();
-    const codes = [null, undefined].map(chunk => {
-      try {
-        res.write(chunk as any);
-        return "no throw";
-      } catch (err) {
-        return (err as NodeJS.ErrnoException).code;
-      }
+  // Like on a connection. Node throws ERR_STREAM_NULL_VALUES and ERR_INVALID_ARG_TYPE.
+  test.each([null, undefined])(
+    "write(%p) to a destroyed response without a socket fails like write('')",
+    async chunk => {
+      const res = new ServerResponse(new IncomingMessage(null as any));
+      res.destroy();
+      const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+      expect(res.write(chunk as any, resolve)).toBe(false);
+      expect((await promise)?.code).toBe("ERR_STREAM_DESTROYED");
+    },
+  );
+});
+
+test("'close' of the socket follows 'close' of the request when the response that closes the connection ends late", async () => {
+  const events: string[] = [];
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    req.on("close", () => events.push("req close"));
+    res.on("close", () => events.push("res close"));
+    req.socket.on("close", () => {
+      events.push("socket close");
+      setImmediate(onClosed);
     });
-    expect(codes).toEqual(["ERR_STREAM_NULL_VALUES", "ERR_INVALID_ARG_TYPE"]);
+    res.writeHead(200);
+    setImmediate(() => res.end("data"));
   });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    client.on("error", () => {}).resume();
+    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await closed;
+    expect(events).toEqual(["res close", "req close", "socket close"]);
+  } finally {
+    client.destroy();
+    server.close();
+  }
 });
 
 test("res close cannot remove a socket listener from the current close emission", async () => {
@@ -808,6 +832,36 @@ describe("request body arriving after the response was ended", () => {
         aborted: false,
         events: [],
         socketDestroyed: true,
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a socket that the listener destroys right behind res.end() leaves req incomplete and emits nothing", async () => {
+    const events: string[] = [];
+    const { promise: request, resolve: gotRequest } = Promise.withResolvers<IncomingMessage>();
+    const { promise: serverSocketClosed, resolve: resolveServerSocketClosed } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      for (const name of ["aborted", "end", "close", "error"]) req.on(name, () => events.push(name));
+      (req.socket as Socket).on("close", () => resolveServerSocketClosed());
+      res.end("first");
+      req.socket.destroy();
+      gotRequest(req);
+    });
+    try {
+      const client = await rawClient(await listen(server));
+      await client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nabc");
+      const req = await request;
+      await serverSocketClosed;
+      await closeServer(server);
+      expect({ ...reqState(req), events }).toEqual({
+        complete: false,
+        readableEnded: false,
+        destroyed: false,
+        aborted: false,
+        events: [],
       });
     } finally {
       server.closeAllConnections();

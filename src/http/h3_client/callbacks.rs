@@ -211,7 +211,7 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     // priority iterator, which serves the crypto stream first. This mirrors
     // lsquic's reference `bin/http_client.c`, whose `on_new_stream` only
     // calls `lsquic_stream_wantwrite(stream, 1)`.
-    s.want_write(true);
+    s.want_write();
 }
 
 extern "C" fn on_stream_headers(s: *mut quic::Stream) {

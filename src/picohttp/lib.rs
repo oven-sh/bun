@@ -290,9 +290,7 @@ impl<'a> HeaderList<'a> {
 pub struct Request<'a> {
     pub method: &'a [u8],
     pub path: &'a [u8],
-    pub minor_version: usize,
     pub headers: &'a [Header],
-    pub bytes_read: u32,
 }
 
 impl<'a> Request<'a> {

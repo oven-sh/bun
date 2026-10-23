@@ -5,6 +5,7 @@ import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { rootCertificates } from "node:tls";
 
 // The vendored Node suite exercises `sni` / `setSNIContexts()` but cannot
 // observe which certificate was served (both fixtures are self-signed and the
@@ -150,6 +151,36 @@ test("session.certificate returns the servername's identity after lsquic frees t
   });
 });
 
+test("a certificate that isn't PEM is reported like in Node", async () => {
+  const notPem = { keys: [key1], certs: [Buffer.from("not a certificate")] };
+  const outcome = (run: () => unknown) =>
+    Promise.resolve()
+      .then(run)
+      .then(
+        () => "no error",
+        (err: any) => `${err.code}: ${err.message}`,
+      );
+  await using server = await listen(() => {}, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+  await using forListen = new QuicEndpoint();
+  await using forEntry = new QuicEndpoint();
+  await using forConnect = new QuicEndpoint();
+  expect({
+    listen: await outcome(() => listen(() => {}, { endpoint: forListen, sni: { "*": notPem }, alpn: ["quic-test"] })),
+    entry: await outcome(() =>
+      listen(() => {}, { endpoint: forEntry, sni: { "*": identity1, "a.example": notPem }, alpn: ["quic-test"] }),
+    ),
+    connect: await outcome(() =>
+      connect(server.address!, { endpoint: forConnect, alpn: "quic-test", ...notPem } as SessionOptions),
+    ),
+    setSNIContexts: await outcome(() => server.setSNIContexts({ "a.example": notPem })),
+  }).toEqual({
+    listen: "ERR_INVALID_STATE: Failed to create TLS context: NO_START_LINE",
+    entry: "ERR_INVALID_STATE: Failed to create TLS context: NO_START_LINE",
+    connect: "ERR_INVALID_STATE: Failed to create TLS context: NO_START_LINE",
+    setSNIContexts: "ERR_INVALID_STATE: Failed to create TLS context: NO_START_LINE",
+  });
+});
+
 test("setSNIContexts() rejects a non-object and a closed endpoint", async () => {
   const endpoint = new QuicEndpoint();
   expect(() => endpoint.setSNIContexts("nope" as any)).toThrow(
@@ -210,6 +241,22 @@ test("opened reports CERT_REVOKED for a chain through a blocked public key", asy
   } finally {
     clearBlockedSPKIsForTesting();
   }
+});
+
+test("every CRL in one `crl` entry counts", async () => {
+  const identity = { keys: [createPrivateKey(readKey("agent3-key.pem"))], certs: [readKey("agent3-cert.pem")] };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  const session = await connect(server.address!, {
+    alpn: "quic-test",
+    servername: "agent3",
+    verifyPeer: "manual",
+    ca: [readKey("ca2-cert.pem")],
+    // Both are ca2's. The second one is newer, and it alone revokes agent3.
+    crl: [Buffer.concat([readKey("ca2-crl.pem"), readKey("ca2-crl-agent3.pem")])],
+  } as SessionOptions);
+  const info = await session.opened;
+  await session.close();
+  expect(info.validationErrorCode as unknown as string).toBe("CERT_REVOKED");
 });
 
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
@@ -350,6 +397,111 @@ test("connect() with the default verifyPeer refuses an unverifiable certificate 
         "QUIC transport error 0: Peer certificate validation failed: unable to get local issuer certificate [UNABLE_TO_GET_ISSUER_CERT_LOCALLY]",
       echoed: [1],
       streamsReceived: 1,
+    }),
+    stderr: expect.stringContaining(
+      "ExperimentalWarning: quic is an experimental feature and might change at any time",
+    ),
+    exitCode: 0,
+  });
+});
+
+// The default CA store is built from the environment once per process, so this runs in a child.
+test("a context without `ca` verifies against the default CA store", async () => {
+  // bundled-root-probe-cert.pem names ISRG Root X1 as its issuer, but a throwaway key signed it:
+  //   openssl req -x509 -newkey rsa:2048 -nodes -keyout fake.key -out fake.pem -days 2 \
+  //     -subj "/C=US/O=Internet Security Research Group/CN=ISRG Root X1"
+  //   openssl req -new -key agent1-key.pem -subj "/CN=bundled-root-probe" -out leaf.csr
+  //   openssl x509 -req -in leaf.csr -CA fake.pem -CAkey fake.key -CAcreateserial -sha256 -extfile ext.cnf \
+  //     -not_before 20260101000000Z -not_after 21260101000000Z -out bundled-root-probe-cert.pem
+  // ext.cnf: basicConstraints=CA:FALSE, subjectKeyIdentifier=none, authorityKeyIdentifier=none,
+  // subjectAltName=DNS:bundled-root-probe
+  // A store with the bundled roots finds the issuer and fails the signature. A store without them finds no issuer.
+  expect(rootCertificates.some(pem => new X509Certificate(pem).subject.includes("CN=ISRG Root X1"))).toBe(true);
+
+  const script = `
+    import { createPrivateKey } from "node:crypto";
+    import { readFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { connect, listen } from "node:quic";
+    import { setDefaultCACertificates } from "node:tls";
+
+    const readKey = name => readFileSync(join(${JSON.stringify(keysDir)}, name));
+    const identity = (agent, cert = readKey(agent + "-cert.pem")) => ({
+      keys: [createPrivateKey(readKey(agent + "-key.pem"))],
+      certs: [cert],
+    });
+    const server = await listen(
+      serverSession => {
+        serverSession.onerror = () => {};
+        serverSession.opened.catch(() => {});
+        serverSession.closed.catch(() => {});
+      },
+      {
+        sni: {
+          "*": identity("agent1"),
+          agent3: identity("agent3"),
+          "bundled-root-probe": identity("agent1", readFileSync(${JSON.stringify(join(import.meta.dir, "bundled-root-probe-cert.pem"))})),
+        },
+        alpn: ["quic-test"],
+      },
+    );
+
+    async function verdict(servername, { ca, crl } = {}) {
+      const session = await connect(server.address, {
+        alpn: "quic-test",
+        servername,
+        ca: ca && [readKey(ca)],
+        crl: crl && [readKey(crl)],
+      });
+      session.onerror = () => {};
+      const outcome = await session.opened.then(() => "verified", e => e.message.match(/\\[(\\w+)\\]$/)?.[1] ?? e.message);
+      await session.close();
+      return outcome;
+    }
+
+    const verdicts = {
+      SSL_CERT_FILE: await verdict("agent1"),
+      NODE_EXTRA_CA_CERTS: await verdict("agent3"),
+      bundledRoot: await verdict("bundled-root-probe"),
+      caReplacesTheDefaults: await verdict("agent3", { ca: "ca1-cert.pem" }),
+      crl: await verdict("agent3", { crl: "ca2-crl-agent3.pem" }),
+      nextContextWithoutCrl: await verdict("agent3"),
+    };
+    setDefaultCACertificates([]);
+    verdicts.emptyDefaultList = await verdict("agent3");
+    setDefaultCACertificates([readKey("ca1-cert.pem")]);
+    verdicts.inDefaultList = await verdict("agent1");
+    verdicts.notInDefaultList = await verdict("agent3");
+    console.log(JSON.stringify(verdicts));
+    await server.close();
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      SSL_CERT_FILE: join(keysDir, "ca1-cert.pem"),
+      SSL_CERT_DIR: "",
+      NODE_EXTRA_CA_CERTS: join(keysDir, "ca2-cert.pem"),
+      NODE_USE_SYSTEM_CA: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      // The server finds ca2 in its own default store and sends it after agent3's certificate, like a node:tls server.
+      SSL_CERT_FILE: "verified",
+      NODE_EXTRA_CA_CERTS: "verified",
+      bundledRoot: "CERT_SIGNATURE_FAILURE",
+      caReplacesTheDefaults: "SELF_SIGNED_CERT_IN_CHAIN",
+      crl: "CERT_REVOKED",
+      nextContextWithoutCrl: "verified",
+      emptyDefaultList: "SELF_SIGNED_CERT_IN_CHAIN",
+      inDefaultList: "verified",
+      notInDefaultList: "SELF_SIGNED_CERT_IN_CHAIN",
     }),
     stderr: expect.stringContaining(
       "ExperimentalWarning: quic is an experimental feature and might change at any time",

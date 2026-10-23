@@ -63,6 +63,10 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
+    pub fn content_length(&mut self) -> Option<u64> {
+        let length = c::uws_h3_req_get_content_length(self);
+        (length != u64::MAX).then_some(length)
+    }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
@@ -91,8 +95,11 @@ impl Response {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         unsafe { c::uws_h3_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
     }
-    pub fn end_without_body(&mut self, close_connection: bool) {
-        c::uws_h3_res_end_without_body(self, close_connection)
+    pub(crate) fn accept_request_body(&mut self) -> bool {
+        c::uws_h3_res_accept_request_body(self)
+    }
+    pub fn end_without_body(&mut self, _close_connection: bool) {
+        c::uws_h3_res_end_without_body(self)
     }
     pub(crate) fn end_stream(&mut self, close_connection: bool) {
         c::uws_h3_res_end_stream(self, close_connection)
@@ -135,15 +142,6 @@ impl Response {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h3_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
-    pub(crate) fn write_mark(&mut self) {
-        c::uws_h3_res_write_mark(self)
-    }
-    pub(crate) fn mark_wrote_content_length_header(&mut self) {
-        c::uws_h3_res_mark_wrote_content_length_header(self)
-    }
-    pub(crate) fn mark_wrote_date_header(&mut self) {
-        c::uws_h3_res_mark_wrote_date_header(self)
-    }
     pub(crate) fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }
@@ -185,11 +183,7 @@ impl Response {
         false
     }
     pub(crate) fn uncork(&mut self) {}
-    pub(crate) fn is_connect_request(&self) -> bool {
-        false
-    }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
-    pub(crate) fn mark_needs_more(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -392,9 +386,13 @@ macro_rules! h3_route_methods {
 }
 
 impl App {
-    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
+    pub fn create(
+        opts: &BunSocketContextOptions,
+        idle_timeout_s: u32,
+        max_request_body_size: u64,
+    ) -> Option<*mut App> {
         // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
-        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s) };
+        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s, max_request_body_size) };
         if p.is_null() { None } else { Some(p) }
     }
     pub fn add_server_name_with_options(
@@ -601,6 +599,7 @@ mod c {
         pub(super) fn uws_h3_create_app(
             opts: BunSocketContextOptions,
             idle_timeout_s: u32,
+            max_request_body_size: u64,
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
@@ -714,7 +713,8 @@ mod c {
             total: usize,
             close: bool,
         ) -> bool;
-        pub(super) safe fn uws_h3_res_end_without_body(res: &mut Response, close: bool);
+        pub(super) safe fn uws_h3_res_accept_request_body(res: &mut Response) -> bool;
+        pub(super) safe fn uws_h3_res_end_without_body(res: &mut Response);
         pub(super) safe fn uws_h3_res_pause(res: &mut Response);
         pub(super) safe fn uws_h3_res_resume(res: &mut Response);
         pub(super) fn uws_h3_res_write_status(res: *mut Response, p: *const u8, n: usize);
@@ -731,9 +731,6 @@ mod c {
             kn: usize,
             v: u64,
         );
-        pub(super) safe fn uws_h3_res_mark_wrote_content_length_header(res: &mut Response);
-        pub(super) safe fn uws_h3_res_mark_wrote_date_header(res: &mut Response);
-        pub(super) safe fn uws_h3_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
         pub(super) safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
@@ -788,6 +785,7 @@ mod c {
         // length — no read-through precondition, so `safe fn`.
         pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
         pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) safe fn uws_h3_req_get_content_length(req: &mut Request) -> u64;
         pub(super) fn uws_h3_req_get_header(
             req: *mut Request,
             name: *const u8,

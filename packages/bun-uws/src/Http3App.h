@@ -12,15 +12,11 @@ namespace uWS {
 struct H3App {
     Http3Context *http3Context;
 
-    static H3App *create(SocketContextOptions options, unsigned idleTimeoutSecs = 0) {
-        us_bun_socket_context_options_t raw;
-        memcpy(&raw, &options, sizeof(raw));
-        Http3Context *ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs);
+    static H3App *create(us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, uint64_t maxRequestBodySize) {
+        Http3Context *ctx = Http3Context::create(Loop::get(), options, idleTimeoutSecs, maxRequestBodySize);
         if (!ctx) return nullptr;
         return new H3App{ctx};
     }
-
-    bool constructorFailed() { return http3Context == nullptr; }
 
     ~H3App() {
         if (http3Context) http3Context->free();
@@ -61,12 +57,9 @@ struct H3App {
         http3Context->getContextData()->onReleasedUser = user;
     }
     bool isReleased() { return us_quic_socket_context_is_released((us_quic_socket_context_t *) http3Context) != 0; }
-    bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
-        us_bun_socket_context_options_t raw;
-        memcpy(&raw, &options, sizeof(raw));
-        return http3Context->addServerName(hostname, raw);
+    bool addServerNameWithOptions(const char *hostname, us_bun_socket_context_options_t options) {
+        return http3Context->addServerName(hostname, options);
     }
-    void *getNativeHandle() { return http3Context; }
 };
 
 }

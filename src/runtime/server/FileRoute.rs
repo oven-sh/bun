@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_http::{Headers, Method, header_has_token};
+use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
 use bun_io::Closer;
@@ -18,7 +18,7 @@ use crate::server::file_response_stream::{StartOptions as FileResponseStreamOpti
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest, write_status};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -37,9 +37,6 @@ pub(crate) struct FileRoute {
     stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
     has_content_range_header: bool,
-    has_date_header: bool,
-    has_connection_header: bool,
-    has_connection_close: bool,
 }
 
 pub(crate) struct InitOptions<'a> {
@@ -50,25 +47,40 @@ pub(crate) struct InitOptions<'a> {
 
 use crate::webcore::headers_ref::blob_content_type;
 
-/// Drops the framing headers, because `serve` frames each response from the file's size.
 fn headers_from(
     global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,
     blob: &Blob,
 ) -> JsResult<Headers> {
-    let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-        global,
-        fetch_headers,
-        blob_content_type(blob),
-    )?;
-    headers.remove(b"transfer-encoding");
-    headers.remove(b"content-length");
-    Ok(headers)
+    bun_http_jsc::headers_jsc::from_fetch_headers(global, fetch_headers, blob_content_type(blob))
 }
 
-#[inline]
-fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
-    &buf[ptr.offset as usize..][..ptr.length as usize]
+/// The headers of a route's `Response`, and the server's Alt-Svc.
+pub(crate) fn write_route_headers(headers: &Headers, server: Option<AnyServer>, resp: AnyResponse) {
+    use bun_http_types::ETag::HeaderEntryColumns;
+    let entries = headers.entries.slice();
+    let names: &[StringPointer] = entries.items_name();
+    let values: &[StringPointer] = entries.items_value();
+    let buf = headers.buf.as_slice();
+
+    debug_assert_eq!(names.len(), values.len());
+    for (name, value) in names.iter().zip(values) {
+        resp.write_header(
+            &buf[name.offset as usize..][..name.length as usize],
+            &buf[value.offset as usize..][..value.length as usize],
+        );
+    }
+    write_alt_svc(server, resp);
+}
+
+/// Advertises the server's HTTP/3 endpoint on its HTTP/1 and HTTP/2 responses (RFC 7838).
+pub(crate) fn write_alt_svc(server: Option<AnyServer>, resp: AnyResponse) {
+    if !matches!(resp, AnyResponse::H3(_))
+        && let Some(server) = server
+        && let Some(alt_svc) = server.h3_alt_svc()
+    {
+        resp.write_header(b"alt-svc", alt_svc);
+    }
 }
 
 /// What `FileRoute::serve` left for `on()` to do with the open fd.
@@ -127,11 +139,6 @@ impl FileRoute {
             server: Cell::new(server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
-            has_date_header: headers.get(b"date").is_some(),
-            has_connection_header: headers.get(b"connection").is_some(),
-            has_connection_close: headers
-                .get(b"connection")
-                .is_some_and(|value| header_has_token(value, b"close")),
             blob,
             headers,
             status_code,
@@ -216,23 +223,7 @@ impl FileRoute {
     }
 
     fn write_headers(&self, resp: AnyResponse) {
-        use bun_http_types::ETag::HeaderEntryColumns;
-        let entries = self.headers.entries.slice();
-        let names: &[StringPointer] = entries.items_name();
-        let values: &[StringPointer] = entries.items_value();
-        let buf = self.headers.buf.as_slice();
-
-        debug_assert_eq!(names.len(), values.len());
-        for (name, value) in names.iter().zip(values) {
-            resp.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
-        }
-        if !matches!(resp, AnyResponse::H3(_)) {
-            if let Some(srv) = self.server.get() {
-                if let Some(alt) = srv.h3_alt_svc() {
-                    resp.write_header(b"alt-svc", alt);
-                }
-            }
-        }
+        write_route_headers(&self.headers, self.server.get(), resp);
 
         if !self.has_last_modified_header {
             // `Cell::take` then restore — `write_header` is a sync uWS buffer
@@ -409,19 +400,18 @@ impl FileRoute {
             RangeRequest::Result::None
         };
 
-        let status_code =
-            status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
+        let status_code = status_for_preconditions(
+            req,
+            method,
+            self.status_code,
+            etag,
+            || last_modified_ms,
+            range,
+        );
 
         req.set_yield(false);
 
-        write_any_status(resp, status_code);
-        if self.has_date_header {
-            resp.mark_wrote_date_header();
-        }
-        if self.has_connection_header {
-            resp.mark_wrote_connection_header(self.has_connection_close);
-        }
-        resp.write_mark();
+        write_status(resp, status_code);
         self.write_headers(resp);
 
         // 1xx, 204 and 304 end at the blank line (RFC 9112 6.3). 205 and 412 need Content-Length: 0.
@@ -456,7 +446,6 @@ impl FileRoute {
 
         if let Some(len) = body_len {
             resp.write_header_int(b"content-length", len);
-            resp.mark_wrote_content_length_header();
         }
 
         if method == Method::HEAD {
@@ -506,7 +495,7 @@ pub(crate) fn status_for_preconditions(
     method: Method,
     base_status: u16,
     etag: Option<&[u8]>,
-    last_modified_ms: Option<u64>,
+    last_modified_ms: impl Fn() -> Option<u64>,
     range: RangeRequest::Result,
 ) -> u16 {
     if (method == Method::HEAD || method == Method::GET) && base_status == 200 {
@@ -518,7 +507,7 @@ pub(crate) fn status_for_preconditions(
             .header(b"if-unmodified-since")
             .and_then(crate::jsc_hooks::parse_http_date)
         {
-            if let Some(lm) = last_modified_ms {
+            if let Some(lm) = last_modified_ms() {
                 if lm / 1000 > ius / 1000 {
                     return 412;
                 }
@@ -542,7 +531,7 @@ pub(crate) fn status_for_preconditions(
             // Compare at second precision: the Last-Modified we emit is
             // second-granular (HTTP-date), so a sub-second mtime would never
             // satisfy `<=` against the client's echoed value otherwise.
-            if let Some(lm) = last_modified_ms {
+            if let Some(lm) = last_modified_ms() {
                 if lm / 1000 <= ims / 1000 {
                     return 304;
                 }
@@ -573,16 +562,5 @@ pub(crate) fn write_content_range(
     match range {
         RangeRequest::Result::Satisfiable { start, end } => Some((start, end - start + 1)),
         _ => None,
-    }
-}
-
-pub(crate) fn write_any_status(resp: AnyResponse, status: u16) {
-    match resp {
-        AnyResponse::SSL(r) => crate::server::write_status::<true>(r, status),
-        AnyResponse::TCP(r) => crate::server::write_status::<false>(r, status),
-        AnyResponse::H3(_) | AnyResponse::H2(_) => {
-            let mut b = bun_core::fmt::ItoaBuf::new();
-            resp.write_status(bun_core::fmt::itoa(&mut b, status));
-        }
     }
 }

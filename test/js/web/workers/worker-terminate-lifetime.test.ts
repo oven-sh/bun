@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -1407,3 +1407,88 @@ describe.skipIf(!isASAN || isWindows)("Bun.serve request pools", () => {
     timeout,
   );
 });
+
+// On macOS every event loop allocates a mach port as its cross-thread wakeup channel. The child
+// counts its own receive rights with mach_port_names across Worker create/terminate cycles.
+test.skipIf(!isMacOS)(
+  "terminated Workers do not leak mach receive rights",
+  async () => {
+    const cycles = slow ? 6 : 10;
+    using dir = tempDir("worker-machport-leak", {
+      "worker.js": `postMessage("ready");\nsetInterval(() => {}, 1e9);\n`,
+      "main.js": `
+        import { dlopen, ptr, toArrayBuffer } from "bun:ffi";
+
+        const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", {
+          task_self_trap: { args: [], returns: "u32" },
+          mach_port_names: { args: ["u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        });
+
+        const task = symbols.task_self_trap();
+        const MACH_PORT_TYPE_RECEIVE = 1 << 17;
+
+        function countReceiveRights() {
+          const names = new BigUint64Array(1);
+          const namesCnt = new Uint32Array(1);
+          const types = new BigUint64Array(1);
+          const typesCnt = new Uint32Array(1);
+          const kr = symbols.mach_port_names(task, ptr(names), ptr(namesCnt), ptr(types), ptr(typesCnt));
+          if (kr !== 0) throw new Error("mach_port_names failed: " + kr);
+          const cnt = typesCnt[0];
+          const arr = new Uint32Array(toArrayBuffer(Number(types[0]), 0, cnt * 4));
+          let n = 0;
+          for (let i = 0; i < cnt; i++) {
+            if (arr[i] & MACH_PORT_TYPE_RECEIVE) n++;
+          }
+          return n;
+        }
+
+        const workerUrl = new URL("./worker.js", import.meta.url).href;
+
+        async function cycle() {
+          const w = new Worker(workerUrl);
+          await new Promise((resolve, reject) => {
+            w.onmessage = resolve;
+            w.onerror = e => reject(new Error("worker error: " + (e && e.message)));
+          });
+          await w.terminate();
+        }
+
+        // Warm up lazy one-time allocations (thread pools, dispatch state).
+        for (let i = 0; i < 3; i++) await cycle();
+
+        const CYCLES = ${cycles};
+        const baseline = countReceiveRights();
+        for (let i = 0; i < CYCLES; i++) await cycle();
+
+        // The worker thread releases the port on its exit path, which can lag terminate().
+        const deadline = Date.now() + 15_000;
+        let current = countReceiveRights();
+        while (current - baseline > CYCLES / 2 && Date.now() < deadline) {
+          await Bun.sleep(50);
+          current = countReceiveRights();
+        }
+
+        if (current - baseline > CYCLES / 2) {
+          console.log("LEAK baseline=" + baseline + " final=" + current + " cycles=" + CYCLES);
+          process.exit(1);
+        }
+        console.log("OK baseline=" + baseline + " final=" + current);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toStartWith("OK ");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

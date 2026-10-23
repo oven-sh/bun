@@ -420,6 +420,18 @@ for (const secure of [true, false]) {
       raw.close();
     });
 
+    // A 100 Continue would start an upload that the 413 behind it refuses. HTTP/1.1 and HTTP/3 do the same.
+    test("answers 413 without an interim response when content-length exceeds maxRequestBodySize", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      await raw.waitFor(f => f.type === T.SETTINGS);
+      // The default limit is 128 MiB.
+      const headers = [...baseHeaders("/echo", "POST"), ["expect", "100-continue"], ["content-length", "200000000"]];
+      raw.headers(1, headers as [string, string][], F.END_HEADERS);
+      const first = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      expect(decodeStatus(first.payload)).toBe(413);
+      raw.close();
+    });
+
     test("server.requestIP works", async () => {
       const res = await request(session, { ":path": "/ip" });
       const ip = JSON.parse(res.body.toString());
@@ -1072,4 +1084,62 @@ describe("Bun.serve http2 in-process", () => {
       raw.close();
     }
   });
+});
+
+test.concurrent.each([
+  ["HTTP/2", "HTTP/1.1"],
+  ["HTTP/1.1", "HTTP/2"],
+])("development mode warns about the idle timeout once, whether %s or %s times out first", async (...order) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import http2 from "node:http2";
+      import net from "node:net";
+      let started = Promise.withResolvers();
+      let aborted = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        http2: true,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          started.resolve();
+          return new Promise(() => {});
+        },
+      });
+      for (const protocol of ${JSON.stringify(order)}) {
+        let client;
+        if (protocol === "HTTP/2") {
+          client = http2.connect("http://127.0.0.1:" + server.port);
+          client.request({ ":path": "/" }).on("error", () => {}).end();
+        } else {
+          client = net.connect(server.port, "127.0.0.1");
+          client.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+        }
+        client.on("error", () => {});
+        await started.promise;
+        // uWS arms the request's timer after the handler returns. The default 10 seconds are 4 sweeps.
+        await new Promise(setImmediate);
+        sweepSocketTimers(4);
+        await aborted.promise;
+        console.log(protocol, "timed out");
+        client.destroy();
+        started = Promise.withResolvers();
+        aborted = Promise.withResolvers();
+      }
+      await server.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure.\n");
+  expect(stdout).toBe(order.map(protocol => protocol + " timed out\n").join(""));
+  expect(exitCode).toBe(0);
 });

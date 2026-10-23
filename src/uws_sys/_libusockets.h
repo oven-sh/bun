@@ -75,7 +75,6 @@ struct uws_app_s;
 struct uws_req_s;
 struct uws_res_s;
 struct uws_websocket_s;
-struct uws_header_iterator_s;
 typedef struct uws_app_s uws_app_t;
 typedef struct uws_req_s uws_req_t;
 typedef struct uws_res_s uws_res_t;

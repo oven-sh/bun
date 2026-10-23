@@ -55,6 +55,12 @@ impl RecvWindow {
         }
     }
 
+    /// The advertised size.
+    #[inline]
+    pub fn size(&self) -> i64 {
+        self.size
+    }
+
     #[inline]
     pub fn on_data(&mut self, octets: usize) {
         self.consumed += octets as i64;

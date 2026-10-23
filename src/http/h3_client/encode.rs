@@ -143,7 +143,8 @@ pub(crate) fn write_request(
     // For streaming bodies the JS sink waits for can_stream to start
     // pumping; report progress now so it begins.
     if is_streaming {
-        client.progress_update_h3();
+        // Nothing of the response is here to decode, so this can't fail.
+        let _ = client.send_progress();
     }
     Ok(())
 }
@@ -189,7 +190,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             qs.shutdown();
             client.state.request_stage = HTTPStage::Done;
         } else if !drained {
-            qs.want_write(true);
+            qs.want_write();
         } else if data_len > 0 {
             sb.report_drain();
         }
@@ -215,6 +216,6 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         qs.shutdown();
         client.state.request_stage = HTTPStage::Done;
     } else {
-        qs.want_write(true);
+        qs.want_write();
     }
 }

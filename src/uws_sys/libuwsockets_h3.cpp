@@ -39,12 +39,9 @@ typedef void (*uws_h3_listen_handler)(us_quic_udp_t*, void*);
 
 /* ───── app ───── */
 
-uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s)
+uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s, uint64_t max_request_body_size)
 {
-    uWS::SocketContextOptions sco;
-    static_assert(sizeof(sco) == sizeof(options));
-    memcpy(&sco, &options, sizeof(sco));
-    return (uws_h3_app_t*)H3App::create(sco, idle_timeout_s);
+    return (uws_h3_app_t*)H3App::create(options, idle_timeout_s, max_request_body_size);
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
@@ -56,9 +53,7 @@ void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
 {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(sco));
-    return ((H3App*)app)->addServerNameWithOptions(hostname, sco);
+    return ((H3App*)app)->addServerNameWithOptions(hostname, options);
 }
 
 #define H3_ROUTE(name, method)                                                                       \
@@ -128,11 +123,13 @@ bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t
     return ((Http3Response*)res)->tryEnd(sv(bytes, len), total_len, close).first;
 }
 
-void uws_h3_res_end_without_body(uws_h3_res_t* res, bool close_connection)
+bool uws_h3_res_accept_request_body(uws_h3_res_t* res) { return ((Http3Response*)res)->acceptRequestBody(); }
+
+void uws_h3_res_end_without_body(uws_h3_res_t* res)
 {
     Http3Response* r = (Http3Response*)res;
     r->clearOnWritableAndAborted();
-    r->endWithoutBody(std::nullopt, close_connection);
+    r->endWithoutBody();
 }
 
 void uws_h3_res_pause(uws_h3_res_t* res) { ((Http3Response*)res)->pause(); }
@@ -155,17 +152,6 @@ void uws_h3_res_write_header_int(uws_h3_res_t* res, const char* key, size_t key_
     ((Http3Response*)res)->writeHeader(sv(key, key_len), value);
 }
 
-void uws_h3_res_mark_wrote_content_length_header(uws_h3_res_t* res)
-{
-    ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-}
-
-void uws_h3_res_mark_wrote_date_header(uws_h3_res_t* res)
-{
-    ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
-}
-
-void uws_h3_res_write_mark(uws_h3_res_t* res) { ((Http3Response*)res)->writeMark(); }
 void uws_h3_res_flush_headers(uws_h3_res_t* res, bool) { ((Http3Response*)res)->flushHeaders(); }
 
 bool uws_h3_res_write(uws_h3_res_t* res, const char* data, size_t* length)
@@ -268,6 +254,8 @@ size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
 {
     return ffi_sv(((Http3Request*)req)->getMethod(), dest);
 }
+
+uint64_t uws_h3_req_get_content_length(uws_h3_req_t* req) { return ((Http3Request*)req)->getContentLength(); }
 
 size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_len, const char** dest)
 {

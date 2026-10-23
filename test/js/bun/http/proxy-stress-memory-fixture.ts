@@ -8,12 +8,13 @@
  *   failed          requests that rejected or returned something else
  *   errors          `failed`, counted by error code (or error name)
  *   connects        CONNECT requests the proxy received
- *   sslCtxGrowth    live SSL_CTX count at the end minus the count after the
- *                   warm-up. Every tunnel owns one SSL_CTX, so a leaked tunnel
- *                   adds one per request.
- *   sslCtxInFlight  highest live SSL_CTX count sampled with tunnels in flight
+ *   tunnelGrowth    live tunnel count at the end minus the count after the
+ *                   warm-up. A leaked tunnel adds one per request.
+ *   tunnelsInFlight highest live tunnel count sampled with requests in flight
  *                   minus the lowest sampled with none. Above 0 proves that
- *                   `sslCtxGrowth` can see a leaked tunnel.
+ *                   `tunnelGrowth` can see a leaked tunnel.
+ *   sslCtxInFlight  the same as `tunnelsInFlight` for SSL_CTX objects. Tunnels
+ *                   with the same `tls` options share one, so it's 0.
  *   rssGrowth       RSS at the end minus RSS after the warm-up, in bytes
  *
  * The first quarter of the iterations is the warm-up.
@@ -23,11 +24,12 @@
  *        about a second of start-up in a debug build.
  */
 
-import { sslCtxLiveCount } from "bun:internal-for-testing";
+import { proxyInternals, sslCtxLiveCount } from "bun:internal-for-testing";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
 
+const fetchProxyTunnelLiveCount = proxyInternals.tunnelLiveCount;
 const [proxyScheme, mode, iterStr] = process.argv.slice(2);
 const iterations = Number(iterStr);
 const isHttpsProxy = proxyScheme === "https";
@@ -66,8 +68,10 @@ const origin = Bun.serve({
 let connects = 0;
 let onNextConnect: (() => void) | undefined;
 
-// Sampling starts after the warm-up, so contexts created lazily during it don't count as tunnels.
-let sslCtxStart = -1;
+// Sampling starts after the warm-up.
+let tunnelStart = -1;
+let tunnelIdleMin = Infinity;
+let tunnelBusyMax = -Infinity;
 let sslCtxIdleMin = Infinity;
 let sslCtxBusyMax = -Infinity;
 
@@ -100,9 +104,11 @@ function handleClient(client: net.Socket) {
     upstream = net.connect(port, "127.0.0.1", () => {
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (leftover.length) upstream!.write(leftover);
-      // The first upstream byte is the origin's ServerHello, so the client's tunnel owns its SSL_CTX by now.
+      // The first upstream byte is the origin's ServerHello, so the client has its tunnel by now.
       upstream!.once("data", () => {
-        if (sslCtxStart !== -1) sslCtxBusyMax = Math.max(sslCtxBusyMax, sslCtxLiveCount());
+        if (tunnelStart === -1) return;
+        tunnelBusyMax = Math.max(tunnelBusyMax, fetchProxyTunnelLiveCount());
+        sslCtxBusyMax = Math.max(sslCtxBusyMax, sslCtxLiveCount());
       });
       // The "data" handler above relays client → upstream.
       upstream!.pipe(client);
@@ -178,9 +184,12 @@ for (let done = 0; done < iterations; ) {
   if (rssStart === -1 && done >= warmup) {
     Bun.gc(true);
     rssStart = rss();
-    sslCtxStart = sslCtxLiveCount();
+    tunnelStart = fetchProxyTunnelLiveCount();
   }
-  if (sslCtxStart !== -1) sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxLiveCount());
+  if (tunnelStart !== -1) {
+    tunnelIdleMin = Math.min(tunnelIdleMin, fetchProxyTunnelLiveCount());
+    sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxLiveCount());
+  }
 }
 
 Bun.gc(true);
@@ -189,11 +198,11 @@ const rssEnd = rss();
 // The HTTP thread frees the last request's tunnel shortly after it delivers the response.
 // A leak keeps the count up until the deadline and still gets reported.
 const deadline = Date.now() + 5_000;
-while (sslCtxLiveCount() > sslCtxStart && Date.now() < deadline) {
+while (fetchProxyTunnelLiveCount() > tunnelStart && Date.now() < deadline) {
   await Bun.sleep(5);
 }
-const sslCtxEnd = sslCtxLiveCount();
-sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxEnd);
+const tunnelEnd = fetchProxyTunnelLiveCount();
+tunnelIdleMin = Math.min(tunnelIdleMin, tunnelEnd);
 
 console.log(
   JSON.stringify({
@@ -201,7 +210,8 @@ console.log(
     failed,
     errors,
     connects,
-    sslCtxGrowth: sslCtxEnd - sslCtxStart,
+    tunnelGrowth: tunnelEnd - tunnelStart,
+    tunnelsInFlight: tunnelBusyMax === -Infinity ? 0 : tunnelBusyMax - tunnelIdleMin,
     sslCtxInFlight: sslCtxBusyMax === -Infinity ? 0 : sslCtxBusyMax - sslCtxIdleMin,
     rssGrowth: rssEnd - rssStart,
   }),

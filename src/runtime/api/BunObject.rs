@@ -1362,10 +1362,10 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         }};
     }
 
-    // Monomorphized over (has_ssl_config, development), expanded here.
-    let has_ssl_config = config.ssl_config.is_some();
+    // Monomorphized over (development, tls), expanded here.
+    let tls = config.tls.is_on();
     let development = config.is_development();
-    match (development, has_ssl_config) {
+    match (development, tls) {
         (true, true) => serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer),
         (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
         (false, true) => serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer),

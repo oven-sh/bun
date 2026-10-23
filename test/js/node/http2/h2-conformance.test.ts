@@ -1297,14 +1297,15 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     let main!: http2.ServerHttp2Stream;
     using ctx = await rawRequest(stream => {
       main = stream;
-      stream.pushStream({ ":path": "/pushed", "bad header": "x" }, err => {
+      // A bad value is only found once the promised id is reserved.
+      stream.pushStream({ ":path": "/pushed", "x-bad": "a\nb" }, err => {
         stream.respond({ ":status": 200 });
         stream.write("m");
         pushFailed.resolve((err as NodeJS.ErrnoException | null)?.code);
       });
     });
     const { c } = ctx;
-    expect(await pushFailed.promise).toBe("ERR_INVALID_HTTP_TOKEN");
+    expect(await pushFailed.promise).toBe("ERR_HTTP2_INVALID_HEADER_VALUE");
     c.sendFrame(FrameType.RST_STREAM, 0, 2, Buffer.from([0, 0, 0, ErrorCode.CANCEL]));
     c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
     await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
@@ -2872,9 +2873,9 @@ describe("inbound stream lifecycle", () => {
     expect(exitCode).toBe(0);
   }, 30_000);
 
-  // emitErrorToAllStreams must reject a non-numeric error code up front (the native
-  // conversion requires a number) instead of reading it once per live stream. goaway()
-  // is stubbed because its own number check sits in front of this path in destroy().
+  // emitErrorToAllStreams must reject a non-numeric error code up front instead of reading it
+  // once per live stream. goaway() is stubbed because its own number check sits in front of
+  // this path in destroy().
   test("session teardown rejects a non-numeric error code instead of reading it per stream", async () => {
     const fixture = String.raw`
       const http2 = require("node:http2");
@@ -2914,7 +2915,7 @@ describe("inbound stream lifecycle", () => {
           });
           console.log("destroy:returned calls=" + calls);
         } catch (e) {
-          console.log("destroy threw: " + e.message);
+          console.log("destroy threw: " + e.code);
         }
         // A numeric code must still tear every open stream down. (null, not undefined: like node,
         // an undefined error takes the NGHTTP2_NO_ERROR default and the code argument is ignored.)
@@ -2930,7 +2931,7 @@ describe("inbound stream lifecycle", () => {
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "destroy threw: Expected errorCode to be a number
+      "destroy threw: ERR_INVALID_ARG_TYPE
       destroy:done
       req error boom
       req close rst=8"
@@ -3002,6 +3003,29 @@ describe("inbound stream lifecycle", () => {
       server.close();
     }
   });
+
+  test("counts the streams a client holds open against maxSessionMemory", async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", (stream: any) => stream.on("error", () => {}));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // Node 26 refuses the 1,329th.
+      const block = requestHeaderBlock("POST");
+      const requests: Buffer[] = [];
+      for (let id = 1; id < 3000; id += 2) requests.push(encodeFrame(FrameType.HEADERS, 0x4, id, block));
+      c.send(Buffer.concat(requests));
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM, 20_000);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(rst.streamId).toBeGreaterThan(2000);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }, 30_000);
 
   // grpc-js passes maxSessionMemory: Number.MAX_SAFE_INTEGER to disable the limit. node keeps the
   // option as a double, so any huge value means "no limit"; it must saturate, not wrap to the
@@ -4797,9 +4821,12 @@ describe("header blocks over maxSendHeaderBlockLength", () => {
     const server = http2.createServer();
     const paths: string[] = [];
     let inFlight!: http2.ServerHttp2Stream;
+    const trailers = Promise.withResolvers<http2.IncomingHttpHeaders>();
     server.on("stream", (stream, headers) => {
       paths.push(headers[":path"] as string);
       inFlight = stream;
+      stream.on("trailers", trailers.resolve);
+      stream.resume();
       stream.respond({ ":status": 200 });
     });
     const serverGoaway = Promise.withResolvers<number>();
@@ -4813,16 +4840,21 @@ describe("header blocks over maxSendHeaderBlockLength", () => {
       const events: unknown[][] = [];
       client.on("error", err => events.push(["session error", (err as NodeJS.ErrnoException).code]));
       const sessionClosed = closed(client);
-      const first = client.request({ ":path": "/in-flight" });
+      const first = client.request({ ":path": "/in-flight", ":method": "POST" }, { waitForTrailers: true });
+      first.on("wantTrailers", () => first.sendTrailers({ "x-refused": "field" }));
       first.on("error", err => events.push(["in-flight error", (err as NodeJS.ErrnoException).code]));
       const firstClosed = closed(first);
       await once(first, "response");
 
-      const over = client.request({ ":path": "/over", "x-big": OVER_LIMIT });
+      const over = client.request({ ":path": "/over", "x-refused": "field", "x-big": OVER_LIMIT });
       over.on("frameError", (type, code) => events.push(["frameError", type, code]));
       over.on("error", err => events.push(["error", (err as NodeJS.ErrnoException).code, err.message]));
       await closed(over);
       expect(await serverGoaway.promise).toBe(ErrorCode.NO_ERROR);
+
+      // The refused block left nothing in the HPACK table, or this field would refer to an entry the server never got.
+      first.end();
+      expect((await trailers.promise)["x-refused"]).toBe("field");
 
       inFlight.end("still delivered");
       const body = await first.setEncoding("utf8").toArray();
@@ -4955,17 +4987,18 @@ describe("RST_STREAM from close(code) and destroy() (RFC 9113 §6.4)", () => {
     }
   }
 
-  // The request is complete, so close(code) ends the stream and the reset behind it comes too late to change the code.
+  // The first close wins, as in Node: the reset behind close(code) comes too late to change the code.
   describe.each([
-    ["HEADERS", [encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"))]],
+    ["ends on HEADERS", [encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"))]],
     [
-      "DATA",
+      "ends on DATA",
       [
         encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
         encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("body")),
       ],
     ],
-  ])("server close(code) on a request that ends on %s", (_, request) => {
+    ["hasn't ended", [encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"))]],
+  ])("server close(code) on a request that %s", (_, request) => {
     test.each([ErrorCode.NO_ERROR, ErrorCode.CANCEL, ErrorCode.INTERNAL_ERROR])(
       "keeps its code when RST_STREAM(%d) arrives in the same read",
       async peerCode => {
@@ -4996,6 +5029,29 @@ describe("RST_STREAM from close(code) and destroy() (RFC 9113 §6.4)", () => {
         }
       },
     );
+
+    test("takes the client's CANCEL when nobody listens for 'error'", async () => {
+      const closed = Promise.withResolvers<number>();
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.on("close", () => closed.resolve(stream.rstCode));
+        stream.close(ErrorCode.REFUSED_STREAM);
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        const reset = Buffer.alloc(4);
+        reset.writeUInt32BE(ErrorCode.CANCEL);
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.send(Buffer.concat([...request, encodeFrame(FrameType.RST_STREAM, 0, 1, reset)]));
+        expect(await closed.promise).toBe(ErrorCode.CANCEL);
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    });
   });
 
   test.each(["GET", "POST"] as const)(

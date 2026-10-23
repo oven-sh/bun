@@ -2259,15 +2259,27 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
-  test("protocol:'http2' against an h1-only server fails with HTTP2Unsupported", async () => {
+  test("protocol:'http2' against a server that negotiates no protocol fails with HTTP2Unsupported", async () => {
+    let received = 0;
+    const server = nodetls.createServer({ ...tls }, socket => {
+      socket.on("error", () => {});
+      socket.on("data", data => (received += data.length));
+    });
+    await listenTcp(server, "https", async url => {
+      expect(await statusOrCode(fetch(url, h2))).toBe("HTTP2Unsupported");
+      // Pinned to h2, the request must not be downgraded and sent over h1.
+      expect(received).toBe(0);
+    });
+  });
+
+  test("protocol:'http2' against node:https, which refuses a handshake that offers h2 alone, fails", async () => {
     let requests = 0;
     const server = https.createServer({ ...tls }, (_req, res) => {
       requests++;
       res.end("h1");
     });
     await listenTcp(server, "https", async url => {
-      expect(await statusOrCode(fetch(url, h2))).toBe("HTTP2Unsupported");
-      // Pinned to h2, the request must not be downgraded and sent over h1.
+      expect(await statusOrCode(fetch(url, h2))).toBe("EPROTO");
       expect(requests).toBe(0);
     });
   });
@@ -2349,7 +2361,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("abort while coalesced onto an in-flight TLS connect resolves promptly", async () => {
     // Leader's TLS handshake never completes (server is plain TCP), so its
-    // PendingConnect stays open. The waiter has no abort-tracker entry and
+    // PendingConnect stays open. The waiter has no socket of its own and
     // would otherwise wait for the leader before observing the abort.
     let conns = 0;
     const { promise: accepted, resolve: onAccept } = Promise.withResolvers<net.Socket>();

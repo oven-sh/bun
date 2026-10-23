@@ -558,6 +558,17 @@ impl QuicStream {
         }
     }
 
+    /// Ends both directions of a stream whose HTTP/3 message is malformed (RFC 9114 §4.1.2).
+    fn reset_malformed(&self) {
+        const H3_MESSAGE_ERROR: u64 = 0x10e;
+        if let Some(s) = self.ls() {
+            // reset() ends the read side only if the peer has ended it, so STOP_SENDING stops the rest of the message.
+            s.reset(H3_MESSAGE_ERROR);
+            s.stop_sending(H3_MESSAGE_ERROR);
+        }
+        self.mark_reset(H3_MESSAGE_ERROR);
+    }
+
     fn mark_reset(&self, code: u64) {
         if self.destroyed.get() {
             return;
@@ -1242,10 +1253,6 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {
             let pairs = hset.pairs();
-            /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-            /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-            /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-            const H3_MESSAGE_ERROR: u64 = 0x10e;
             let has_status = pairs
                 .as_chunks::<2>()
                 .0
@@ -1257,14 +1264,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             // the request unanswered until the idle timeout.
             let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
             if peer_is_client && has_status.is_some() {
-                if let Some(s) = qs.ls() {
-                    // reset() only ends the read side when the peer already
-                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                    // request streaming a body into a stream nothing will answer.
-                    s.reset(H3_MESSAGE_ERROR);
-                    s.stop_sending(H3_MESSAGE_ERROR);
-                }
-                qs.mark_reset(H3_MESSAGE_ERROR);
+                qs.reset_malformed();
                 return false;
             }
             // 1xx interim responses are HINTS (RFC 9114 §4.1).
@@ -1286,9 +1286,6 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         }
         true
     };
-    if !claim_header_sets() {
-        return;
-    }
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
     }
@@ -1297,6 +1294,10 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;
     loop {
+        // Until a header block is claimed, a read fails and sets no errno.
+        if !claim_header_sets() {
+            break;
+        }
         let n = stream.read(buf);
         match n {
             n if n > 0 => {
@@ -1334,6 +1335,14 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                         });
                     }
                     got_any = true;
+                } else if bun_core::ffi::errno() == libc::EBADMSG
+                    && qs
+                        .session_ref()
+                        .and_then(|session| session.conn())
+                        .is_some_and(|conn| conn.status().0 != lsquic::LSCONN_ST_ERROR)
+                {
+                    // No frame error, which closes the connection: there's no header block where one belongs (RFC 9114 §4.1). lsquic calls on_read on every tick for this too.
+                    qs.reset_malformed();
                 }
                 break;
             }

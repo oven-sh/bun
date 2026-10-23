@@ -14,6 +14,7 @@
 #include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include "StringSizeLimit.h"
 #include "JavaScriptCore/ThrowScope.h"
 
 #include "JavaScriptCore/JSCast.h"
@@ -2348,7 +2349,7 @@ bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
     return headers;
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
@@ -2397,7 +2398,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
         }
     }
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     // `fill` doesn't set an exception on the VM if it fails, it returns an
     //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -2434,7 +2435,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* clone = new WebCore::FetchHeaders();
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
     return clone;
 }
@@ -2543,7 +2544,7 @@ typedef struct PicoHTTPHeaders {
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -2589,7 +2590,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     HTTPHeaderMap map = HTTPHeaderMap();
 
@@ -2615,7 +2616,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 {
     auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     HTTPHeaderMap map = HTTPHeaderMap();
     req->forEachHeader([&](std::string_view name, std::string_view val) {
@@ -2785,6 +2786,9 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     WTF::String message = WTF::emptyString();
     if (err.message.tag != BunStringTag::Empty) {
         message = err.message.toWTFString();
+        // As in BunString__toErrorInstance.
+        if (message.isNull() || Bun::exceedsStringLimit(message.length())) [[unlikely]]
+            message = "The error message exceeds the maximum string length"_s;
     }
 
     auto& names = WebCore::builtinNames(vm);
@@ -3103,16 +3107,30 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
         vm->heap.collectAsync();
 }
 
+static void collectAsyncWhileParked(JSC::VM*, JSC::GCRequest);
+
 // The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
 // optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
 void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+{
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.isIdle = true;
+    collectAsyncWhileParked(vm, request);
+}
+
+// For a finalizer that something outside the heap waits for. Full: the object may have survived an eden collection. One at a time is enough.
+void JSC__VM__collectAsyncForFinalizers(JSC::VM* vm)
+{
+    if (!WebCore::clientData(*vm)->idleCollectionsPending.load())
+        collectAsyncWhileParked(vm, JSC::CollectionScope::Full);
+}
+
+static void collectAsyncWhileParked(JSC::VM* vm, JSC::GCRequest request)
 {
     JSC::JSLockHolder lock(*vm);
     if (!JSC::Options::useGC())
         return;
     auto* clientData = WebCore::clientData(*vm);
-    JSC::GCRequest request(JSC::CollectionScope::Full);
-    request.isIdle = true;
     // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
     // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
     // request with this hook is never coalesced into another, so the count always comes back down.
@@ -4741,6 +4759,33 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
+// A mitigation, not an exact fix: zeroes a fixed amount of dead stack between the heap iteration and the collection in
+// JSC__VM__runGC. Zeroing dead stack cannot free anything live; the worst it can do is not help.
+//
+// What it is for: deleteAllUnlinkedCodeBlocks() stops the allocators to iterate the heap, and prologues under
+// MarkedBlock::Handle::stopAllocating() spill a register holding a free list's sentinel (the address of the first cell
+// allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
+// every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
+// Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
+// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
+//
+// The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
+// stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
+// few times that and nothing derives them from the collector's frames. If such a test fails again after the collector's
+// call path grows, measure again. The fix without a constant is to capture the stack before
+// deleteAllUnlinkedCodeBlocks() and have the collection use that capture as its conservative roots.
+static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
+{
+#if ASAN_ENABLED || ASSERT_ENABLED
+    constexpr size_t size = 16 * 1024;
+#else
+    constexpr size_t size = 2 * 1024;
+#endif
+    volatile char dead[size];
+    for (size_t i = 0; i < size; ++i)
+        dead[i] = 0;
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
@@ -4758,12 +4803,15 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+        // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
+        clearStackBelowCaller();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+        clearStackBelowCaller();
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 

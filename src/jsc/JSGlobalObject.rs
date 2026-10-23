@@ -1124,8 +1124,15 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
-        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
+    /// `blob()` of a body that is a stream. `content_type` is its owner's, or undefined.
+    pub fn readable_stream_to_body_blob(
+        &self,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToBodyBlob(self, value, content_type)
+        })
     }
 
     pub fn readable_stream_to_form_data(
@@ -1478,8 +1485,11 @@ unsafe extern "C" {
         value: JSValue,
         content_type: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
-    -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToBodyBlob(
+        this: &JSGlobalObject,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JSValue;
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 

@@ -560,14 +560,15 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     };
   }
 
-  // Close-delimited, and the origin never closes: for the client this body does not end.
-  async function serveBomb(enc: Enc, secure: boolean) {
+  // Close-delimited. Unless `closes`, the origin never closes: for the client this body does not end.
+  async function serveBomb(enc: Enc, secure: boolean, closes = false) {
     const bomb = bombFor(enc);
     const handler = (s: import("node:net").Socket) => {
       s.on("error", () => {});
       s.once("data", () => {
         s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nConnection: close\r\n\r\n`);
-        s.write(bomb);
+        if (closes) s.end(bomb);
+        else s.write(bomb);
       });
     };
     const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
@@ -670,6 +671,27 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     await using proxy = await serveConnectProxy();
     const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
     expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+  });
+
+  // The end of the body reaches the client while the reader is paused, since a tunnelled socket keeps reading.
+  test("gzip through a CONNECT proxy, and the origin closes: a reader that takes a little holds a little", async () => {
+    await using server = await serveBomb("gzip", true, true);
+    await using proxy = await serveConnectProxy();
+    const opts = { proxy: proxy.url, tls: { ca: tls.cert } };
+    expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+  });
+
+  // The whole body fits the stream's flow-control window, so it and END_STREAM arrive while the reader is paused.
+  test("gzip over HTTP/2: a reader that takes a little holds a little", async () => {
+    const server = createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200, "content-encoding": "gzip" });
+      stream.end(bombFor("gzip"));
+    });
+    await using origin = await listening(server);
+    const opts = { protocol: "http2", tls: { ca: tls.cert } };
+    expectBounded(await runClient(`https://127.0.0.1:${origin.port}/`, opts, READ_A_LITTLE));
   });
 
   // The whole body fits the stream's flow-control window, so it and its FIN arrive while the reader is paused.
@@ -896,10 +918,12 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
           : wire;
       const requested = Promise.withResolvers<import("node:net").Socket>();
       const closed = Promise.withResolvers<void>();
+      let connections = 0;
       const handler = (s: import("node:net").Socket) => {
+        connections++;
         s.on("error", () => {});
         s.on("close", () => closed.resolve());
-        s.once("data", () => {
+        s.on("data", () => {
           s.write(when === "with the head" ? Buffer.concat([Buffer.from(head), body]) : head);
           requested.resolve(s);
         });
@@ -909,6 +933,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         ...server,
         url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/`,
         closed: closed.promise,
+        connections: () => connections,
         sendBody: async () => {
           const socket = await requested.promise;
           await new Promise<void>(written => socket.write(body, () => written()));
@@ -1021,8 +1046,17 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(exitCode).toBe(0);
     });
 
-    // The socket of a held body is paused, so the client sees this close only once a consumer
-    // resumes it.
+    test.each(["content-length", "chunked"] as Framing[])("%s: a held body gives its connection back", async framing => {
+      await using server = await serveWhole(framing, "with the head");
+      const held = await fetch(server.url);
+      const next = await fetch(server.url);
+      expect({
+        next: md5(await next.bytes()),
+        held: md5(await held.bytes()),
+        connections: server.connections(),
+      }).toEqual({ next: digest, held: digest, connections: 1 });
+    });
+
     test.each(consumers)("%s takes a held body after the origin closed the connection", async (_, consume) => {
       await using server = await serveWhole("content-length", "with the head");
       const res = await fetch(server.url);
@@ -1030,9 +1064,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(await consume(res)).toBe(digest);
     });
 
-    // A tunnelled socket is never paused, so the close reaches the client while it still holds
-    // the body. `server.closed` settles once the client has closed its side, which is after it
-    // handled the end of the body. Only then does the consumer attach.
+    // `server.closed` settles once the client has closed its side. Only then does the consumer attach.
     test.each([
       ["res.bytes()", `[await res.bytes()]`],
       ["a streaming reader", `await Array.fromAsync(res.body)`],
@@ -1098,15 +1130,79 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
 
-    test("held, and its Response is collected: the fetch is aborted", async () => {
+    test("held, and its Response is collected: the request ends", async () => {
       await using server = await serveWhole("content-length", "with the head");
-      // Its own frame, so that nothing on this one still refers to the response afterwards.
-      async function abandon() {
-        expect((await fetch(server.url)).status).toBe(200);
-      }
-      await abandon();
-      await collectUntil(server.closed);
+      // With one request at a time, the second one starts when the held one has ended.
+      const script = /* js */ `
+        const url = ${JSON.stringify(server.url)};
+        // Its own frame, so that nothing on this one still refers to the response afterwards.
+        async function abandon() {
+          return (await fetch(url)).status;
+        }
+        const first = await abandon();
+        let second;
+        fetch(url).then(async res => (second = (await res.bytes()).length));
+        while (second === undefined) {
+          await new Promise(setImmediate);
+          Bun.gc(true);
+        }
+        console.log(first, second);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `200 ${SIZE}\n`, stderr: "" });
+      expect(exitCode).toBe(0);
     });
+  });
+});
+
+// A Response that was dropped with its body unread keeps its request slot until a collection
+// finds it. A program that only reads `res.status` allocates too little to cause one.
+// Not on Windows: there the collection advances at the idle timer's ticks, which this test turns off.
+describe.concurrent.skipIf(isWindows)("fetch() that waits for a request slot asks for a collection", () => {
+  const big = Buffer.alloc(1024 * 1024, "a");
+  const gzipped = gzipSync(Buffer.alloc(64 * 1024 * 1024));
+  test.each<[string, Buffer[]]>([
+    ["larger than the receive buffer", [Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]],
+    [
+      "compressed, and held undecoded",
+      [Buffer.from(`Content-Encoding: gzip\r\nContent-Length: ${gzipped.length}\r\n\r\n`), gzipped],
+    ],
+    ["cut off by an origin that went quiet", [Buffer.from("Content-Length: 100000\r\n\r\nonly this much")]],
+  ])("the dropped bodies are %s", async (_, response) => {
+    const origin = createTcpServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write(Buffer.concat([Buffer.from("HTTP/1.1 200 OK\r\n"), ...response])));
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    const script = /* js */ `
+      let ok = 0;
+      for (let i = 0; i < 12; i++) {
+        const res = await fetch("http://127.0.0.1:${(origin.address() as import("node:net").AddressInfo).port}/");
+        if (res.status === 200) ok++;
+      }
+      console.log(ok);
+      process.exit(0);
+    `;
+    try {
+      // Without its idle timer the heap is never collected on its own, instead of every 30 seconds.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "4", BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "12\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    } finally {
+      origin.close();
+    }
   });
 });
 

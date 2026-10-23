@@ -5261,8 +5261,6 @@ pub mod perf {
         unsafe extern "C" {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,
@@ -5340,7 +5338,7 @@ pub mod perf {
 }
 
 // ── form_data ─────────────────────────────────────────────────────────────
-// `bun.FormData.{Encoding, AsyncFormData, getBoundary}`.
+// `bun.FormData.{Encoding, getBoundary}`.
 // The JSC-touching parts (`toJS`, the field map,
 // multipart parser) stay in `bun_runtime::webcore::form_data`; T0 owns only
 // the encoding-detection types so `Request`/`Response`/`Body` can name them
@@ -5432,22 +5430,6 @@ pub mod form_data {
             i += 1;
         }
         None
-    }
-
-    /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
-    /// Cleanup is `Drop` on the
-    /// `Box`/`Box<[u8]>` fields — no explicit impl needed.
-    #[derive(Debug)]
-    pub struct AsyncFormData {
-        pub encoding: Encoding,
-    }
-
-    impl AsyncFormData {
-        #[inline]
-        pub fn init(encoding: Encoding) -> Box<AsyncFormData> {
-            // With `Box<[u8]>`, boundary ownership has already transferred.
-            Box::new(AsyncFormData { encoding })
-        }
     }
 }
 /// `bun.FormData` — capitalized namespace alias.

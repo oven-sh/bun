@@ -7,17 +7,18 @@ use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult,
-    StringJsc as _,
+    BuiltinName, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
-use super::{FetchHeaders, ReadableStream, Request};
+use super::request::Pristine;
+use super::{FetchHeaders, ReadableStream};
 
 use super::blob::{Blob, BodyFacts};
+use super::fetch::request_init::HeadersInit;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -77,24 +78,27 @@ impl HeadersRef {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<Self>> {
-        let Some(orig) = FetchHeaders::cast_as_init(value) else {
-            return Self::create_from_js(global, value);
-        };
-        let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
-        if orig.is_empty() {
-            return Ok(None);
+        match HeadersInit::from_js(global, value)? {
+            Some(HeadersInit::Created(headers)) => Ok(Some(headers)),
+            Some(borrowed) => Self::clone_of(borrowed.get(), global),
+            None => Ok(None),
         }
-        // SAFETY: `clone_this` returns a +1 ref or null.
-        Ok(orig.clone_this(global)?.map(|p| unsafe { Self::adopt(p) }))
     }
 
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
-    #[inline]
-    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+    pub(crate) fn clone_of(
+        headers: &mut FetchHeaders,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
-        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
+        Ok(headers
             .clone_this(global)?
             .map(|p| unsafe { Self::adopt(p) }))
+    }
+
+    #[inline]
+    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+        Self::clone_of(bun_opaque::opaque_deref_mut(self.0.as_ptr()), global)
     }
 }
 
@@ -180,13 +184,6 @@ use crate::generated_bindgen::response::js_Response as js;
 #[inline]
 pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(|p| p.as_ptr())
-}
-
-pub(crate) fn is_body_decoded(response: &Response) -> bool {
-    response
-        .get_body_value()
-        .facts()
-        .contains(BodyFacts::DECODED)
 }
 
 /// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
@@ -299,21 +296,8 @@ impl BodyMixin for Response {
         Response::get_body_value(self)
     }
     #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.init.get().headers.as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
-    }
-    #[inline]
-    fn get_form_data_encoding(
-        &self,
-    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        Response::get_form_data_encoding(self)
+    fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
+        Response::get_content_type(self)
     }
     #[inline]
     fn ensure_headers(&self, global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
@@ -422,7 +406,7 @@ impl Response {
 
     /// Settles what the body says about the headers. Call it before the body is taken to be sent.
     pub(crate) fn prepare_headers_for_send(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        if is_body_decoded(self) {
+        if self.get_body_value().facts().contains(BodyFacts::DECODED) {
             if let Some(headers) = self.get_init_headers_mut() {
                 headers.fast_remove(HTTPHeaderName::ContentEncoding);
             }
@@ -458,20 +442,6 @@ impl Response {
 }
 
 impl Response {
-    #[inline]
-    pub(crate) fn get_form_data_encoding(
-        &self,
-    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
-            return Ok(None);
-        };
-        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
-    }
-
     pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
             self.body.get().value.get().estimated_size()
@@ -549,10 +519,6 @@ impl Response {
 }
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code
@@ -626,17 +592,17 @@ impl Response {
         Ok(self.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
+    pub(crate) fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
+                return Some(value.to_utf8());
             }
         }
 
         let content_type = self.body.get().value.get().content_type().as_slice();
-        Ok((!content_type.is_empty()).then_some(Utf8Bytes::Borrowed(content_type)))
+        (!content_type.is_empty()).then_some(Utf8Bytes::Borrowed(content_type))
     }
 }
 
@@ -1214,21 +1180,12 @@ impl Init {
             return Ok(None);
         }
 
-        let js_type = response_init.js_type();
-
-        if !js_type.is_object() {
+        if !response_init.js_type().is_object() {
             return Ok(None);
         }
 
-        if js_type == JSType::DOMWrapper {
-            // fast path: it's a Request object or a Response object
-            // we can skip calling JS getters
-            if let Some(req) = response_init.as_direct::<Request>() {
-                // SAFETY: `as_direct` returned a live `*mut Request` owned by the
-                // JS wrapper cell; the wrapper is rooted by `response_init` for
-                // the duration of this call, so no GC can finalize it here.
-                // Everything touched is `&self`.
-                let req = unsafe { &*req };
+        match Pristine::of(response_init) {
+            Pristine::Request(req) => {
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
@@ -1236,13 +1193,8 @@ impl Init {
                 result.method = req.method.known().unwrap_or(Method::GET);
                 return Ok(Some(result));
             }
-
-            if let Some(resp) = response_init.as_direct::<Response>() {
-                // SAFETY: `as_direct` returned a live `*mut Response` owned by the
-                // JS wrapper cell; rooted by `response_init` for this call.
-                let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
-            }
+            Pristine::Response(resp) => return Ok(Some(resp.init.get().clone(global_this)?)),
+            Pristine::No => {}
         }
 
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {

@@ -54,7 +54,7 @@ pub mod flags {
     pub const END_STREAM: u8 = 0x01;
     pub const END_HEADERS: u8 = 0x04;
     pub const PADDED: u8 = 0x08;
-    pub const PRIORITY: u8 = 0x20;
+    pub(super) const PRIORITY: u8 = 0x20;
 }
 
 /// RFC 9113 §7. A newtype, so a code outside the registry survives the trip from the wire.
@@ -90,7 +90,7 @@ impl FrameHeader {
     pub fn new(frame_type: FrameType, flags: u8, stream_id: u32, length: usize) -> Self {
         debug_assert!(length <= 0xff_ffff);
         FrameHeader {
-            length: length as u32,
+            length: length.min(0xff_ffff) as u32,
             frame_type: frame_type as u8,
             flags,
             stream_id,
@@ -102,7 +102,7 @@ impl FrameHeader {
             length: u32::from_be_bytes([0, raw[0], raw[1], raw[2]]),
             frame_type: raw[3],
             flags: raw[4],
-            stream_id: read_u31(&[raw[5], raw[6], raw[7], raw[8]]),
+            stream_id: read_u31([raw[5], raw[6], raw[7], raw[8]]),
         }
     }
 
@@ -129,8 +129,8 @@ fn read_u32(payload: &[u8], at: usize) -> u32 {
 }
 
 #[inline]
-fn read_u31(raw: &[u8; 4]) -> u32 {
-    u32::from_be_bytes(*raw) & MAX_STREAM_ID
+fn read_u31(raw: [u8; 4]) -> u32 {
+    u32::from_be_bytes(raw) & MAX_STREAM_ID
 }
 
 /// A frame its receiver has to answer with GOAWAY or RST_STREAM.
@@ -197,7 +197,7 @@ pub fn unpadded_range(
         return Ok(0..length);
     }
     match pad_length {
-        Some(pad) if 1 + pad as usize <= length => Ok(1..length - pad as usize),
+        Some(pad) if (pad as usize) < length => Ok(1..length - pad as usize),
         _ => Err(FrameError::connection(
             ErrorCode::PROTOCOL_ERROR,
             "padding exceeds the frame payload",
@@ -337,7 +337,7 @@ impl<'a> Frame<'a> {
                     ));
                 };
                 Frame::PushPromise {
-                    promised_id: read_u31(id),
+                    promised_id: read_u31(*id),
                     fragment,
                     end_headers,
                 }

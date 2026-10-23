@@ -505,7 +505,7 @@ An option given on the request takes precedence over the session's, `proxy: fals
 
 The constructor throws for a `proxy` or a `tls.checkServerIdentity` that it cannot use, such as `proxy: 8080`, a `proxy` object without a `url`, or a `checkServerIdentity` that is not a function. For `proxy`, only `undefined`, `null` and `""` mean no option. On a request, `fetch` ignores such a `proxy` (`true` throws), and the request keeps the proxy of its session or of the environment.
 
-A connection that has been idle for `idleTimeout` seconds (rounded up to a whole second) is never reused. A server's `Keep-Alive: timeout=N` header can only shorten that. The socket timer that closes the connection is coarser. It moves in 4 second steps up to four minutes and in whole minutes beyond that, so the connection can stay open for up to two steps longer. If you don't set `idleTimeout`, only that timer enforces the 5 minute default. The longest `idleTimeout` is 238 minutes. A larger value means 238 minutes.
+A connection that has been idle for `idleTimeout` seconds (rounded up to a whole second) is never reused. A server's `Keep-Alive: timeout=N` header can only shorten that. Bun checks socket timers every 4 seconds, so the connection itself can stay open up to 4 seconds longer. If you don't set `idleTimeout`, only that timer enforces the 5 minute default.
 
 Without `maxIdleSockets` a session has no limit of its own. The idle connections of all sessions and of plain `fetch` share one bounded pool per kind. When that pool is full, Bun closes the longest-idle connection in it, whichever session it belongs to. A `maxIdleSockets` above the size of the pool has no effect.
 

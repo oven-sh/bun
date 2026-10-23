@@ -88,7 +88,7 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
         });
 
       const { host } = server.url;
-      return Response.redirect(`://${host}/redirect`);
+      return Response.redirect(`//${host}/redirect`);
     },
   });
 

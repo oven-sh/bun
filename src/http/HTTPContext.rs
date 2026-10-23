@@ -341,7 +341,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // A request never outlives its socket's tag with the socket still recorded.
         if let Some(client) = tagged.client_mut() {
-            client.transport = http::Transport::None;
+            client.carrier = http::Carrier::None;
         }
 
         Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(dead_socket()));
@@ -692,7 +692,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         bun_core::scoped_log!(HTTPContext, "close socket");
         if let Some(t) = tunnel {
             ProxyTunnel::shutdown(t.as_non_null());
-            crate::proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
         }
         Self::close_socket(socket);
     }
@@ -1019,7 +1018,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .cast::<HTTPClient<'static>>(),
             )
             .ptr(),
-            false, // dont allow half-open sockets
         )
         .inspect_err(|_| client.record_socket_open_errno())?;
         client.allow_retry = false;
@@ -1075,7 +1073,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                         // client outlives the pending connect (resolved before
                         // its terminal callback fires).
                         pc.waiters.push(client.as_erased_ptr());
-                        client.transport = http::Transport::H2Connect;
+                        client.carrier = http::Carrier::H2Connect;
                         return Ok(None);
                     }
                 }
@@ -1152,7 +1150,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // become no-ops for the CONNECT/handshake phases.
                     // `adopt` moves the pool's strong ref into
                     // `client.proxy_tunnel`.
-                    crate::proxy_tunnel::ProxyTunnel::adopt::<SSL>(tunnel, client, sock);
+                    crate::proxy_tunnel::ProxyTunnel::adopt(tunnel, client);
                     client.on_open::<SSL>(sock)?;
                     client.on_writable::<true, SSL>(sock);
                 } else {
@@ -1182,7 +1180,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .cast::<HTTPClient<'static>>(),
             )
             .ptr(),
-            false,
         )
         .inspect_err(|_| client.record_socket_open_errno())?;
         client.allow_retry = false;
@@ -1450,7 +1447,7 @@ impl<const SSL: bool> Handler<SSL> {
         HTTPContext::<SSL>::mark_socket_as_dead(socket);
 
         if let Some(client) = tagged.client_mut() {
-            return client.on_close::<SSL>(socket);
+            return client.on_close();
         }
         if let Some(session) = tagged.session() {
             return h2::ClientSession::on_close(session, crate::Error::ConnectionClosed);
@@ -1489,7 +1486,7 @@ impl<const SSL: bool> Handler<SSL> {
     pub fn on_data(ptr: *mut c_void, socket: HTTPSocket<SSL>, buf: &[u8]) {
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = tagged.client_mut() {
-            return client.on_data::<SSL>(buf, client.get_ssl_ctx::<SSL>(), socket);
+            return client.on_data::<SSL>(buf, socket);
         } else if let Some(session) = tagged.session() {
             return h2::ClientSession::on_data(session, buf);
         } else if let Some(pooled) = tagged.pooled_mut() {
@@ -1597,7 +1594,7 @@ impl<const SSL: bool> Handler<SSL> {
             } else {
                 socket.close(uws::CloseKind::Normal);
             }
-            client.on_close::<SSL>(socket);
+            client.on_close();
             return;
         }
         if let Some(session) = tagged.session() {

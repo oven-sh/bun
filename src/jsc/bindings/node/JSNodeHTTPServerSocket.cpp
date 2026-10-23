@@ -5,38 +5,40 @@
 #include "DOMIsoSubspaces.h"
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
-#include "JSSocketAddressDTO.h"
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <wtf/Scope.h>
 #include <wtf/text/WTFString.h>
 #include <bun-uws/src/App.h>
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
-extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
+extern "C" size_t Bun__NodeHTTPResponse_bytesWritten(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_updateParked(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
-extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
-extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
+extern "C" void* Bun__NodeHTTPSocket__create(const void* handlers, us_socket_t* socket, bool ssl, bool rejectUnauthorized);
+extern "C" void Bun__NodeHTTPSocket__onOpen(void* handle, bool ssl);
+extern "C" void Bun__NodeHTTPSocket__onHandshake(void* handle, int success, us_bun_verify_error_t verifyError);
+extern "C" void Bun__NodeHTTPSocket__onData(void* handle, bool ssl, const char* data, size_t length);
+extern "C" void Bun__NodeHTTPSocket__onEnd(void* handle, bool ssl);
+extern "C" void Bun__NodeHTTPSocket__onWritable(void* handle, bool ssl);
+extern "C" void Bun__NodeHTTPSocket__forgetConnection(void* handle, bool ssl);
+extern "C" void Bun__NodeHTTPSocket__forgetWebSocket(void* handle, bool ssl, bool sentEverything);
+extern "C" void Bun__NodeHTTPSocket__onClose(void* handle, bool ssl, int readError, bool runScript);
+extern "C" void Bun__NodeHTTPSocket__leaveHttp(void* handle, bool ssl, us_socket_t* socket, const char* unsent, size_t unsentLength, bool readsPaused, uint64_t bytesRead);
+extern "C" Zig::GlobalObject* Bun__NodeHTTPSocket__globalObject(void* handle, bool ssl);
 
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
 
-// Calls ondata / ondrain / onclose in the context of the Bun.ModuleGraph whose script set it, if one
-// did, and reports what it throws.
+// Calls onclose in the context of the Bun.ModuleGraph whose script set it, if one did, and reports what it throws.
 static void callStoredCallback(Zig::GlobalObject* globalObject, JSObject* callback, JSValue thisValue, const ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
@@ -58,7 +60,6 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structu
     }
     auto* object = new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl, response);
     object->finishCreation(vm);
-    object->syncPeerCertificateVerification();
     return object;
 }
 
@@ -66,18 +67,6 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, Zig::GlobalO
 {
     auto* structure = globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject);
     return create(vm, structure, socket, is_ssl, response);
-}
-
-template<bool SSL>
-void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
-{
-    if (upgraded) {
-        auto* webSocket = (uWS::WebSocketData*)us_socket_ext(socket);
-        webSocket->socketData = nullptr;
-    } else {
-        auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
-        httpResponseData->socketData = nullptr;
-    }
 }
 
 template<bool SSL>
@@ -97,7 +86,7 @@ static void flushPartialResponseBeforeClose(us_socket_t* socket)
 void JSNodeHTTPServerSocket::close()
 {
     if (socket) {
-        if (!upgraded && !us_socket_is_closed(socket) && !us_socket_is_shut_down(socket)) {
+        if (!us_socket_is_closed(socket) && !us_socket_is_shut_down(socket)) {
             if (is_ssl) {
                 flushPartialResponseBeforeClose<true>(socket);
             } else {
@@ -105,7 +94,7 @@ void JSNodeHTTPServerSocket::close()
             }
         }
         // uws is parsing this socket: it delivers the rest of the read, then closes (HTTP_NODE_CLOSE_AFTER_MESSAGE).
-        if (!upgraded && !us_socket_is_closed(socket)) {
+        if (!us_socket_is_closed(socket)) {
             bool deferred = is_ssl
                 ? reinterpret_cast<uWS::HttpResponse<true>*>(socket)->closeAfterMessageIfParsing()
                 : reinterpret_cast<uWS::HttpResponse<false>*>(socket)->closeAfterMessageIfParsing();
@@ -116,88 +105,6 @@ void JSNodeHTTPServerSocket::close()
         // Forceful: code 0 defers the fd close until a close_notify reply that a half-open peer never sends.
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
-}
-
-void JSNodeHTTPServerSocket::reset()
-{
-    if (socket) {
-        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
-    }
-}
-
-template<bool SSL>
-static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
-{
-    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
-    if (afterBody) {
-        /* The Upgrade request carries a body: keep parsing it as HTTP and only
-         * switch into tunnel mode once the message completes (Node 26 delivers
-         * the body through the request before raw data starts flowing). */
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
-        return;
-    }
-    httpResponseData->isConnectRequest = true;
-    /* resume() on a response does nothing in tunnel mode: lift what paused reads before it (req.pause(), flood prevention). */
-    auto* response = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket);
-    response->resumeReads(uWS::HttpResponseData<SSL>::READ_PAUSE_BODY);
-    response->endFloodPauseIfDrained();
-}
-
-void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, JSNodeHTTPResponse* response)
-{
-    /* Once a WebSocket adopts the connection, its ext block is no longer an HttpResponseData. */
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
-        return;
-    }
-    /* Like Node's http server connections (allowHalfOpen: true): the peer
-     * finishing its writable side ends the tunnel's readable side without
-     * tearing the connection down, so the server can still write and decides
-     * itself when to end the socket. */
-    socket->flags.allow_half_open = 1;
-    /* From here on the JS socket only carries tunnel bytes. */
-    setRawReads(false);
-    /* Reuse the CONNECT plumbing so the parser stops interpreting subsequent
-     * bytes as HTTP and routes them to the ondata callback as opaque data. */
-    if (is_ssl) {
-        upgradeToTunnelModeImpl<true>(socket, afterBody);
-    } else {
-        upgradeToTunnelModeImpl<false>(socket, afterBody);
-    }
-    /* The exchange leaves HTTP here: let the response release the server's
-     * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs). */
-    if (response != nullptr) {
-        Bun__NodeHTTPResponse_markTunneled(response->wrapped());
-    }
-}
-
-template<bool SSL>
-static bool isInTunnelMode(us_socket_t* socket)
-{
-    return reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->isConnectRequest;
-}
-
-static bool isTunnel(const JSNodeHTTPServerSocket* self)
-{
-    us_socket_t* socket = self->socket;
-    if (!socket || self->upgraded || us_socket_is_closed(socket)) {
-        return false;
-    }
-    return self->is_ssl ? isInTunnelMode<true>(socket) : isInTunnelMode<false>(socket);
-}
-
-template<bool SSL>
-static bool hasRawReadsFlag(us_socket_t* socket)
-{
-    return (reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->state & uWS::HttpResponseData<SSL>::HTTP_NODE_RAW_READS) != 0;
-}
-
-static bool hasRawReads(const JSNodeHTTPServerSocket* self)
-{
-    us_socket_t* socket = self->socket;
-    if (!socket || self->upgraded || us_socket_is_closed(socket)) {
-        return false;
-    }
-    return self->is_ssl ? hasRawReadsFlag<true>(socket) : hasRawReadsFlag<false>(socket);
 }
 
 template<bool SSL>
@@ -211,63 +118,54 @@ static void setSocketReadsPaused(us_socket_t* socket, bool paused)
     }
 }
 
-void JSNodeHTTPServerSocket::applyTunnelReads()
+template<bool SSL>
+static void setStateBit(us_socket_t* socket, uint32_t bit, bool value)
 {
-    if (!isTunnel(this) && !hasRawReads(this)) {
-        return;
-    }
-    if (is_ssl) {
-        setSocketReadsPaused<true>(socket, tunnelReadsPaused());
-    } else {
-        setSocketReadsPaused<false>(socket, tunnelReadsPaused());
-    }
-}
-
-void JSNodeHTTPServerSocket::readStop()
-{
-    // After the end of the stream no _read() comes to start the reads again.
-    if ((!isTunnel(this) && !hasRawReads(this)) || tunnelReadEnded) {
-        return;
-    }
-    tunnelReadsStopped = true;
-    applyTunnelReads();
-    updateTunnelIdle();
-}
-
-void JSNodeHTTPServerSocket::readStart()
-{
-    if (!isTunnel(this) && !hasRawReads(this)) {
-        return;
-    }
-    tunnelReadsStopped = false;
-    applyTunnelReads();
-    updateTunnelIdle();
+    auto& state = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->state;
+    state = value ? state | bit : state & ~bit;
 }
 
 void JSNodeHTTPServerSocket::setRawReads(bool enabled)
 {
-    /* Once a WebSocket adopts the connection, its ext block is no longer an HttpResponseData. */
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
+    if (!socket || us_socket_is_closed(socket)) {
         return;
     }
-    if (!enabled && hasRawReads(this)) {
-        // Without ondata, no _read() would call readStart() again.
-        readStart();
-    }
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->setFlag(uWS::HttpResponseData<true>::HTTP_NODE_RAW_READS, enabled);
+        setStateBit<true>(socket, uWS::HttpResponseData<true>::HTTP_NODE_RAW_READS, enabled);
     } else {
-        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->setFlag(uWS::HttpResponseData<false>::HTTP_NODE_RAW_READS, enabled);
+        setStateBit<false>(socket, uWS::HttpResponseData<false>::HTTP_NODE_RAW_READS, enabled);
     }
 }
 
-void JSNodeHTTPServerSocket::didDeliverQueuedTunnelBytes(size_t length)
+template<bool SSL>
+static void liftParserReadPauses(us_socket_t* socket)
 {
-    queuedTunnelBytes -= length;
-    if (tunnelReadsQueuedFull && queuedTunnelBytes == 0) {
-        tunnelReadsQueuedFull = false;
-        applyTunnelReads();
+    using Data = uWS::HttpResponseData<SSL>;
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resumeReads(Data::READ_PAUSE_BODY | Data::READ_PAUSE_PARKED | Data::READ_PAUSE_FLOOD);
+}
+
+void JSNodeHTTPServerSocket::leaveHttpAfterBody()
+{
+    if (isClosed()) {
+        return;
     }
+    // The body is the request's, not the socket's.
+    setRawReads(false);
+    if (is_ssl) {
+        setStateBit<true>(socket, uWS::HttpResponseData<true>::HTTP_NODE_LEAVE_AFTER_BODY, true);
+    } else {
+        setStateBit<false>(socket, uWS::HttpResponseData<false>::HTTP_NODE_LEAVE_AFTER_BODY, true);
+    }
+}
+
+void JSNodeHTTPServerSocket::detachParser()
+{
+    if (isClosed()) {
+        return;
+    }
+    stopHTTPParsing();
+    setRawReads(true);
+    is_ssl ? liftParserReadPauses<true>(socket) : liftParserReadPauses<false>(socket);
 }
 
 template<bool SSL>
@@ -352,8 +250,7 @@ static std::string& responseTrailersFor(us_socket_t* socket)
 
 void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
 {
-    /* Once a WebSocket adopts the connection, its ext block is no longer an HttpResponseData. */
-    if (!socket || upgraded || us_socket_is_closed(socket) || trailers.isEmpty()) {
+    if (!socket || us_socket_is_closed(socket) || trailers.isEmpty()) {
         return;
     }
     // Node writes trailers with encoding 'latin1' (lib/_http_outgoing.js);
@@ -373,9 +270,9 @@ void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
     /* internalEnd() decides the response framing from this base-struct mirror
      * so the shared path never touches the node-only string. */
     if (is_ssl) {
-        ((uWS::HttpResponseData<true>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<true>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
+        setStateBit<true>(socket, uWS::HttpResponseData<true>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
     } else {
-        ((uWS::HttpResponseData<false>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<false>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
+        setStateBit<false>(socket, uWS::HttpResponseData<false>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
     }
 }
 
@@ -385,86 +282,69 @@ bool JSNodeHTTPServerSocket::isClosed() const
 }
 
 template<bool SSL>
-static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySoon)
+static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
 {
-    /* The end() of a finished response whose request body is still being parsed: Node parses the whole read before destroySoon(). */
-    bool bodyStillParsing = destroySoon && reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    if (!bodyStillParsing && asyncSocket->getBufferedAmount() == 0) {
+    if (asyncSocket->getBufferedAmount() == 0) {
         /* No response bytes to wait for: the caller ends the write side. */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED;
         return false;
     }
-    /* uWS shuts down after the parse and the flush. HttpContext dispatches nothing behind a complete response that closes the connection. */
-    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-    if (destroySoon) {
-        /* And closes it there, even if the response never ends. */
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
-    } else {
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
-    }
+    /* uWS shuts down after the flush. HttpContext dispatches nothing behind a complete response that closes the connection. */
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
     return true;
 }
 
-bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
+bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
 {
-    if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
+    if (!socket || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
     flushResponseBytesAhead();
     if (is_ssl) {
-        return deferShutdownUntilResponseDrains<true>(socket, destroySoon);
+        return deferShutdownUntilResponseDrains<true>(socket);
     }
-    return deferShutdownUntilResponseDrains<false>(socket, destroySoon);
+    return deferShutdownUntilResponseDrains<false>(socket);
 }
 
-JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject)
+#ifdef LIBUS_USE_KQUEUE
+template<bool SSL>
+static bool socketReadsPaused(us_socket_t* socket)
 {
-    // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-    // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
-    // re-add), without which macOS 26 does not deliver the peer's close.
-    // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
-    const bool cycleReads = socket && !upgraded && !us_socket_is_closed(socket) && !tunnelReadsPaused();
+    return (reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->readPauseReasons & uWS::HttpResponseData<SSL>::READ_PAUSE_SOCKET) != 0;
+}
+#endif
+
+void JSNodeHTTPServerSocket::halfClose()
+{
+    if (isClosed()) {
+        return;
+    }
+#ifdef LIBUS_USE_KQUEUE
+    // A pause and a resume around the shutdown cycle EVFILT_READ, without which macOS 26 does not deliver the peer's close. For a socket that paused its reads, the resume that ends that pause does it.
+    const bool cycleReads = !(is_ssl ? socketReadsPaused<true>(socket) : socketReadsPaused<false>(socket));
     if (cycleReads) {
         is_ssl ? setSocketReadsPaused<true>(socket, true) : setSocketReadsPaused<false>(socket, true);
     }
-    auto result = us_socket_buffered_js_write(socket, is_ssl, ended, hasUnsentResponseBytes(), flushesStreamBufferOnDrain(), &streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-    // Undo the pause above after the shutdown so the unread body drains
-    // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
-    // SHUT_WR) is not deleted by a W -> R|W -> R step.
+#endif
+    us_socket_shutdown(socket);
+#ifdef LIBUS_USE_KQUEUE
+    // After the shutdown, so that a W -> R|W -> R step does not delete the one-shot EVFILT_WRITE, which delivers EV_EOF on SHUT_WR.
     if (cycleReads && !us_socket_is_closed(socket)) {
         is_ssl ? setSocketReadsPaused<true>(socket, false) : setSocketReadsPaused<false>(socket, false);
     }
-    return result;
+#endif
 }
 
-template<bool SSL>
-static void closeWhenDrainedImpl(us_socket_t* socket)
+bool JSNodeHTTPServerSocket::finSent() const
 {
-    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    /* uWS's close gates (below, or onWritable after the flush) close a connection marked like this. */
-    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-    /* A response that ended inside the read being parsed is still in the cork buffer. */
-    reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->uncork();
-    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->closeIfDoneAndMarked(httpResponseData);
-}
-
-void JSNodeHTTPServerSocket::closeWhenDrained()
-{
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
-        return;
-    }
-    if (is_ssl) {
-        closeWhenDrainedImpl<true>(socket);
-    } else {
-        closeWhenDrainedImpl<false>(socket);
-    }
+    return ended && !isClosed() && us_socket_is_shut_down(socket);
 }
 
 bool JSNodeHTTPServerSocket::closeIfIdle()
 {
-    if (upgraded || isClosed()) {
+    if (isClosed()) {
         return false;
     }
     if (is_ssl) {
@@ -478,9 +358,8 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
 {
     /* node:http compat connections always carry the derived ext block. */
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    if (httpResponseData->isConnectRequest) {
-        // CONNECT/Upgrade tunnels are detached from the HTTP request machinery,
-        // like Node freeing the parser for upgraded connections.
+    if (httpResponseData->isParserDetached()) {
+        // Like Node, which frees the parser of a connection that 'connect' or 'upgrade' got.
         return false;
     }
     if (httpResponseData->requestTimeoutReported) {
@@ -504,7 +383,7 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
 
 bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
+    if (!socket || us_socket_is_closed(socket)) {
         return false;
     }
     if (is_ssl) {
@@ -513,79 +392,13 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
     return isRequestTimedOutImpl<false>(socket, headersTimeoutMs, requestTimeoutMs);
 }
 
-bool JSNodeHTTPServerSocket::isAuthorized() const
-{
-    // is secure means that tls was established successfully
-    if (!is_ssl || upgraded || !socket)
-        return false;
-
-    // Check if the handshake callback has fired. If so, use the isAuthorized flag
-    // which reflects the actual certificate verification result.
-    if (us_socket_ssl_handshake_callback_has_fired(socket)) {
-        auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket));
-        if (!httpResponseData)
-            return false;
-        return httpResponseData->isAuthorized;
-    }
-
-    // The handshake callback hasn't fired yet, but we're in an HTTP handler,
-    // which means we received HTTP data. Check if the TLS handshake has actually
-    // completed using OpenSSL's state (SSL_is_init_finished).
-    //
-    // If the handshake is complete but the callback hasn't fired, we're in a race
-    // condition. The callback will fire shortly and either:
-    // 1. Set isAuthorized = true (success)
-    // 2. Close the socket (if rejectUnauthorized and verification failed)
-    //
-    // Since we're in an HTTP handler and the socket isn't closed, we can safely
-    // assume the handshake will succeed. If it fails, the socket will be closed
-    // and subsequent operations will fail appropriately.
-    return us_socket_is_ssl_handshake_finished(socket);
-}
-
-const char* JSNodeHTTPServerSocket::sniServername() const
-{
-    if (!is_ssl || !socket) {
-        return nullptr;
-    }
-    return us_socket_sni_servername(socket);
-}
-
-void JSNodeHTTPServerSocket::syncPeerCertificateVerification()
-{
-    if (!is_ssl || upgraded || !socket || !us_socket_ssl_handshake_callback_has_fired(socket))
-        return;
-    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket));
-    if (!httpResponseData)
-        return;
-    peer_cert_verified = httpResponseData->peerCertVerified;
-    peerCertVerifyErrorCode = httpResponseData->peerCertVerifyErrorCode;
-}
-
-bool JSNodeHTTPServerSocket::isPeerCertificateVerified()
-{
-    syncPeerCertificateVerification();
-    return peer_cert_verified;
-}
-
-const char* JSNodeHTTPServerSocket::peerCertificateVerificationError()
-{
-    if (!is_ssl)
-        return nullptr;
-    syncPeerCertificateVerification();
-    return peerCertVerifyErrorCode;
-}
-
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
 {
-    if (socket) {
-        if (is_ssl) {
-            clearSocketData<true>(this->upgraded, socket);
-        } else {
-            clearSocketData<false>(this->upgraded, socket);
-        }
+    if (socket && is_ssl) {
+        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->socketData = nullptr;
+    } else if (socket) {
+        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->socketData = nullptr;
     }
-    us_socket_free_stream_buffer(&streamBuffer);
 }
 
 JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response)
@@ -596,8 +409,59 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
 {
 }
 
+bool JSNodeHTTPServerSocket::onPeerEnded()
+{
+    if (!m_socketHandle) {
+        return false;
+    }
+    Bun__NodeHTTPSocket__onEnd(m_socketHandle, is_ssl);
+    return true;
+}
+
+bool JSNodeHTTPServerSocket::finishParsing()
+{
+    if (isClosed()) {
+        return false;
+    }
+    return is_ssl ? reinterpret_cast<uWS::HttpResponse<true>*>(socket)->finishParsing() : reinterpret_cast<uWS::HttpResponse<false>*>(socket)->finishParsing();
+}
+
+void JSNodeHTTPServerSocket::onUpgradeBodyEnded()
+{
+    if (!m_socketHandle) {
+        return;
+    }
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    EnsureStillAliveScope keepThis(this);
+    auto* callback = functionToCallOnClose.get();
+    auto* duplex = m_duplex.get();
+    MarkedArgumentBuffer args;
+    if (duplex) {
+        args.append(duplex);
+    }
+    if (!leaveHttp(false)) {
+        detachParser();
+        return;
+    }
+    if (!callback || !duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
+        return;
+    }
+    // onclose(socket): the connection is open, and it's the socket's from here on.
+    Bun__EventLoop__enter(globalObject);
+    callStoredCallback(globalObject, callback, this, args);
+    Bun__EventLoop__exit(globalObject);
+}
+
+void JSNodeHTTPServerSocket::closeSocketHandle(bool runScript)
+{
+    if (void* handle = std::exchange(m_socketHandle, nullptr)) {
+        Bun__NodeHTTPSocket__onClose(handle, is_ssl, closeReadError, runScript);
+    }
+}
+
 void JSNodeHTTPServerSocket::detach()
 {
+    closeSocketHandle(false);
     this->m_duplex.clear();
     this->m_currentResponse.clear();
     {
@@ -621,9 +485,9 @@ extern "C" void Bun__NodeHTTP__onRequestParked(int ssl, us_socket_t* socket)
         return;
     }
     if (ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(true);
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setParked(true);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(true);
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setParked(true);
     }
 }
 
@@ -648,7 +512,7 @@ extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket
 }
 
 template<bool SSL>
-static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose)
+static void startRawResponseImpl(us_socket_t* socket, bool connectionClose)
 {
     /* node:http compat connections always carry the derived ext block. */
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
@@ -662,20 +526,21 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     if (connectionClose) {
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
     }
-    if (isAncient) {
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST;
-    }
     httpResponseData->nodeHttpResponseTrailers.clear();
 
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
         httpResponseData->nodeHttpQueuedPipelinedCount--;
     }
-    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->endFloodPauseIfDrained();
+    auto* uwsResponse = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket);
+    uwsResponse->endFloodPauseIfDrained();
+    // JavaScript renders this response and writes it with socket.write(): the header section is over, and uWS has no byte of its own to send.
+    uwsResponse->setFraming(uWS::HttpResponseData<SSL>::HTTP_BODY_NONE);
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_WRITE_CALLED;
 }
 
-bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, JSNodeHTTPResponse* response, bool isAncient, bool connectionClose)
+bool JSNodeHTTPServerSocket::startRawResponse(JSC::VM& vm, JSNodeHTTPResponse* response, bool connectionClose)
 {
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
+    if (!socket || us_socket_is_closed(socket)) {
         return false;
     }
 
@@ -692,9 +557,9 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, JSNodeHTTPRespo
     // Before the state reset: the response in flight leaves its last bytes in the buffer and its handler slots empty.
     setCurrentResponse(vm, response);
     if (is_ssl) {
-        startPipelinedResponseImpl<true>(socket, isAncient, connectionClose);
+        startRawResponseImpl<true>(socket, connectionClose);
     } else {
-        startPipelinedResponseImpl<false>(socket, isAncient, connectionClose);
+        startRawResponseImpl<false>(socket, connectionClose);
     }
     Bun__NodeHTTPResponse_grantConnection(response->wrapped());
     return true;
@@ -702,7 +567,7 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, JSNodeHTTPRespo
 
 void JSNodeHTTPServerSocket::stopHTTPParsing()
 {
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
+    if (!socket || us_socket_is_closed(socket)) {
         return;
     }
     if (is_ssl) {
@@ -742,34 +607,12 @@ static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
     }
 }
 
-void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted, uint64_t bytesRead)
-{
-    socket = adopted;
-    upgraded = true;
-    m_bytesReadAtHandover = bytesRead;
-
-    // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
-    if (auto* res = currentResponse()) {
-        Bun__NodeHTTPResponse_takeBackConnection(res->wrapped(), JSValue::encode(res), true);
-    }
-    WTF::Vector<JSNodeHTTPResponse*, 2> pipelined;
-    {
-        Locker locker { m_pipelinedResponsesLock };
-        for (auto& entry : m_pipelinedResponses) {
-            if (auto* res = entry.get()) {
-                pipelined.append(res);
-            }
-        }
-    }
-    for (auto* res : pipelined) {
-        Bun__NodeHTTPResponse_takeBackConnection(res->wrapped(), JSValue::encode(res), true);
-    }
-}
-
 void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
 {
-    syncPeerCertificateVerification();
     this->socket = nullptr;
+    if (m_socketHandle) {
+        Bun__NodeHTTPSocket__forgetConnection(m_socketHandle, is_ssl);
+    }
     this->closeReadError = readError;
     this->peer_ended = peerEnded;
     if (auto* res = currentResponse()) {
@@ -821,6 +664,7 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
             if (!scope.exception()) {
                 callStoredCallback(globalObject, callbackObject, thisObject, args);
                 RETURN_IF_EXCEPTION(scope, );
+                thisObject->closeSocketHandle(true);
             } else if (!vm.hasPendingTerminationException()) {
                 auto* ptr = scope.exception();
                 scope.clearException();
@@ -834,7 +678,7 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
 
 void JSNodeHTTPServerSocket::flushResponseBytesAhead()
 {
-    if (upgraded || isClosed()) {
+    if (isClosed()) {
         return;
     }
     if (auto* res = currentResponse()) {
@@ -847,55 +691,20 @@ void JSNodeHTTPServerSocket::flushResponseBytesAhead()
     }
 }
 
-bool JSNodeHTTPServerSocket::hasUnsentResponseBytes() const
-{
-    if (upgraded || isClosed()) {
-        return false;
-    }
-    if (is_ssl) {
-        return reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->getBufferedAmount() > 0;
-    }
-    return reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->getBufferedAmount() > 0;
-}
-
 template<bool SSL>
-static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t length)
+static void unparkIfBytesAreUnsent(us_socket_t* socket)
 {
-    auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
-    if (length > 0) {
-        asyncSocket->write(data, length);
-    }
-    return asyncSocket->getBufferedAmount() > 0;
-}
-
-/* A raw socket.write() takes the path of a 1xx line (HttpResponse::writeRawInformational). Returns whether uWS still holds bytes. */
-extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* socket, bool is_ssl, const char* data, size_t length)
-{
-    return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
-}
-
-template<bool SSL>
-static void updateTunnelIdleImpl(us_socket_t* socket, bool sent, bool readEnded, bool readsStopped)
-{
-    sent = sent && reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained();
-    const bool canRead = !readEnded && isInTunnelMode<SSL>(socket);
-    /* Only a tunnel becomes idle here. A parked request's connection gets no drain call, so a raw write that leaves bytes only ends its idle state. */
-    if (readEnded || canRead || !sent) {
-        reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->setNodeHttpTunnelIdle(sent && (readEnded || readsStopped), canRead);
+    if (!reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
+        reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->setParked(false);
     }
 }
 
-void JSNodeHTTPServerSocket::updateTunnelIdle()
+void JSNodeHTTPServerSocket::updateParked()
 {
-    if (upgraded || isClosed()) {
+    if (isClosed()) {
         return;
     }
-    const bool sent = streamBuffer.bufferedSize() == 0;
-    if (is_ssl) {
-        updateTunnelIdleImpl<true>(socket, sent, tunnelReadEnded, tunnelReadsStopped);
-    } else {
-        updateTunnelIdleImpl<false>(socket, sent, tunnelReadEnded, tunnelReadsStopped);
-    }
+    is_ssl ? unparkIfBytesAreUnsent<true>(socket) : unparkIfBytesAreUnsent<false>(socket);
     if (auto* res = currentResponse()) {
         Bun__NodeHTTPResponse_updateParked(res->wrapped());
     }
@@ -903,139 +712,16 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
 
 void JSNodeHTTPServerSocket::onDrain()
 {
-    // This function can be called during GC!
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
-    if (!functionToCallOnDrain) {
-        return;
-    }
-
-    // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
-    if (this->streamBuffer.bufferedSize() == 0 && !heldWriteAwaitsDrain) {
-        updateTunnelIdle();
-        return;
-    }
-    // uWS calls this with its own buffer empty, so the write it held has left.
-    heldWriteAwaitsDrain = false;
-    if (this->streamBuffer.bufferedSize() > 0) {
-        auto* globalObject = defaultGlobalObject(this->globalObject());
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, this->hasUnsentResponseBytes(), this->flushesStreamBufferOnDrain(), &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-
-        if (this->streamBuffer.bufferedSize() > 0) {
-            // need to drain more
-            return;
-        }
-    }
-    updateTunnelIdle();
-    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
-
-    if (scriptExecutionContext) {
-        scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
-            auto* globalObject = defaultGlobalObject(context.globalObject());
-            auto* thisObject = self;
-            auto* callbackObject = thisObject->functionToCallOnDrain.get();
-            if (!callbackObject) {
-                return;
-            }
-            MarkedArgumentBuffer args;
-            EnsureStillAliveScope ensureStillAlive(self);
-
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running)
-                callStoredCallback(globalObject, callbackObject, thisObject, args);
-        });
+    if (m_socketHandle) {
+        Bun__NodeHTTPSocket__onWritable(m_socketHandle, is_ssl);
     }
 }
 
-void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
-{
-    // This function can be called during GC!
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
-    if (last) {
-        tunnelReadEnded = true;
-    }
-    if (!functionToCallOnData) {
-        return;
-    }
-
-    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
-
-    if (scriptExecutionContext) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
-        auto chunk = JSC::JSValue(buffer);
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-        gcProtect(chunk);
-        // JS gets the chunk in a task, so its readStop() comes after the read loop: bound what the loop queues.
-        queuedTunnelBytes += length;
-        if (queuedTunnelBytes >= LIBUS_RECV_BUFFER_LENGTH && !tunnelReadsQueuedFull) {
-            tunnelReadsQueuedFull = true;
-            applyTunnelReads();
-        }
-        scriptExecutionContext->postTask([self = this, chunk = chunk, last = last, length = static_cast<size_t>(length)](ScriptExecutionContext& context) {
-            auto* globalObject = defaultGlobalObject(context.globalObject());
-            auto* thisObject = self;
-            auto* callbackObject = thisObject->functionToCallOnData.get();
-            EnsureStillAliveScope ensureChunkStillAlive(chunk);
-            gcUnprotect(chunk);
-            // After the callback: a readStop() from it keeps the reads paused, with no resume in between.
-            auto delivered = WTF::makeScopeExit([&] {
-                thisObject->didDeliverQueuedTunnelBytes(length);
-                if (last) {
-                    thisObject->updateTunnelIdle();
-                }
-            });
-            if (!callbackObject) {
-                return;
-            }
-
-            MarkedArgumentBuffer args;
-            args.append(chunk);
-            args.append(JSC::jsBoolean(last));
-            EnsureStillAliveScope ensureStillAlive(self);
-
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running)
-                callStoredCallback(globalObject, callbackObject, thisObject, args);
-        });
-    }
-}
-
-// Synchronous, unlike onData(). In a task, a 'data' listener added by this read's 'upgrade' or 'connect' listener would also get the request head.
 void JSNodeHTTPServerSocket::onRawRead(const char* data, int length)
 {
-    auto* callbackObject = functionToCallOnData.get();
-    if (!callbackObject) {
-        return;
+    if (m_socketHandle) {
+        Bun__NodeHTTPSocket__onData(m_socketHandle, is_ssl, data, length);
     }
-    auto* globalObject = defaultGlobalObject(this->globalObject());
-    if (globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
-        return;
-    }
-    EnsureStillAliveScope ensureStillAlive(this);
-    MarkedArgumentBuffer args;
-    {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        args.append(WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length)));
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-    }
-    Bun__EventLoop__enter(globalObject);
-    callStoredCallback(globalObject, callbackObject, this, args);
-    Bun__EventLoop__exit(globalObject);
 }
 
 JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -1059,10 +745,6 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(fn->m_currentResponse);
     visitor.append(fn->functionToCallOnClose);
-    visitor.append(fn->functionToCallOnDrain);
-    visitor.append(fn->functionToCallOnData);
-    visitor.append(fn->m_remoteAddress);
-    visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);
     {
         Locker locker { fn->m_pipelinedResponsesLock };
@@ -1107,6 +789,178 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
 }
 
+void JSNodeHTTPServerSocket::onHandshake(int success, us_bun_verify_error_t verifyError)
+{
+    if (m_socketHandle) {
+        Bun__NodeHTTPSocket__onHandshake(m_socketHandle, success, verifyError);
+    }
+}
+
+extern "C" uint64_t Bun__NodeHTTPServerSocket__bytesRead(us_socket_t* socket, bool ssl)
+{
+    if (ssl) {
+        return reinterpret_cast<uWS::HttpResponseData<true, true>*>(us_socket_ext(socket))->bytesRead;
+    }
+    return reinterpret_cast<uWS::HttpResponseData<false, true>*>(us_socket_ext(socket))->bytesRead;
+}
+
+template<bool SSL>
+static void handOverToSocketHandle(us_socket_t* socket, void* handle, bool restOfReadTaken)
+{
+    auto* contextData = uWS::HttpContext<SSL>::getSocketContextDataS(socket);
+    auto left = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->leaveHttp();
+    Bun__NodeHTTPSocket__leaveHttp(handle, SSL, socket, left.backpressure.data(), left.backpressure.length(), left.readsPaused, left.bytesRead);
+    contextData->socketLeft(socket, restOfReadTaken);
+}
+
+bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
+{
+    if (isClosed() || !m_socketHandle) {
+        return false;
+    }
+    flushResponseBytesAhead();
+    if (us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
+        return false;
+    }
+    if (auto* res = currentResponse()) {
+        Bun__NodeHTTPResponse_takeBackConnection(res->wrapped(), JSValue::encode(res));
+    }
+    // The responses queued behind the one that leaves never get the connection.
+    WTF::Vector<JSNodeHTTPResponse*, 2> queued;
+    {
+        Locker locker { m_pipelinedResponsesLock };
+        for (auto& entry : m_pipelinedResponses) {
+            if (auto* res = entry.get()) {
+                queued.append(res);
+            }
+        }
+    }
+    for (auto* res : queued) {
+        Bun__NodeHTTPResponse_takeBackConnection(res->wrapped(), JSValue::encode(res));
+    }
+    us_socket_t* leaving = std::exchange(socket, nullptr);
+    void* handle = std::exchange(m_socketHandle, nullptr);
+    if (is_ssl) {
+        handOverToSocketHandle<true>(leaving, handle, restOfReadTaken);
+    } else {
+        handOverToSocketHandle<false>(leaving, handle, restOfReadTaken);
+    }
+    detach();
+    return true;
+}
+
+// The WebSocket's close handler runs right behind this, and ws.ts has to hear it before the socket's 'close'.
+template<bool SSL>
+static void onAdoptedWebSocketClosed(void* handle, us_socket_t* socket, int, bool)
+{
+    Bun__NodeHTTPSocket__forgetWebSocket(handle, SSL, reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained() && !us_socket_ssl_spill_dropped(socket));
+    auto* globalObject = Bun__NodeHTTPSocket__globalObject(handle, SSL);
+    auto* context = globalObject->scriptExecutionContext();
+    if (!context || globalObject->isShuttingDown()) {
+        Bun__NodeHTTPSocket__onClose(handle, SSL, 0, false);
+        return;
+    }
+    context->postTask([handle](ScriptExecutionContext& context) {
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        Bun__NodeHTTPSocket__onClose(handle, SSL, 0, globalObject->scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running);
+    });
+}
+
+template<bool SSL>
+static us_socket_t* adoptIntoWebSocket(us_socket_t* socket, void* webSocketContext, void* userData, std::string_view handshake, const uWS::PerMessageDeflateParams* deflateParams, void* handle)
+{
+    return reinterpret_cast<uWS::WebSocketContext<SSL, true, void*>*>(webSocketContext)->adoptSocket(socket, sizeof(uWS::HttpResponseData<SSL, true>), std::move(userData), handshake, deflateParams != nullptr, deflateParams ? uWS::compressOptionsFor(*deflateParams) : uWS::CompressOptions::DISABLED, handle, onAdoptedWebSocketClosed<SSL>);
+}
+
+// `socket` left HTTP for `handle` (leaveHttp() above), so its block still has the size of a node:http connection's.
+extern "C" us_socket_t* Bun__NodeHTTPSocket__adoptIntoWebSocket(bool ssl, us_socket_t* socket, void* webSocketContext, void* userData, const char* handshake, size_t handshakeLength, const uWS::PerMessageDeflateParams* deflateParams, void* handle)
+{
+    std::string_view head(handshake, handshakeLength);
+    return ssl ? adoptIntoWebSocket<true>(socket, webSocketContext, userData, head, deflateParams, handle) : adoptIntoWebSocket<false>(socket, webSocketContext, userData, head, deflateParams, handle);
+}
+
+static JSNodeHTTPServerSocket* openServerSocket(us_socket_t* socket, bool ssl)
+{
+    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    return serverSocket && !serverSocket->isClosed() ? serverSocket : nullptr;
+}
+
+// The functions below are InternalSocket::UwsHttp in src/uws_sys/socket.rs: what req.socket._handle asks of a connection that uWS owns.
+extern "C" void Bun__NodeHTTPServerSocket__write(us_socket_t* socket, bool ssl, const char* data, size_t length)
+{
+    auto* serverSocket = openServerSocket(socket, ssl);
+    if (!serverSocket || serverSocket->ended) {
+        return;
+    }
+    serverSocket->flushResponseBytesAhead();
+    // The path of a 1xx line (HttpResponse::writeRawInformational): uWS buffers what the kernel doesn't take.
+    ssl ? (void)reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->write(data, length) : (void)reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->write(data, length);
+    serverSocket->updateParked();
+}
+
+extern "C" void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* socket, bool ssl)
+{
+    auto* serverSocket = openServerSocket(socket, ssl);
+    if (!serverSocket) {
+        return;
+    }
+    serverSocket->ended = true;
+    if (!serverSocket->shutdownAfterResponseDrains()) {
+        serverSocket->halfClose();
+    }
+}
+
+template<bool SSL>
+static bool closeBehindPendingShutdown(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) {
+        return false;
+    }
+    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
+    return true;
+}
+
+extern "C" void Bun__NodeHTTPServerSocket__close(us_socket_t* socket, bool ssl, int code)
+{
+    auto* serverSocket = openServerSocket(socket, ssl);
+    if (!serverSocket) {
+        return;
+    }
+    if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET) {
+        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        return;
+    }
+    // destroySoon(): the FIN still waits for queued bytes, so the close goes behind them too.
+    if (ssl ? closeBehindPendingShutdown<true>(socket) : closeBehindPendingShutdown<false>(socket)) {
+        return;
+    }
+    serverSocket->close();
+}
+
+extern "C" uint64_t Bun__NodeHTTPServerSocket__responseBytesWritten(us_socket_t* socket, bool ssl)
+{
+    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    auto* res = serverSocket ? serverSocket->currentResponse() : nullptr;
+    return res ? Bun__NodeHTTPResponse_bytesWritten(res->wrapped()) : 0;
+}
+
+extern "C" bool Bun__NodeHTTPServerSocket__hasUnsentBytes(us_socket_t* socket, bool ssl)
+{
+    return ssl ? !reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained() : !reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained();
+}
+
+extern "C" void Bun__NodeHTTPServerSocket__setReadsPaused(us_socket_t* socket, bool ssl, bool paused)
+{
+    auto* serverSocket = openServerSocket(socket, ssl);
+    if (!serverSocket) {
+        return;
+    }
+    ssl ? setSocketReadsPaused<true>(socket, paused) : setSocketReadsPaused<false>(socket, paused);
+    serverSocket->updateParked();
+}
+
 void JSNodeHTTPServerSocket::onReadParsed()
 {
     if (isClosed()) {
@@ -1129,28 +983,17 @@ static bool markHalfClosed(us_socket_t* socket)
 void JSNodeHTTPServerSocket::halfCloseAfterDrain()
 {
     const bool peerEnded = is_ssl ? markHalfClosed<true>(socket) : markHalfClosed<false>(socket);
-    halfClose(globalObject());
+    halfClose();
     // Both sides have ended, so no later event would close the socket.
     if (peerEnded && !isClosed()) {
         close();
     }
 }
 
-uint64_t JSNodeHTTPServerSocket::bytesRead() const
-{
-    if (upgraded || isClosed()) {
-        return m_bytesReadAtHandover;
-    }
-    if (is_ssl) {
-        return reinterpret_cast<uWS::HttpResponseData<true, true>*>(us_socket_ext(socket))->bytesRead;
-    }
-    return reinterpret_cast<uWS::HttpResponseData<false, true>*>(us_socket_ext(socket))->bytesRead;
-}
-
 // Returns the JSNodeHTTPServerSocket already attached to this raw socket, or
 // creates (and attaches) one. Used for connections that have not produced a
 // parsed request yet: the 'clientError' path and the connection-accept path.
-extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject, const void* socketHandlers)
 {
     auto& vm = globalObject->vm();
 
@@ -1187,6 +1030,11 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
     }
     if (socket) {
         socket->strongThis.set(vm, socket);
+        if (socketHandlers) {
+            socket->m_socketHandle = Bun__NodeHTTPSocket__create(socketHandlers, us_socket, isSSL, isSSL && us_socket_rejects_unauthorized(us_socket));
+            // node:net's accept path, which emits 'connection'. A listener can close the connection.
+            Bun__NodeHTTPSocket__onOpen(socket->m_socketHandle, isSSL);
+        }
         return JSValue::encode(socket);
     }
 

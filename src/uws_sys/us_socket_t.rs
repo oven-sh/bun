@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 
 use bun_core::Fd;
 
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
+use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx};
 
 bun_core::declare_scope!(uws, visible);
 
@@ -211,13 +211,6 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
-    /// Install a socket-level SNI resolver on an already-adopted server-side
-    /// TLS socket (there is no listen socket to hang it off). Must run before
-    /// the handshake is driven.
-    pub fn on_server_name(&mut self) {
-        c::us_socket_on_server_name(self);
-    }
-
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
     /// plain TCP. Consumers that want one or the other should call `ssl()` /
     /// `get_fd()` directly; this is the round-trip-to-JS form.
@@ -304,12 +297,6 @@ impl us_socket_t {
         c::us_socket_start_tls_handshake(self);
     }
 
-    /// Refuse a bad server chain during the handshake, before the client
-    /// certificate goes out. No-op on a server socket or after the handshake.
-    pub fn set_inline_reject(&mut self) {
-        c::us_socket_set_inline_reject(self);
-    }
-
     /// Drop the handshake flight that is held across the handshake callback.
     pub fn release_held_flight(&mut self) {
         c::us_socket_release_held_flight(self);
@@ -385,28 +372,6 @@ impl us_socket_t {
         rc
     }
 
-    pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
-        let rc = unsafe {
-            // SAFETY: both slices valid for their respective lengths
-            c::us_socket_write2(
-                self,
-                first.as_ptr(),
-                first.len(),
-                second.as_ptr(),
-                second.len(),
-            )
-        };
-        bun_core::scoped_log!(
-            uws,
-            "us_socket_write2({:p}, {}, {}) = {}",
-            self,
-            first.len(),
-            second.len(),
-            rc
-        );
-        rc
-    }
-
     /// Vectored raw write — all chunks reach the fd in one writev (sequential
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
@@ -466,10 +431,6 @@ impl us_socket_t {
         }
     }
 
-    pub(crate) fn get_verify_error(&self) -> us_bun_verify_error_t {
-        c::us_socket_verify_error(self)
-    }
-
     pub(crate) fn get_error(&self) -> i32 {
         c::us_socket_get_error(self)
     }
@@ -478,8 +439,16 @@ impl us_socket_t {
         c::us_socket_is_established(self) > 0
     }
 
-    pub(crate) fn ssl_send_rejected(&self) -> bool {
-        c::us_socket_ssl_send_rejected(self) > 0
+    pub(crate) fn reject_send(&mut self, error: i32) {
+        c::us_internal_socket_reject_send(self, error);
+    }
+
+    pub(crate) fn rejected_send_error(&self) -> i32 {
+        c::us_socket_rejected_send_error(self)
+    }
+
+    pub(crate) fn ssl_spill_pending(&self) -> bool {
+        c::us_socket_ssl_spill_pending(self) > 0
     }
 
     pub(crate) fn queued_input(&self) -> QueuedInput {
@@ -529,7 +498,6 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -549,13 +517,6 @@ mod c {
             data: *const u8,
             length: i32,
             fd: i32,
-        ) -> i32;
-        pub(super) fn us_socket_write2(
-            s: *mut us_socket_t,
-            header: *const u8,
-            len: usize,
-            payload: *const u8,
-            len2: usize,
         ) -> i32;
         pub(super) fn us_socket_raw_writev(
             s: *mut us_socket_t,
@@ -592,11 +553,12 @@ mod c {
             size: c_int,
             out: &mut c_int,
         ) -> c_int;
-        pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
-        pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_internal_socket_reject_send(s: &mut us_socket_t, error: c_int);
+        pub(super) safe fn us_socket_rejected_send_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_ssl_spill_pending(s: &us_socket_t) -> c_uint;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
@@ -618,83 +580,7 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
-        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }
-
-#[repr(C)]
-pub struct us_socket_stream_buffer_t {
-    pub(crate) list_ptr: *mut u8,
-    pub(crate) list_cap: usize,
-    pub(crate) list_len: usize,
-    pub(crate) total_bytes_written: usize,
-    pub(crate) cursor: usize,
-}
-
-/// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.
-/// The higher-tier `bun_io::StreamBuffer` is field-identical and converts via
-/// `From`/`Into` (added in the move-in pass).
-pub struct StreamBuffer {
-    pub list: Vec<u8>,
-    pub cursor: usize,
-}
-
-impl us_socket_stream_buffer_t {
-    pub fn update(&mut self, stream_buffer: StreamBuffer) {
-        // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
-        // the C side can read ptr/len/cap directly.
-        let mut list = core::mem::ManuallyDrop::new(stream_buffer.list);
-        if list.capacity() > 0 {
-            self.list_ptr = list.as_mut_ptr();
-        } else {
-            self.list_ptr = ptr::null_mut();
-        }
-        self.list_len = list.len();
-        self.list_cap = list.capacity();
-        self.cursor = stream_buffer.cursor;
-    }
-
-    pub fn wrote(&mut self, written: usize) {
-        self.total_bytes_written = self.total_bytes_written.saturating_add(written);
-    }
-
-    pub fn to_stream_buffer(&self) -> StreamBuffer {
-        StreamBuffer {
-            list: if !self.list_ptr.is_null() {
-                unsafe {
-                    // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
-                    // Vec<u8> in `update`; global allocator (mimalloc) matches.
-                    Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap)
-                }
-            } else {
-                Vec::new()
-            },
-            cursor: self.cursor,
-        }
-    }
-
-    /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
-    /// exported `us_socket_free_stream_buffer`, so no `Drop` impl.
-    ///
-    /// SAFETY: `list_ptr`/`list_cap` were produced by `update` (decomposed
-    /// `Vec<u8>` on the global mimalloc allocator). Not called more than once.
-    pub(crate) unsafe fn destroy(&mut self) {
-        if !self.list_ptr.is_null() {
-            unsafe {
-                // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(self.list_ptr, 0, self.list_cap));
-            }
-            self.list_ptr = core::ptr::null_mut();
-            self.list_cap = 0;
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
-    // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { (*buffer).destroy() };
-}
-// us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs

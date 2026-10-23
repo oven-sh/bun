@@ -111,7 +111,6 @@ unsafe extern "C" {
         peer_ctx: *mut c_void,
         ecn: c_int,
     ) -> c_int;
-    pub fn lsquic_engine_set_idle_timeout_ms(engine: *mut lsquic_engine, ms: c_uint);
 
     pub fn lsquic_conn_get_ctx(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
@@ -140,7 +139,7 @@ unsafe extern "C" {
         reason: *const c_char,
     );
     pub fn lsquic_conn_get_info(c: *mut lsquic_conn, info: *mut ConnInfo) -> c_int;
-    pub fn us_nq_conn_transport_params(
+    pub fn lsquic_conn_transport_params(
         c: *const lsquic_conn,
         peer: c_int,
         out: *mut NqTransportParams,
@@ -168,7 +167,7 @@ unsafe extern "C" {
         vt: *mut NqVtable,
         settings: *const lsquic_engine_settings,
     ) -> *mut lsquic_engine;
-    pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
+    pub fn lsquic_stream_force_reset_ext(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
     pub fn us_nq_hset_free(hset: *mut c_void);
     pub fn us_nq_stream_send_headers(
@@ -218,12 +217,11 @@ unsafe extern "C" {
         blob: *const u8,
         len: usize,
     );
-    fn us_nq_settings_set_scid_len(s: *mut lsquic_engine_settings, v: c_uint);
     fn us_nq_settings_set_silent_close(s: *mut lsquic_engine_settings, v: c_int);
     fn us_nq_settings_set_cc_algo(s: *mut lsquic_engine_settings, v: c_uint);
-    fn us_nq_settings_set_delay_onclose(s: *mut lsquic_engine_settings, v: c_int);
 }
 
+#[derive(PartialEq, Eq)]
 pub struct Settings {
     bytes: Vec<u8>,
 }
@@ -330,10 +328,8 @@ settings_setters! {
     max_h3_header_pairs => us_nq_settings_set_max_h3_header_pairs : u16,
     max_h3_header_bytes => us_nq_settings_set_max_h3_header_bytes : c_uint,
     allow_migration => us_nq_settings_set_allow_migration : c_int,
-    scid_len => us_nq_settings_set_scid_len : c_uint,
     silent_close => us_nq_settings_set_silent_close : c_int,
     cc_algo => us_nq_settings_set_cc_algo : c_uint,
-    delay_onclose => us_nq_settings_set_delay_onclose : c_int,
 }
 
 /// `conn` must be a live `lsquic_conn_t`.
@@ -449,13 +445,6 @@ impl Conn {
     pub fn pings_received(&self) -> u64 {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_pings_received(self.0) }
-    }
-    pub fn set_ping_period_us(&self, usec: u64) {
-        unsafe extern "C" {
-            fn lsquic_conn_set_ping_period_us(c: *mut lsquic_conn, usec: u64);
-        }
-        // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_set_ping_period_us(self.0, usec) }
     }
     pub fn ack_now(&self) {
         unsafe extern "C" {
@@ -599,7 +588,7 @@ impl Stream {
     }
     pub fn reset(&self, code: u64) {
         // SAFETY: as above.
-        unsafe { us_nq_stream_reset(self.0, code) }
+        unsafe { lsquic_stream_force_reset_ext(self.0, code) }
     }
     pub fn error_code(&self) -> u64 {
         unsafe extern "C" {
@@ -820,7 +809,7 @@ impl Conn {
     pub fn peer_transport_params(&self) -> Option<NqTransportParams> {
         let mut out = NqTransportParams::default();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
-        if unsafe { us_nq_conn_transport_params(self.0, 1, core::ptr::from_mut(&mut out)) } == 1 {
+        if unsafe { lsquic_conn_transport_params(self.0, 1, core::ptr::from_mut(&mut out)) } == 1 {
             Some(out)
         } else {
             None

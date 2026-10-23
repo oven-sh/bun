@@ -49,7 +49,6 @@ function wrapCertificate(der) {
 
 // Stand-ins for the Node.js primordials used by the original source.
 const ArrayIsArray = Array.isArray;
-const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
@@ -144,37 +143,10 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
   return $ERR_QUIC_VERSION_NEGOTIATION_ERROR("The QUIC session requires version negotiation");
 }
 
-const kClientEngineKey = Symbol("kClientEngineKey");
-const kNoteClientEngineKey = Symbol("kNoteClientEngineKey");
-
-const kSocketAddressHandle = Symbol("kSocketAddressHandle");
-Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
-const kBlockListHandle = Symbol("kBlockListHandle");
-Object.defineProperty(BlockList.prototype, kBlockListHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
 function InternalSocketAddress(handle): void {
   return handle;
 }
 
-const kBlobHandle = Symbol("kBlobHandle");
-Object.defineProperty(Blob.prototype, kBlobHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
 function isBlob(value) {
   return value instanceof Blob;
 }
@@ -1288,10 +1260,9 @@ function invokeOnerror(fn, error) {
 
 function validateBody(body) {
   if (body === undefined) return body;
-  if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body)) {
+  if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body) || isBlob(body)) {
     return body;
   }
-  if (isBlob(body)) return body[kBlobHandle];
 
   if (typeof body === "string") {
     return Buffer.from(body, "utf8");
@@ -1583,7 +1554,6 @@ let isQuicStream;
 let isReceiveOnlyQuicStream;
 let isQuicSession;
 let isQuicEndpoint;
-let sendRawHeadersForTesting;
 
 // A reset is an abnormal end of the stream even if the stream or its session then closes cleanly.
 function streamResetError(stream) {
@@ -1758,13 +1728,6 @@ class QuicStream {
     getQuicStreamState = function (stream) {
       assertIsQuicStream(stream);
       return stream.#inner.state;
-    };
-
-    // For bun:internal-for-testing. Sends `[name, value, ...]` as one block and skips buildNgHeaderString's checks.
-    sendRawHeadersForTesting = function (stream, pairs: string[], kind: number, flags: number) {
-      let block = "";
-      for (let i = 0; i + 1 < pairs.length; i += 2) block += `${pairs[i]}\0${pairs[i + 1]}\0\0`;
-      return stream.#handle.sendHeaders(kind, [block, pairs.length >> 1], flags);
     };
   }
 
@@ -4384,7 +4347,6 @@ interface QuicEndpointInner {
   busy: boolean;
   isPendingClose: boolean;
   listening: boolean;
-  clientEngineKey: string | undefined;
   pendingClose: PendingPromise;
   pendingError: unknown;
   sessions: Set<QuicSession>;
@@ -4404,7 +4366,6 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
-    clientEngineKey: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
     sessions: new SafeSet(),
@@ -4479,10 +4440,8 @@ class QuicEndpoint {
       udpSendBufferSize,
       udpTTL,
       idleTimeout,
-      validateAddress,
       ipv6Only,
       reusePort,
-      cc,
       resetTokenSecret,
       tokenSecret,
     } = options;
@@ -4564,39 +4523,23 @@ class QuicEndpoint {
       }
     }
 
+    // The other options are checked like in Node, and have no effect.
     return {
       __proto__: null,
-      address: address?.[kSocketAddressHandle],
-      retryTokenExpiration,
-      tokenExpiration,
+      address,
       maxConnectionsPerHost,
       maxConnectionsTotal,
       disableStatelessReset,
-      addressLRUSize,
-      retryRate,
-      retryBurst,
       statelessResetRate,
       statelessResetBurst,
-      versionNegotiationRate,
-      versionNegotiationBurst,
-      immediateCloseRate,
-      immediateCloseBurst,
-      sessionCreationRate,
-      sessionCreationBurst,
-      blockList: blockList?.[kBlockListHandle],
+      blockList,
       blockListPolicy,
-      rxDiagnosticLoss,
-      txDiagnosticLoss,
       udpReceiveBufferSize,
       udpSendBufferSize,
       udpTTL,
       idleTimeout,
-      validateAddress,
       ipv6Only,
       reusePort,
-      cc,
-      resetTokenSecret,
-      tokenSecret,
     };
   }
 
@@ -4880,14 +4823,6 @@ class QuicEndpoint {
     return this.#inner.listening;
   }
 
-  get [kClientEngineKey]() {
-    return this.#inner.clientEngineKey;
-  }
-
-  [kNoteClientEngineKey](key) {
-    this.#inner.clientEngineKey ??= key;
-  }
-
   /** @type {boolean} */
   get destroyed() {
     assertIsQuicEndpoint(this);
@@ -5084,28 +5019,9 @@ class QuicEndpoint {
   }
 }
 
-/**
- * MUST match `alpn_cstr_is_http` in `src/runtime/node/quic/endpoint.rs`
- * (which cross-references this fn). `alpn` is the RAW, not-yet-validated
- * `options.alpn`: never throw here -- a non-string is treated as the HTTP/3
- * default and rejected with the proper error by `processTlsOptions` later.
- * @param {string|string[]|undefined} alpn
- */
-function alpnWantsHttp(alpn) {
-  const first = ArrayIsArray(alpn) ? alpn[0] : alpn;
-  return typeof first !== "string" || first === "h3" || StringPrototypeStartsWith(first, "h3-");
-}
-
-function findSuitableEndpoint(engineKey) {
+function findSuitableEndpoint() {
   for (const endpoint of endpointRegistry) {
-    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy) {
-      const key = endpoint[kClientEngineKey];
-      if (key !== undefined && key !== engineKey) {
-        continue;
-      }
-      if (endpoint.listening) {
-        continue;
-      }
+    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy && !endpoint.listening) {
       return endpoint;
     }
   }
@@ -5118,7 +5034,7 @@ function findSuitableEndpoint(engineKey) {
  * @param {boolean} forServer
  * @returns {QuicEndpoint}
  */
-function processEndpointOption(endpoint, reuseEndpoint, forServer, engineKey) {
+function processEndpointOption(endpoint, reuseEndpoint, forServer) {
   if (isQuicEndpoint(endpoint)) {
     return endpoint;
   }
@@ -5126,7 +5042,7 @@ function processEndpointOption(endpoint, reuseEndpoint, forServer, engineKey) {
     return new QuicEndpoint(endpoint);
   }
   if (reuseEndpoint && !forServer) {
-    const existing = findSuitableEndpoint(engineKey);
+    const existing = findSuitableEndpoint();
     if (existing !== undefined) return existing;
   }
   return new QuicEndpoint();
@@ -5426,13 +5342,8 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     qlog = false,
     sessionTicket,
     token,
-    maxPayloadSize,
-    unacknowledgedPacketThreshold = 0,
     handshakeTimeout,
-    initialRtt,
     keepAlive,
-    maxStreamWindow,
-    maxWindow,
     cc,
     datagramDropPolicy = "drop-oldest",
     drainingPeriodMultiplier = 3,
@@ -5554,17 +5465,7 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     enableDatagrams = true,
   } = application;
 
-  // Every option `build_engine` in endpoint.rs turns into a setting of the endpoint's one lsquic client engine.
-  const tp = transportParams;
-  const engineKey = forServer
-    ? undefined
-    : `${alpnWantsHttp(options.alpn)}|${handshakeTimeout}|${cc}` +
-      `|${tp.initialMaxStreamDataBidiLocal}|${tp.initialMaxStreamDataBidiRemote}|${tp.initialMaxStreamDataUni}` +
-      `|${tp.initialMaxData}|${tp.initialMaxStreamsBidi}|${tp.initialMaxStreamsUni}|${tp.maxIdleTimeout}` +
-      `|${tp.maxUdpPayloadSize}|${!!tp.disableActiveMigration}|${tp.maxDatagramFrameSize}` +
-      `|${maxHeaderPairs}|${maxHeaderLength}|${!!enableConnectProtocol}|${!!enableDatagrams}`;
-  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, engineKey);
-  actualEndpoint[kNoteClientEngineKey](engineKey);
+  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer);
 
   if (sessionTicket !== undefined) {
     if (!isArrayBufferView(sessionTicket)) {
@@ -5603,11 +5504,7 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     version,
     minVersion,
     preferredAddressPolicy: getPreferredAddressPolicy(preferredAddressPolicy),
-    transportParams: {
-      ...transportParams,
-      preferredAddressIpv4: preferredAddressIpv4?.[kSocketAddressHandle],
-      preferredAddressIpv6: preferredAddressIpv6?.[kSocketAddressHandle],
-    },
+    transportParams,
     tls: {
       ...processTlsOptions(options, forServer),
       verifyPeerStrict: verifyPeer === "strict",
@@ -5615,19 +5512,11 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     },
     verifyPeer,
     qlog,
-    maxPayloadSize,
-    unacknowledgedPacketThreshold,
     handshakeTimeout,
-    initialRtt,
     keepAlive,
-    maxStreamWindow,
-    maxWindow,
     sessionTicket,
-    token,
     cc,
     datagramDropPolicy,
-    drainingPeriodMultiplier,
-    maxDatagramSendAttempts,
     streamIdleTimeout,
     application: normalizedApplication,
     onerror,
@@ -5700,7 +5589,7 @@ async function connect(address, options: SessionOptions = kEmptyObject) {
     });
   }
 
-  const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
+  const session = endpoint[kConnect](address, rest);
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
     onEndpointClientSessionChannel.publish({
@@ -5758,5 +5647,4 @@ export default {
   getQuicStreamState,
   getQuicSessionState,
   getQuicEndpointState,
-  sendRawHeadersForTesting,
 };

@@ -2,6 +2,7 @@
 #define UWS_H3RESPONSE_H
 
 #include "quic.h"
+#include "Http3ContextData.h"
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
 #include "Utilities.h"
@@ -32,22 +33,32 @@ struct Http3Response {
     }
 
     Http3Response *writeHeader(std::string_view key, std::string_view value) {
-        if (isConnectionSpecificResponseField(key, value)) return this;
+        Http3ResponseData *d = getHttpResponseData();
+        switch (classifyResponseField(key, value)) {
+        case ResponseField::Other: break;
+        case ResponseField::Date: d->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER; break;
+        /* The body that is sent decides the length, and RFC 9114 §4.2 forbids the connection-specific fields. */
+        default: return this;
+        }
         writeStatus("200 OK");
-        appendHeader(getHttpResponseData(), key, value);
+        appendHeader(d, key, value);
         return this;
     }
 
+    /* As content-length it declares the length of the body. */
     Http3Response *writeHeader(std::string_view key, uint64_t value) {
+        Http3ResponseData *d = getHttpResponseData();
+        if (key.size() == 14 && asciiIEquals(key, "content-length")) d->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         char buf[utils::U64_MAX_DIGITS];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
-        return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
+        writeStatus("200 OK");
+        appendHeader(d, key, std::string_view{buf, (size_t)(r.ptr - buf)});
+        return this;
     }
 
     void writeMark() {
         Http3ResponseData *d = getHttpResponseData();
         if (d->state & Http3ResponseData::HTTP_WROTE_DATE_HEADER) return;
-        d->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
         LoopData *ld = (LoopData *) us_loop_ext(
             (us_loop_t *) us_quic_socket_context_loop(us_quic_stream_context((us_quic_stream_t *) this)));
         writeHeader("date", std::string_view{ld->date, 29});
@@ -95,21 +106,17 @@ struct Http3Response {
         return true;
     }
 
-    void end(std::string_view data = {}, bool closeConnection = false) {
-        internalEnd(data, data.length(), false, true, closeConnection);
+    void end(std::string_view data = {}, bool /*closeConnection*/ = false) {
+        internalEnd(data, data.length(), false);
     }
 
-    std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool closeConnection = false) {
-        bool ok = internalEnd(data, totalSize, true, true, closeConnection);
+    std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool /*closeConnection*/ = false) {
+        bool ok = internalEnd(data, totalSize, true);
         return {ok, ok || hasResponded()};
     }
 
-    void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool /*closeConnection*/ = false) {
+    void endWithoutBody() {
         Http3ResponseData *d = getHttpResponseData();
-        if (reportedContentLength.has_value() &&
-            !(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-            writeHeader("content-length", (uint64_t) *reportedContentLength);
-        }
         if (d->headersDeferred) {
             d->endAfterDrain = true;
         } else if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
@@ -120,6 +127,31 @@ struct Http3Response {
             sendBufferedHeaders(d, true);
         }
         markDone(d);
+    }
+
+    /* See HttpResponse. A refusal ends this stream and leaves the connection's other streams alone. */
+    bool acceptRequestBody() {
+        Http3ResponseData *d = getHttpResponseData();
+        if (d->state & Http3ResponseData::HTTP_REQUEST_BODY_TOO_LARGE) {
+            writeStatus("413");
+            endWithoutBody();
+            return false;
+        }
+        d->requestBodyBudget = ((Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context((us_quic_stream_t *) this)))->maxRequestBodySize;
+        return true;
+    }
+
+    void refuseRequestBody() {
+        Http3ResponseData *d = getHttpResponseData();
+        d->state |= Http3ResponseData::HTTP_REQUEST_BODY_TOO_LARGE;
+        d->inStream = nullptr;
+        if (auto onAborted = std::exchange(d->onAborted, nullptr)) onAborted(this, d->userData);
+        if (d->state & Http3ResponseData::HTTP_STATUS_CALLED) {
+            us_quic_stream_reset((us_quic_stream_t *) this, US_QUIC_H3_INTERNAL_ERROR);
+            return;
+        }
+        writeStatus("413");
+        endWithoutBody();
     }
 
     bool sendTerminatingChunk(bool /*closeConnection*/ = false) {
@@ -139,15 +171,12 @@ struct Http3Response {
         return !(getHttpResponseData()->state & Http3ResponseData::HTTP_RESPONSE_PENDING);
     }
 
-    uint64_t getWriteOffset() { return getHttpResponseData()->offset; }
-    void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
 
     Http3Response *pause() { us_quic_stream_hold_window((us_quic_stream_t *) this, 1); return this; }
     Http3Response *resume() { us_quic_stream_hold_window((us_quic_stream_t *) this, 0); return this; }
 
     Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
-    void *getSocketData() { return getHttpResponseData()->socketData; }
 
     Http3Response *onWritable(void *userData, Http3ResponseData::OnWritableCallback h) {
         Http3ResponseData *d = getHttpResponseData();
@@ -255,11 +284,10 @@ private:
 
     /* lsquic refuses once it has answered the peer's STOP_SENDING with RESET_STREAM. */
     void wantWrite() {
-        if (us_quic_stream_want_write((us_quic_stream_t *) this, 1) < 0) failStream();
+        if (us_quic_stream_want_write((us_quic_stream_t *) this) < 0) failStream();
     }
 
-    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,
-                     bool /*allowContentLength*/, bool /*closeConnection*/) {
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional) {
         Http3ResponseData *d = getHttpResponseData();
 
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {
@@ -267,7 +295,6 @@ private:
             writeMark();
             if (!(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER) && totalSize) {
                 writeHeader("content-length", totalSize);
-                d->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
             }
             if (data.empty() && d->offset == totalSize) {
                 sendBufferedHeaders(d, true);

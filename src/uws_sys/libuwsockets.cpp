@@ -117,17 +117,14 @@ extern "C"
     ((uWS::Loop *) loop)->flushPendingWrites();
   }
 
-  uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
+  uws_app_t *uws_create_app(struct ssl_ctx_st *ssl_ctx)
   {
-    uWS::SocketContextOptions socket_context_options;
-    memcpy(&socket_context_options, &options,
-           sizeof(uWS::SocketContextOptions));
-    if (ssl)
+    if (ssl_ctx)
     {
-      return (uws_app_t *)uWS::SSLApp::create(socket_context_options);
+      return (uws_app_t *)uWS::SSLApp::create(ssl_ctx);
     }
 
-    return (uws_app_t *)uWS::App::create(socket_context_options);
+    return (uws_app_t *)uWS::App::create(nullptr);
   }
 
   void uws_app_clear_routes(int ssl, uws_app_t *app)
@@ -437,20 +434,6 @@ extern "C"
     }
   }
 
-  void uws_app_run(int ssl, uws_app_t *app)
-  {
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->run();
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->run();
-    }
-  }
-
   void uws_app_close(int ssl, uws_app_t *app)
   {
     if (ssl)
@@ -529,13 +512,13 @@ extern "C"
     return ((uWS::App *)app)->listen_unix({domain, pathlen}, options, error);
   }
 
-  struct us_listen_socket_t *uws_app_listen_fd(int ssl, uws_app_t *app, LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int *error)
+  struct us_listen_socket_t *uws_app_listen_fd(int ssl, uws_app_t *app, LIBUS_SOCKET_DESCRIPTOR fd, int options, int *error)
   {
     if (ssl)
     {
-      return ((uWS::SSLApp *)app)->listen_fd(fd, backlog, options, error);
+      return ((uWS::SSLApp *)app)->listen_fd(fd, options, error);
     }
-    return ((uWS::App *)app)->listen_fd(fd, backlog, options, error);
+    return ((uWS::App *)app)->listen_fd(fd, options, error);
   }
 
   void uws_app_set_idle_timeout(int ssl, uws_app_t *app, uint8_t seconds) {
@@ -572,13 +555,13 @@ extern "C"
       uwsApp->setMaxHeadersCount(max_headers_count);
     }
   }
-  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open) {
+  void uws_app_set_flags(int ssl, uws_app_t *app, uint8_t lenient_http_flags, bool http_allow_half_open) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->setFlags(require_host_header, use_strict_method_validation, lenient_http_flags, http_allow_half_open);
+      uwsApp->setFlags(lenient_http_flags, http_allow_half_open);
     } else {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->setFlags(require_host_header, use_strict_method_validation, lenient_http_flags, http_allow_half_open);
+      uwsApp->setFlags(lenient_http_flags, http_allow_half_open);
     }
   }
 
@@ -623,26 +606,9 @@ extern "C"
                                              stringViewFromC(message, message_length),
                                              (uWS::OpCode)(unsigned char)opcode, compress);
   }
-  int uws_add_server_name_with_options(
-      int ssl, uws_app_t *app, const char *hostname_pattern,
-      struct us_bun_socket_context_options_t options,
-      int apply_client_cert_policy)
+  void uws_add_server_name(uws_app_t *app, const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, bool own_client_auth)
   {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(uWS::SocketContextOptions));
-    bool success = false;
-
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->addServerName(hostname_pattern, sco, &success, apply_client_cert_policy != 0);
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->addServerName(hostname_pattern, sco, &success, apply_client_cert_policy != 0);
-    }
-    return !success;
+    ((uWS::SSLApp *)app)->addServerName(hostname_pattern, ssl_ctx, own_client_auth);
   }
 
   void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,
@@ -840,19 +806,7 @@ extern "C"
     }
     return withSSL(ssl, [&](auto isSSL) {
       constexpr bool SSL = decltype(isSSL)::value;
-      return (((uWS::HttpResponse<SSL> *)res)->getHttpResponseData()->readPauseReasons & uWS::HttpResponseData<SSL>::READ_PAUSE_BODY) != 0;
-    });
-  }
-
-  void uws_res_pause_until_drained(int ssl, uws_res_r res)
-  {
-    if (us_socket_is_closed((struct us_socket_t *)res))
-    {
-      return;
-    }
-    withSSL(ssl, [&](auto isSSL) {
-      constexpr bool SSL = decltype(isSSL)::value;
-      ((uWS::HttpResponse<SSL> *)res)->pauseReads(uWS::HttpResponseData<SSL>::READ_PAUSE_FLOOD);
+      return (((uWS::HttpResponse<SSL> *)res)->getHttpResponseData()->readPauseReasons & (uWS::HttpResponseData<SSL>::READ_PAUSE_BODY | uWS::HttpResponseData<SSL>::READ_PAUSE_SOCKET)) != 0;
     });
   }
 
@@ -913,16 +867,6 @@ extern "C"
     }
   }
 
-  void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {
-    if (ssl) {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-    } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-    }
-  }
-
   void uws_res_mark_fixed_length_file_body(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -930,38 +874,6 @@ extern "C"
     } else {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_FIXED_LENGTH_FILE_BODY;
-    }
-  }
-
-  void uws_res_mark_wrote_date_header(int ssl, uws_res_r res) {
-    if (ssl) {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_DATE_HEADER;
-    } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_DATE_HEADER;
-    }
-  }
-
-  void uws_res_mark_wrote_connection_header(int ssl, uws_res_r res, bool close) {
-    if (ssl) {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_CONNECTION_HEADER;
-      if (close) uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
-    } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_CONNECTION_HEADER;
-      if (close) uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
-    }
-  }
-
-  void uws_res_write_mark(int ssl, uws_res_r res) {
-    if (ssl) {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->writeMark();
-    } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->writeMark();
     }
   }
 
@@ -1075,57 +987,29 @@ extern "C"
     }
   }
 
+  /* No close gate: callers keep using the response, so a corked one relies on cork()'s gate and the others call uws_res_close_if_done_and_marked. */
   void uws_res_end_without_body(int ssl, uws_res_r res, bool close_connection)
   {
-    if (ssl)
-    {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      auto *data = uwsRes->getHttpResponseData();
-      /* Once write()/flushHeaders() (HTTP_WRITE_CALLED) or an earlier end
-       * (HTTP_END_CALLED) terminated the header section, header bytes written
-       * here would land inside the body (a node:http listener that throws mid-response
-       * ends up here). Setting HTTP_CONNECTION_CLOSE is what makes the close
-       * gates tear the connection down; terminateHeaders() writes the header. */
-      bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
-      if (close_connection)
-      {
-        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
-      }
-      if (headers_open)
-      {
-        uwsRes->terminateHeaders();
-      }
-      data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone(uwsRes);
-      uwsRes->resetTimeout();
-      /* No close gate here: callers (FileResponseStream::finish,
-       * DevServer/HTMLBundle error paths) keep using the response after this
-       * returns, so closing inside this call would destruct the ext under
-       * them. Corked callers get the cork() wrapper's post-uncork gate;
-       * uncorked ones run uws_res_close_if_done_and_marked themselves once
-       * they are done with the response. */
-    }
-    else
-    {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      auto *data = uwsRes->getHttpResponseData();
-      /* See the SSL arm above. */
-      bool headers_open = !(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED));
-      if (close_connection)
-      {
-        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
-      }
-      if (headers_open)
-      {
-        // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
-        // If not, they may throw a ConnectionError.
-        uwsRes->terminateHeaders();
-      }
-      data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
-      data->markDone(uwsRes);
-      uwsRes->resetTimeout();
-      /* No close gate here; see the SSL arm above. */
-    }
+    withSSL(ssl, [&](auto isSSL) {
+      using Response = uWS::HttpResponse<decltype(isSSL)::value>;
+      ((Response *)res)->endWithoutBody(Response::NO_BODY, close_connection);
+    });
+  }
+
+  bool uws_res_accept_request_body(int ssl, uws_res_r res)
+  {
+    return withSSL(ssl, [&](auto isSSL) {
+      return ((uWS::HttpResponse<decltype(isSSL)::value> *)res)->acceptRequestBody();
+    });
+  }
+
+  /* The response to a HEAD whose GET would stream its body. */
+  void uws_res_end_head_of_stream(int ssl, uws_res_r res, bool close_connection)
+  {
+    withSSL(ssl, [&](auto isSSL) {
+      using Response = uWS::HttpResponse<decltype(isSSL)::value>;
+      ((Response *)res)->endWithoutBody(Response::UNKNOWN_LENGTH, close_connection);
+    });
   }
 
   /* uws_res_end_without_body(res, true) without its writes, which would complete a head that node:http's destroy() gave up on. */
@@ -1406,6 +1290,11 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return uwsReq->getHasTransferEncoding();
   }
 
+  uint64_t uws_req_get_content_length(uws_req_t *res)
+  {
+    return ((uWS::HttpRequest *)res)->getContentLength();
+  }
+
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,
                              const char *sec_web_socket_key,
                              size_t sec_web_socket_key_length,
@@ -1423,21 +1312,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
           stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
           stringViewFromC(sec_web_socket_extensions,
                           sec_web_socket_extensions_length),
-          (uWS::WebSocketContext<SSL, true, void *> *)ws);
-    });
-  }
-
-  us_socket_t *uws_res_upgrade_raw(int ssl, uws_res_r res, void *data,
-                                   const char *handshake, size_t handshake_length,
-                                   const uWS::PerMessageDeflateParams *deflate_params,
-                                   uws_socket_context_t *ws)
-  {
-    return withSSL(ssl, [&](auto isSSL) {
-      constexpr bool SSL = decltype(isSSL)::value;
-      return ((uWS::HttpResponse<SSL> *)res)->template upgradeRaw<void *>(
-          data ? std::move(data) : nullptr,
-          stringViewFromC(handshake, handshake_length),
-          deflate_params,
           (uWS::WebSocketContext<SSL, true, void *> *)ws);
     });
   }
@@ -1547,22 +1421,19 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
+  void uws_res_request_writable(uws_res_r res)
+  {
+    ((uWS::HttpResponse<false> *)res)->requestWritable();
+  }
+
   void uws_res_prepare_for_sendfile(int ssl, uws_res_r res)
   {
-    if (ssl)
-    {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->terminateHeaders();
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WRITE_CALLED;
+    withSSL(ssl, [&](auto isSSL) {
+      auto *uwsRes = (uWS::HttpResponse<decltype(isSSL)::value> *)res;
+      /* The caller declared the file's length. If sendfile(2) is refused, the rest of the body goes through write(). */
+      uwsRes->startBody();
       uwsRes->uncork();
-    }
-    else
-    {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->terminateHeaders();
-      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WRITE_CALLED;
-      uwsRes->uncork();
-    }
+    });
   }
 
   bool uws_res_try_end(int ssl, uws_res_r res, const char *bytes, size_t len,
@@ -1631,16 +1502,6 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  bool uws_res_is_connect_request(int ssl, uws_res_r res)
-  {
-    if (ssl) {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      return uwsRes->isConnectRequest();
-    } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      return uwsRes->isConnectRequest();
-    }
-  }
   void *uws_res_get_native_handle(int ssl, uws_res_r res)
   {
     if (ssl)
@@ -1677,26 +1538,7 @@ __attribute__((callback (corker, ctx)))
     //      AsyncSocket::addressAsText
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
-    auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
-
-    if (length == 0) return 0;
-    if (length == 4) {
-      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-      *dest = &b[4];
-      *is_ipv6 = false;
-      return strlen(*dest);
-    } else {
-      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-      *dest = &b[16];
-      *is_ipv6 = true;
-      return strlen(*dest);
-    }
-  }
-
-  uint64_t uws_res_get_local_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)
-  {
-    static thread_local char b[64];
-    auto length = us_get_local_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
+    auto length = us_get_remote_address_info(b, (us_socket_t *)res, port);
 
     if (length == 0) return 0;
     if (length == 4) {

@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use core::ffi::{c_char, c_int};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::ffi::{CStr, c_char, c_int};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -862,16 +862,27 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
-/// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
-/// when it builds the default certificate store.
-#[unsafe(no_mangle)]
-pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
+const CA_STORE_FLAGS: [&CStr; 3] = [c"--use-system-ca", c"--use-openssl-ca", c"--use-bundled-ca"];
 
-/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
-/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
+pub fn is_ca_store_flag(arg: &[u8]) -> bool {
+    CA_STORE_FLAGS.iter().any(|flag| flag.to_bytes() == arg)
+}
+
+/// Index into `CA_STORE_FLAGS`, or its length. `Relaxed` is enough: it is written while the arguments are parsed, before there is another thread.
+static PASSED_CA_STORE_FLAG: AtomicU8 = AtomicU8::new(CA_STORE_FLAGS.len() as u8);
+
+/// The one of `CA_STORE_FLAGS` that was passed, to pass on to a `bun` that this process spawns.
+pub fn ca_store_flag() -> Option<&'static ZStr> {
+    let index = PASSED_CA_STORE_FLAG.load(Ordering::Relaxed);
+    CA_STORE_FLAGS
+        .get(usize::from(index))
+        .copied()
+        .map(ZStr::from_cstr)
+}
+
+/// Handles `CA_STORE_FLAGS`. Exits with an error if more than one is passed.
 pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
-    let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
-    let passed = flags.map(has_flag);
+    let passed = CA_STORE_FLAGS.map(|flag| has_flag(flag.to_bytes()));
     let count = passed.iter().filter(|&&passed| passed).count();
     if count > 1 {
         crate::pretty_errorln!(
@@ -879,8 +890,42 @@ pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
         );
         exit(1);
     }
-    let from_env = count == 0 && crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
-    Bun__Node__UseSystemCA.store(passed[0] || from_env, Ordering::Relaxed);
+    let index = passed.iter().position(|&passed| passed);
+    PASSED_CA_STORE_FLAG.store(index.unwrap_or(passed.len()) as u8, Ordering::Relaxed);
+}
+
+/// The roots in the default certificate store, besides `NODE_EXTRA_CA_CERTS` and OpenSSL's default paths.
+#[repr(C)]
+struct DefaultCASources {
+    bundled: bool,
+    system: bool,
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__defaultCASources() -> DefaultCASources {
+    let (bundled, system) = match ca_store_flag().map(ZStr::as_bytes) {
+        Some(b"--use-system-ca") => (true, true),
+        // Node exits if `NODE_USE_SYSTEM_CA=1` comes with this flag. Here a `.env` file can set the variable for the processes that this one spawns, which get the flag too.
+        Some(b"--use-openssl-ca") => (false, false),
+        // Read when asked, not at startup: a compiled executable parses no flags.
+        _ => (
+            true,
+            crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false),
+        ),
+    };
+    DefaultCASources { bundled, system }
+}
+
+/// The `tls.getCACertificates()` types that make up `"default"`. OpenSSL's default paths have no type, as in Node.
+pub fn default_ca_certificate_types() -> impl Iterator<Item = &'static str> {
+    let sources = Bun__defaultCASources();
+    [
+        (sources.bundled, "bundled"),
+        (sources.system, "system"),
+        (true, "extra"),
+    ]
+    .into_iter()
+    .filter_map(|(used, name)| used.then_some(name))
 }
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are

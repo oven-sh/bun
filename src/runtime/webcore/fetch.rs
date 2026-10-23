@@ -36,6 +36,10 @@ pub(crate) mod compress_body;
 pub(crate) mod fetch_session;
 pub(crate) use self::fetch_session::FetchSession;
 
+#[path = "fetch/RequestInit.rs"]
+pub(crate) mod request_init;
+use self::request_init::{HeadersInit, InitSources, flag};
+
 /// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
 /// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
@@ -61,15 +65,11 @@ use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::webcore::blob::{BlobContentType, BlobExt as _};
-use crate::webcore::body::{
-    Action as BodyValueLockedAction, BodyMixin, InternalBlob, Value as BodyValue,
-};
+use crate::webcore::body::{BodyMixin, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
-use crate::webcore::{
-    AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
-};
+use crate::webcore::{Blob, Body, ObjectURLRegistry, ReadableStream, Request, Response};
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
@@ -86,10 +86,6 @@ use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
     FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
 };
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension shims (upstream methods not yet ported / not in scope)
-// ──────────────────────────────────────────────────────────────────────────
 
 /// The `unix` option when it is a non-empty string.
 fn parse_unix(
@@ -132,32 +128,6 @@ pub(crate) fn s3_credentials_from_env(
         env.session_token.clone(),
         env.insecure_http,
     )
-}
-
-/// `Blob.Any` accessor shim.
-trait AnyBlobExt {
-    fn blob(&self) -> &Blob;
-}
-impl AnyBlobExt for blob::Any {
-    fn blob(&self) -> &Blob {
-        match self {
-            blob::Any::Blob(b) => b,
-            _ => unreachable!("Blob.Any::blob() on non-Blob variant"),
-        }
-    }
-}
-
-/// `HTTPRequestBody` accessor shim missing from FetchTasklet.rs.
-trait HTTPRequestBodyExt {
-    fn any_blob(&self) -> &blob::Any;
-}
-impl HTTPRequestBodyExt for HTTPRequestBody {
-    fn any_blob(&self) -> &blob::Any {
-        match self {
-            HTTPRequestBody::AnyBlob(b) => b,
-            _ => unreachable!("HTTPRequestBody::any_blob() on non-AnyBlob"),
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -321,13 +291,13 @@ fn bun_fetch_preconnect(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
+    // A request to an origin the environment proxies never dials it.
     let vm = VirtualMachine::get();
-    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
+    if vm.env_loader().get_http_proxy_for(&url).is_some() {
         reclaim_href!();
         return Ok(JSValue::UNDEFINED);
     }
-    http::async_http::preconnect(url, true);
+    http::async_http::preconnect(url, true, crate::socket::http_client_defaults(vm));
     Ok(JSValue::UNDEFINED)
 }
 
@@ -358,16 +328,13 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe, None))
+    reject_on_exception(ctx, fetch_impl(ctx, callframe, None))
 }
 
 /// What `session.fetch` is bound from: `fetch()` with `this` as its session.
 #[bun_jsc::host_fn]
 pub(crate) fn session_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(
-        ctx,
-        fetch_impl::<false>(ctx, callframe, Some(callframe.this())),
-    )
+    reject_on_exception(ctx, fetch_impl(ctx, callframe, Some(callframe.this())))
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
@@ -433,7 +400,7 @@ fn reject_before_send(
 }
 
 /// Shared implementation of fetch
-fn fetch_impl<const ALLOW_GET_BODY: bool>(
+fn fetch_impl(
     ctx: &JSGlobalObject,
     callframe: &CallFrame,
     // `session.fetch()`: the session, which a `session` in the init does not replace.
@@ -453,7 +420,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let vm = VirtualMachine::get().as_mut();
 
     let mut upgraded_connection = false;
-    let mut forced_protocol: Option<http::Protocol> = None;
 
     if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
@@ -463,8 +429,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    let mut headers: Option<Headers> = None;
-
     // hoist the one `&mut vm` accessor before `args` takes an
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
@@ -473,12 +437,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let first_arg = args.next_eat().unwrap();
 
-    let mut disable_timeout = false;
     let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
-    let mut disable_keepalive = false;
-    let mut disable_decompression = false;
-    let mut compress: Option<compress_body::CompressOption> = None;
-    let mut max_redirects: Option<u8> = None;
     let mut verbose: http::HTTPVerboseLevel = if vm
         .log_ref()
         .is_some_and(|l| l.level.at_least(bun_ast::Level::Debug))
@@ -492,10 +451,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     let mut proxy: Option<ZigURL> = None;
-    let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
-    let signal: Option<AbortSignalRef>;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: Box<[u8]> = Box::default();
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -512,7 +468,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     let mut url_type = URLType::Remote;
 
-    let mut ssl_config: Option<http::ssl_config::SharedPtr> = None;
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
@@ -529,24 +484,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // kept as raw `*mut Request` because the body re-borrows it
-    // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> = 'brk: {
-        if first_arg.is_cell() {
-            if let Some(request_) = first_arg.as_direct::<Request>() {
-                break 'brk Some(request_);
-            }
-        }
-        break 'brk None;
+    let request: Option<&Request> = if first_arg.is_cell() {
+        // SAFETY: `first_arg`, which the call frame keeps alive, owns the Request.
+        first_arg.as_direct::<Request>().map(|p| unsafe { &*p })
+    } else {
+        None
     };
-    // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
-    macro_rules! request_mut {
-        () => {
-            // SAFETY: `request` was obtained from a live JS-owned Request via
-            // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &mut *p })
-        };
-    }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
@@ -573,7 +516,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.get().clone();
         }
@@ -630,163 +573,92 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // **Start with the harmless ones.**
 
-    // "method"
-    let mut method: OwnedMethod = 'extract_method: {
-        if let Some(options) = options_object {
-            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
-            }
-        }
-
-        if let Some(req) = request_mut!() {
-            break 'extract_method req.method.clone();
-        }
-
-        if let Some(req) = request_init_object {
-            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
-            }
-        }
-
-        Method::GET.into()
+    let sources = InitSources {
+        init: options_object,
+        request,
+        object: request_init_object,
     };
+
+    // "method"
+    let mut method: OwnedMethod = sources
+        .member(
+            |object| match object.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
+                Some(method) => method_jsc::request_method_from_js(global_this, method).map(Some),
+                None => Ok(None),
+            },
+            |req| Ok(Some(req.method.clone())),
+        )?
+        .unwrap_or_else(|| Method::GET.into());
 
     // "decompress: boolean"
-    disable_decompression = 'extract_disable_decompression: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(decompression_value) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionDecompress)?
-                {
-                    if decompression_value.is_boolean() {
-                        break 'extract_disable_decompression !decompression_value.as_boolean();
-                    } else if decompression_value.is_number() {
-                        break 'extract_disable_decompression decompression_value.to_int32() == 0;
-                    }
-                }
-            }
-        }
-
-        break 'extract_disable_decompression disable_decompression;
-    };
+    let disable_decompression = sources
+        .option(global_this, jsc::CommonString::FetchOptionDecompress, |v| {
+            Ok(flag(v))
+        })?
+        .is_some_and(|decompress| !decompress);
 
     // "compress: boolean | string | { encoding, level? }"
-    'extract_compress: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(compress_value) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionCompress)?
-                {
-                    if !compress_value.is_undefined() {
-                        compress = compress_body::from_js(global_this, compress_value)?;
-                        break 'extract_compress;
-                    }
-                }
-            }
-        }
-    }
+    let mut compress: Option<compress_body::CompressOption> = sources
+        .option(global_this, jsc::CommonString::FetchOptionCompress, |v| {
+            compress_body::from_js(global_this, v).map(Some)
+        })?
+        .flatten();
 
     // "maxRedirects: number"
-    'extract_max_redirects: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(value) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionMaxRedirects)?
-                {
-                    if !value.is_undefined_or_null() {
-                        if !value.is_number() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "fetch: 'maxRedirects' must be a non-negative integer"
-                            )));
-                        }
-                        let n = value.as_number();
-                        if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "fetch: 'maxRedirects' must be a non-negative integer"
-                            )));
-                        }
-                        max_redirects = Some(n.min(126.0) as u8);
-                        break 'extract_max_redirects;
-                    }
-                }
+    let max_redirects: Option<u8> = sources.option(
+        global_this,
+        jsc::CommonString::FetchOptionMaxRedirects,
+        |value| {
+            if value.is_null() {
+                return Ok(None);
             }
-        }
-    }
+            let n = if value.is_number() {
+                value.as_number()
+            } else {
+                f64::NAN
+            };
+            if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "fetch: 'maxRedirects' must be a non-negative integer"
+                )));
+            }
+            Ok(Some(n.min(126.0) as u8))
+        },
+    )?;
 
     // "session: Bun.FetchSession"
-    let session_hold: Option<fetch_session::SessionHold> = 'extract_session: {
-        if let Some(bound) = bound_session {
-            break 'extract_session Some(fetch_session::SessionHold::from_js(global_this, bound)?);
-        }
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(value) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionSession)?
-                {
-                    if !value.is_undefined_or_null() {
-                        break 'extract_session Some(fetch_session::SessionHold::from_js(
-                            global_this,
-                            value,
-                        )?);
-                    }
+    let session_hold: Option<fetch_session::SessionHold> = match bound_session {
+        Some(bound) => Some(fetch_session::SessionHold::from_js(global_this, bound)?),
+        None => sources.option(
+            global_this,
+            jsc::CommonString::FetchOptionSession,
+            |value| {
+                if value.is_null() {
+                    return Ok(None);
                 }
-            }
-        }
-        break 'extract_session None;
+                fetch_session::SessionHold::from_js(global_this, value).map(Some)
+            },
+        )?,
     };
     let session = session_hold.as_ref();
 
     // "tls: TLSConfig". A request's `tls` replaces its session's as a whole.
     let mut request_has_tls = false;
-    ssl_config = 'extract_ssl_config: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(tls) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionTls)?
-                {
-                    if tls.is_object() {
-                        request_has_tls = true;
-                        let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
-                        if let Some(reject) = parsed.reject_unauthorized {
-                            reject_unauthorized = reject;
-                        }
-                        if let Some(callback) = parsed.check_server_identity {
-                            check_server_identity = callback;
-                        }
-                        if parsed.ssl_config.is_some() {
-                            break 'extract_ssl_config parsed.ssl_config;
-                        }
-                    }
-                }
+    let mut ssl_config: Option<http::ssl_config::SharedPtr> =
+        sources.option(global_this, jsc::CommonString::FetchOptionTls, |tls| {
+            if !tls.is_object() {
+                return Ok(None);
             }
-        }
-
-        break 'extract_ssl_config ssl_config;
-    };
+            request_has_tls = true;
+            let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
+            if let Some(reject) = parsed.reject_unauthorized {
+                reject_unauthorized = reject;
+            }
+            if let Some(callback) = parsed.check_server_identity {
+                check_server_identity = callback;
+            }
+            Ok(parsed.ssl_config)
+        })?;
     // A per-request closure has no identity a pool key could compare.
     let bypass_pool = !check_server_identity.is_empty();
     // The session's callbacks stay on the session, which the request keeps alive.
@@ -801,208 +673,121 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // unix: string | undefined
-    unix_socket_path = 'extract_unix_socket_path: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(socket_path) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionUnix)?
-                {
-                    if let Some(path) = parse_unix(vm, global_this, socket_path)? {
-                        break 'extract_unix_socket_path path;
-                    }
-                    // Ignoring it would send the request to the URL's host over TCP.
-                    if !socket_path.is_string() && socket_path.to_boolean() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "fetch: 'unix' must be a string"
-                        )));
-                    }
+    let mut unix_socket_path: Box<[u8]> = sources
+        .option(
+            global_this,
+            jsc::CommonString::FetchOptionUnix,
+            |socket_path| {
+                let path = parse_unix(vm, global_this, socket_path)?;
+                // Ignoring it would send the request to the URL's host over TCP.
+                if path.is_none() && !socket_path.is_string() && socket_path.to_boolean() {
+                    return Err(global_this
+                        .throw_invalid_arguments(format_args!("fetch: 'unix' must be a string")));
                 }
-            }
-        }
-        break 'extract_unix_socket_path unix_socket_path;
-    };
+                Ok(path)
+            },
+        )?
+        .unwrap_or_default();
     let request_has_unix = !unix_socket_path.is_empty();
 
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
-    'extract_protocol: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(protocol_val) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionProtocol)?
-                {
-                    if protocol_val.is_string() {
-                        let str = protocol_val.to_js_string_view(global_this)?;
-                        if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
-                            forced_protocol = Some(http::Protocol::Http2);
-                        } else if str.eq_ascii(b"http3") || str.eq_ascii(b"h3") {
-                            forced_protocol = Some(http::Protocol::Http3);
-                        } else if str.eq_ascii(b"http1.1") || str.eq_ascii(b"h1") {
-                            forced_protocol = Some(http::Protocol::Http1_1);
-                        } else {
-                            return Err(global_this.throw_invalid_arguments(
-                                format_args!("fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\""),
-                            ));
-                        }
-                        break 'extract_protocol;
-                    }
-                }
+    let forced_protocol: Option<http::Protocol> = sources.option(
+        global_this,
+        jsc::CommonString::FetchOptionProtocol,
+        |protocol| {
+            if !protocol.is_string() {
+                return Ok(None);
             }
-        }
-    }
+            let str = protocol.to_js_string_view(global_this)?;
+            if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
+                Ok(Some(http::Protocol::Http2))
+            } else if str.eq_ascii(b"http3") || str.eq_ascii(b"h3") {
+                Ok(Some(http::Protocol::Http3))
+            } else if str.eq_ascii(b"http1.1") || str.eq_ascii(b"h1") {
+                Ok(Some(http::Protocol::Http1_1))
+            } else {
+                Err(global_this.throw_invalid_arguments(format_args!(
+                    "fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\""
+                )))
+            }
+        },
+    )?;
 
     // timeout: false | number | undefined
-    disable_timeout = 'extract_disable_timeout: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(timeout_value) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionTimeout)?
-                {
-                    if timeout_value.is_boolean() {
-                        break 'extract_disable_timeout !timeout_value.as_boolean();
-                    } else if timeout_value.is_number() {
-                        // A finite positive `timeout` (in ms) also governs the
-                        // socket idle deadline, overriding the global
-                        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
-                        let ms = timeout_value.as_number();
-                        if ms.is_finite() && ms > 0.0 {
-                            idle_timeout_seconds =
-                                Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
-                                    as core::ffi::c_uint);
-                        }
-                        // `to_int32()` saturates ±Infinity (JSC's
-                        // `coerceJSValueDoubleTruncatingT`, not spec ToInt32),
-                        // so gate on `is_finite()` too so `{timeout: Infinity}`
-                        // disables the timer instead of silently falling back
-                        // to the global default.
-                        break 'extract_disable_timeout !ms.is_finite()
-                            || timeout_value.to_int32() == 0;
-                    }
+    let disable_timeout = sources
+        .option(
+            global_this,
+            jsc::CommonString::FetchOptionTimeout,
+            |timeout| {
+                if !timeout.is_number() {
+                    return Ok(flag(timeout).map(|enabled| !enabled));
                 }
-            }
-        }
-
-        break 'extract_disable_timeout disable_timeout;
-    };
+                // A finite positive `timeout` (in ms) also governs the socket idle deadline, instead of `BUN_CONFIG_HTTP_IDLE_TIMEOUT`.
+                let ms = timeout.as_number();
+                if ms.is_finite() && ms > 0.0 {
+                    idle_timeout_seconds =
+                        Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                            as core::ffi::c_uint);
+                }
+                // `to_int32()` saturates ±Infinity, which has to disable the timer like 0 does.
+                Ok(Some(!ms.is_finite() || timeout.to_int32() == 0))
+            },
+        )?
+        .unwrap_or(false);
 
     // redirect: "follow" | "error" | "manual" | undefined;
-    redirect_type = 'extract_redirect_type: {
-        // First, try to use the Request object's redirect if available
-        if let Some(req) = request_mut!() {
-            redirect_type = req.flags.redirect;
-        }
-
-        // Then check options/init objects which can override the Request's redirect
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(redirect_value) =
-                    obj.get_optional_enum::<FetchRedirect>(global_this, "redirect")?
-                {
-                    break 'extract_redirect_type redirect_value;
-                }
-            }
-        }
-
-        break 'extract_redirect_type redirect_type;
-    };
+    let redirect_type: FetchRedirect = sources
+        .member(
+            |object| object.get_optional_enum::<FetchRedirect>(global_this, "redirect"),
+            |req| Ok(Some(req.flags.redirect)),
+        )?
+        .unwrap_or(FetchRedirect::Follow);
 
     // keepalive: boolean | undefined; the session's setting is the default.
-    if session.is_some_and(|c| !c.keep_alive()) {
-        disable_keepalive = true;
-    }
-    disable_keepalive = 'extract_disable_keepalive: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(keepalive_value) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionKeepalive)?
-                {
-                    if keepalive_value.is_boolean() {
-                        break 'extract_disable_keepalive !keepalive_value.as_boolean();
-                    } else if keepalive_value.is_number() {
-                        break 'extract_disable_keepalive keepalive_value.to_int32() == 0;
-                    }
-                }
-            }
-        }
-
-        break 'extract_disable_keepalive disable_keepalive;
-    };
+    let disable_keepalive = sources
+        .option(global_this, jsc::CommonString::FetchOptionKeepalive, |v| {
+            Ok(flag(v))
+        })?
+        .map_or(session.is_some_and(|c| !c.keep_alive()), |keepalive| {
+            !keepalive
+        });
 
     // verbose: boolean | "curl" | undefined;
-    verbose = 'extract_verbose: {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(verb) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionVerbose)?
-                {
-                    if verb.is_string() {
-                        if verb.to_js_string_view(global_this)?.eq_ascii(b"curl") {
-                            break 'extract_verbose http::HTTPVerboseLevel::Curl;
-                        }
-                    } else if verb.is_boolean() {
-                        break 'extract_verbose if verb.to_boolean() {
-                            http::HTTPVerboseLevel::Headers
-                        } else {
-                            http::HTTPVerboseLevel::None
-                        };
-                    }
-                }
-            }
-        }
-        break 'extract_verbose verbose;
-    };
+    if let Some(level) =
+        sources.option(global_this, jsc::CommonString::FetchOptionVerbose, |verb| {
+            Ok(if verb.is_string() {
+                verb.to_js_string_view(global_this)?
+                    .eq_ascii(b"curl")
+                    .then_some(http::HTTPVerboseLevel::Curl)
+            } else if verb.is_boolean() {
+                Some(if verb.to_boolean() {
+                    http::HTTPVerboseLevel::Headers
+                } else {
+                    http::HTTPVerboseLevel::None
+                })
+            } else {
+                None
+            })
+        })?
+    {
+        verbose = level;
+    }
 
     // proxy: string | URL | { url, headers?, respectNoProxy? } | false | undefined;
     let mut proxy_headers: Option<Headers> = None;
     let mut proxy_direct = false;
     let mut proxy_respects_no_proxy = true;
     {
-        let mut proxy_option: Option<fetch_session::ProxyOption> = None;
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-        for obj in objects_to_try {
-            if !obj.is_empty() && proxy_option.is_none() {
-                if let Some(proxy_arg) =
-                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionProxy)?
-                {
-                    if let fetch_session::ProxyArg::Policy(policy) =
-                        fetch_session::parse_proxy(global_this, proxy_arg)?
-                    {
-                        proxy_option = Some(policy);
-                    }
-                }
-            }
-        }
+        let proxy_option: Option<fetch_session::ProxyOption> = sources.option(
+            global_this,
+            jsc::CommonString::FetchOptionProxy,
+            |proxy_arg| {
+                Ok(match fetch_session::parse_proxy(global_this, proxy_arg)? {
+                    fetch_session::ProxyArg::Policy(policy) => Some(policy),
+                    _ => None,
+                })
+            },
+        )?;
         // The request's own `unix` or `proxy` wins over whichever of the two
         // its session names; they cannot be combined.
         if let Some(session) = session {
@@ -1046,51 +831,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
-    // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
-    // detaches (no fallback to the input Request's signal); a present non-null
-    // non-AbortSignal is a TypeError.
-    signal = 'extract_signal: {
-        if let Some(options) = options_object {
-            if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
-                if signal_.is_null() {
-                    break 'extract_signal None;
-                }
-                if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                    break 'extract_signal Some(signal);
-                }
-                let err = ctx.to_type_error(
-                    jsc::ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("signal is not of type AbortSignal."),
-                );
-                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-            }
-        }
-
-        if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.abort_signal() {
-                break 'extract_signal Some(signal_.ref_());
-            }
-            break 'extract_signal None;
-        }
-
-        if let Some(options) = request_init_object {
-            if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
-                if signal_.is_null() {
-                    break 'extract_signal None;
-                }
-                if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                    break 'extract_signal Some(signal);
-                }
-                let err = ctx.to_type_error(
-                    jsc::ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("signal is not of type AbortSignal."),
-                );
-                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-            }
-        }
-
-        break 'extract_signal None;
-    };
+    let signal: Option<AbortSignalRef> = sources
+        .member(
+            |object| {
+                request_init::signal_member(global_this, object, || {
+                    global_this.throw_value(ctx.to_type_error(
+                        jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("signal is not of type AbortSignal."),
+                    ))
+                })
+            },
+            |req| Ok(Some(req.abort_signal().map(|signal| signal.ref_()))),
+        )?
+        .flatten();
 
     // We do this 2nd to last instead of last so that if it's a FormData
     // object, we can still insert the boundary.
@@ -1104,172 +857,79 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     //
     // body: BodyInit | null | undefined;
     //
-    let mut body = 'extract_body: {
-        if let Some(options) = options_object {
-            if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
-                if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(
-                        &ctx.js_thread(context),
-                        body__,
-                    )?);
+    let mut body = sources
+        .member(
+            |object| match object.fast_get(global_this, jsc::BuiltinName::Body)? {
+                Some(body) => HTTPRequestBody::from_js(&ctx.js_thread(context), body).map(Some),
+                None => Ok(None),
+            },
+            |req| {
+                if BodyMixin::body_unusable(req, global_this).is_some() {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::BODY_ALREADY_USED,
+                            format_args!("Request body already used"),
+                        )
+                        .throw());
                 }
-            }
-        }
 
-        if let Some(req) = request_mut!() {
-            let body_value = req.get_body_value();
-            let already_used = match body_value {
-                BodyValue::Used => true,
-                BodyValue::Locked(locked) => {
-                    locked.action != BodyValueLockedAction::None
-                        || locked.is_disturbed::<Request>(global_this, first_arg)
-                }
-                _ => false,
-            };
-            if already_used {
-                return Err(global_this
-                    .err(
-                        jsc::ErrorCode::BODY_ALREADY_USED,
-                        format_args!("Request body already used"),
-                    )
-                    .throw());
-            }
-
-            BodyMixin::copy_content_type_to_headers(&*req, global_this)?;
-            let body_value = req.get_body_value();
-            body_value.to_blob_if_in_memory();
-            if matches!(*body_value, BodyValue::Locked(_)) {
-                if let Some(readable) = req.get_body_readable_stream() {
-                    if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
-                        return Err(global_this
-                            .err(
-                                jsc::ErrorCode::BODY_ALREADY_USED,
-                                format_args!("Request body already used"),
-                            )
-                            .throw());
-                    }
-                    break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                        readable_stream::Strong::init(readable, global_this),
-                    ));
-                }
+                BodyMixin::copy_content_type_to_headers(req, global_this)?;
                 let body_value = req.get_body_value();
-                if let BodyValue::Locked(locked) = body_value {
-                    if locked.readable.has() {
-                        break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                            readable_stream::Strong::init(
-                                locked.readable.get().unwrap(),
-                                global_this,
-                            ),
-                        ));
+                body_value.to_blob_if_in_memory();
+                if matches!(*body_value, BodyValue::Locked(_)) {
+                    if let Some(readable) = req.get_body_readable_stream() {
+                        return Ok(Some(HTTPRequestBody::ReadableStream(
+                            readable_stream::Strong::init(readable, global_this),
+                        )));
                     }
-                }
-                let readable = body_value.to_readable_stream(&global_this.js_thread(context))?;
-                if !readable.is_empty_or_undefined_or_null() {
-                    if let BodyValue::Locked(locked) = body_value {
-                        if locked.readable.has() {
-                            break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                                readable_stream::Strong::init(
-                                    locked.readable.get().unwrap(),
-                                    global_this,
-                                ),
-                            ));
+                    let body_value = req.get_body_value();
+                    let readable =
+                        body_value.to_readable_stream(&global_this.js_thread(context))?;
+                    if !readable.is_empty_or_undefined_or_null() {
+                        if let BodyValue::Locked(locked) = body_value {
+                            if locked.readable.has() {
+                                return Ok(Some(HTTPRequestBody::ReadableStream(
+                                    readable_stream::Strong::init(
+                                        locked.readable.get().unwrap(),
+                                        global_this,
+                                    ),
+                                )));
+                            }
                         }
                     }
                 }
-            }
 
-            break 'extract_body Some(HTTPRequestBody::AnyBlob(
-                req.get_body_value().use_as_any_blob(),
-            ));
-        }
-
-        if let Some(req) = request_init_object {
-            if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
-                if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(
-                        &ctx.js_thread(context),
-                        body__,
-                    )?);
-                }
-            }
-        }
-
-        break 'extract_body None;
-    }
-    .unwrap_or_default();
+                Ok(Some(HTTPRequestBody::AnyBlob(
+                    req.get_body_value().use_as_any_blob(),
+                )))
+            },
+        )?
+        .unwrap_or_default();
 
     // headers: Headers | undefined;
-    headers = 'extract_headers: {
-        // Holds the +1 from `create_from_js` until this block exits.
-        let mut created_headers: Option<HeadersRef> = None;
-
-        let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
-            if let Some(options) = options_object {
-                if let Some(headers_value) =
-                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
-                {
-                    if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast_as_init(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
-                        }
-
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
-                    }
-                }
-            }
-
-            if let Some(req) = request_mut!() {
-                if let Some(head) = req.get_fetch_headers_unless_empty() {
-                    break 'brk Some(head.as_ptr());
-                }
-                break 'brk None;
-            }
-
-            if let Some(options) = request_init_object {
-                if let Some(headers_value) =
-                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
-                {
-                    if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast_as_init(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
-                        }
-
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
-                    }
-                }
-            }
-
-            break 'extract_headers headers;
-        };
-
-        let result = if let Some(headers_) = fetch_headers {
-            // `headers_` points to a live FetchHeaders (either JS-owned or
-            // refcounted via `created_headers` above). `FetchHeaders` is
-            // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
-            let headers_ref = bun_opaque::opaque_deref_mut(headers_);
+    let fetch_headers: Option<HeadersInit> = sources
+        .member(
+            |object| match object.fast_get(global_this, jsc::BuiltinName::Headers)? {
+                Some(headers) => HeadersInit::from_js(global_this, headers).map(Some),
+                None => Ok(None),
+            },
+            |req| {
+                Ok(Some(req.get_fetch_headers_unless_empty().and_then(
+                    |headers| core::ptr::NonNull::new(headers.as_ptr()).map(HeadersInit::Borrowed),
+                )))
+            },
+        )?
+        .flatten();
+    let mut headers: Option<Headers> = match &fetch_headers {
+        Some(fetch_headers) => {
+            let fetch_headers = fetch_headers.get();
             if url.is_s3() {
-                if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
+                if let Some(range_) = fetch_headers.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
                 }
             }
 
-            if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
+            if let Some(upgrade_) = fetch_headers.fast_get(HTTPHeaderName::Upgrade) {
                 if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
                     upgraded_connection = true;
                 }
@@ -1277,15 +937,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             Some(from_fetch_headers(
                 global_this,
-                Some(headers_ref),
+                Some(fetch_headers),
                 any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
             )?)
-        } else {
-            headers
-        };
-
-        break 'extract_headers result;
+        }
+        None => None,
     };
+    drop(fetch_headers);
 
     if proxy.is_some() && !unix_socket_path.is_empty() {
         let err = ctx.to_type_error(
@@ -1522,8 +1180,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
     // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
     // not enforce forbidden methods. has_request_body() encodes exactly that.
-    if !ALLOW_GET_BODY
-        && method.known().is_some_and(|verb| !verb.has_request_body())
+    if method.known().is_some_and(|verb| !verb.has_request_body())
         && body.has_body()
         && !upgraded_connection
     {
@@ -1577,7 +1234,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
                     &global_this.js_thread(context),
-                    body.any_blob().blob(),
+                    body.blob(),
                     s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
                 )?,
                 global_this,
@@ -1669,9 +1326,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'use_sendfile;
                     }
 
-                    let original_size = body.any_blob().blob().size.get();
+                    let original_size = body.blob().size.get();
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
-                    let blob_offset = body.any_blob().blob().offset.get();
+                    let blob_offset = body.blob().offset.get();
 
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64) — hence the `as usize` casts.
@@ -1714,8 +1371,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
 
             // TODO: make this async + lazy
-            let blob_offset = body.any_blob().blob().offset.get();
-            let blob_size = body.any_blob().blob().size.get();
+            let blob_offset = body.blob().offset.get();
+            let blob_size = body.blob().size.get();
             // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
             // with an `Fd` path only touches `self.sync_error_buf` for
             // path-variant inputs, so a fresh `NodeFS` is sufficient here.
@@ -2061,7 +1718,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ssl_config: ssl_config.take(),
         upgraded_connection,
         forced_protocol,
-        is_node_http_client: ALLOW_GET_BODY,
         compress,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()

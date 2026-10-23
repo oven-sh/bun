@@ -21,42 +21,24 @@ pub(crate) mod js_socket_handlers;
 #[path = "Listener.rs"]
 pub(crate) mod listener;
 
+pub(crate) mod pending_writes;
+
 #[path = "UpgradedDuplex.rs"]
 pub(crate) mod upgraded_duplex;
+
+#[path = "FdPipe.rs"]
+pub(crate) mod fd_pipe;
 
 #[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub(crate) mod windows_named_pipe;
-
-#[cfg(windows)]
-#[path = "WindowsNamedPipeContext.rs"]
-pub(crate) mod windows_named_pipe_context;
 
 mod bundled_root_certs;
 mod cert_files;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod system_certs;
 
-/// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
-/// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
-/// need to name `crate::server::server_config::SSLConfig`). The body is the
-/// same `as_usockets() → init_from_options()` round-trip the old local copy
-/// did; the duplicate module file is gone.
-pub(crate) mod ssl_wrapper {
-    pub(crate) use bun_uws::ssl_wrapper::*;
-
-    /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
-    /// tier can keep passing `&SSLConfig` directly.
-    pub(crate) fn init<T: Copy>(
-        ssl_options: &crate::server::server_config::SSLConfig,
-        is_client: bool,
-        handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, crate::Error> {
-        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
-            .map_err(crate::Error::from)
-    }
-}
-
+pub(crate) mod node_http_socket;
 pub(crate) mod udp_socket;
 
 #[path = "uws_dispatch.rs"]
@@ -70,10 +52,7 @@ pub(crate) mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub(crate) mod ssl_config;
-pub(crate) use ssl_config::{
-    SSLConfig, SSLConfigFromJs, http_client_defaults, resolve_reject_unauthorized,
-    tls_true_defaults,
-};
+pub(crate) use ssl_config::{SSLConfig, http_client_defaults, resolve_reject_unauthorized};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real
@@ -83,14 +62,13 @@ pub(crate) use ssl_config::{
 pub(crate) use handlers::{Handlers, SocketConfig};
 pub(crate) use listener::Listener;
 pub(crate) use socket_address::SocketAddress;
-pub(crate) use socket_body::DuplexUpgradeContext;
 pub(crate) use socket_body::{
-    Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
-    server_ctx_rejects_unauthorized, server_ctx_requests_cert,
+    DeferredWriteCompletion, Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode,
+    TCPSocket, TLSSocket, server_ctx_rejects_unauthorized, server_ctx_requests_cert,
 };
 
 #[cfg(windows)]
-pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
+pub(crate) use windows_named_pipe::WindowsNamedPipe;
 
 pub(crate) use udp_socket::UDPSocket;
 
@@ -103,7 +81,7 @@ pub(crate) use udp_socket::UDPSocket;
 /// the name the generator expects rather than special-casing the generator.
 pub(crate) mod socket {
     pub(crate) use super::socket_body::{
-        js_create_socket_pair, js_set_socket_options, js_upgrade_duplex_to_tls, testing_ap_is,
+        js_create_socket_pair, js_set_socket_options, testing_ap_is,
     };
 }
 

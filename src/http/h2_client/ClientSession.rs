@@ -25,7 +25,7 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol, Transport};
+use crate::{Carrier, HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, StreamProgress};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -290,12 +290,12 @@ impl ClientSession {
         Self::enter(this, |s| s.attach(client));
     }
 
-    /// The session of a stream that a request's `Transport::H2` names.
+    /// The session of a stream that a request's `Carrier::H2` names.
     fn of_stream(stream: NonNull<Stream>) -> SessionPtr {
         Self::this_ptr(stream_ref(stream.as_ptr()).session)
     }
 
-    /// The request on `stream` was aborted; see [`Self::abort_request`].
+    /// The request on `stream` was aborted.
     pub(crate) fn abort_stream(stream: NonNull<Stream>) {
         Self::enter(Self::of_stream(stream), |s| {
             let opened_at = stream_ref(stream.as_ptr()).opened_at;
@@ -311,7 +311,7 @@ impl ClientSession {
     ) {
         Self::enter(Self::this_ptr(session), |s| {
             s.pending_attach.retain(|&parked| parked != client.as_ptr());
-            pending_client_mut(client.as_ptr()).h2_fail(crate::Error::Aborted);
+            pending_client_mut(client.as_ptr()).fail(crate::Error::Aborted);
             s.after_abort(s.last_read);
         });
     }
@@ -332,9 +332,13 @@ impl ClientSession {
                     return s.fail_all(err);
                 }
             }
-            // Flush body bytes that arrived between metadata delivery and `getReader()`.
-            if let Some(client) = stream_mut(stream.as_ptr()).client_mut() {
-                client.h2_drain_response_body(s.socket);
+            let Some(client) = stream_mut(stream.as_ptr()).client_mut() else {
+                return;
+            };
+            if let Err(err) = client.send_held_body() {
+                s.detach_with_failure(stream.as_ptr(), err);
+                s.rearm_timeout();
+                s.maybe_release();
             }
         });
     }
@@ -413,7 +417,7 @@ impl ClientSession {
         // `ctx` is a live back-ref to the owning context (set-once,
         // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
         // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
-        HTTPClient::ssl_ctx_mut(ctx).h2_register(this);
+        HTTPClient::ssl_ctx_mut(ctx).register_h2(this);
         Self::this_ptr(NonNull::new(this).expect("heap::into_raw is non-null"))
     }
 
@@ -457,7 +461,7 @@ impl ClientSession {
         // remote_max_concurrent_streams == 0 if a mid-connection SETTINGS
         // dropped it. Re-dispatch instead of asserting in attach().
         if !self.has_headroom() {
-            client.h2_retry_after_coalesce();
+            client.retry_after_h2_coalesce();
             self.maybe_release();
             return;
         }
@@ -477,7 +481,7 @@ impl ClientSession {
 
     /// Park a coalesced request until the server's SETTINGS arrive.
     fn park(&mut self, client: &mut HTTPClient<'_>) {
-        client.transport = Transport::H2Parked(NonNull::from(&mut *self));
+        client.carrier = Carrier::H2Parked(NonNull::from(&mut *self));
         self.pending_attach.push(client.as_erased_ptr().as_ptr());
         self.rearm_timeout();
     }
@@ -490,13 +494,13 @@ impl ClientSession {
         for client_ptr in waiters {
             let client = pending_client_mut(client_ptr);
             if let Some(err) = self.fatal_error {
-                client.h2_fail(err);
+                client.fail(err);
             } else if client.signals.get(signals::Field::Aborted) {
-                client.h2_fail(crate::Error::Aborted);
+                client.fail(crate::Error::Aborted);
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
-                client.h2_retry_after_coalesce();
+                client.retry_after_h2_coalesce();
             }
         }
     }
@@ -559,7 +563,7 @@ impl ClientSession {
         self.next_stream_id = self.next_stream_id.saturating_add(2);
         let stream_ref = stream_mut(stream);
         let _ = self.streams.put(stream_ref.id, stream);
-        client.transport = Transport::H2(NonNull::from(&mut *stream_ref));
+        client.carrier = Carrier::H2(NonNull::from(&mut *stream_ref));
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
 
@@ -572,7 +576,7 @@ impl ClientSession {
         // cursor stays valid across event-loop ticks.
         if let Err(e) = client.compress_body_for_send(false) {
             self.remove_stream(stream);
-            client.transport = Transport::None;
+            client.carrier = Carrier::None;
             client.fail(e);
             return;
         }
@@ -581,8 +585,8 @@ impl ClientSession {
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // No RST: the server never saw this stream id, and RST_STREAM on an idle stream is a connection error (RFC 9113 §5.1).
             self.remove_stream(stream);
-            client.transport = Transport::None;
-            client.h2_fail(err);
+            client.carrier = Carrier::None;
+            client.fail(err);
             let _ = self.flush();
             return;
         }
@@ -609,7 +613,8 @@ impl ClientSession {
         }
 
         if client.flags.is_streaming_request_body {
-            client.h2_progress_update(self.ctx, self.socket);
+            // Nothing of the response is here to decode, so this can't fail.
+            let _ = client.send_progress();
         }
     }
 
@@ -628,11 +633,11 @@ impl ClientSession {
         let _ = self.flush();
         let client = s.client.take();
         if let Some(c) = client {
-            stream_client_mut(c).transport = Transport::None;
+            stream_client_mut(c).carrier = Carrier::None;
         }
         self.remove_stream(stream);
         if let Some(c) = client {
-            stream_client_mut(c).h2_fail(err);
+            stream_client_mut(c).fail(err);
         }
     }
 
@@ -917,20 +922,20 @@ impl ClientSession {
         // aliased `&mut NewHTTPContext` via autoref.
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         for client in core::mem::take(&mut self.pending_attach) {
-            pending_client_mut(client).h2_fail(err);
+            pending_client_mut(client).fail(err);
         }
         // `handle_data`'s deliver loop holds a stream across the callback that re-entered here.
         let deliver_loop_frees_streams = self.delivering;
         for &e in self.streams.values() {
             let client = stream_mut(e).client.take();
             if let Some(c) = client {
-                stream_client_mut(c).transport = Transport::None;
+                stream_client_mut(c).carrier = Carrier::None;
             }
             if !deliver_loop_frees_streams {
                 drop_stream(e);
             }
             if let Some(c) = client {
-                stream_client_mut(c).h2_fail(err);
+                stream_client_mut(c).fail(err);
             }
         }
         if !deliver_loop_frees_streams {
@@ -1084,14 +1089,14 @@ impl ClientSession {
             self.rst_stream(stream, ErrorCode::CANCEL);
             let _ = self.flush();
             stream.client = None;
-            client.transport = Transport::None;
-            client.h2_fail(crate::Error::Aborted);
+            client.carrier = Carrier::None;
+            client.fail(crate::Error::Aborted);
             return true;
         }
 
         if let Some(err) = stream.fatal_error {
             stream.client = None;
-            client.transport = Transport::None;
+            client.carrier = Carrier::None;
             if stream.http1_required && stream.status_code == 0 && client.can_retry_over_http1() {
                 client.retry_over_http1();
                 return true;
@@ -1108,146 +1113,42 @@ impl ClientSession {
                     HTTPRequestBody::Bytes(_)
                 )
             {
-                client.h2_retry();
+                client.retry_from_h2();
             } else {
-                client.h2_fail(err);
+                client.fail(err);
             }
             return true;
         }
 
-        if stream.headers_ready {
-            stream.headers_ready = false;
-            let (result, response) = match client
-                .apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
-            {
-                Ok(r) => r,
-                Err(err) => {
-                    self.rst_stream(stream, ErrorCode::CANCEL);
-                    let _ = self.flush();
-                    stream.client = None;
-                    client.transport = Transport::None;
-                    client.h2_fail(err);
-                    return true;
-                }
-            };
-            // handleResponseMetadata set is_redirect_pending. The doRedirect
-            // contract assumes the caller already detached the stream.
-            // Detach + RST here unconditionally so the
-            // header_progress path below can never re-enter doRedirect via
-            // progressUpdate while the old Stream still points at this
-            // client — that path would attach a second Stream to the same
-            // HTTPClient and the first one's `stream.client` becomes a
-            // dangling pointer once the request completes.
-            if client.state.flags.is_redirect_pending {
-                self.rst_stream(stream, ErrorCode::CANCEL);
-                let _ = self.flush();
-                stream.client = None;
-                client.transport = Transport::None;
-                client.h2_do_redirect(self.ctx, self.socket);
-                return true;
-            }
-            // Deep-copy before detaching: `response` borrows
-            // `stream.decoded_headers`.
-            client.h2_clone_metadata(&response);
-            // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
-            // SSE content-type), which would make the headerProgress update
-            // below terminal and free `client` while the stream still holds it.
-            if result == HeaderResult::Finished
-                || (stream.remote_closed() && stream.body_buffer.is_empty())
-                || client.state.is_done()
-            {
-                stream.client = None;
-                client.transport = Transport::None;
-                client.state.flags.received_last_chunk = true;
-                // .finished = HEAD/204/304: no body is expected regardless of
-                // any Content-Length header, so clear it. Otherwise leave the
-                // parsed value so finishStream() enforces §8.1.1 against the
-                // (zero) bytes actually received.
-                if result == HeaderResult::Finished {
-                    client.state.content_length = Some(0);
-                }
-                return self.finish_stream(stream, client);
-            }
-            // Mirror the h1 path: deliver headers
-            // to JS now so `await fetch()` resolves and `getReader()` can enable
-            // response_body_streaming. Without this, a content-length response
-            // buffers the entire body before the Response promise settles.
-            if client.signals.get(signals::Field::HeaderProgress) {
-                client.h2_progress_update(self.ctx, self.socket);
-            }
-        }
-
-        if client.state.response_stage != HTTPStage::Body {
+        if stream.status_code == 0 {
             return false;
         }
-
-        if !stream.body_buffer.is_empty() {
-            let terminal = stream.remote_closed();
-            if terminal {
-                client.state.flags.received_last_chunk = true;
-                stream.client = None;
-                client.transport = Transport::None;
+        let head = core::mem::take(&mut stream.headers_ready)
+            .then_some((stream.status_code, stream.decoded_headers.as_slice()));
+        let mut progress =
+            client.receive_from_stream(head, &stream.body_buffer, stream.remote_closed());
+        stream.body_buffer.clear();
+        if let Ok(StreamProgress::Open { report }) = progress {
+            if !report {
+                return false;
             }
-            let report = match client.h2_handle_response_body(&stream.body_buffer, false) {
-                Ok(r) => r,
-                Err(err) => {
-                    stream.body_buffer.clear();
-                    self.rst_stream(stream, ErrorCode::CANCEL);
-                    let _ = self.flush();
-                    if !terminal {
-                        stream.client = None;
-                        client.transport = Transport::None;
-                    }
-                    client.h2_fail(err);
-                    return true;
+            match client.send_progress() {
+                Ok(_) => return false,
+                Err(err) => progress = Err(err),
+            }
+        }
+        // `handle_data` resets a stream that the server still has open.
+        stream.client = None;
+        client.carrier = Carrier::None;
+        match progress {
+            Ok(StreamProgress::Redirect) => client.follow_redirect(),
+            Ok(_) => {
+                if let Err(err) = client.send_progress() {
+                    client.fail(err);
                 }
-            };
-            stream.body_buffer.clear();
-            if terminal {
-                return self.finish_stream(stream, client);
             }
-            if report {
-                // handleResponseBody may report completion before END_STREAM
-                // (Content-Length satisfied). The terminal progressUpdate
-                // path frees the AsyncHTTP that owns `client`, so detach
-                // first; the trailing END_STREAM/trailers land on a stream
-                // we no longer track and are discarded.
-                if client.state.is_done() {
-                    stream.client = None;
-                    client.transport = Transport::None;
-                    client.h2_progress_update(self.ctx, self.socket);
-                    return true;
-                }
-                client.h2_progress_update(self.ctx, self.socket);
-            }
-            return false;
+            Err(err) => client.fail(err),
         }
-
-        if stream.remote_closed() {
-            stream.client = None;
-            client.transport = Transport::None;
-            if let Err(err) = client.state.finalize_body_on_eof() {
-                client.h2_fail(err);
-                return true;
-            }
-            return self.finish_stream(stream, client);
-        }
-
-        false
-    }
-
-    /// Terminal delivery: enforce the announced Content-Length (RFC 9113
-    /// §8.1.1 — mismatch is malformed) and hand off to progressUpdate.
-    /// `total_body_received` is clamped at content_length by the body handler,
-    /// so compare the raw DATA byte count instead — that catches overshoot too.
-    fn finish_stream(&mut self, stream: &mut Stream, client: &mut HTTPClient) -> bool {
-        if let Some(cl) = client.state.content_length {
-            if stream.data_bytes_received != cl as u64 {
-                client.h2_fail(crate::Error::HTTP2ContentLengthMismatch);
-                return true;
-            }
-        }
-        client.h2_progress_update(self.ctx, self.socket);
         true
     }
 }

@@ -29,6 +29,7 @@ struct Http3ResponseData {
         HTTP_CONNECTION_CLOSE = 16,
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
         HTTP_WROTE_DATE_HEADER = 64,
+        HTTP_REQUEST_BODY_TOO_LARGE = 128,
     };
 
     void *userData = nullptr;
@@ -40,7 +41,6 @@ struct Http3ResponseData {
      * peer stalls or aborts mid-stream. Keep the onWritable context
      * pointer in its own slot, same as HttpResponseData<SSL>. */
     void *writableUserData = nullptr;
-    void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;
@@ -63,6 +63,8 @@ struct Http3ResponseData {
     bool headersDeferred = false;
 
     uint64_t offset = 0;
+    /* See HttpResponseData::requestBodyBudget. */
+    uint64_t requestBodyBudget = UINT64_MAX;
     uint8_t state = 0;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {

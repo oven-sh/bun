@@ -233,7 +233,8 @@ describe("response Connection: close closes the socket", () => {
     );
   });
 
-  test("keep-alive still the default", async () => {
+  // "not-close" is one connection option (RFC 9110 section 7.6.1), and it isn't "close".
+  test.each([undefined, "not-close"])("keep-alive still the default with Connection: %s", async connection => {
     // Negative: without Connection: close, a second request on the same socket
     // must be serviced.
     let handled = 0;
@@ -243,7 +244,7 @@ describe("response Connection: close closes the socket", () => {
       idleTimeout: 0,
       fetch() {
         handled++;
-        return new Response("bye");
+        return new Response("bye", connection ? { headers: { connection } } : undefined);
       },
     });
 
@@ -271,6 +272,91 @@ describe("response Connection: close closes the socket", () => {
 });
 
 // RFC 9112 9.6. A pooling client that doesn't see "close" reuses the socket and loses its next request.
+// One raw request per entry on its own connection. Resolves with the response heads, lowercased.
+async function rawHeads(port: number, requests: string[]) {
+  return Promise.all(
+    requests.map(async request => {
+      const socket = net.connect(port, "127.0.0.1");
+      try {
+        let raw = "";
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        socket.on("error", reject);
+        socket.on("close", () => resolve());
+        socket.on("data", chunk => {
+          raw += chunk.toString("latin1");
+          if (raw.includes("\r\n\r\n")) resolve();
+        });
+        socket.write(request);
+        await promise;
+        return raw.split("\r\n\r\n")[0].toLowerCase().split("\r\n");
+      } finally {
+        socket.destroy();
+      }
+    }),
+  );
+}
+
+describe("the server frames the response, whatever the handler's headers say", () => {
+  const headers = { "Content-Length": "3", "Transfer-Encoding": "gzip, chunked", "X-Kept": "yes" };
+  const framing = (head: string[]) => head.filter(line => /^(content-length|transfer-encoding|x-kept):/.test(line));
+
+  test("for a handler, a static route and a file route, and leaves the headers of a route's Response alone", async () => {
+    using dir = tempDir("serve-framing-headers", { "hello.txt": "hello world" });
+    const staticRoute = new Response("hello world", { headers });
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/static": staticRoute,
+        "/file": new Response(Bun.file(join(String(dir), "hello.txt")), { headers }),
+      },
+      fetch: () => new Response("hello world", { headers }),
+    });
+    const heads = await rawHeads(
+      server.port!,
+      ["/handler", "/static", "/file"].map(path => `GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`),
+    );
+    expect(heads.map(framing)).toEqual([
+      ["x-kept: yes", "content-length: 11"],
+      ["x-kept: yes", "content-length: 11"],
+      ["x-kept: yes", "content-length: 11"],
+    ]);
+    expect(staticRoute.headers.get("content-length")).toBe("3");
+  });
+
+  test("HEAD says what GET would: chunked for a stream, and for a bodiless Response that names any transfer coding", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/stream") return new Response(new ReadableStream({}));
+        return new Response(null, { headers: { "Transfer-Encoding": "gzip, chunked" } });
+      },
+    });
+    const heads = await rawHeads(server.port!, [
+      "HEAD /stream HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      "HEAD /bodiless HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      "HEAD /stream HTTP/1.0\r\nHost: x\r\n\r\n",
+    ]);
+    expect(heads.map(framing)).toEqual([["transfer-encoding: chunked"], ["transfer-encoding: chunked"], []]);
+  });
+
+  test("sends one Date, the route's own, from a file route", async () => {
+    using dir = tempDir("serve-file-route-date", { "hello.txt": "hello world" });
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/file": new Response(Bun.file(join(String(dir), "hello.txt")), {
+          headers: { Date: "Thu, 01 Jan 1970 00:00:00 GMT" },
+        }),
+      },
+    });
+    const [head] = await rawHeads(server.port!, ["GET /file HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"]);
+    expect(head.filter(line => line.startsWith("date:"))).toEqual(["date: thu, 01 jan 1970 00:00:00 gmt"]);
+  });
+});
+
 describe.concurrent("sends Connection: close in the last response on a connection", () => {
   const dir = tempDir("serve-connection-close", {
     "small.txt": "bye",
@@ -628,7 +714,9 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "through a Request": res =>
           new Response(new Request("http://example.com/", { method: "POST", body: res.body }).body, res),
       };
-      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
+      expect(await proxied(late, shapes)).toEqual(
+        expected(shapes, { encoding: null, upstream: "1", body: "plain" }),
+      );
     });
 
     test("is dropped from both branches of tee()", async () => {
@@ -637,7 +725,9 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "second": res => new Response(res.body!.tee()[1], res),
         "tee of a branch": res => new Response(res.body!.tee()[0].tee()[1], res),
       };
-      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
+      expect(await proxied(late, shapes)).toEqual(
+        expected(shapes, { encoding: null, upstream: "1", body: "plain" }),
+      );
     });
 
     test("is dropped from a Response that wraps the decoded Blob", async () => {
@@ -646,7 +736,9 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "blob().stream()": async res => new Response((await res.blob()).stream(), res),
         "blob().slice()": async res => new Response((await res.blob()).slice(), res),
       };
-      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
+      expect(await proxied(late, shapes)).toEqual(
+        expected(shapes, { encoding: null, upstream: "1", body: "plain" }),
+      );
     });
 
     // What comes out of a transform is the program's own bytes, and only the program knows their encoding.
@@ -656,9 +748,7 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "CompressionStream, upstream headers": res =>
           new Response(res.body!.pipeThrough(new CompressionStream("gzip")), res),
         "CompressionStream, own header": res =>
-          new Response(res.body!.pipeThrough(new CompressionStream("gzip")), {
-            headers: { "content-encoding": "gzip" },
-          }),
+          new Response(res.body!.pipeThrough(new CompressionStream("gzip")), { headers: { "content-encoding": "gzip" } }),
       };
       using proxy = Bun.serve({
         port: 0,

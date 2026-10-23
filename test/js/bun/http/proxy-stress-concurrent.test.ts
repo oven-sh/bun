@@ -46,7 +46,7 @@ afterAll(() => {
 //   - A crash (UAF under ASAN, debug assert, segfault) shows in stderr and the exit code.
 //   - On the ASAN lanes the runner turns LeakSanitizer on for this file, so a
 //     leaked object shows in stderr too.
-//   - A leaked tunnel adds one to `sslCtxGrowth` per request, in every build.
+//   - A leaked tunnel adds one to `tunnelGrowth` per request, in every build.
 //   - Anything else that grows per request shows in `rssGrowth`, on release builds.
 // More iterations make none of these more sensitive. macOS and Windows can't
 // take more than 300: they have 16k ephemeral ports, and every request leaves
@@ -112,7 +112,7 @@ describe("memory probe (subprocess)", () => {
 
         // Anything on stderr is a crash, a sanitizer report or a fixture error.
         expect(stderr).toBe("");
-        const { connects, sslCtxGrowth, sslCtxInFlight, rssGrowth, ...outcome } = JSON.parse(stdout);
+        const { connects, tunnelGrowth, tunnelsInFlight, sslCtxInFlight, rssGrowth, ...outcome } = JSON.parse(stdout);
 
         const want = EXPECTED[mode];
         expect(outcome).toEqual(want.outcome);
@@ -123,11 +123,11 @@ describe("memory probe (subprocess)", () => {
         }
 
         // Steady state is 0. A leaked tunnel adds one per request after the
-        // warm-up, so 200 or more per cell. If tunnels ever stop owning an
-        // SSL_CTX, the `sslCtxInFlight` check fails instead of the growth
-        // check going silent.
-        expect(sslCtxGrowth).toBeLessThanOrEqual(2);
-        if (want.outcome.completed > 0) expect(sslCtxInFlight).toBeGreaterThanOrEqual(1);
+        // warm-up, so 200 or more per cell.
+        expect(tunnelGrowth).toBeLessThanOrEqual(2);
+        if (want.outcome.completed > 0) expect(tunnelsInFlight).toBeGreaterThanOrEqual(1);
+        // Every tunnel has the same `tls` options, so they share the SSL_CTX that the warm-up made.
+        expect(sslCtxInFlight).toBe(0);
 
         // A release build measures 0 to 9 MB. 32 MB catches leaks from about
         // 150 KB per request, such as a response or TLS buffer. Under ASAN

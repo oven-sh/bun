@@ -1,4 +1,5 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any, ...js } as const;
@@ -10,11 +11,11 @@ export const QuicEndpoint = b.class({
   proto: {
     address: { returns: b.any, capability: "js" },
     closeGracefully: { capability: "js", passThis: true },
-    connect: { ...method, args: { address: b.any, options: b.any, sessionTicket: b.any }, passThis: true },
+    connect: { ...method, args: { address: SocketAddress, options: b.any, sessionTicket: b.any }, passThis: true },
     listen: { ...js, args: { options: b.any }, passThis: true },
     markBusy: { args: { busy: b.bool.loose } },
     releaseSocket: { capability: "js" },
-    setSNIContexts: { ...js, args: { entries: b.any, replace: b.any } },
+    setSNIContexts: { ...js, args: { entries: b.any, replace: b.bool } },
   },
 });
 

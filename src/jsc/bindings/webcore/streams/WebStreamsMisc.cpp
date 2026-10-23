@@ -476,17 +476,6 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
     });
 }
 
-// Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
-JSC::JSBoundFunction* createStreamsBoundHandler(JSGlobalObject* globalObject, JSFunction* target, JSCell* context)
-{
-    auto& vm = getVM(globalObject);
-    MarkedArgumentBuffer boundArgs;
-    boundArgs.append(context);
-    ASSERT(!boundArgs.hasOverflowed());
-    return JSBoundFunction::create(vm, globalObject, target, jsUndefined(), ArgList(boundArgs), 1, nullptr,
-        makeSource("streamsBoundHandler"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
-}
-
 JSPromise* promiseFulfilledWith(JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = getVM(globalObject);

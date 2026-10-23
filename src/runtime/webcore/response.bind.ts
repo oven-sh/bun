@@ -4,20 +4,17 @@ const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any, ...js } as const;
 const getter = { getter: b.any, capability: "js" } as const;
 const cached = { getter: b.any, cache: true, ...js } as const;
-/** Reads the whole body. The `stream` field of the receiver says whether a script already read from it. */
-const read = { ...method, passThis: true } as const;
-
 /** Members of the trait `BodyMixin`. */
 const body = {
   rustTraits: ["crate::webcore::body::BodyMixin"],
-  arrayBuffer: read,
-  blob: read,
+  arrayBuffer: method,
+  blob: method,
   body: cached,
   bodyUsed: { getter: b.bool, capability: "js" },
-  bytes: read,
-  formData: read,
-  json: read,
-  text: read,
+  bytes: method,
+  formData: method,
+  json: method,
+  text: method,
   textStream: method,
 } as const;
 const clone = { ...method, passThis: true, rustName: "do_clone", length: 1 } as const;
@@ -93,11 +90,4 @@ export const Response = b.class({
     /** `Response.redirect()` is to "" and `Response.redirect(undefined)` to "undefined". */
     redirect: { ...method, args: { args: b.any.variadic } },
   },
-});
-
-/** For `undici`. `fetch()` decoded the body, so `Content-Encoding` and `Content-Length` describe other bytes. */
-export const isBodyDecoded = b.fn({
-  args: { response: Response },
-  returns: b.bool,
-  rustPath: "crate::webcore::response::is_body_decoded",
 });

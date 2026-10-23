@@ -842,7 +842,6 @@ impl PostgresSQLConnection {
     }
 }
 
-#[bun_jsc::host_fn(export = "PostgresSQLConnection__createInstance")]
 pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let vm = global_object.bun_vm().as_mut();
     // The connection is the calling script's.
@@ -1111,7 +1110,6 @@ fn open(
                 None,
                 path_slice,
                 ptr,
-                false,
             )
         } else {
             uws::SocketTCP::connect_group(
@@ -1121,7 +1119,6 @@ fn open(
                 params.hostname,
                 params.port,
                 ptr,
-                false,
             )
         };
 

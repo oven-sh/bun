@@ -200,6 +200,34 @@ test.each(["http", "https"] as const)(
   },
 );
 
+// In Node.js this socket never hears of the FIN, and close() reaps the connection as idle.
+test.each(["pause()", "a 'readable' listener that never reads"])(
+  "server.close(cb) completes after the peer of a socket with %s has gone",
+  async how => {
+    const server = createServer((_req, res) => res.end("ok"));
+    const socketClosed = Promise.withResolvers<void>();
+    server.on("connection", socket => {
+      if (how === "pause()") socket.pause();
+      else socket.on("readable", () => {});
+      socket.on("close", () => socketClosed.resolve());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      client.end();
+      await socketClosed.promise;
+      const closed = Promise.withResolvers<Error | undefined>();
+      server.close(closed.resolve);
+      expect(await closed.promise).toBeUndefined();
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
 test("closeIdleConnections() leaves a connection that has sent part of a request head", async () => {
   const server = createServer((req, res) => res.end("ok"));
   let accepted = 0;

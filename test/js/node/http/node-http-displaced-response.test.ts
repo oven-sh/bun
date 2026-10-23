@@ -81,7 +81,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
         results: [
           returned("resume"),
           returned("pause"),
-          returned("pauseReads"),
           returned("notifyWhenReadParsed"),
           returned("flushHeaders"),
           threw("end", "ERR_STREAM_WRITE_AFTER_END"),
@@ -89,7 +88,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
           returned("abort"),
           returned("writeContinue"),
           returned("bufferedAmount"),
-          threw("cork", "ERR_STREAM_ALREADY_FINISHED"),
         ],
         stderr: "",
         exitCode: 0,
@@ -138,7 +136,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       const head = (length: number) =>
         `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
-      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
+      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational"];
       expect(await run("queued", transport)).toEqual({
         results: calls.map(call => ({
           call,

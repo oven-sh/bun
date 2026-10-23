@@ -119,6 +119,12 @@ describe("Bun.file in serve routes", () => {
         res.body;
         return res;
       },
+      "/slice-handler-form-data-refused": async () => {
+        const res = new Response(partialSlice());
+        // text/plain isn't a form type, so this rejects and leaves the body alone.
+        await res.formData().catch(() => {});
+        return res;
+      },
       "/slice-handler-body-and-headers-read": () => {
         const res = new Response(partialSlice());
         res.body;
@@ -895,6 +901,7 @@ describe("Bun.file in serve routes", () => {
       expect({
         "no headers": await serve("/slice-handler"),
         "body read": await serve("/slice-handler-body-read"),
+        "formData() refused": await serve("/slice-handler-form-data-refused"),
         "copy": await serve("/slice-handler-copy"),
         "clone of a copy": await serve("/slice-handler-copy-clone"),
         "copy of a Request": await serve("/slice-handler-request-copy"),
@@ -905,6 +912,7 @@ describe("Bun.file in serve routes", () => {
       }).toEqual({
         "no headers": partial,
         "body read": partial,
+        "formData() refused": partial,
         "copy": partial,
         "clone of a copy": partial,
         "copy of a Request": partial,

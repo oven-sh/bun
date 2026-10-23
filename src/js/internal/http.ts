@@ -2,86 +2,27 @@ const { isIPv4 } = require("internal/net/isIP");
 
 const queueMicrotask = globalThis.queueMicrotask;
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
-  "NodeHTTP.cpp",
-  "createNodeHTTPInternalBinding",
-) as {
-  setServerCustomOptions: (
-    server: any,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    maxHeaderSize: number,
-    onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
-    onConnection?: (socketHandle: any) => undefined,
-  ) => void;
-  setServerAppFlags: (
-    server: any,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    httpAllowHalfOpen: boolean,
-  ) => void;
-  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
-  drainMicrotasks: () => void;
-};
+const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
 const abortedSymbol = Symbol("aborted");
-const headerStateSymbol = Symbol("headerState");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
-const kOnReadParsed = Symbol("kOnReadParsed");
+// http.Server.prototype method for the `ws` package: takes a connection out of HTTP.
+const kLeaveHttp = Symbol("kLeaveHttp");
+// On a server socket: the stream that 'upgrade' got in its place, while the body of the request is incomplete.
+const kUpgradeStream = Symbol("kUpgradeStream");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
-const optionsSymbol = Symbol("options");
 const tlsSymbol = Symbol("tls");
 const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
-const kRequest = Symbol("request");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
 const kHeaderSource = Symbol("kHeaderSource");
-// Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
-const kHandoffResponse = Symbol("kHandoffResponse");
-// Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
-const kRememberPeer = Symbol("kRememberPeer");
-// Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
-// into the socket in a task.
-const kHasQueuedReads = Symbol("kHasQueuedReads");
-// Property of a server socket: whether the connection closed before the kernel had taken everything that was written.
-// undefined until it has closed.
-const kClosedWithUnsentData = Symbol("kClosedWithUnsentData");
 const kCloseCallback = Symbol("closeCallback");
-
-// node:_http_server registers its pipelined-response machinery here at module
-// initialization, letting internal/http1_server_fallback drive the same
-// per-connection queue without widening node:_http_server's exports. The
-// fallback loads node:http (and with it _http_server) before reading these.
-const http1ServerPipeline: {
-  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
-  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
-  abortQueuedPipelinedResponses?: (socket: unknown) => void;
-  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
-  maybePauseFallbackReads?: (socket: unknown) => void;
-  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
-  finishDrainedResponse?: (res: unknown) => void;
-  kMustCloseConnection?: symbol;
-  socketOnError?: (this: unknown, err: unknown) => void;
-  socketOnTimeout?: (this: unknown) => void;
-  onResponseFinishHandleSocket?: (server: unknown, socket: unknown, res: unknown) => void;
-  resetSocketTimeout?: (server: unknown, socket: unknown) => void;
-  kConnectionsCheckingInterval?: symbol;
-  // Registered by internal/http1_server_fallback when it loads.
-  checkHttp1Connections?: (
-    server: unknown,
-    headersTimeout: number,
-    requestTimeout: number,
-    onRequestTimeout: (socket: unknown) => void,
-  ) => void;
-} = {};
 
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
@@ -92,7 +33,7 @@ export const enum NodeHTTPResponseAbortEvent {
 export const enum NodeHTTPBodyReadState {
   none,
   pending = 1 << 1,
-  /** The last chunk arrived, or a WebSocket took the connection. */
+  /** The last chunk arrived, or the reader let go of the body. */
   done = 1 << 2,
   /** The connection closed before the last chunk. */
   aborted = 1 << 3,
@@ -103,16 +44,8 @@ export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
   ended = 1 << 2,
-  upgraded = 1 << 3,
-  dispatch_threw_while_queued = 1 << 9,
 
   closed_or_completed = socket_closed | request_has_completed,
-}
-
-export const enum NodeHTTPHeaderState {
-  none,
-  assigned,
-  sent,
 }
 
 function emitErrorNextTickIfErrorListenerNT(self, err, cb) {
@@ -192,15 +125,6 @@ function emitEOFIncomingMessage(self) {
 }
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
-  if (aborted === NodeHTTPResponseAbortEvent.readParsed) {
-    const socket = this.socket;
-    const onReadParsed = socket?.[kOnReadParsed];
-    if (onReadParsed) {
-      socket[kOnReadParsed] = undefined;
-      onReadParsed(socket);
-    }
-    return;
-  }
   if (aborted === NodeHTTPResponseAbortEvent.abort) {
     // The request is aborted from the socket's #onClose (like Node.js's
     // socketOnClose → abortIncoming), which the native close path always
@@ -226,8 +150,6 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       else if (finSent && !this._consuming) socket[kHandle].stopParsing();
       else if (socket && (finSent || !socket.writableEnded)) {
         socket.pause();
-        // For a pipelined request the socket's current response is an earlier one, and an ended response does not pause.
-        this[kHandle]?.pause();
       }
     }
   }
@@ -350,57 +272,12 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
-function hasServerResponseFinished(self, chunk, callback, fromEnd) {
-  const finished = self.finished;
-
-  // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
-  if (chunk || (!fromEnd && chunk === "")) {
-    const destroyed = self.destroyed;
-
-    if (finished || destroyed) {
-      let err;
-      if (finished) {
-        err = $ERR_STREAM_WRITE_AFTER_END();
-      } else if (destroyed) {
-        err = $ERR_STREAM_DESTROYED("write");
-      }
-
-      if (!destroyed) {
-        process.nextTick(emitErrorNt, self, err, callback);
-      } else if (!fromEnd && $isCallable(callback)) {
-        // Node.js's end() never gives this error to its callback: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
-        process.nextTick(callback, err);
-      }
-
-      return true;
-    }
-  } else if (finished) {
-    if ($isCallable(callback)) {
-      if (!self.writableFinished) {
-        self.on("finish", callback);
-      } else {
-        callback($ERR_STREAM_ALREADY_FINISHED("end"));
-      }
-    }
-
-    return true;
-  }
-
-  return false;
-}
-
-function emitErrorNt(msg, err, callback) {
-  if ($isCallable(callback)) {
-    callback(err);
-  }
-  if ($isCallable(msg.emit) && !msg.destroyed) {
-    msg.emit("error", err);
-  }
-}
 const setMaxHTTPHeaderSize = $bindgen("node_http_binding.bind.ts", "setMaxHTTPHeaderSize");
 const getMaxHTTPHeaderSize = $bindgen("node_http_binding.bind.ts", "getMaxHTTPHeaderSize");
+const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
+const kFinishesWithoutLastWrite = Symbol("kFinishesWithoutLastWrite");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
@@ -444,7 +321,7 @@ class ProxyConfig {
   bypassList;
   proxyConnectionOptions;
 
-  constructor(proxyUrl, keepAlive, noProxyList) {
+  constructor(proxyUrl, noProxyList) {
     let parsedURL;
     try {
       parsedURL = new URL(proxyUrl);
@@ -542,7 +419,7 @@ function parseProxyUrl(env, protocol) {
   return proxyUrl;
 }
 
-function parseProxyConfigFromEnv(env, protocol, keepAlive) {
+function parseProxyConfigFromEnv(env, protocol) {
   // We only support proxying for HTTP and HTTPS requests.
   if (protocol !== "http:" && protocol !== "https:") return null;
   const proxyUrl = parseProxyUrl(env, protocol);
@@ -550,7 +427,7 @@ function parseProxyConfigFromEnv(env, protocol, keepAlive) {
 
   // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
   if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
-  return new ProxyConfig(proxyUrl, keepAlive, env.no_proxy || env.NO_PROXY);
+  return new ProxyConfig(proxyUrl, env.no_proxy || env.NO_PROXY);
 }
 
 function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
@@ -561,6 +438,7 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
 
 export {
   METHODS,
+  RE_CONN_CLOSE,
   STATUS_CODES,
   abortedSymbol,
   callCloseCallback,
@@ -572,39 +450,29 @@ export {
   eofInProgress,
   fakeSocketSymbol,
   getMaxHTTPHeaderSize,
-  hasServerResponseFinished,
-  headerStateSymbol,
-  http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
-  kClosedWithUnsentData,
+  kFinishesWithoutLastWrite,
   kHandle,
-  kHandoffResponse,
-  kHasQueuedReads,
   kHeaderSource,
   kInternalSocketData,
+  kLeaveHttp,
   kNeedDrain,
-  kOnReadParsed,
   kOutHeaders,
   kPendingCallbacks,
   kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
-  kRememberPeer,
-  kRequest,
+  kUpgradeStream,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,
-  optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,
-  setServerAppFlags,
-  setServerCustomOptions,
-  setServerMaxHeadersCount,
   tlsSymbol,
   utcDate,
 };

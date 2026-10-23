@@ -97,6 +97,8 @@ pub struct HttpThread {
     /// aborted tasks when `active >= max`; without it the common at-capacity
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
+    /// How many requests had been created when `ask_for_slots` last asked.
+    slots_asked_at: u32,
 
     pub(crate) queued_shutdowns: Vec<ShutdownMessage>,
     pub(crate) queued_writes: Vec<WriteMessage>,
@@ -168,6 +170,7 @@ impl HttpThread {
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
+            slots_asked_at: 0,
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
@@ -399,12 +402,27 @@ impl HttpThread {
     }
 
     /// A new reference to the default HTTPS context's `SSL_CTX`, which holds the CA options of [`InitOpts`].
-    pub(crate) fn default_ssl_ctx(&mut self) -> OwnedSslCtx {
+    fn default_ssl_ctx(&mut self) -> OwnedSslCtx {
         self.ensure_https_context_init();
         self.https_context
             .secure
             .clone()
             .expect("init_with_thread_opts sets `secure` or diverges")
+    }
+
+    /// The `SSL_CTX` of a TLS connection over TCP with these options: the default one, unless they need their own.
+    pub(crate) fn ssl_ctx_for(
+        &mut self,
+        tls: Option<&ssl_config::SharedPtr>,
+    ) -> crate::Result<OwnedSslCtx> {
+        let Some(tls) = tls.filter(|tls| tls.get().requires_custom_request_ctx) else {
+            return Ok(self.default_ssl_ctx());
+        };
+        Ok(self
+            .custom_https_context(tls)?
+            .secure
+            .clone()
+            .expect("init_with_config sets `secure` or fails"))
     }
 
     /// The `SSL_CTX` of this config's HTTP/3 connections. `None` if the config can't be loaded.
@@ -415,7 +433,7 @@ impl HttpThread {
                 .get()
                 .as_usockets_for_client_verification()
                 .create_ssl_context(&mut uws::create_bun_socket_error_t::none)
-                .filter(uws::quic::context::prepare_client_ssl_ctx);
+                .inspect(uws::quic::context::prepare_client_ssl_ctx);
         }
         entry.quic.clone()
     }
@@ -530,8 +548,6 @@ impl HttpThread {
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
-        // The hostname is passed to the socket layer as a C string, so it must not contain a NUL.
-        crate::validate_request_target(hn)?;
         ctx.connect(client, hn, pt)
     }
 
@@ -686,6 +702,25 @@ impl HttpThread {
         self.deferred_tasks.insert(first_that_yields, http);
     }
 
+    /// Every slot is taken. A response that was dropped with its body unread holds one until a garbage collection finds it, and an idle heap is rarely collected.
+    #[cold]
+    fn ask_for_slots(&mut self, max: usize) {
+        if self.deferred_tasks.is_empty() && self.queued_tasks.is_empty() {
+            return;
+        }
+        // Asking again is worth it once the program has run: it has when it made more requests.
+        let created = crate::ASYNC_HTTP_ID_MONOTONIC.load(Ordering::Relaxed);
+        if (created.wrapping_sub(self.slots_asked_at) as usize) < (max / 4).max(1) {
+            return;
+        }
+        self.slots_asked_at = created;
+        for &id in self.in_flight.keys() {
+            if let Some(client) = self.request(id) {
+                HttpClient::report_slot_wanted(client);
+            }
+        }
+    }
+
     pub(crate) fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -711,6 +746,7 @@ impl HttpThread {
         // tracker. If that's clear, there's nothing to fail-fast and nothing can
         // start, so don't walk the lists.
         if active >= max && !self.has_pending_queued_abort {
+            self.ask_for_slots(max);
             return;
         }
 
@@ -921,7 +957,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
-                client.close_proxy_tunnel(false);
+                drop(core::mem::take(&mut client.proxy_tunnel));
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
                 if let Some(f) = release.release_at_shutdown {
@@ -1045,7 +1081,7 @@ fn start_queued_task(
     cloned.async_http.on_start();
 }
 
-/// Debug+ASAN invariant check: the socket a request records as its transport is live (unfreed) memory.
+/// Debug+ASAN invariant check: the socket a request records as its carrier is live (unfreed) memory.
 #[inline]
 fn assert_request_sockets_alive(thread: &HttpThread) {
     if cfg!(debug_assertions) {
@@ -1053,9 +1089,9 @@ fn assert_request_sockets_alive(thread: &HttpThread) {
             let Some(client) = thread.request(id) else {
                 continue;
             };
-            let socket = match bun_ptr::ParentRef::from(client).transport {
-                crate::Transport::Tcp(socket) => socket.socket,
-                crate::Transport::Tls(socket) => socket.socket,
+            let socket = match bun_ptr::ParentRef::from(client).carrier {
+                crate::Carrier::Tcp(socket) => socket.socket,
+                crate::Carrier::Tls(socket) => socket.socket,
                 _ => continue,
             };
             if let Some(usocket) = socket.get() {
@@ -1333,9 +1369,6 @@ pub fn shutdown_for_exit() -> bool {
     }
     true
 }
-
-// dispatch_deps bridge removed — real impls now live in
-// h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
 /// Module-level bridge for `HTTPThread::init`. The real body lives in
 /// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,

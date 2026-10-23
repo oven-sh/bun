@@ -758,3 +758,89 @@ describe.concurrent("client certificate policy", () => {
     });
   });
 });
+
+// node:https passes the context it built in createServer() this way. No other server reads the key.
+test("Bun.serve() ignores tls.secureContext", async () => {
+  const pem = (name: string) => readFileSync(join(import.meta.dir, "../../node/test/fixtures/keys", name), "utf8");
+  const secureContext = tls.createSecureContext({ key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") }).context;
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: { ...tlsCert, secureContext } as Bun.TLSOptions,
+    fetch: () => new Response("ok"),
+  });
+  const client = tls.connect({ port: server.port, host: "127.0.0.1", ca: tlsCert.cert });
+  await once(client, "secureConnect");
+  const { CN } = client.getPeerCertificate().subject;
+  client.destroy();
+  expect(CN).toBe("server-bun");
+});
+
+describe("tls.minVersion and tls.maxVersion take node:tls's version names", () => {
+  const serve = (bounds: Bun.TLSOptions) =>
+    Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { ...tlsCert, ...bounds }, fetch: () => new Response("ok") });
+
+  test.each(["TLSv1.2", "TLSv1.3"] as const)("Bun.serve negotiates %s when it's both bounds", async version => {
+    using server = serve({ minVersion: version, maxVersion: version });
+    const client = tls.connect({ port: server.port, host: "127.0.0.1", ca: tlsCert.cert, servername: "localhost" });
+    await once(client, "secureConnect");
+    const negotiated = client.getProtocol();
+    client.destroy();
+    expect(negotiated).toBe(version);
+  });
+
+  test("fetch applies them", async () => {
+    using server = serve({ minVersion: "TLSv1.3" });
+    const request = (bounds: Bun.TLSOptions) =>
+      fetch(`https://localhost:${server.port}/`, { tls: { ca: tlsCert.cert, ...bounds } }).then(
+        response => response.text(),
+        () => "refused",
+      );
+    expect([await request({ minVersion: "TLSv1.3" }), await request({ maxVersion: "TLSv1.2" })]).toEqual([
+      "ok",
+      "refused",
+    ]);
+  });
+
+  test("a number that is no protocol code leaves the default bounds", async () => {
+    const versions = ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"] as const;
+    // The versions that a client pinned to one version at a time gets.
+    const accepted = async (bounds: object) => {
+      using server = serve(bounds);
+      const got: string[] = [];
+      for (const version of versions) {
+        const { promise, resolve } = Promise.withResolvers<boolean>();
+        const client = tls
+          .connect({
+            port: server.port,
+            host: "127.0.0.1",
+            ca: tlsCert.cert,
+            servername: "localhost",
+            minVersion: version,
+            maxVersion: version,
+            ciphers: "ALL",
+          })
+          .on("secureConnect", () => resolve(true))
+          .on("error", () => resolve(false));
+        if (await promise) got.push(version);
+        client.destroy();
+      }
+      return got;
+    };
+    // The clients do speak TLS 1.0 and 1.1.
+    expect(await accepted({ minVersion: "TLSv1" })).toEqual([...versions]);
+    for (const code of [5, 0x0305]) {
+      expect(await accepted({ minVersion: code })).toEqual(["TLSv1.2", "TLSv1.3"]);
+      expect(await accepted({ maxVersion: code })).toEqual(["TLSv1.2", "TLSv1.3"]);
+    }
+  });
+
+  test("another string throws ERR_TLS_INVALID_PROTOCOL_VERSION", () => {
+    expect(() => serve({ minVersion: "TLSv9" as any })).toThrow(
+      expect.objectContaining({
+        code: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+        message: '"TLSv9" is not a valid minimum TLS protocol version',
+      }),
+    );
+  });
+});

@@ -2,7 +2,8 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
-  statusCode: b.i32.validateInteger(100, 999).default(200),
+  /** `ServerResponse` has checked the range. */
+  statusCode: b.u16.default(200),
   statusMessage: b.string.loose.nullable,
   /** The flat `[name, value, ...]` array, which C++ reads in place. */
   headers: b.any,
@@ -30,12 +31,10 @@ export const NodeHTTPResponse = b.class({
   proto: {
     abort: { capability: "js" },
     bufferedAmount: { getter: b.u64 },
-    cork: { ...method, args: { callback: b.callable } },
     end: { ...method, ...body, passThis: true, length: 2 },
     finished: { getter: b.bool },
     flags: { getter: b.i32 },
     flushHeaders: {},
-    getBytesWritten: { returns: b.usize },
     hasBody: { getter: b.i32 },
     headersObject: { returns: b.any, capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
@@ -43,12 +42,9 @@ export const NodeHTTPResponse = b.class({
     ondata: eventHandler,
     onwritable: eventHandler,
     pause: { returns: b.bool },
-    pauseReads: {},
     resume: { returns: b.bool },
     takeRawHeaders: { ...method, args: { headers: b.any } },
     takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
-    unref: { rustName: "js_unref" },
-    upgraded: { getter: b.bool },
     write: { ...method, ...body, length: 3 },
     writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },

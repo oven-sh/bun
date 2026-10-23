@@ -2,7 +2,7 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -16,7 +16,7 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::ssl_config::SSLConfig;
-use crate::{HTTPClient, Transport};
+use crate::{Carrier, HTTPClient};
 
 use crate::h3_client::h3_client;
 
@@ -165,14 +165,9 @@ impl ClientContext {
         self.sessions.push(session);
         session_mut(session).enqueue(client);
 
-        let result = self.qctx_mut().connect(
-            host_z,
-            port,
-            sni,
-            reject,
-            ssl_ctx.as_ref(),
-            session.cast::<c_void>(),
-        );
+        let result = self
+            .qctx_mut()
+            .connect(host_z, port, sni, reject, ssl_ctx.as_ref());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
@@ -207,7 +202,7 @@ impl ClientContext {
                 );
                 // `fail_session` fails what is queued, and that dispatch frees
                 // the `AsyncHTTP` the caller still holds. Queue nothing.
-                if let Transport::H3(stream) = client.transport {
+                if let Carrier::H3(stream) = client.carrier {
                     session_mut(session).detach(stream.as_ptr());
                 }
                 self.unregister(session_mut(session));

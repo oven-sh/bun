@@ -7,14 +7,24 @@ use bun_boringssl_sys::SSL_CTX;
 use crate::{Loop, udp};
 
 bun_opaque::opaque_ffi! {
-    /// Owns lsquic engines and their UDP sockets, and is the only code that enters the engines.
+    /// Owns lsquic engines and their UDP sockets, sends their packets and runs them from the loop.
     pub struct Driver;
     /// A driver's UDP socket. Valid until `Driver::close`.
     pub struct Udp;
 }
 
+/// `enum us_quic_pass_point`.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PassPoint {
+    BeforePoll,
+    /// The loop has dispatched what the poll returned.
+    AfterPoll,
+    AfterMicrotasks,
+}
+
 /// Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver.
-pub type Pass = unsafe extern "C" fn(driver: *mut Driver, in_microtask_drain: c_int) -> c_int;
+pub type Pass = unsafe extern "C" fn(driver: *mut Driver, point: PassPoint) -> c_int;
 
 unsafe extern "C" {
     fn us_quic_driver_create(loop_: *mut Loop, pass: Pass, owner: *mut c_void) -> *mut Driver;

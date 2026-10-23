@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -274,6 +274,40 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("exists after exit: false");
 });
 
+test.skipIf(isWindows)("SCHED_NONE pipe listen rejects a path with a null byte instead of truncating it", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("worker:", JSON.stringify(m));
+    console.log("truncated exists:", fs.existsSync(path.join(__dirname, "nul")));
+    worker.disconnect();
+  });
+  worker.on("exit", code => {
+    process.exit(code ?? 1);
+  });
+} else {
+  const server = net.createServer(() => {});
+  server.on("error", e => process.send({ code: e.code, syscall: e.syscall }));
+  server.listen(path.join(__dirname, "nul\\0byte.sock"), () => process.send({ listening: true }));
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain(`worker: {"code":"EINVAL","syscall":"bind"}`);
+  expect(stdout).toContain("truncated exists: false");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)("round-robin pipe listen applies readableAll/writableAll to the socket file", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
@@ -493,14 +527,19 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("SCHED_NONE: a worker listening on a unix path reports it from address()", async () => {
+// A path too long for sockaddr_un binds through its directory, as it does outside cluster.
+test.skipIf(isWindows).each([
+  ["a unix path", "."],
+  ["a unix path longer than sun_path", Buffer.alloc(120, "d").toString()],
+])("SCHED_NONE: a worker listening on %s reports it from address()", async (_name, subdirectory) => {
   using dir = tempDir("cluster-shared-unix-address", {
+    [`${subdirectory}/keep`]: "",
     "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const path = require("node:path");
 cluster.schedulingPolicy = cluster.SCHED_NONE;
-const SOCK = path.join(__dirname, "srv.sock");
+const SOCK = path.join(__dirname, ${JSON.stringify(subdirectory)}, "srv.sock");
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => { console.log(JSON.stringify(m)); worker.disconnect(); });
@@ -623,6 +662,170 @@ test.concurrent.each([{ ack: {} }, { addressType: {} }, { addressType: false }])
       stderr: "",
       exitCode: 0,
     });
+  },
+);
+
+test.skipIf(isWindows).concurrent.each(["SCHED_RR", "SCHED_NONE"])(
+  "%s: the primary outlives anything a worker writes on its channel",
+  async POLICY => {
+    using dir = tempDir("cluster-malformed-lines", {
+      "main.js": `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+
+cluster.schedulingPolicy = cluster[process.env.POLICY];
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", message => {
+    console.log(message);
+    worker.kill();
+  });
+} else {
+  const values = [null, true, 1.5, -1, 70000, 1e10, "x", [], {}, { toString: 1, valueOf: 1 }];
+  const lines = [...values];
+  for (const act of [...values, "valueOf", "toString", "constructor", "__proto__", "__defineGetter__"]) lines.push({ act });
+  for (const act of ["listening", "close", "online", "queryServer"]) {
+    lines.push({ act });
+    for (const sharedOnly of act === "queryServer" ? [undefined, true] : [undefined]) {
+      for (const value of values) {
+        lines.push({ act, address: value, port: -1, addressType: -1, fd: -1, sharedOnly });
+        for (const field of ["address", "port", "addressType", "fd", "flags", "index", "backlog", "key", "seq", "ack"]) {
+          lines.push({ act, address: "127.0.0.1", port: 0, addressType: 4, fd: -1, sharedOnly, [field]: value });
+        }
+      }
+    }
+  }
+  // An internal message is a line of JSON after a 0x02 byte, and fork() puts the channel at descriptor 3.
+  const bytes = Buffer.from(lines.map(line => "\\x02" + JSON.stringify(line) + "\\n").join(""));
+  for (let offset = 0; offset < bytes.length; ) {
+    try {
+      offset += fs.writeSync(3, bytes, offset);
+    } catch (err) {
+      if (err.code !== "EAGAIN") throw err;
+    }
+  }
+  process.send("the primary read " + lines.length + " lines");
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, POLICY },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "the primary read 579 lines", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each(["SCHED_RR", "SCHED_NONE"])(
+  "%s: a worker's server that is closed before the primary answers listen() emits 'close' and never listens",
+  async POLICY => {
+    using dir = tempDir("cluster-close-before-answer", {
+      "main.mjs": `
+import cluster from "node:cluster";
+import { once } from "node:events";
+import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import tls from "node:tls";
+
+const keys = { cert: process.env.CERT, key: process.env.KEY };
+cluster.schedulingPolicy = cluster[process.env.POLICY];
+
+function openFds() {
+  let count = 0;
+  for (let fd = 0; fd < 256; fd++) {
+    try {
+      fs.fstatSync(fd);
+      count++;
+    } catch {}
+  }
+  return count;
+}
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  await once(worker, "online");
+  const before = openFds();
+  worker.send("go");
+  for (const line of (await once(worker, "message"))[0]) console.log(line);
+  console.log("descriptors left in the primary:", openFds() - before);
+  worker.kill();
+} else {
+  await once(process, "message");
+  const servers = {
+    net: () => net.createServer(),
+    http: () => http.createServer(),
+    https: () => https.createServer(keys),
+    tls: () => tls.createServer(keys),
+  };
+  const cases = {
+    "listen(0), close(cb)"(server, callback) {
+      server.listen(0).close(callback);
+    },
+    "listen(0, host), close(cb)"(server, callback) {
+      server.listen(0, "127.0.0.1").close(callback);
+    },
+    "listen({ signal }), abort()"(server) {
+      const controller = new AbortController();
+      server.listen({ port: 0, signal: controller.signal });
+      controller.abort();
+    },
+    "listen({ signal }) with an aborted signal"(server) {
+      server.listen({ port: 0, signal: AbortSignal.abort() });
+    },
+    "listen(0), close(cb), listen(0)"(server, callback) {
+      server.listen(0).close(callback).listen(0);
+    },
+  };
+  const lines = [];
+  for (const [name, create] of Object.entries(servers)) {
+    for (const [label, run] of Object.entries(cases)) {
+      const server = create();
+      const events = [];
+      for (const event of ["listening", "close", "error"]) server.on(event, () => events.push(event));
+      const closed = once(server, "close");
+      run(server, err => events.push("callback " + err?.code));
+      await closed;
+      // The primary answers in order, so once it has answered this one, it has answered the server above.
+      const next = net.createServer().listen(0);
+      await once(next, "listening");
+      lines.push(name + ": " + label + ": " + events.join(", "));
+      for (const open of [next, server]) if (open.listening) await once(open.close(), "close");
+    }
+  }
+  process.send(lines);
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, POLICY, CERT: tlsCerts.cert, KEY: tlsCerts.key },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+      stdout: [
+        ...["net", "http", "https", "tls"].flatMap(name => [
+          `${name}: listen(0), close(cb): close, callback ERR_SERVER_NOT_RUNNING`,
+          `${name}: listen(0, host), close(cb): close, callback ERR_SERVER_NOT_RUNNING`,
+          `${name}: listen({ signal }), abort(): close`,
+          `${name}: listen({ signal }) with an aborted signal: close`,
+          `${name}: listen(0), close(cb), listen(0): close, callback ERR_SERVER_NOT_RUNNING, listening`,
+        ]),
+        "descriptors left in the primary: 0",
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   },
 );
 
@@ -1124,6 +1327,287 @@ if (cluster.isPrimary) {
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).concurrent.each(["server.close()", "process.disconnect()"])(
+  "an http worker's listen({ fd }) gets EEXIST for the primary's own http listener, which outlives the worker's %s",
+  async LEAVE => {
+    using dir = tempDir("cluster-fd-http", {
+      "main.js": `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+const http = require("node:http");
+const { once } = require("node:events");
+
+function socketFds() {
+  const fds = [];
+  for (let fd = 3; fd < 256; fd++) {
+    try {
+      if (fs.fstatSync(fd).isSocket()) fds.push(fd);
+    } catch {}
+  }
+  return fds;
+}
+function get(port) {
+  return new Promise(resolve => {
+    http
+      .get({ port, host: "127.0.0.1", agent: false }, res => {
+        let body = "";
+        res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
+      })
+      .on("error", err => resolve(err.code));
+  });
+}
+
+if (cluster.isPrimary) {
+  const before = socketFds();
+  const server = http.createServer((req, res) => res.end("primary")).listen(0, "127.0.0.1", async () => {
+    const { port } = server.address();
+    const worker = cluster.fork({ FD: socketFds().find(fd => !before.includes(fd)) });
+    console.log("worker:", (await once(worker, "message"))[0]);
+    console.log("client:", await get(port));
+    worker.send("leave");
+    await once(worker, process.env.LEAVE === "server.close()" ? "message" : "disconnect");
+    console.log("client after the worker left:", await get(port));
+    console.log("listening:", server.listening);
+    const file = fs.openSync(__filename, "r");
+    await new Promise(resolve => server.close(resolve));
+    console.log("a file opened before the primary's close() is a file:", fs.fstatSync(file).isFile());
+    console.log("client after the primary's close():", await get(port));
+    worker.kill();
+  });
+} else {
+  const server = http.createServer((req, res) => res.end("worker"));
+  server.on("error", err => process.send(err.code));
+  server.listen({ fd: Number(process.env.FD) }, () => process.send("listening"));
+  process.on("message", () => {
+    if (process.env.LEAVE === "process.disconnect()") process.disconnect();
+    else if (server.listening) server.close(() => process.send("closed"));
+    else process.send("closed");
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, LEAVE },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+      stdout: [
+        "worker: EEXIST",
+        "client: primary",
+        "client after the worker left: primary",
+        "listening: true",
+        "a file opened before the primary's close() is a file: true",
+        "client after the primary's close(): ECONNREFUSED",
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+const ownedFdFixture = `
+const cluster = require("node:cluster");
+const dgram = require("node:dgram");
+const dns = require("node:dns");
+const fs = require("node:fs");
+const http = require("node:http");
+const https = require("node:https");
+const net = require("node:net");
+const path = require("node:path");
+const tls = require("node:tls");
+const { once } = require("node:events");
+const { Worker } = require("node:worker_threads");
+
+const keys = { cert: process.env.CERT, key: process.env.KEY };
+cluster.schedulingPolicy = cluster[process.env.POLICY];
+
+function socketFds() {
+  const fds = [];
+  for (let fd = 3; fd < 256; fd++) {
+    try {
+      if (fs.fstatSync(fd).isSocket()) fds.push(fd);
+    } catch {}
+  }
+  return fds;
+}
+function readAll(socket, request) {
+  return new Promise(resolve => {
+    let text = "";
+    socket.on("data", chunk => (text += chunk));
+    socket.on("close", () => resolve(text.slice(text.indexOf("\\r\\n\\r\\n") + 1).trim()));
+    socket.on("error", err => resolve(err.code));
+    if (request) socket.write(request);
+  });
+}
+const httpRequest = "GET / HTTP/1.0\\r\\n\\r\\n";
+
+// Each returns a function that asks the owner for "primary" over a new connection.
+const owners = {
+  async "net.Server"() {
+    const server = net.createServer(socket => socket.end("primary")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address();
+    return () => readAll(net.connect(port, "127.0.0.1"));
+  },
+  async "http.Server"() {
+    const server = http.createServer((req, res) => res.end("primary")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address();
+    return () => readAll(net.connect(port, "127.0.0.1"), httpRequest);
+  },
+  async "tls.Server"() {
+    const server = tls.createServer(keys, socket => socket.end("primary")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address();
+    return () => readAll(tls.connect({ port, host: "127.0.0.1", ca: keys.cert }));
+  },
+  async "unix path"() {
+    const file = path.join(process.cwd(), "owner.sock");
+    await once(net.createServer(socket => socket.end("primary")).listen(file), "listening");
+    return () => readAll(net.connect(file));
+  },
+  async "Bun.serve"() {
+    const { port } = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("primary") });
+    return () => readAll(net.connect(port, "127.0.0.1"), httpRequest);
+  },
+  async "Bun.listen"() {
+    const { port } = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { open: socket => void socket.end("primary"), data() {} } });
+    return () => readAll(net.connect(port, "127.0.0.1"));
+  },
+  async "listener on another thread"() {
+    const thread = new Worker(
+      'const server = require("node:net").createServer(socket => socket.end("primary")).listen(0, "127.0.0.1", () => require("node:worker_threads").parentPort.postMessage(server.address().port));',
+      { eval: true },
+    );
+    const [port] = await once(thread, "message");
+    return () => readAll(net.connect(port, "127.0.0.1"));
+  },
+  async "connected socket"() {
+    const server = net.createServer(socket => socket.on("data", () => socket.write("primary"))).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = net.connect(server.address().port, "127.0.0.1");
+    await once(client, "connect");
+    return Object.assign(async () => (client.write("x"), String((await once(client, "data"))[0])), { fd: client._handle.fd });
+  },
+  async "dns.Resolver"() {
+    let answers = false;
+    const server = dgram.createSocket("udp4").bind(0, "127.0.0.1");
+    server.on("message", (query, { port }) => {
+      if (!answers) return;
+      const head = Buffer.from(query.subarray(0, 12));
+      head.writeUInt16BE(0x8180, 2);
+      head.writeUInt16BE(1, 6);
+      head.writeUInt16BE(0, 10);
+      const question = query.subarray(12, query.indexOf(0, 12) + 5);
+      server.send([head, question, Buffer.from("c00c000100010000000100047f000001", "hex")], port, "127.0.0.1");
+    });
+    await once(server, "listening");
+    const before = socketFds();
+    const resolver = new dns.promises.Resolver({ timeout: 60_000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + server.address().port]);
+    // The resolver holds a descriptor until this query times out.
+    let released = false;
+    resolver.resolve4("unanswered.test").catch(() => (released = true));
+    await once(server, "message");
+    const ask = async () => {
+      answers = true;
+      const [address] = await resolver.resolve4("primary.test");
+      return address === "127.0.0.1" ? "primary" : address;
+    };
+    return Object.assign(ask, { fd: socketFds().find(fd => !before.includes(fd)), released: () => released });
+  },
+  async "dgram.Socket"() {
+    const socket = dgram.createSocket("udp4").bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+    return async () => {
+      const sender = dgram.createSocket("udp4");
+      sender.send("primary", port, "127.0.0.1", () => sender.close());
+      return String((await once(socket, "message"))[0]);
+    };
+  },
+};
+
+function listen(server, fd) {
+  return new Promise(resolve => {
+    server.on("error", err => resolve(err.code));
+    server.listen({ fd }, () => server.close(() => resolve("listening")));
+  });
+}
+const ways = {
+  net: fd => listen(net.createServer(), fd),
+  http: fd => listen(http.createServer(), fd),
+  https: fd => listen(https.createServer(keys), fd),
+  tls: fd => listen(tls.createServer(keys), fd),
+  dgram: fd =>
+    new Promise(resolve => {
+      const socket = dgram.createSocket("udp4");
+      socket.on("error", err => resolve(err.code));
+      socket.bind({ fd }, () => socket.close(() => resolve("listening")));
+    }),
+};
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  await once(worker, "online");
+  let ask, lines;
+  do {
+    const before = socketFds();
+    ask = await owners[process.env.OWNER]();
+    worker.send(ask.fd ?? socketFds().find(fd => !before.includes(fd)));
+    [lines] = await once(worker, "message");
+    // An answer about a descriptor that its owner has given up meanwhile says nothing.
+  } while (ask.released?.());
+  for (const line of lines) console.log(line);
+  console.log("owner:", await ask());
+  worker.disconnect();
+  await once(worker, "exit");
+  console.log("owner after the worker's exit:", await ask());
+  process.exit(0);
+} else {
+  process.on("message", async fd => {
+    const lines = [];
+    for (const way of process.env.WAYS.split("|")) lines.push(way + ": " + (await ways[way](fd)));
+    process.send(lines);
+  });
+}
+`;
+
+describe.each(["SCHED_RR", "SCHED_NONE"])("%s: a worker can't take a descriptor that the primary uses:", POLICY => {
+  const streamWays = ["net", "http", "https", "tls"];
+  test.skipIf(isWindows).concurrent.each([
+    ["net.Server", streamWays],
+    ["http.Server", streamWays],
+    ["tls.Server", streamWays],
+    ["unix path", streamWays],
+    ["Bun.serve", streamWays],
+    ["Bun.listen", streamWays],
+    ["listener on another thread", streamWays],
+    ["connected socket", streamWays],
+    ["dgram.Socket", ["dgram"]],
+    ["dns.Resolver", ["dgram"]],
+  ])("%s", async (OWNER, ways) => {
+    using dir = tempDir("cluster-fd-owned", { "main.mjs": ownedFdFixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, POLICY, OWNER, WAYS: ways.join("|"), CERT: tlsCerts.cert, KEY: tlsCerts.key },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+      stdout: [...ways.map(way => `${way}: EEXIST`), "owner: primary", "owner after the worker's exit: primary"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.skipIf(isWindows)(

@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { NodeHTTPResponse } from "../server/NodeHTTPResponse.bind.ts";
 import { DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket } from "../server/server.bind.ts";
+import { SocketHandle } from "../socket/socket_body.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_http_binding" });
 
@@ -18,19 +18,52 @@ export const BunServer = b.union({
   debugHttp: DebugHTTPServer,
   debugHttps: DebugHTTPSServer,
 });
-export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
+/** `handlers` is `node:net`'s handler table for accepted sockets. Every `req.socket._handle` of `server` calls it, and starts with `data`. `alpnProtocols` is in wire format, empty for none. */
+export const setBunServerSocketHandlers = b.fn({
+  args: {
+    server: BunServer,
+    handlers: b.any,
+    alpnProtocols: b.bytes({ from: ["buffer"], held: "handle" }),
+    data: b.any,
+  },
+  capability: "js",
+  throws: true,
+});
 
-/** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
-export const UpgradeResponse = b.union({ response: NodeHTTPResponse, ignored: b.any });
+/** `lenientHttpFlags`: bit 0 is llhttp's LENIENT_HEADERS, bit 1 its LENIENT_TRANSFER_ENCODING. */
+const appFlags = { lenientHttpFlags: b.u8, httpAllowHalfOpen: b.bool } as const;
+/** What an `http.Server` can change while it listens. */
+export const setServerAppFlags = b.fn({ args: { server: BunServer, ...appFlags } });
+/** 0 means the option is not set. */
+export const setServerMaxHeadersCount = b.fn({ args: { server: BunServer, maxHeadersCount: b.u32 } });
+/** `onClientError(socketHandle, errorCode, rawPacket)`. */
+export const setServerCustomOptions = b.fn({
+  args: {
+    server: BunServer,
+    ...appFlags,
+    maxHeaderSize: b.f64.loose,
+    onClientError: b.callable,
+  },
+  capability: "js",
+});
+
 export const DeflateParams = b.dictionary({
   serverMaxWindowBits: b.f64.loose.nullable.default(15),
   clientMaxWindowBits: b.f64.loose.nullable.default(15),
   serverNoContextTakeover: b.bool.loose.default(false),
   clientNoContextTakeover: b.bool.loose.default(false),
 });
-export const upgradeNodeHTTPResponseToWebSocket = b.fn({
+/** The HTTP side of `socket`'s connection while uWS owns it, and `undefined` for every other value. */
+export const httpConnectionOf = b.fn({ args: { socket: SocketHandle }, returns: b.any, capability: "heap" });
+
+/** Whether the WebSocket that `upgradeSocketToWebSocket()` made of `socket` has closed, and the kernel had taken everything it queued. */
+export const closedWithAllDataSent = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
+
+/** `socket` is `_handle` of the socket given to `handleUpgrade()` of `ws`, after the connection has left HTTP. */
+export const upgradeSocketToWebSocket = b.fn({
   args: {
-    response: UpgradeResponse,
+    server: BunServer,
+    socket: SocketHandle,
     websocket: b.any,
     handlers: b.any,
     handshake: b.string.utf8,

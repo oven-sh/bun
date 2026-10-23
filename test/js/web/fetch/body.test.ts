@@ -292,6 +292,23 @@ for (const { body, fn } of bodyTypes) {
         expect([blob.type, await blob.text(), subject.bodyUsed]).toEqual(["text/x-bun", "bye", true]);
       });
 
+      test("blob() of a stream the program made has the type in Content-Type, or none", async () => {
+        const stream = () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("bye"));
+              controller.close();
+            },
+          });
+        const png = { "Content-Type": "image/png" };
+        expect({
+          "no header": (await fn(stream()).blob()).type,
+          header: (await fn(stream(), png).blob()).type,
+          "header, clone()": (await fn(stream(), png).clone().blob()).type,
+          "tee() of another body": (await fn(fn(new Uint8Array(3)).body!.tee()[0]).blob()).type,
+        }).toEqual({ "no header": "", header: "image/png", "header, clone()": "image/png", "tee() of another body": "" });
+      });
+
       test("text() after the body getter returns a string body's bytes", async () => {
         const subject = fn("bye");
         expect(subject.body).toBeInstanceOf(ReadableStream);
@@ -2068,6 +2085,9 @@ describe("the body's Content-Type stays in the headers after the body is read", 
     // None of the bodies is JSON.
     json: owner => owner.json().catch(() => {}),
   };
+  for (const [name, read] of Object.entries(reads).slice(1)) {
+    reads[`body, then ${name}`] = owner => (owner.body, read(owner));
+  }
   describe.each([
     ["Response", response],
     ["Request", request],
@@ -2080,6 +2100,12 @@ describe("the body's Content-Type stays in the headers after the body is read", 
         seen[name] = owner.headers.get("content-type");
       }
       expect(seen).toEqual(all(reads, type));
+    });
+
+    test.each(bodies)("blob() of a %s body has it after .body", async (_, body, type) => {
+      const owner = make(body());
+      owner.body;
+      expect<unknown>((await owner.blob()).type).toEqual(type);
     });
 
     test("the FormData boundary matches the body", async () => {
@@ -2104,6 +2130,8 @@ describe("the body's Content-Type stays in the headers after the body is read", 
       const p = request(body);
       return new Response(p.body, p);
     },
+    "new Response('x', p)": body => new Response("x", response(body)),
+    "new Response(null, p)": body => new Response(null, response(body)),
   };
   test.each(bodies)("a Response copied from one with a %s body has it", async (_, body, type) => {
     using server = Bun.serve({
@@ -2119,6 +2147,7 @@ describe("the body's Content-Type stays in the headers after the body is read", 
     expect({ headers, wire }).toEqual({ headers: all(copies, type), wire: all(copies, type) });
     // A stream has no type: https://fetch.spec.whatwg.org/#concept-bodyinit-extract
     expect(new Response(response(body()).body).headers.get("content-type")).toBeNull();
+    expect(request(response(body()).body!).headers.get("content-type")).toBeNull();
   });
 
   test.each(bodies)("fetch(request) leaves it in request.headers (%s)", async (_, body, type) => {

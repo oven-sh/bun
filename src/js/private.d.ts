@@ -90,7 +90,6 @@ declare module "bun" {
       unix?: string;
       fd?: number;
       onNodeHTTPRequest(
-        bunServer: Server<WebSocketData>,
         url: string,
         method: string,
         dispatchBits: number,

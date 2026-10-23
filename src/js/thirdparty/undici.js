@@ -9,7 +9,8 @@ const kEmptyObject = ObjectCreate(null);
 const noop = () => {};
 
 const nativeFetch = Bun.fetch;
-const isBodyDecoded = $bindgen("response.bind.ts", "isBodyDecoded");
+const FetchSession = Bun.FetchSession;
+const isDecodedBody = $bindgen("ReadableStream.bind.ts", "isDecodedBody");
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];
@@ -221,14 +222,14 @@ function callFunction(fn) {
 // If fetch() decoded the body, Content-Encoding and the encoded Content-Length no longer describe it.
 function responseHeaders(response) {
   const headers = response.headers.toJSON();
-  if (isBodyDecoded(response)) {
+  if (isDecodedBody(response.body)) {
     delete headers["content-encoding"];
     delete headers["content-length"];
   }
   return headers;
 }
 
-function validateRequest({ method, body, maxRedirections, signal }) {
+function validateRequest(method, body, maxRedirections, signal) {
   // https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
   if (!method) method = "GET";
   else if (typeof method !== "string") throw new InvalidArgumentError("method must be a string");
@@ -250,11 +251,10 @@ function validateRequest({ method, body, maxRedirections, signal }) {
   return method;
 }
 
-// Sends a request() or dispatch() request with native fetch().
-function send(dispatcher, url, method, { headers, body, maxRedirections, reset }, signal) {
+// Sends a request() or dispatch() request with the dispatcher's fetch().
+function send(dispatcher, url, method, headers, body, maxRedirections, reset, signal) {
   const followRedirects = maxRedirections > 0;
-  return nativeFetch(url, {
-    ...dispatcher?.[kFetchOptions],
+  return (dispatcher?.[kFetch] ?? nativeFetch)(url, {
     signal,
     method,
     headers: toHeaders(headers),
@@ -308,11 +308,17 @@ function callbackify(run, callback, opaque) {
  * }}
  */
 async function request(url, options = kEmptyObject) {
-  const { query, signal, throwOnError, opaque = kEmptyObject, dispatcher = globalDispatcher } = options;
+  const { dispatcher = globalDispatcher } = options;
+  return requestWith(dispatcher, url, options);
+}
+
+async function requestWith(dispatcher, url, options) {
+  const { query, signal, throwOnError, opaque = kEmptyObject, headers, maxRedirections, reset } = options;
+  const requestBody = options.body;
 
   url = parseURL(url);
   if (query) url.search = new URLSearchParams(query).toString();
-  const method = validateRequest(options);
+  const method = validateRequest(options.method, requestBody, maxRedirections, signal);
 
   const controller = new AbortController();
   const removeAbortListener = addAbortListener(signal, controller);
@@ -320,7 +326,7 @@ async function request(url, options = kEmptyObject) {
     const run = signal =>
       hasOwnDispatch(dispatcher)
         ? sendWithDispatch(dispatcher, url, { ...options, method, query: undefined }, signal)
-        : send(dispatcher, url, method, options, signal);
+        : send(dispatcher, url, method, headers, requestBody, maxRedirections, reset, signal);
     /** @type {Response} */
     const resp = await (dispatcher?.[kTrack] ? dispatcher[kTrack](controller.signal, run) : run(controller.signal));
     const statusCode = resp.status;
@@ -345,8 +351,12 @@ async function stream(url, options, factory) {
     factory = options;
     options = undefined;
   }
+  return streamWith(() => request(url, options), factory);
+}
+
+async function streamWith(run, factory) {
   if (!$isCallable(factory)) throw new InvalidArgumentError("invalid factory");
-  const { statusCode, headers, body, opaque, context } = await request(url, options);
+  const { statusCode, headers, body, opaque, context } = await run();
   try {
     const writable = factory({ statusCode, headers, opaque, context });
     if (!writable || !$isCallable(writable.write) || !$isCallable(writable.end) || !$isCallable(writable.on)) {
@@ -382,7 +392,7 @@ class MockAgent {
 
 function mockErrors() {}
 
-const kFetchOptions = Symbol("kFetchOptions");
+const kFetch = Symbol("kFetch");
 const kTrack = Symbol("kTrack");
 const kUsesFetch = Symbol("kUsesFetch");
 
@@ -400,14 +410,15 @@ class Dispatcher extends EventEmitter {
   }
 }
 
-// Maps a dispatcher's `connect` options, which undici passes to tls.connect(), to native fetch() options.
-function connectToFetchOptions(connect, socketPath) {
+// Maps a dispatcher's `connect` options, which undici passes to tls.connect(), to Bun.FetchSession options.
+function toSessionOptions(connect, socketPath, proxy) {
   // A connector function has no options. Its own properties must not relax TLS while the function itself is ignored.
   if ($isCallable(connect)) connect = undefined;
-  socketPath ??= connect?.socketPath;
-  const tls = connect && require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...connect });
-  if (!tls && !socketPath) return undefined;
-  return { __proto__: null, tls, unix: socketPath };
+  return {
+    tls: connect && require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...connect }),
+    unix: (socketPath ?? connect?.socketPath) || undefined,
+    proxy,
+  };
 }
 
 // https://github.com/nodejs/undici/blob/v7.16.0/lib/handler/unwrap-handler.js
@@ -481,7 +492,7 @@ function parseRawHeaders(rawHeaders) {
 }
 
 // Runs one native fetch() and reports it through a dispatch() handler's callbacks.
-async function dispatchWithFetch(dispatcher, url, method, opts, handler, controller, signal) {
+async function dispatchWithFetch(send, handler, controller, signal) {
   let paused = false;
   let wake = noop;
   const resume = () => {
@@ -493,7 +504,7 @@ async function dispatchWithFetch(dispatcher, url, method, opts, handler, control
   handler.onConnect?.(reason => controller.abort(reason ?? new RequestAbortedError()), null);
   signal.throwIfAborted();
 
-  const response = await send(dispatcher, url, method, opts, signal);
+  const response = await send(signal);
 
   const headers = responseHeaders(response);
   const rawHeaders = [];
@@ -522,17 +533,24 @@ async function dispatchWithFetch(dispatcher, url, method, opts, handler, control
 class DispatcherBase extends Dispatcher {
   #origin;
   #hasConnector;
+  #sessionOptions;
+  #session;
   #closed = false;
   #destroyed = false;
   #aborter = new AbortController();
   #pending = 0;
   #onDrain = [];
 
-  constructor(options, origin) {
+  constructor(options, origin, proxy) {
     super();
     this.#origin = origin;
     this.#hasConnector = $isCallable(options?.connect);
-    this[kFetchOptions] = connectToFetchOptions(options?.connect, options?.socketPath);
+    this.#sessionOptions = toSessionOptions(options?.connect, options?.socketPath, proxy);
+  }
+
+  // fetch() with this dispatcher's TLS options, socket path, proxy and connections. Bad options fail the first request, as in undici.
+  get [kFetch]() {
+    return (this.#session ??= new FetchSession(this.#sessionOptions)).fetch;
   }
 
   get closed() {
@@ -595,6 +613,7 @@ class DispatcherBase extends Dispatcher {
     this.#closed = true;
     this.#whenDrained(() => {
       this.#destroyed = true;
+      this.#session?.close();
       callback(null, null);
     });
   }
@@ -610,20 +629,24 @@ class DispatcherBase extends Dispatcher {
     if (!$isCallable(callback)) throw new InvalidArgumentError("invalid callback");
     this.#destroyed = true;
     this.#aborter.abort(err || new ClientDestroyedError());
-    this.#whenDrained(() => callback(null, null));
+    this.#whenDrained(() => {
+      this.#session?.close();
+      callback(null, null);
+    });
   }
 
   dispatch(opts, handler) {
     if (!handler || typeof handler !== "object") throw new InvalidArgumentError("handler must be an object");
     handler = unwrapHandler(handler);
-    let url, method;
+    let run;
     try {
       if (!opts || typeof opts !== "object") throw new InvalidArgumentError("opts must be an object.");
       this.#assertOpen();
-      url = this.#url(opts);
-      const { query } = opts;
+      const url = this.#url(opts);
+      const { query, headers, body, maxRedirections, reset } = opts;
       if (query) url.search = new URLSearchParams(query).toString();
-      method = validateRequest(opts);
+      const method = validateRequest(opts.method, body, maxRedirections, opts.signal);
+      run = signal => send(this, url, method, headers, body, maxRedirections, reset, signal);
     } catch (err) {
       if (!$isCallable(handler.onError)) throw err;
       handler.onError(err);
@@ -632,7 +655,7 @@ class DispatcherBase extends Dispatcher {
     const controller = new AbortController();
     this[kTrack](controller.signal, async signal => {
       try {
-        await dispatchWithFetch(this, url, method, opts, handler, controller, signal);
+        await dispatchWithFetch(run, handler, controller, signal);
       } catch (err) {
         controller.abort(err);
         handler.onError(err);
@@ -642,12 +665,15 @@ class DispatcherBase extends Dispatcher {
   }
 
   request(opts, callback) {
-    return callbackify(async () => request(this.#url(opts), { ...opts, dispatcher: this }), callback, opts?.opaque);
+    return callbackify(async () => requestWith(this, this.#url(opts), opts), callback, opts?.opaque);
   }
 
   stream(opts, factory, callback) {
     return callbackify(
-      async () => stream(this.#url(opts), { ...opts, dispatcher: this }, factory),
+      async () => {
+        const url = this.#url(opts);
+        return streamWith(() => requestWith(this, url, opts), factory);
+      },
       callback,
       opts?.opaque,
     );
@@ -680,7 +706,6 @@ class ProxyAgent extends DispatcherBase {
     if (!opts || (typeof opts === "object" && !(opts instanceof URL) && !opts.uri)) {
       throw new InvalidArgumentError("Proxy uri is mandatory");
     }
-    super();
     const url = new URL(typeof opts === "string" || opts instanceof URL ? opts : opts.uri).href;
     const { auth, token } = opts;
     const headers = { ...opts.headers };
@@ -692,8 +717,7 @@ class ProxyAgent extends DispatcherBase {
       headers["proxy-authorization"] = token;
     }
     // fetch()'s `tls` also covers the connection to an https: proxy, which requestTls must not relax.
-    const requestTls = url.startsWith("https:") ? undefined : connectToFetchOptions(opts.requestTls);
-    this[kFetchOptions] = { __proto__: null, ...requestTls, proxy: { url, headers } };
+    super({ connect: url.startsWith("https:") ? undefined : opts.requestTls }, undefined, { url, headers });
   }
 }
 
@@ -712,8 +736,8 @@ class RetryAgent extends Dispatcher {
     this.#agent = agent;
   }
 
-  get [kFetchOptions]() {
-    return this.#agent?.[kFetchOptions];
+  get [kFetch]() {
+    return this.#agent?.[kFetch];
   }
 
   get [kUsesFetch]() {
@@ -1072,19 +1096,11 @@ async function fetchWithDispatch(dispatcher, input, init) {
 function fetch(input, init) {
   const dispatcher = init?.dispatcher ?? globalDispatcher;
   if (hasOwnDispatch(dispatcher)) return fetchWithDispatch(dispatcher, input, init);
-  const options = dispatcher?.[kFetchOptions];
-  if (!options) return nativeFetch(input, init);
-  if (init instanceof Request) {
-    // A Request's fields are getters, so a spread would lose them.
-    try {
-      return nativeFetch(new Request(input, init), options);
-    } catch (err) {
-      return Promise.$reject(err);
-    }
+  try {
+    return (dispatcher?.[kFetch] ?? nativeFetch)(input, init);
+  } catch (err) {
+    return Promise.$reject(err);
   }
-  const merged = { ...init };
-  for (const name in options) merged[name] ??= options[name];
-  return nativeFetch(input, merged);
 }
 fetch.preconnect = nativeFetch.preconnect;
 

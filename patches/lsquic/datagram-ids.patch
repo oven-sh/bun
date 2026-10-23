@@ -1,26 +1,22 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -257,12 +257,14 @@ struct lsquic_stream_if {
+@@ -256,6 +256,15 @@ struct lsquic_stream_if {
+     void (*on_mini_conn_failed)(void *stream_if_ctx,
                                  const struct sockaddr *peer_sa,
                                  uint64_t error_code);
-     /**
--     * Optional callback fired when a packet carrying DATAGRAM frames is
--     * acknowledged by the peer (`acked` is 1) or declared lost (`acked` is
--     * 0).  `count` is the number of DATAGRAM frames the packet carried.
--     * bun addition.
++    /**
 +     * Optional callback fired once for each DATAGRAM frame when its packet
 +     * is acknowledged, when its packet is declared lost, or when the frame
 +     * is dropped before its packet is sent.  `dgram_id` is the value that
 +     * on_dg_write gave lsquic_conn_set_datagram_id() for that frame (0 if it
 +     * gave none).  `status` is one of enum lsquic_dg_status.  bun addition.
-      */
--    void (*on_datagram_status)(lsquic_conn_t *c, unsigned count, int acked);
++     */
 +    void (*on_datagram_status)(lsquic_conn_t *c, uint64_t dgram_id,
 +                               int status);
      /**
       * Optional callback fired on the client the moment the server rejects
       * its early data (before any of the 0-RTT streams are torn down).
-@@ -2269,6 +2271,25 @@ lsquic_engine_set_idle_timeout_ms (lsquic_engine_t *, unsigned ms);
+@@ -2248,6 +2257,25 @@ lsquic_conn_ack_now (lsquic_conn_t *);
  int
  lsquic_conn_datagram_early (const lsquic_conn_t *);
  
@@ -48,16 +44,14 @@
   * discovers the death via stateless reset or idle timeout.
 --- a/src/liblsquic/lsquic_full_conn_ietf.c
 +++ b/src/liblsquic/lsquic_full_conn_ietf.c
-@@ -534,12 +534,16 @@ struct ietf_full_conn
-      * (calloc'd conns default to not set, falling back to engine settings).
-      */
-     lsquic_time_t               ifc_ping_us_override;
--    int                         ifc_ping_us_override_set;
+@@ -527,11 +527,15 @@ struct ietf_full_conn
+     }                           ifc_u;
+     lsquic_time_t               ifc_idle_to;
+     lsquic_time_t               ifc_ping_period;
 +    /* bun: the id on_dg_write gave the DATAGRAM frame that write_datagram is
-+     * generating.  The three flags below are one byte each so that this
++     * generating.  The two flags below are one byte each so that this
 +     * field doesn't grow the struct. */
 +    uint64_t                    ifc_dg_id;
-+    unsigned char               ifc_ping_us_override_set;
      /* bun: the DATAGRAM frame currently being delivered arrived in a 0-RTT
       * packet (valid only during the on_datagram callback). */
 -    int                         ifc_datagram_early;
@@ -68,7 +62,7 @@
      /* bun: PING frames received, for session stats. */
      uint64_t                    ifc_pings_in;
      lsquic_time_t               ifc_last_tick;
-@@ -6963,6 +6967,20 @@ lsquic_conn_datagram_early (const struct lsquic_conn *lconn)
+@@ -6924,6 +6928,20 @@ lsquic_conn_datagram_early (const struct lsquic_conn *lconn)
  }
  
  
@@ -89,9 +83,9 @@
  typedef unsigned (*process_frame_f)(
      struct ietf_full_conn *, struct lsquic_packet_in *,
      const unsigned char *p, size_t);
-@@ -8499,6 +8517,10 @@ write_datagram (struct ietf_full_conn *conn)
-     if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
-         packet_out->po_header_type = HETY_0RTT;
+@@ -8455,6 +8473,10 @@ write_datagram (struct ietf_full_conn *conn)
+     if (!packet_out)
+         return 0;
  
 +    /* bun */
 +    _Static_assert(sizeof(uintptr_t) >= sizeof(conn->ifc_dg_id),
@@ -100,7 +94,7 @@
      w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
              packet_out->po_data + packet_out->po_data_sz,
              lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
-@@ -8509,8 +8531,8 @@ write_datagram (struct ietf_full_conn *conn)
+@@ -8465,8 +8487,8 @@ write_datagram (struct ietf_full_conn *conn)
          LSQ_DEBUG("could not generate DATAGRAM frame");
          return 0;
      }
@@ -111,41 +105,6 @@
      {
          ABORT_ERROR("adding DATAGRAME frame to packet failed: %d", errno);
          return 0;
---- a/src/liblsquic/lsquic_packet_out.c
-+++ b/src/liblsquic/lsquic_packet_out.c
-@@ -401,20 +401,6 @@ lsquic_packet_out_ack_streams (lsquic_packet_out_t *packet_out)
- }
- 
- 
--unsigned
--lsquic_packet_out_count_datagram_frames (lsquic_packet_out_t *packet_out)
--{
--    struct packet_out_frec_iter pofi;
--    struct frame_rec *frec;
--    unsigned count = 0;
--    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
--                                                frec = lsquic_pofi_next(&pofi))
--        if (QUIC_FRAME_DATAGRAM == frec->fe_frame_type)
--            ++count;
--    return count;
--}
--
--
- void
- lsquic_packet_out_zero_pad (lsquic_packet_out_t *packet_out)
- {
---- a/src/liblsquic/lsquic_packet_out.h
-+++ b/src/liblsquic/lsquic_packet_out.h
-@@ -376,9 +376,6 @@ lsquic_pofi_first (struct packet_out_frec_iter *pofi, lsquic_packet_out_t *);
- struct frame_rec *
- lsquic_pofi_next (struct packet_out_frec_iter *pofi);
- 
--unsigned
--lsquic_packet_out_count_datagram_frames (lsquic_packet_out_t *);
--
- lsquic_packet_out_t *
- lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
-                        const struct lsquic_conn *, enum packno_bits,
 --- a/src/liblsquic/lsquic_send_ctl.c
 +++ b/src/liblsquic/lsquic_send_ctl.c
 @@ -1164,6 +1164,30 @@ send_ctl_record_loss (struct lsquic_send_ctl *ctl,
@@ -179,40 +138,26 @@
  static struct lsquic_packet_out *
  send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
              lsquic_packet_out_t *packet_out, struct lsquic_packet_out **next)
-@@ -1174,15 +1198,9 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
+@@ -1174,6 +1198,10 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
      assert(ctl->sc_n_in_flight_all);
      packet_sz = packet_out_sent_sz(packet_out);
  
--    /* DATAGRAM frames are never retransmitted (RFC 9221 Section 5): even if
--     * the packet's other frames are rescheduled, the datagrams it carried
--     * are gone.  Report them as lost.
--     */
--    if ((packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
--            && ctl->sc_enpub->enp_stream_if->on_datagram_status)
--        ctl->sc_enpub->enp_stream_if->on_datagram_status(
--            ctl->sc_conn_pub->lconn,
--            lsquic_packet_out_count_datagram_frames(packet_out), 0);
 +    /* bun: even if the packet's other frames are rescheduled, the datagrams
 +     * it carried are gone. */
 +    send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_LOST);
- 
++
      ++ctl->sc_loss_count;
  #if LSQUIC_CONN_STATS
-@@ -1517,12 +1535,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
+     ++ctl->sc_conn_pub->conn_stats->out.lost_packets;
+@@ -1507,6 +1535,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                  packet_sz = packet_out_sent_sz(packet_out);
                  send_ctl_unacked_remove(ctl, packet_out, packet_sz);
                  lsquic_packet_out_ack_streams(packet_out);
--                if ((packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
--                        && ctl->sc_enpub->enp_stream_if->on_datagram_status)
--                    ctl->sc_enpub->enp_stream_if->on_datagram_status(
--                        ctl->sc_conn_pub->lconn,
--                        lsquic_packet_out_count_datagram_frames(packet_out),
--                        1);
 +                send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_ACKED);
                  LSQ_DEBUG("acking via regular record #%"PRIu64,
                                                          packet_out->po_packno);
              }
-@@ -2304,6 +2317,10 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+@@ -2288,6 +2317,10 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
  
      if (packet_out->po_flags & PO_REPACKNO)
      {
@@ -223,7 +168,7 @@
          if (packet_out->po_regen_sz < packet_out->po_data_sz
              && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
          {
-@@ -2893,6 +2910,10 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+@@ -2877,6 +2910,10 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
              send_ctl_sched_remove(ctl, packet_out);
              LSQ_DEBUG("Dropping packet #%"PRIu64" from scheduled queue",
                  packet_out->po_packno);

@@ -956,6 +956,27 @@ describe("a stream that errors after both halves have closed", () => {
       server.close();
     }
   });
+
+  // request() ends a GET itself. The errored writable side never emits 'finish', so 'close' can't wait for it.
+  test("client: write() on a GET that was made before 'connect'", async () => {
+    const server = rawH2Server(sid => [frame(F.HEADERS, END_HEADERS | END_STREAM, sid, hp([[":status", "204"]]))]);
+    const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+    try {
+      const req = client.request({ ":path": "/" });
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      record(req, events, withoutEnd);
+      req.on("close", closed.resolve);
+      req.resume();
+      req.write("late");
+      await closed.promise;
+      assert.deepStrictEqual(events, ["error:ERR_STREAM_WRITE_AFTER_END", "close"]);
+      assert.strictEqual(req.rstCode, NGHTTP2_NO_ERROR);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 });
 
 // respond() ends these responses itself. Node emits 'error' for the write(), which is uncaught here.

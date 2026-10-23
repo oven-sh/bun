@@ -237,7 +237,6 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
             if end_stream {
                 stream.recv_end_stream();
             }
-            stream.data_bytes_received += data.len() as u64;
             stream.body_buffer.extend_from_slice(data);
         }
         Frame::RstStream { code } => {

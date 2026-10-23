@@ -1425,8 +1425,9 @@ describe("chunk size strict hex digit validation", () => {
     test(`rejects '${ch}' in chunk size (not a hex digit)`, async () => {
       await using server = Bun.serve({
         port: 0,
+        // Reads the body: the request says "Connection: close", and nothing is parsed behind a complete response to it.
         async fetch(req) {
-          return new Response("OK");
+          return new Response(await req.text());
         },
       });
 
@@ -1441,8 +1442,9 @@ describe("chunk size strict hex digit validation", () => {
     test(`rejects '${ch}' (ASCII ${ch.charCodeAt(0)}) in chunk size`, async () => {
       await using server = Bun.serve({
         port: 0,
+        // Reads the body: the request says "Connection: close", and nothing is parsed behind a complete response to it.
         async fetch(req) {
-          return new Response("OK");
+          return new Response(await req.text());
         },
       });
 
@@ -1456,8 +1458,9 @@ describe("chunk size strict hex digit validation", () => {
     test(`rejects '${ch}' in chunk size`, async () => {
       await using server = Bun.serve({
         port: 0,
+        // Reads the body: the request says "Connection: close", and nothing is parsed behind a complete response to it.
         async fetch(req) {
-          return new Response("OK");
+          return new Response(await req.text());
         },
       });
 

@@ -1335,12 +1335,11 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
-JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
+// readableStreamToBlob(stream).then(blob => onFulfilled(blob, context))
+static JSValue readableStreamToBlobThen(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSFunction* onFulfilled, JSValue context)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* error = unusableStreamError(globalObject, stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue blobResult = readableStreamToBlob(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* blobPromise = dynamicDowncast<JSPromise>(blobResult);
@@ -1348,10 +1347,20 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
         blobPromise = promiseFulfilledWith(globalObject, blobResult);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    blobPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToFormDataFulfilled(), jsUndefined(), derived, contentType);
+    blobPromise->performPromiseThenWithContext(vm, globalObject, onFulfilled, jsUndefined(), derived, context);
     return derived;
+}
+
+JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
+{
+    return readableStreamToBlobThen(globalObject, stream, JSStreamsRuntime::from(globalObject)->onReadableStreamToFormDataFulfilled(), contentType);
+}
+
+JSValue readableStreamToBodyBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
+{
+    auto* context = InternalFieldTuple::create(getVM(globalObject), defaultGlobalObject(globalObject)->internalFieldTupleStructure(), stream, contentType);
+    return readableStreamToBlobThen(globalObject, stream, JSStreamsRuntime::from(globalObject)->onReadableStreamToBodyBlobFulfilled(), context);
 }
 
 } // namespace WebStreams
@@ -1536,6 +1545,19 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(blob);
+}
+
+extern "C" void Body__finishBlobOfStream(JSGlobalObject*, EncodedJSValue blob, EncodedJSValue contentType, uint8_t facts);
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBodyBlobFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->uncheckedArgument(1));
+    auto* stream = uncheckedDowncast<JSReadableStream>(context->getInternalField(0));
+    Body__finishBlobOfStream(globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(context->getInternalField(1)), stream->m_bodyFacts);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(callFrame->argument(0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToFormDataFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))

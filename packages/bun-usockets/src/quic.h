@@ -40,10 +40,13 @@ struct lsquic_conn;
 
 /* ───── Driver: what every lsquic engine in Bun runs on (the HTTP/3 contexts below, and node:quic) ───── */
 
-/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver. */
-typedef int (*us_quic_pass_fn)(us_quic_driver_t *d, int in_microtask_drain);
+/* Before `loop` polls, after it has dispatched what the poll returned, and after a microtask drain. */
+enum us_quic_pass_point { US_QUIC_BEFORE_POLL, US_QUIC_AFTER_POLL, US_QUIC_AFTER_MICROTASKS };
 
-/* `pass` runs before and after each poll of `loop`, and after a microtask drain if the driver is pending. */
+/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver. */
+typedef int (*us_quic_pass_fn)(us_quic_driver_t *d, enum us_quic_pass_point point);
+
+/* `pass` runs at each point, but after a microtask drain only if the driver is pending. */
 us_quic_driver_t *us_quic_driver_create(struct us_loop_t *loop, us_quic_pass_fn pass, void *owner);
 /* Closes the driver's UDP sockets and destroys its engines. `pass` keeps running. */
 void us_quic_driver_close(us_quic_driver_t *d);
@@ -130,8 +133,8 @@ us_quic_socket_context_t *us_create_quic_client_context(
 struct us_quic_pending_connect_s;
 struct addrinfo_request;
 
-/* Limits `ssl_ctx` to TLS 1.3 and installs the verify step that reads each connection's reject_unauthorized. 0 on failure. */
-int us_quic_prepare_client_ssl_ctx(struct ssl_ctx_st *ssl_ctx);
+/* Limits `ssl_ctx`, which us_ssl_ctx_build_raw made, to TLS 1.3 and installs the verify step that reads each connection's reject_unauthorized. */
+void us_quic_prepare_client_ssl_ctx(struct ssl_ctx_st *ssl_ctx);
 
 /* Open a QUIC connection to `host:port`. `host` may be an IP literal or
  * hostname; literals and DNS-cache hits connect synchronously (return 1,
@@ -139,15 +142,13 @@ int us_quic_prepare_client_ssl_ctx(struct ssl_ctx_st *ssl_ctx);
  * registers a Bun__addrinfo callback and invokes
  * us_quic_pending_connect_resolved() once it fires. -1 on error. `sni` is
  * the TLS ServerNameIndication; `reject_unauthorized` is per-connection.
- * `ssl_ctx` (borrowed) went through us_quic_prepare_client_ssl_ctx. NULL uses
- * the default trust store and no client certificate. */
+ * `ssl_ctx` (borrowed) went through us_quic_prepare_client_ssl_ctx, or is NULL for the default trust store and no client certificate. */
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, struct ssl_ctx_st *ssl_ctx,
     us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user);
+    struct us_quic_pending_connect_s **out_pending);
 
-void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc);
 struct addrinfo_request *us_quic_pending_connect_addrinfo(
     struct us_quic_pending_connect_s *pc);
 us_quic_socket_t *us_quic_pending_connect_resolved(
@@ -162,8 +163,6 @@ unsigned us_quic_socket_streams_avail(us_quic_socket_t *s);
 int us_quic_socket_status(us_quic_socket_t *s, char *buf, unsigned int len);
 
 /* Connection-level callbacks */
-void us_quic_socket_context_on_open(us_quic_socket_context_t *ctx,
-    void (*on_open)(us_quic_socket_t *));
 /* Fires once the TLS handshake completes (client only). ok=0 means the
  * handshake failed; on_close follows shortly. */
 void us_quic_socket_context_on_hsk_done(us_quic_socket_context_t *ctx,
@@ -199,7 +198,7 @@ int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len
 /* Receive backpressure, see lsquic_stream_hold_window() in lsquic.h. */
 void us_quic_stream_hold_window(us_quic_stream_t *s, int hold);
 /* -1 when the send half is finished (a FIN or a RESET_STREAM is out): no on_stream_writable follows. */
-int us_quic_stream_want_write(us_quic_stream_t *s, int want);
+int us_quic_stream_want_write(us_quic_stream_t *s);
 /* lsquic holds one outgoing header block per stream and refuses the next one
  * while an earlier block (a 1xx) is still unsent. Nothing was queued: send the
  * same block again from on_stream_writable. 0 is sent, -1 is a hard failure. */
@@ -210,16 +209,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
  * header block follows separately. */
 int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3);
 void us_quic_stream_shutdown(us_quic_stream_t *s);
-void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
-int us_quic_stream_has_unacked(us_quic_stream_t *s);
 /* RFC 9114 §8.1: a message this endpoint can't send or can't finish. */
 #define US_QUIC_H3_INTERNAL_ERROR 0x102
 /* RFC 9114 §8.1: the server did no application processing. */
 #define US_QUIC_H3_REQUEST_REJECTED 0x10B
-#define US_QUIC_H3_REQUEST_CANCELLED 0x10C
 /* RFC 9114 §4.1.2: a malformed message. */
 #define US_QUIC_H3_MESSAGE_ERROR 0x10E
 /* The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
@@ -237,7 +233,7 @@ us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
 
 /* Runs every driver on `loop` and stores the soonest next tick. Called from us_internal_loop_pre and us_internal_loop_post. */
-void us_quic_loop_process(struct us_loop_t *loop);
+void us_quic_loop_process(struct us_loop_t *loop, enum us_quic_pass_point point);
 /* Runs the drivers that are pending. Called after a microtask drain. */
 void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 
@@ -251,7 +247,6 @@ int us_quic_stream_headers_too_large(us_quic_stream_t *s);
 
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);
-us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
 void us_quic_socket_close(us_quic_socket_t *s);
 

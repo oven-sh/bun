@@ -1973,9 +1973,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     results.after = await h3Exchange(server.port!, requestHeaders("/"));
 
     expect(results).toEqual({
-      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\r\nb: c")]: "400 ",
+      [JSON.stringify("a\nb")]: "400 ",
+      [JSON.stringify("a\rb")]: "400 ",
       wellFormed: "200 1",
       after: "200 1",
     });
@@ -2229,6 +2229,42 @@ describe("Bun.serve HTTP/3 request validation", () => {
       );
     });
 
+    // RFC 9110 section 9.1: the method is case-sensitive. HTTP/1.1 and HTTP/2 answer 501 too.
+    test("answers 501 to a known method that isn't uppercase", async () => {
+      const { server, calls } = serve();
+      await using _ = server;
+      const rows: Record<string, Record<string, string>> = {};
+      for (const method of ["get", "Get", "patch", "m-search"]) {
+        rows[method] = requestHeaders("/echo", { ":method": method });
+      }
+      expect({ results: await exchangeAll(server.port!, rows), calls }).toEqual({
+        results: Object.fromEntries(Object.keys(rows).map(row => [row, "501 "])),
+        calls: [],
+      });
+    });
+
+    // RFC 9114 sections 4.2 and 4.3. HTTP/2 resets the stream for each of these.
+    test("answers 400 to a malformed field section", async () => {
+      const { server, calls } = serve();
+      await using _ = server;
+      const { ":scheme": _scheme, ...noScheme } = requestHeaders("/echo");
+      const rows: Record<string, Record<string, string>> = {
+        "no :scheme": noScheme,
+        "unknown pseudo-header": requestHeaders("/echo", { ":protocol": "websocket" }),
+        "empty :scheme": requestHeaders("/echo", { ":scheme": "" }),
+        ":authority with userinfo": requestHeaders("/echo", { ":authority": "user@localhost" }),
+        "host that contradicts :authority": requestHeaders("/echo", { host: "other.invalid" }),
+        "control byte in a value": requestHeaders("/echo", { "x-probe": "a\x01b" }),
+      };
+      expect({ results: await exchangeAll(server.port!, rows), calls }).toEqual({
+        results: Object.fromEntries(Object.keys(rows).map(row => [row, "400 "])),
+        calls: [],
+      });
+      expect(
+        await h3Exchange(server.port!, requestHeaders("/echo", { host: "localhost", "x-probe": "a\tb" })),
+      ).toBe("200 GET https://localhost/echo");
+    });
+
     test("answers 400 to a malformed request line", async () => {
       const { server, calls } = serve();
       await using _ = server;
@@ -2275,7 +2311,6 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     const authorities = [
       "example.com/other",
-      "user@example.com",
       "example.com#frag",
       "example.com\\other:8080",
       "[::1]:3000?q",
@@ -2291,7 +2326,6 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     expect(results).toEqual({
       "example.com/other": "200 /index",
-      "user@example.com": "200 /index",
       "example.com#frag": "200 /index",
       "example.com\\other:8080": "200 /index",
       "[::1]:3000?q": "200 /index",
@@ -2498,6 +2532,43 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
   test("on the first request of a connection, sent with the handshake", async () => {
     await using server = serve();
     expect(await exchange(server, { handshakeFirst: false })).toEqual(expected);
+  });
+
+  // A 100 Continue would start an upload that the 413 behind it refuses. HTTP/1.1 and HTTP/2 do the same.
+  test("but not when content-length exceeds maxRequestBodySize", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      maxRequestBodySize: 100,
+      fetch: async req => new Response("content:" + (await req.text())),
+    });
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    await client.opened;
+    const seen: string[] = [];
+    const final = Promise.withResolvers<void>();
+    const stream = await client.createBidirectionalStream({
+      oninfo(received) {
+        seen.push("info " + received[":status"]);
+      },
+      onheaders(received) {
+        seen.push("headers " + received[":status"]);
+        final.resolve();
+      },
+    });
+    stream.closed.then(final.resolve, final.resolve);
+    stream.sendHeaders(requestHeaders("/", { ":method": "POST", expect: "100-continue", "content-length": "101" }));
+    await final.promise;
+    if (!client.destroyed) client.close().catch(() => {});
+    expect(seen).toEqual(["headers 413"]);
   });
 
   // https://github.com/oven-sh/bun/issues/33082

@@ -51,6 +51,10 @@ struct us_internal_loop_data_t {
     long long sweep_next_tick_ns;
 #endif
     int sweep_timer_count;
+    /* Counts the sweeps. us_socket_t.timeout is the count at which that socket's timeout is due. */
+    uint32_t sweep_tick;
+    /* us_internal_coarse_ms() at the last sweep, or at the first socket if there was none since. */
+    uint64_t sweep_time_ms;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from
@@ -59,12 +63,7 @@ struct us_internal_loop_data_t {
      * just calls us_quic_loop_process. */
     struct us_quic_driver_s *quic_head;
     int quic_walk_depth;
-    /* µs until lsquic next wants process_conns (min earliest_adv_tick
-     * across engines), or -1 for "no deadline". Written by
-     * us_quic_loop_process from loop_post; read by Bun's getTimeout() to
-     * bound the epoll_pwait2 timeout. No timerfd, no scheduling syscall —
-     * the gap between loop_post and getTimeout is sub-µs so storing the
-     * relative diff is precise enough. */
+    /* µs until a driver wants its next pass, or -1. us_quic_loop_process writes it, and us_loop_run_bun_tick bounds the poll timeout with it right after loop_pre. */
     long long quic_next_tick_us;
 #ifdef LIBUS_USE_LIBUV
     /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes

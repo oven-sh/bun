@@ -2,7 +2,6 @@
 #define UWS_H3REQUEST_H
 
 #include "quic.h"
-#include "QueryParser.h"
 #include "Utilities.h"
 
 #include <lshpack.h>
@@ -45,9 +44,6 @@ struct Http3Request {
                 fullUrl = value;
                 size_t q = value.find('?');
                 url = q == std::string_view::npos ? value : value.substr(0, q);
-                /* Keep the leading '?' — getDecodedQueryValue expects it and
-                 * unconditionally drops the first byte. */
-                query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
                 break;
             }
             case Field::Authority: authority = value; break;
@@ -97,7 +93,6 @@ struct Http3Request {
     /* Nothing but this is meaningful on a malformed request. */
     bool isMalformed() { return malformed; }
     bool getExpectsContinue() { return expectsContinue; }
-    static constexpr uint64_t NO_CONTENT_LENGTH = UINT64_MAX;
     uint64_t getContentLength() { return contentLength; }
 
     bool getYield() { return yield; }
@@ -105,10 +100,6 @@ struct Http3Request {
 
     std::string_view getUrl() { return url; }
     std::string_view getFullUrl() { return fullUrl; }
-    std::string_view getQuery() { return query.empty() ? query : query.substr(1); }
-    std::string_view getQuery(std::string_view key) {
-        return getDecodedQueryValue(key, query);
-    }
 
     std::string_view getCaseSensitiveMethod() { return method; }
 
@@ -205,7 +196,7 @@ private:
 
     const us_quic_header_t *headers;
     unsigned int headerCount;
-    std::string_view method, url, fullUrl, query, authority;
+    std::string_view method, url, fullUrl, authority;
     uint64_t contentLength = NO_CONTENT_LENGTH;
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];

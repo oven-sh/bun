@@ -84,13 +84,18 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
+#define LIBUS_ECONNREFUSED WSAECONNREFUSED
+#define LIBUS_EADDRINUSE WSAEADDRINUSE
 /* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
 #define LIBUS_ECANCELED WSAEINTR
 #else
 #include <errno.h>
+#include <time.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECONNREFUSED ECONNREFUSED
+#define LIBUS_EADDRINUSE EADDRINUSE
 #define LIBUS_ECANCELED ECANCELED
 #endif
 #include <stdbool.h>
@@ -108,10 +113,8 @@ enum {
   POLL_TYPE_POLLING_IN = 16,
 };
 
-#define POLL_TYPE_BITSIZE 5 // make sure to update epoll_kqueue.h if you change this
 #define POLL_TYPE_KIND_MASK 0b111
 #define POLL_TYPE_POLLING_MASK 0b11000
-#define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
 /* Bun APIs implemented in Zig */
 void Bun__lock(zig_mutex_t *lock);
@@ -145,14 +148,19 @@ extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
-extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
-extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
-struct ssl_session_st;
-/* Runs inside SSL_read/SSL_do_handshake: must not run JS. Returns 1 to get us_dispatch_session later. */
-extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session);
+/* A serialized session or a keylog line for the socket given to us_ssl_set_bun_socket. Returns 0 once that socket has closed. */
+extern int us_dispatch_tls_event(void *bun_socket, int is_keylog, const unsigned char *data, unsigned int length);
 /* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
-extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
+/* The same, asked of the socket given to us_ssl_set_bun_socket. */
+extern int us_dispatch_bun_socket_identity(void *bun_socket, struct ssl_st *ssl);
+/* Asks the socket given to us_ssl_set_bun_socket for the SSL_CTX to serve for `hostname` on this handshake only. NULL keeps the default one. abort_handshake: 1 refuses, 2 suspends until us_ssl_sni_resolve. */
+extern struct ssl_ctx_st *us_dispatch_server_name(void *bun_socket, const char *hostname, int *abort_handshake);
+/* The ALPN protocols a ClientHello offers, as entries of (u8 length, bytes). Only for an SSL that called us_ssl_on_alpn_offer.
+ * Returns 0 if the owner refuses them all. */
+extern int us_dispatch_alpn_offer(struct ssl_st *ssl, const unsigned char *protocols, unsigned int length);
+/* BoringSSL's ALPN select callback, for a server-side SSL whose listen socket has no us_listen_socket_set_alpn list. */
+extern int us_dispatch_alpn_select(struct ssl_st *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 /* crypto/sni_tree.cpp: the one place server names are compared. */
 void *sni_new();
@@ -259,11 +267,9 @@ struct us_socket_t *us_internal_ssl_on_writable(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
-struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(us_socket_r s);
+struct us_socket_t *us_internal_ssl_close_after_rejected_send(us_socket_r s, int unread);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
-int us_internal_ssl_is_handshake_finished(us_socket_r s);
-int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
@@ -272,8 +278,6 @@ int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int coun
 int us_internal_ssl_fatal_write_error(us_socket_r s);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
-struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
-const char *us_internal_ssl_sni_servername(us_socket_r s);
 /* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
@@ -284,17 +288,52 @@ void us_internal_socket_raw_shutdown(us_socket_r s);
 /* us_socket_raw_write that stores us_internal_classify_failed_send's answer for a failed send(). */
 int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *fatal_send_error);
 void us_internal_rearm_writable(us_socket_r s);
+/* `error` (LIBUS_ERR numbering) is why a send() failed for good. Ends the write side and asks for the writable event that
+ * runs us_internal_socket_close_after_rejected_send: no write may close under its caller. */
+void us_internal_socket_reject_send(us_socket_r s, int error);
+/* Closes with the send's error, unless the kernel still holds bytes of the peer: then the read side ends the connection. */
+struct us_socket_t *us_internal_socket_close_after_rejected_send(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
 #define LIBUS_NO_TIMEOUT UINT32_MAX
 
-/* The tick in progress may be about to end, so it doesn't count: a timeout never fires early. */
-static inline uint32_t us_internal_timeout_tick(struct us_socket_group_t *group, unsigned int seconds) {
+/* More than us_internal_coarse_ms() can lag behind the time: a jiffy at HZ=100 is 10 ms, a Windows tick 16 ms. */
+#define LIBUS_COARSE_CLOCK_LAG_MS 50
+
+/* Cheap enough to read whenever a timeout is set. Only differences over a few seconds mean anything. */
+static inline uint64_t us_internal_coarse_ms(void) {
+#if defined(_WIN32)
+    return GetTickCount64();
+#elif defined(__APPLE__)
+    return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW_APPROX) / 1000000;
+#else
+    struct timespec ts;
+#if defined(CLOCK_MONOTONIC_COARSE)
+    clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+#elif defined(CLOCK_MONOTONIC_FAST)
+    clock_gettime(CLOCK_MONOTONIC_FAST, &ts);
+#else
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
+    return (uint64_t) ts.tv_sec * 1000 + (uint64_t) ts.tv_nsec / 1000000;
+#endif
+}
+
+/* Sweeps are at least a period apart, so the n-th from now comes no earlier than n periods after the last one: a timeout never fires early. */
+static inline uint32_t us_internal_timeout_tick(struct us_loop_t *loop, unsigned int seconds) {
     if (!seconds) {
         return LIBUS_NO_TIMEOUT;
     }
-    return group->global_tick + (uint32_t) (((uint64_t) seconds + LIBUS_TIMEOUT_GRANULARITY - 1) / LIBUS_TIMEOUT_GRANULARITY) + 1;
+    const uint64_t period = LIBUS_TIMEOUT_GRANULARITY * 1000;
+    uint64_t ms = (uint64_t) seconds * 1000;
+    /* With no socket there are no sweeps, and the first socket starts a whole period. */
+    if (loop->data.sweep_timer_count) {
+        uint64_t since_sweep = us_internal_coarse_ms() - loop->data.sweep_time_ms + LIBUS_COARSE_CLOCK_LAG_MS;
+        /* A sweep that is overdue still comes after this call, and the next a whole period after that one. */
+        ms += since_sweep < period ? since_sweep : period;
+    }
+    return loop->data.sweep_tick + (uint32_t) ((ms + period - 1) / period);
 }
 
 /* Sockets are polls */
@@ -334,7 +373,6 @@ struct us_socket_t {
    * sets it. */
   unsigned char ssl_write_parked : 1;
   unsigned char ssl_fatal_error : 1;
-  unsigned char ssl_is_server : 1;
   /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
    * bytes via us_dispatch_ssl_raw_tap() before feeding them to SSL_read.
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
@@ -362,49 +400,48 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
-  /* Client with rejectUnauthorized on: a failed chain fails the handshake before the Certificate flight. */
-  unsigned char ssl_inline_reject : 1;
-  /* The verify callback saw an error in this handshake. */
-  unsigned char ssl_verify_failed : 1;
-  /* The owner checked the server's name inside this handshake. */
-  unsigned char ssl_identity_checked : 1;
-  /* The peer sent a certificate chain in this handshake, and it was checked. */
-  unsigned char ssl_peer_chain_checked : 1;
-  /* US_SNI_*: an async SNICallback has the handshake suspended. */
-  unsigned char ssl_sni_pending : 2;
-  /* Server-side socket adopted into TLS with its own SNICallback. */
-  unsigned char ssl_sni_resolver : 1;
-  /* This socket has entries in the loop's ssl_pending_events. */
-  unsigned char ssl_has_pending_events : 1;
-  /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
+  /* Peer FIN was dispatched as on_end on a half-open socket. on_end never re-fires, and only a shutdown re-adds readable interest, to close. */
   unsigned char read_eof : 1;
   /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
    * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
   unsigned char hangup_closes_unsent : 1;
+  /* connect() itself returned 0 (AF_UNIX), so the connection was established before its first poll event. */
+  unsigned char connect_returned_zero : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code : 2;
+  /* us_socket_close_lingering: the owner let go. loop.c drops what the peer still sends, and closes at its FIN or at the timeout. */
+  unsigned char lingering : 1;
   /* us_socket_set_first_flight_before_fin: the first handshake step is still due, and a shutdown waits for it. */
   unsigned char ssl_first_flight_before_fin : 1;
   /* us_internal_ssl_shutdown held its FIN back for that step. */
   unsigned char ssl_shutdown_after_first_flight : 1;
-  /* A send that no retry can save shut the write side down, not the owner. */
-  unsigned char ssl_send_rejected : 1;
-  /* The same on a socket without TLS: loop.c closes it after its next event. */
+  /* A send that no retry can save shut the write side down, not the owner (us_internal_socket_reject_send). */
   unsigned char send_rejected : 1;
-  /* Consecutive send() failures with an errno that is neither
-   * would-block/transient nor a known peer-gone error (see
-   * us_socket_write_check_error). Reset by any send that makes progress.
-   * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
-  unsigned char unclassified_send_failures;
+  union {
+    /* Consecutive send() failures with an errno that is neither
+     * would-block/transient nor a known peer-gone error (see
+     * us_socket_write_check_error). Reset by any send that makes progress.
+     * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
+    unsigned char unclassified_send_failures;
+    /* Once send_rejected is set nothing is sent again, and this is what us_socket_rejected_send_error decodes. */
+    unsigned char rejected_send_error;
+  };
+  /* Timer-sweep ticks this socket has spent parked in the low-priority queue. Fits in the same gap. */
+  unsigned char low_prio_ticks;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
    * in adopt_tls / connect-with-ssl_ctx / accept-with-ssl_ctx. */
   struct ssl_st *ssl;
   struct us_socket_t *prev, *next;
-  struct us_socket_t *connect_next;
+  union {
+    /* connect_state != NULL: the next candidate of that us_connecting_socket_t. */
+    struct us_socket_t *connect_next;
+    /* connect_state == NULL, still connecting: the DNS cache entry this socket's address came from. */
+    struct addrinfo_request *connect_addrinfo_req;
+  };
   struct us_connecting_socket_t *connect_state;
 };
 
@@ -414,6 +451,14 @@ _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 
 /* The state every socket starts in. `s->p` belongs to us_poll_init. */
 void us_internal_socket_init(struct us_socket_t *s, struct us_socket_group_t *group, unsigned char kind, int allow_half_open);
+
+/* Call once a connect without a connect_state succeeds, fails or is closed. `failed` evicts the cache entry. */
+static inline void us_internal_socket_release_addrinfo(struct us_socket_t *s, int failed) {
+    if (s->connect_addrinfo_req) {
+        Bun__addrinfo_freeRequest(s->connect_addrinfo_req, failed);
+        s->connect_addrinfo_req = NULL;
+    }
+}
 
 /* Whether a raw write can send: the fd is open and no FIN went out. */
 static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
@@ -454,11 +499,13 @@ struct us_connecting_socket_t {
      * different namespaces that overlap numerically, so consumers of `error`
      * must check this bit first. */
     unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
-    /* Every candidate socket starts with this us_socket_t.timeout. */
-    uint32_t timeout;
     unsigned char kind;
     uint16_t port;
+    /* Every candidate socket starts with this us_socket_t.timeout. */
+    uint32_t timeout;
     int error;
+    /* Why the most recent address failed (LIBUS_ERR numbering). Becomes `error` once every address has. */
+    int last_candidate_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
@@ -539,6 +586,8 @@ struct us_listen_socket_t {
   unsigned char deferred_accept;
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
   unsigned char accept_paused;
+  /* Another process can accept on this socket too: it was sent over IPC or adopted from a descriptor (bsd_accept_socket). */
+  unsigned char shared;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

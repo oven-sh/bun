@@ -476,8 +476,13 @@ const backToBackRenegotiationServer = /* js */ `
         socket.resume();
         const responseFirst = head.startsWith("GET /response-first ");
         let asked = 0;
+        let answered = false;
         (function ask() {
-          if (asked === 3 && responseFirst) socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          // Since Node.js 26.10 a write() made in a handshake callback waits a turn of the loop, and renegotiate() does not.
+          if (asked === 3 && responseFirst && !answered) {
+            answered = true;
+            return socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok", ask);
+          }
           if (asked === 4) {
             if (isHttp) socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
             return;
@@ -645,26 +650,40 @@ it.concurrent.each([
 );
 
 // After its own close_notify the client cannot answer the request. That is the end of the client's own close, not an
-// error, and no second 'secureConnect'.
-it.concurrent.each(["TCP", "a Duplex"])(
-  "a request for a renegotiation after the client's own end() is not an 'error' over %s",
-  async transport => {
-    const { socket, raw } = connectOver(transport, afterEndPort, { ca: tls.cert });
+// error, and no second 'secureConnect'. With an untrusted chain the session keeps its handshake's verify error, which
+// must not be reported as the result of a second handshake.
+it.concurrent.each([
+  { transport: "TCP", trusted: true },
+  { transport: "a Duplex", trusted: true },
+  { transport: "TCP", trusted: false },
+  { transport: "a Duplex", trusted: false },
+] as const)(
+  "a request for a renegotiation after the client's own end() is not an 'error' over $transport (trusted chain: $trusted)",
+  async ({ transport, trusted }) => {
+    const { socket, raw } = connectOver(
+      transport,
+      afterEndPort,
+      trusted ? { ca: tls.cert } : { rejectUnauthorized: false },
+    );
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     socket.on("secureConnect", () => {
-      events.push(`secureConnect authorized=${socket.authorized}`);
+      events.push(`secureConnect authorized=${socket.authorized} authError=${socket.authorizationError}`);
       socket.end("go");
     });
     socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
     socket.on("close", (hadError: boolean) => {
-      events.push(`close hadError=${hadError}`);
+      events.push(`close hadError=${hadError} authError=${socket.authorizationError}`);
       closed.resolve();
     });
     socket.resume();
     try {
       await closed.promise;
-      expect(events).toEqual(["secureConnect authorized=true", "close hadError=false"]);
+      const authError = trusted ? null : "DEPTH_ZERO_SELF_SIGNED_CERT";
+      expect(events).toEqual([
+        `secureConnect authorized=${trusted} authError=${authError}`,
+        `close hadError=false authError=${authError}`,
+      ]);
     } finally {
       socket.destroy();
       raw?.destroy();
@@ -1151,6 +1170,26 @@ it("fetch through a CONNECT proxy sends the client certificate a renegotiation a
   }
 });
 
+// The server renegotiates once for each request, which the default budget (3 in 600 s) allows. A limit of 0 counts
+// only next to a window, since 0 for both means the default. Direct is the path of a socket, the proxy is the path of
+// a tunnel.
+it.each(["direct", "through a CONNECT proxy"])(
+  "fetch (%s) refuses a renegotiation when the tls options allow none",
+  async route => {
+    using proxy = route === "direct" ? undefined : await startRecordingProxy();
+    const outcome = await fetch(url, {
+      keepalive: false,
+      tls: { ca: tls.cert, ...agent3, clientRenegotiationLimit: 0, clientRenegotiationWindow: 600 },
+      // The environment must not choose the route.
+      proxy: proxy ? { url: `http://127.0.0.1:${proxy.port}`, respectNoProxy: false } : false,
+    }).then(
+      res => `status ${res.status}`,
+      (err: NodeJS.ErrnoException) => `${err.name} ${err.code}`,
+    );
+    expect(outcome).toBe("TypeError EPROTO");
+  },
+);
+
 it("Bun.connect sends the client certificate a renegotiation asks for", async () => {
   const response = Promise.withResolvers<string>();
   let received = "";
@@ -1397,7 +1436,8 @@ it.concurrent(
   },
 );
 
-it.concurrent("a write made in the middle of a renegotiation leaves when it ends, over a Duplex", async () => {
+const duplexes = ["a Duplex", "a Duplex that emits 'drain' in its write()"] as const;
+it.concurrent.each(duplexes)("sends a write made in the middle of a renegotiation once, over %s", async duplexKind => {
   const tcp = netConnect(quiet.staysOpen, "127.0.0.1");
   tcp.on("error", () => {});
   const APPLICATION_DATA = 23;
@@ -1408,6 +1448,7 @@ it.concurrent("a write made in the middle of a renegotiation leaves when it ends
   const duplex = new Duplex({
     read() {},
     write(chunk: Buffer, _encoding: string, callback: () => void) {
+      if (duplexKind !== "a Duplex") this.emit("drain");
       const forward = () => void tcp.write(chunk, callback);
       if (!established) return forward();
       if (sent.push(chunk[0]) === 1) clientHello.resolve(forward);
@@ -1425,7 +1466,10 @@ it.concurrent("a write made in the middle of a renegotiation leaves when it ends
     socket.write("parked", err => (err ? written.reject(err) : written.resolve()));
     forward();
     await Promise.race([written.promise, failed.promise]);
-    expect(sent.at(-1)).toBe(APPLICATION_DATA);
+    expect({ last: sent.at(-1), applicationData: sent.filter(type => type === APPLICATION_DATA).length }).toEqual({
+      last: APPLICATION_DATA,
+      applicationData: 1,
+    });
   } finally {
     socket.destroy();
     tcp.destroy();

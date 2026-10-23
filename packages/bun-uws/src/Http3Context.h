@@ -14,11 +14,11 @@ static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 
 
 struct Http3Context {
 
-    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
+    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, uint64_t maxRequestBodySize) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
             (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
-        new (us_quic_socket_context_ext(ctx)) Http3ContextData();
+        (new (us_quic_socket_context_ext(ctx)) Http3ContextData())->maxRequestBodySize = maxRequestBodySize;
 
         us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
             new (us_quic_stream_ext(s)) Http3ResponseData();
@@ -58,7 +58,11 @@ struct Http3Context {
                 res->writeStatus("501 Not Implemented")->end();
                 return;
             }
-            if (req.getExpectsContinue()) res->writeContinue();
+            if (declaresBodyOverLimit(req.getContentLength(), cd->maxRequestBodySize)) {
+                rd->state |= Http3ResponseData::HTTP_REQUEST_BODY_TOO_LARGE;
+            } else if (req.getExpectsContinue()) {
+                res->writeContinue();
+            }
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();
@@ -68,12 +72,15 @@ struct Http3Context {
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
-            if (rd->inStream) rd->inStream(res, data, len, fin != 0, rd->userData);
+            if (!rd->inStream) return;
+            if (len > rd->requestBodyBudget) return res->refuseRequestBody();
+            rd->requestBodyBudget -= len;
+            rd->inStream(res, data, len, fin != 0, rd->userData);
         });
 
         us_quic_socket_context_on_stream_writable(ctx, [](us_quic_stream_t *s) {
             Http3Response *res = (Http3Response *) s;
-            if (!res->drain()) us_quic_stream_want_write(s, 1);
+            if (!res->drain()) us_quic_stream_want_write(s);
         });
 
         us_quic_socket_context_on_stream_close(ctx, [](us_quic_stream_t *s) {

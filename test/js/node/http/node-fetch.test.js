@@ -458,6 +458,45 @@ test("node-fetch Request leaves an old-style Stream body unread until the body i
   expect(await (await fetch2(server.url, init)).text()).toBe("hello world");
 });
 
+describe("node-fetch keeps the members of an init whose body or tls it replaces", () => {
+  const members = { method: "PUT", headers: { "x-from": "init" } };
+  const shapes = [
+    ["inherited", extra => Object.assign(Object.create(members), extra)],
+    [
+      "non-enumerable",
+      extra => {
+        const init = { ...extra };
+        for (const name in members) Object.defineProperty(init, name, { value: members[name], enumerable: false });
+        return init;
+      },
+    ],
+  ];
+  const echo = () =>
+    Bun.serve({
+      port: 0,
+      fetch: async req => Response.json([req.method, req.headers.get("x-from"), await req.text()]),
+    });
+
+  test.each(shapes)("%s: fetch() with an old-style Stream body", async (_, shape) => {
+    using server = echo();
+    const init = shape({ body: streamThatSendsWhenPiped("hello") });
+    expect(await (await fetch2(server.url, init)).json()).toEqual(["PUT", "init", "hello"]);
+  });
+
+  test.each(shapes)("%s: Request with an old-style Stream body", async (_, shape) => {
+    const request = new Request("http://example.test/", shape({ body: streamThatSendsWhenPiped("hello") }));
+    expect([request.method, request.headers.get("x-from"), await request.text()]).toEqual(["PUT", "init", "hello"]);
+  });
+
+  test.each(shapes)("%s: fetch() with an agent that has TLS options", async (_, shape) => {
+    using server = echo();
+    const agent = new https.Agent({ rejectUnauthorized: false });
+    const init = shape({ agent, body: "hello" });
+    expect(await (await fetch2(server.url, init)).json()).toEqual(["PUT", "init", "hello"]);
+    agent.destroy();
+  });
+});
+
 test("node-fetch fetch() rejects for a Writable request body", async () => {
   using server = serveRequestBody();
   const response = fetch2(server.url, { method: "POST", body: discard() });

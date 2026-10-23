@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_uint, c_void};
 
 #[repr(C)]
 struct lshpack_header {
@@ -7,7 +7,6 @@ struct lshpack_header {
     value: *const u8,
     value_len: usize,
     never_index: bool,
-    hpack_index: u16,
 }
 
 impl Default for lshpack_header {
@@ -18,7 +17,6 @@ impl Default for lshpack_header {
             value: core::ptr::null(),
             value_len: 0,
             never_index: false,
-            hpack_index: 255,
         }
     }
 }
@@ -33,7 +31,6 @@ pub struct DecodeResult<'a> {
     pub name: &'a [u8],
     pub value: &'a [u8],
     pub never_index: bool,
-    pub well_know: u16,
     /// offset of the next header position in src
     pub next: usize,
 }
@@ -168,7 +165,6 @@ impl HPACK {
             value,
             next: offset,
             never_index: header.never_index,
-            well_know: header.hpack_index,
         })
     }
 
@@ -207,49 +203,16 @@ impl HPACK {
         Ok(())
     }
 
-    /// encode name, value with never_index option into dst_buffer
-    /// if name + value length is greater than LSHPACK_MAX_HEADER_SIZE this will return UnableToEncode
-    pub fn encode(
-        &mut self,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-        dst_buffer: &mut [u8],
-        dst_buffer_offset: usize,
-    ) -> Result<usize, HpackError> {
-        // SAFETY: genuine FFI — the three (ptr,len) pairs come straight from
-        // live borrowed slices so the C side's reads/writes are in-bounds. The
-        // `self` precondition is type-discharged via `&mut` in the extern
-        // signature; the ptr+len contracts cannot be encoded over the C ABI.
-        let offset = unsafe {
-            lshpack_wrapper_encode(
-                self,
-                name.as_ptr(),
-                name.len(),
-                value.as_ptr(),
-                value.len(),
-                never_index as c_int,
-                dst_buffer.as_mut_ptr(),
-                dst_buffer.len(),
-                dst_buffer_offset,
-            )
-        };
-        if offset == 0 {
-            return Err(HpackError::UnableToEncode);
-        }
-        Ok(offset)
-    }
-
     /// Adjust the encoder's dynamic-table capacity after init. Evicts entries
     /// to fit; the caller is responsible for emitting the RFC 7541 §6.3
     /// Dynamic Table Size Update opcode at the start of the next header block
     /// so the peer's decoder evicts in lockstep.
-    pub fn set_encoder_max_capacity(&mut self, max_capacity: u32) {
+    fn set_encoder_max_capacity(&mut self, max_capacity: u32) {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
     /// Sets both the table size and the limit on the peer's RFC 7541 §6.3 size updates.
-    pub fn set_decoder_max_capacity(&mut self, max_capacity: u32) {
+    fn set_decoder_max_capacity(&mut self, max_capacity: u32) {
         lshpack_wrapper_dec_set_max_capacity(self, max_capacity as c_uint);
     }
 
@@ -445,20 +408,6 @@ unsafe extern "C" {
         src: *const u8,
         src_len: usize,
         output: &mut lshpack_header,
-    ) -> usize;
-    // `self_` tightened to a reference; the three (ptr,len) pairs carry
-    // in-bounds read/write contracts that the C ABI cannot encode, so the
-    // declaration stays unsafe.
-    fn lshpack_wrapper_encode(
-        self_: &mut HPACK,
-        name: *const u8,
-        name_len: usize,
-        value: *const u8,
-        value_len: usize,
-        never_index: c_int,
-        buffer: *mut u8,
-        buffer_len: usize,
-        buffer_offset: usize,
     ) -> usize;
     // `fields` holds `field_count` pairs of u32 that describe `bytes` (see `HeaderBlock`).
     fn lshpack_wrapper_encode_block(

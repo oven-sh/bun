@@ -67,12 +67,8 @@ pub enum Error {
     RequestBodyLengthMismatch,
     #[error("UnsupportedRedirectProtocol")]
     UnsupportedRedirectProtocol,
-    #[error("RedirectURLTooLong")]
-    RedirectURLTooLong,
     #[error("RedirectURLInvalid")]
     RedirectURLInvalid,
-    #[error("InvalidRedirectURL")]
-    InvalidRedirectURL,
     #[error("UnexpectedRedirect")]
     UnexpectedRedirect,
     #[error("ShortRead")]
@@ -299,9 +295,7 @@ impl Error {
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
             Self::RequestBodyLengthMismatch => "RequestBodyLengthMismatch",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
-            Self::RedirectURLTooLong => "RedirectURLTooLong",
             Self::RedirectURLInvalid => "RedirectURLInvalid",
-            Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",
             Self::ShortRead => "ShortRead",
             Self::WantRead => "WantRead",

@@ -57,10 +57,6 @@ pub struct Stream {
     /// The server refused the stream with HTTP_1_1_REQUIRED. Separate from `fatal_error` because a later GOAWAY overwrites that.
     pub(crate) http1_required: bool,
     pub(crate) recv_window: RecvWindow,
-    /// Σ DATA payload bytes (post-padding) for §8.1.1 Content-Length check —
-    /// `total_body_received` is clamped at content_length so it can't catch
-    /// overshoot.
-    pub(crate) data_bytes_received: u64,
     pub(crate) send_window: SendWindow,
     /// Unsent suffix of a `.bytes` request body, parked while the send
     /// window is exhausted. Borrows from `client.state.request_body`.
@@ -128,7 +124,6 @@ impl Stream {
             fatal_error: None,
             http1_required: false,
             recv_window: RecvWindow::new(super::LOCAL_INITIAL_WINDOW_SIZE),
-            data_bytes_received: 0,
             send_window,
             pending_body: bun_ptr::RawSlice::EMPTY,
         })

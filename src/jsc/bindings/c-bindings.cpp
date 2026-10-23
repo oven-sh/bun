@@ -525,7 +525,6 @@ typedef struct {
     const char* value;
     size_t value_len;
     bool never_index;
-    uint16_t hpack_index;
 } lshpack_header;
 
 lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
@@ -540,31 +539,6 @@ lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapp
     lshpack_enc_set_max_capacity(&coders->enc, max_capacity);
     lshpack_dec_set_max_capacity(&coders->dec, max_capacity);
     return coders;
-}
-
-size_t lshpack_wrapper_encode(lshpack_wrapper* self,
-    const unsigned char* name, size_t name_len,
-    const unsigned char* val, size_t val_len,
-    int never_index,
-    unsigned char* buffer, size_t buffer_len, size_t buffer_offset)
-{
-    if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
-        return 0;
-
-    char* shared_header_buffer = shared_header_buffer_get();
-    lsxpack_header_t hdr;
-    memset(&hdr, 0, sizeof(lsxpack_header_t));
-    memcpy(&shared_header_buffer[0], name, name_len);
-    memcpy(&shared_header_buffer[name_len], val, val_len);
-    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
-    if (never_index) {
-        hdr.indexed_type = 2;
-    }
-    auto* start = buffer + buffer_offset;
-    auto* ptr = lshpack_enc_encode(&self->enc, start, buffer + buffer_len, &hdr);
-    if (!ptr)
-        return 0;
-    return ptr - start;
 }
 
 // Returns the bytes written, 0 if the block is refused (encoder untouched), or SIZE_MAX if lshpack ran out of memory mid-block.
@@ -621,11 +595,6 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     output->value = lsxpack_header_get_value(&hdr);
     output->value_len = hdr.val_len;
     output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
-    if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
-        output->hpack_index = hdr.hpack_index - 1;
-    } else {
-        output->hpack_index = 255;
-    }
     return s - src;
 }
 

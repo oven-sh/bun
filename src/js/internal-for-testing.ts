@@ -350,11 +350,6 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
-/** Sends `[name, value, ...]` on a node:quic stream as one header block, without `sendHeaders()`'s checks. */
-export function quicSendRawHeaders(stream: object, pairs: string[], kind: number, flags: number): boolean {
-  return require("internal/quic/quic").sendRawHeadersForTesting(stream, pairs, kind, flags);
-}
-
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
@@ -790,7 +785,7 @@ export const namedPipeInternals = {
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeLiveCount", 0) as () => number,
 };
 
 export const duplexTLSInternals = {
@@ -799,11 +794,7 @@ export const duplexTLSInternals = {
    * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
    * socket, until the task that frees it after the close has run.
    */
-  liveCount: $newRustFunction(
-    "runtime/socket/socket.rs",
-    "TestingAPIs.jsDuplexUpgradeContextLiveCount",
-    0,
-  ) as () => number,
+  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsUpgradedDuplexLiveCount", 0) as () => number,
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
@@ -977,6 +968,8 @@ export const proxyInternals = {
   ) => boolean,
   /** The proxy an environment of exactly `env` selects for `url`, or null. */
   proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
+  /** How many CONNECT tunnels fetch() has open or pooled. */
+  tunnelLiveCount: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.tunnelLiveCount", 0) as () => number,
   /** What the HTTP client's URL parser makes of `href`. */
   parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
     username: string;

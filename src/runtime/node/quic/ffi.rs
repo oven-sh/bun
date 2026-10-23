@@ -3,7 +3,7 @@ use core::ffi::c_void;
 /// SAFETY CONTRACT (the single audited deref for every `node:quic` callback):
 ///
 /// * Every context pointer the shim hands back — the engine's `owner`
-///   (`ea_stream_if_ctx` / `peer_ctx`), a conn-ctx, or a stream-ctx — is a
+///   (`ea_stream_if_ctx`), a conn-ctx, or a stream-ctx — is a
 ///   pointer we ourselves installed: a `QuicEndpoint`, `QuicSession`, or
 ///   `QuicStream` stored inline in its JS wrapper, whose first field is the
 ///   `*const NqVtable` that `packages/bun-usockets/src/node_quic_shim.c` reads

@@ -59,6 +59,27 @@ public:
         return &fromSocket(s)->data;
     }
 
+    /* Makes a WebSocket of an open socket whose ext (extSize bytes) has no owner left. Returns nullptr, with s untouched, if s is closed or shut down. */
+    us_socket_t *adoptSocket(us_socket_t *s, int extSize, USERDATA &&userData, std::string_view handshake, bool perMessageDeflate,
+            CompressOptions compressOptions, void *socketData, WebSocketData::OnSocketClosedCallback onSocketClosed) {
+        us_socket_t *adopted = us_socket_adopt(s, &group, socketKind(), extSize, sizeof(WebSocketData) + sizeof(USERDATA));
+        if (!adopted) {
+            return nullptr;
+        }
+        auto *webSocket = (WebSocket<SSL, isServer, USERDATA> *) adopted;
+        auto *asyncSocket = (AsyncSocket<SSL> *) adopted;
+        webSocket->init(perMessageDeflate, compressOptions, BackPressure(), socketData, onSocketClosed);
+        asyncSocket->cork();
+        asyncSocket->write(handshake.data(), (int) handshake.length());
+        us_socket_timeout(adopted, data.idleTimeoutComponents.first);
+        new (webSocket->getUserData()) USERDATA(std::move(userData));
+        if (data.openHandler) {
+            data.openHandler(webSocket);
+        }
+        asyncSocket->uncork();
+        return adopted;
+    }
+
 private:
     /* If we have negotiated compression, mark the message as compressed. Idempotent:
      * consume() re-validates the same header when an extended-length header straddles

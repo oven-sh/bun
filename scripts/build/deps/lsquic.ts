@@ -195,11 +195,9 @@ export const lsquic: Dependency = {
     // credit. lsquic_conn_cancel_pending_uni_streams() takes a request back.
     // Applies on top of node-quic-accessors.
     "patches/lsquic/delayed-uni-streams.patch",
-    // on_datagram_status() reported how many DATAGRAM frames of a packet were
-    // acknowledged or lost, which doesn't say which ones. on_dg_write now names
-    // its frame with lsquic_conn_set_datagram_id(), the id stays in the frame
-    // record, and each frame is reported under it, also when lsquic drops the
-    // frame before the send. Applies on top of node-quic-accessors.
+    // on_datagram_status() reports each DATAGRAM frame as acknowledged, lost, or
+    // dropped before the send, under the id that on_dg_write gave it with
+    // lsquic_conn_set_datagram_id(). Applies on top of node-quic-accessors.
     "patches/lsquic/datagram-ids.patch",
     // lsquic_merge_acks() merges the ACK frames of one batch of packets. When one
     // frame's range lay inside the other's, it cut the outer range short: [16-8]

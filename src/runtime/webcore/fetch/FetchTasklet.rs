@@ -193,7 +193,7 @@ pub struct FetchTasklet {
 }
 
 // Boxing `AnyBlob` is not viable: the `AnyBlob` arm is constructed/matched in
-// `fetch.rs` (e.g. `HTTPRequestBodyExt::any_blob`) and would require changes
+// `fetch.rs` and would require changes
 // across files. The enum is also short-lived per-request, so the size cost is bounded.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
@@ -211,6 +211,14 @@ impl Default for HTTPRequestBody {
 }
 
 impl HTTPRequestBody {
+    /// The `Blob` of a body that `is_s3()` or `needs_to_read_file()`.
+    pub(crate) fn blob(&self) -> &Blob {
+        match self {
+            HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob)) => blob,
+            _ => unreachable!("the body is not a Blob"),
+        }
+    }
+
     pub(crate) fn store(&self) -> Option<&BlobStore> {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.store(),
@@ -249,42 +257,13 @@ impl HTTPRequestBody {
                     .throw_value(super::system_type_error(&err, cx.global()))),
             };
         }
+        // It threw if `value` is a stream that is disturbed or locked.
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
-        if matches!(body_value, BodyValue::Used)
-            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
-        {
-            return Err(cx
-                .global()
-                .err(
-                    jsc::ErrorCode::BODY_ALREADY_USED,
-                    format_args!("body already used"),
-                )
-                .throw());
-        }
         body_value.to_blob_if_in_memory();
-        if let BodyValue::Locked(locked) = &mut body_value {
-            if locked.readable.has() {
-                // `BodyValue` now has `Drop` (H3), so we cannot move
-                // `l.readable` out by value (E0509). `mem::take` leaves a default
-                // readable; `Value::drop` on the residual `Locked` then runs
-                // `readable.deinit()` on that default — a no-op.
-                return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
-                    &mut locked.readable,
-                )));
-            }
-        }
-        if matches!(&body_value, BodyValue::Locked(_)) {
-            let readable = body_value.to_readable_stream(cx)?;
-            if !readable.is_empty_or_undefined_or_null() {
-                if let BodyValue::Locked(l) = &mut body_value {
-                    if l.readable.has() {
-                        // See note above re: E0509 and `Value::drop`.
-                        return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
-                            &mut l.readable,
-                        )));
-                    }
-                }
-            }
+        if let BodyValue::Locked(stream) = &mut body_value {
+            return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
+                &mut stream.readable,
+            )));
         }
         Ok(HTTPRequestBody::AnyBlob(body_value.use_as_any_blob()))
     }
@@ -874,13 +853,11 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
-            let body: *mut BodyValue = response.get_body_value();
+            let body = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
             // callback was queued; checked before `buffer_reset.set(false)` so
             // the defer still drops the bytes.
-            // SAFETY: just obtained from live `response`.
-            if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+            if !matches!(body, BodyValue::Locked(_)) {
                 return Ok(());
             }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
@@ -895,15 +872,10 @@ impl FetchTasklet {
                 );
                 self.scheduled_response_buffer = MutableString::default();
 
-                let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                // (response.init); both live for this block.
-                let body = unsafe { &mut *body };
                 let context = self.global_this.bun_vm().context_of(self.context);
                 body.fulfill(
                     scheduled_response_buffer,
                     &self.global_this.js_thread(context),
-                    headers,
                 )?;
             }
         }
@@ -1031,6 +1003,10 @@ impl FetchTasklet {
         }
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {
+            if core::mem::take(&mut self.result.slot_wanted) {
+                // If the Response is garbage, only a collection can tell. Its finalizer gives the slot back.
+                vm.gc_controller.collect_for_finalizers();
+            }
             // `scheduled_response_buffer` has two readers that both drain-and-reset:
             // this path (onBodyReceived) and `onStartStreamingHTTPResponseBodyCallback`,
             // which runs once when JS first touches `res.body` and hands any already-
@@ -1111,7 +1087,7 @@ impl FetchTasklet {
             // checkServerIdentity passed: un-park the HTTP-thread connection
             // so the request is finally written to the now-verified peer. If
             // the connection already closed/failed the resume is a no-op
-            // (keyed through the abort tracker).
+            // (the HTTP thread looks the request up by id).
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread().schedule_cert_check_resume(http_);
             }
@@ -1449,7 +1425,7 @@ impl FetchTasklet {
 
         let syscall = match fail {
             http::Error::ConnectionRefused => BunString::static_("connect"),
-            http::Error::FailedToOpenSocket if self.result.connect_errno != 0 => {
+            http::Error::FailedToOpenSocket if self.result.connect_errno.is_some() => {
                 BunString::static_("connect")
             }
             _ => BunString::EMPTY,
@@ -1684,14 +1660,20 @@ impl FetchTasklet {
             ..Default::default()
         };
 
+        if matches!(fail, http::Error::Cert(_)) {
+            // Node's fetch reports the TLS error as `.cause`.
+            let global = &self.global_this;
+            let cause = fetch_error.clone().to_error_instance(global);
+            let err_js = fetch_error.to_type_error_instance(global);
+            err_js.put(global, b"cause", cause);
+            return BodyValueError::JSValue(StrongOptional::create(err_js, global));
+        }
+
         BodyValueError::SystemTypeError(fetch_error)
     }
 
     fn connect_errno_name(&self) -> Option<&'static str> {
-        if self.result.connect_errno == 0 {
-            return None;
-        }
-        bun_sys::SystemErrno::init(i64::from(self.result.connect_errno)).map(Into::into)
+        self.result.connect_errno.map(Into::into)
     }
 
     /// `ERR_PROXY_TUNNEL` with the `status`, `statusText` and `headers` of the
@@ -1768,7 +1750,7 @@ impl FetchTasklet {
         // After the take, not before: a chunk the HTTP thread appends (and pauses for) in
         // between would otherwise reach the stream with its task finding the buffer empty, and
         // nothing left to undo that pause. Unconditional: also flushes body bytes the client
-        // holds that arrived with no follow-up read (`drain_response_body`).
+        // holds that arrived with no follow-up read (`receive_resumed`).
         this.signal_store.receive_on_demand();
         this.schedule_receive_resume();
 
@@ -2205,7 +2187,9 @@ impl FetchTasklet {
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
         http_client.client.flags.forced_protocol = fetch_options.forced_protocol;
-        http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
+        if fetch_tasklet.upgraded_connection {
+            http_client.client.expect_upgrade();
+        }
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
             // An upgraded connection tunnels its "body", so those bytes are not counted.
@@ -2855,7 +2839,6 @@ pub(crate) struct FetchOptions {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,
-    pub(crate) is_node_http_client: bool,
     pub(crate) compress: Option<http::compress_body::CompressOption>,
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,

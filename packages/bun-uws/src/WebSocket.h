@@ -32,6 +32,7 @@ template <bool SSL, bool isServer, typename USERDATA>
 struct WebSocket : AsyncSocket<SSL> {
     template <bool> friend struct TemplatedApp;
     template <bool> friend struct HttpResponse;
+    template <bool, bool, typename> friend struct WebSocketContext;
 private:
     typedef AsyncSocket<SSL> Super;
 
@@ -60,7 +61,6 @@ public:
     /* See AsyncSocket */
     using Super::getBufferedAmount;
     using Super::getRemoteAddress;
-    using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
     /* WebSocket close cannot be an alias to AsyncSocket::close since

@@ -312,10 +312,9 @@ impl ReadableStream {
         BodyFacts::from_bits_truncate(ReadableStream__bodyFacts(self.value))
     }
 
+    /// For a stream that Bun just made out of a body or a Blob.
     pub(crate) fn set_body_facts(stream: JSValue, facts: BodyFacts) {
-        if !facts.is_empty() {
-            ReadableStream__setBodyFacts(stream, facts.bits());
-        }
+        ReadableStream__setBodyFacts(stream, (facts | BodyFacts::NATIVE_STREAM).bits());
     }
 
     /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
@@ -434,17 +433,12 @@ impl ReadableStream {
     }
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
-        is_disturbed_value(self.value, global_object)
+        ReadableStream__isDisturbed(self.value, global_object)
     }
 
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
-    }
-
-    /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
-    pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
-        self.is_disturbed(global_object) || self.is_locked(global_object)
     }
 
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
@@ -693,9 +687,9 @@ impl ReadableStream {
     }
 }
 
-pub(crate) fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
-    // SAFETY: FFI call; value may be any JSValue (C++ side checks).
-    ReadableStream__isDisturbed(value, global_object)
+pub(crate) fn is_decoded_body(stream: JsLocal<'_>) -> bool {
+    BodyFacts::from_bits_truncate(ReadableStream__bodyFacts(stream.to_js()))
+        .contains(BodyFacts::DECODED)
 }
 
 pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {

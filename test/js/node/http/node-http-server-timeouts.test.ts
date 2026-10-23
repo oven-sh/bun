@@ -819,7 +819,8 @@ describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
       req: expectedInvalidDurations,
       res: expectedInvalidDurations,
       msecsIsCheckedBeforeCallback: outOfRange("-1"),
-      timeoutAfterRejectedCalls: 0,
+      // net.Socket#setTimeout() stores msecs before it checks it, as in Node.
+      timeoutAfterRejectedCalls: -1,
       validCallReturnsSocket: true,
       timeoutAfterValidCall: 1000,
     });

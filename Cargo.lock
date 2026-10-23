@@ -688,7 +688,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_url",
- "bytemuck",
  "enumset",
  "strum",
 ]

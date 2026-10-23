@@ -10,6 +10,9 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
     [`telemetry = "no"`, "expected boolean but received string"],
     [`define = 3`, "expected object but received number"],
     [`[serve]\nport = "abc"`, "expected number but received string"],
+    [`[install]\noffline = "true"`, "expected boolean but received string"],
+    [`[install]\noffline = 1`, "expected boolean but received number"],
+    [`[install]\noffline = []`, "expected boolean but received array"],
   ];
 
   test.each(cases)("%s -> %s", async (config, expected) => {

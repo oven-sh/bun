@@ -1659,8 +1659,9 @@ impl<'a> Parser<'a, '_> {
             install.hoist = Some(v);
         }
 
-        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
-            install.offline = Some(v);
+        if let Some(offline) = install_obj.get(b"offline") {
+            self.expect(&offline, ExprTag::EBoolean)?;
+            install.offline = Some(offline.as_bool().expect("infallible: type checked"));
         }
 
         Ok(())

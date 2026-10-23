@@ -731,6 +731,28 @@ impl Value {
         }
     }
 
+    /// The store of the `Bun.file()` that this body reads: the store of its Blob, or of an
+    /// unread stream over one, which [`Self::to_blob_if_possible`] turns back into that Blob.
+    pub(crate) fn file_store(
+        &self,
+        global: &JSGlobalObject,
+    ) -> Option<bun_ptr::RefPtr<blob::Store>> {
+        match self {
+            Value::Blob(blob) if blob.needs_to_read_file() => blob.store.get().clone(),
+            Value::Locked(locked) if locked.promise.is_none() => {
+                let stream = locked.readable.get()?;
+                if stream.is_disturbed_or_locked(global) {
+                    return None;
+                }
+                match stream.ptr.file()?.lazy.get() {
+                    webcore::file_reader::Lazy::Blob(store) => Some(store.clone()),
+                    webcore::file_reader::Lazy::None => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn size(&mut self) -> blob::SizeType {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,

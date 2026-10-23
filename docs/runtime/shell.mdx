@@ -178,6 +178,8 @@ You can redirect from these JavaScript objects:
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
 
+When the body of a `Response` is `Bun.file(path)`, Bun Shell opens that file. A missing file fails the command.
+
 ### Example: Redirect stdin -> file
 
 ```js

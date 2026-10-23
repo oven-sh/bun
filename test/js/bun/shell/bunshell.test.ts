@@ -4,9 +4,9 @@
  *
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
-import { $ } from "bun";
+import { $, type BunFile } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -3652,6 +3652,200 @@ test("output redirect buffer for an external command stays attached until the co
   const result = await running;
   expect(stringifyBuffer(buffer)).toEqual("external-redirect-output\n");
   expect(result.exitCode).toBe(0);
+});
+
+describe("redirect to a Response over Bun.file(path)", () => {
+  // `${Bun.file(path)}` is a path word in the script, so the shell opens the
+  // file itself. A Response over the same file must give the same result.
+  //
+  // `echo` is a builtin on every platform and bun is a spawned command on
+  // every platform. The two set up their redirects in different code.
+  // `--version` starts no VM, so a debug build runs it in a tenth of the time.
+  const commands = {
+    spawned: { read: [BUN, "-e", "console.log(await Bun.stdin.text())"], write: [BUN, "--version"] },
+    builtin: { read: ["echo", "out"], write: ["echo", "out"] },
+  };
+  type Kind = keyof typeof commands;
+  const kinds = Object.keys(commands) as Kind[];
+  const files = {
+    "an existing file": "existing.txt",
+    "a missing file": "missing.txt",
+    "a file in a missing directory": join("nodir", "missing.txt"),
+  };
+  type State = keyof typeof files;
+  const states = Object.keys(files) as State[];
+  const operators = ["<", ">", ">>", "2>", "&>"];
+  const missingFileError = expect.stringMatching(/^bun: No such file or directory: .*missing\.txt$/);
+  // Longer than anything a command writes here, so a write that does not truncate leaves a tail.
+  const oldContent = Buffer.alloc(240, "old content\n").toString();
+
+  // Runs `command <op> ${target}` in a fresh directory. `relative` gives the
+  // Bun.file a path that only the cwd of the shell can resolve.
+  async function redirect(
+    kind: Kind,
+    op: string,
+    state: State,
+    wrap: (file: BunFile) => Blob | Response | Promise<Response>,
+    relative = false,
+  ) {
+    using dir = tempDir("shell-response-file", { "existing.txt": oldContent });
+    const path = join(String(dir), files[state]);
+    const target = await wrap(Bun.file(relative ? files[state] : path));
+    const result = await $`${commands[kind][op === "<" ? "read" : "write"]} ${{ raw: op }} ${target}`
+      .cwd(String(dir).replaceAll("\\", "/"))
+      .env(bunEnv)
+      .quiet()
+      .nothrow();
+    return {
+      exitCode: result.exitCode,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString().replaceAll(String(dir), "<dir>"),
+      onDisk: existsSync(path) ? readFileSync(path, "utf8") : null,
+      bodyUsed: target instanceof Response ? target.bodyUsed : undefined,
+    };
+  }
+  const bare = (file: BunFile) => file;
+  const inResponse = (file: BunFile) => new Response(file);
+
+  const cells = (kind: Kind) =>
+    operators.flatMap(op => states.map((state): [Kind, string, State] => [kind, op, state]));
+  const sameAsBare = async (kind: Kind, op: string, state: State) => {
+    const [expected, actual] = await Promise.all([
+      redirect(kind, op, state, bare),
+      redirect(kind, op, state, inResponse),
+    ]);
+    // The redirect takes the body once the file is open. A failed open leaves it unread.
+    expect(actual).toEqual({ ...expected, bodyUsed: expected.exitCode === 0 });
+  };
+  const cellName = "%s command, %s %s: same result as the bare Bun.file";
+  test.concurrent.each(cells("builtin"))(cellName, sameAsBare);
+  // A spawned cell starts two bun processes. These run one cell at a time, so
+  // that a slow machine does not stack all of them into one test timeout.
+  test.each(cells("spawned"))(cellName, sameAsBare);
+
+  test.concurrent.each(kinds)("%s command: a relative path resolves against the cwd of the shell", async kind => {
+    for (const state of ["an existing file", "a missing file"] as const) {
+      const [expected, actual] = await Promise.all([
+        redirect(kind, "<", state, bare, true),
+        redirect(kind, "<", state, inResponse, true),
+      ]);
+      expect(actual).toEqual({ ...expected, bodyUsed: expected.exitCode === 0 });
+    }
+  });
+
+  test.concurrent.each(kinds)("%s command: a missing input file fails the command and is not created", async kind => {
+    expect(await redirect(kind, "<", "a missing file", inResponse)).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: missingFileError,
+      onDisk: null,
+      bodyUsed: false,
+    });
+  });
+
+  test.concurrent.each(kinds)("%s command: > truncates the file and >> appends to it", async kind => {
+    const output = await $`${commands[kind].write}`.env(bunEnv).text();
+    expect(output).not.toBe("");
+    expect({
+      truncate: (await redirect(kind, ">", "an existing file", inResponse)).onDisk,
+      append: (await redirect(kind, ">>", "an existing file", inResponse)).onDisk,
+    }).toEqual({ truncate: output, append: oldContent + output });
+  });
+
+  test.concurrent("cat reads the file", async () => {
+    // `cat` is a builtin on Windows and a spawned command elsewhere.
+    using dir = tempDir("shell-response-file", { "in.txt": "file content\n" });
+    const response = new Response(Bun.file(join(String(dir), "in.txt")));
+    const result = await $`cat < ${response}`.env(bunEnv).quiet().nothrow();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+      bodyUsed: response.bodyUsed,
+    }).toEqual({ stdout: "file content\n", stderr: "", exitCode: 0, bodyUsed: true });
+  });
+
+  test.concurrent.each(kinds)("%s command: an empty path is an ambiguous redirect", async kind => {
+    const run = async (target: Blob | Response) => {
+      const result = await $`${commands[kind].read} < ${target}`.env(bunEnv).quiet().nothrow();
+      return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+    };
+    const expected = await run(Bun.file(""));
+    expect(expected).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: expect.stringMatching(/^bun: ambiguous redirect: at `.+`\n$/),
+    });
+    expect(await run(new Response(Bun.file("")))).toEqual(expected);
+  });
+
+  // Each of these bodies is still the Bun.file: a consumer that takes the whole body gets the file.
+  type Made = { response: Response; stream?: ReadableStream };
+  const bodyForms: Array<[string, (file: BunFile) => Made | Promise<Made>]> = [
+    [
+      "after .body was read",
+      file => {
+        const response = new Response(file);
+        return { response, stream: response.body! };
+      },
+    ],
+    [
+      "over Bun.file(path).stream()",
+      file => {
+        const stream = file.stream();
+        return { response: new Response(stream), stream };
+      },
+    ],
+    ["cloned", file => ({ response: new Response(file).clone() })],
+    ["from fetch() of a file: URL", async file => ({ response: await fetch(Bun.pathToFileURL(file.name!)) })],
+  ];
+  test.concurrent.each(bodyForms)("a Response %s is the same file", async (_name, make) => {
+    let made!: Made;
+    const wrap = async (file: BunFile) => (made = await make(file)).response;
+
+    expect(await redirect("builtin", "<", "a missing file", wrap)).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: missingFileError,
+      onDisk: null,
+      bodyUsed: false,
+    });
+    // The failed open read nothing: the stream is free, and a read still goes to the file.
+    expect(made.stream?.locked).toBe(made.stream ? false : undefined);
+    await expect((async () => await made.response.text())()).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(await redirect("builtin", ">", "an existing file", wrap)).toEqual({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      onDisk: "out\n",
+      bodyUsed: true,
+    });
+  });
+
+  // A body that is not a file keeps its own rule: a builtin cannot write to it.
+  test.concurrent.each([
+    ["a string", () => new Response("in memory")],
+    ["a stream that is not a file", () => new Response(new Blob(["in memory"]).stream())],
+  ])("a builtin still refuses to write to a body that is %s", async (_name, make) => {
+    const response = make();
+    await expect($`echo out > ${response}`.env(bunEnv).quiet()).rejects.toThrow(
+      "Cannot redirect stdout/stderr to an immutable blob. Expected a file",
+    );
+    // The refusal read nothing.
+    expect({ bodyUsed: response.bodyUsed, text: await response.text() }).toEqual({
+      bodyUsed: false,
+      text: "in memory",
+    });
+  });
+
+  test.concurrent("a command that does not run leaves the body unread", async () => {
+    using dir = tempDir("shell-response-file", { "in.txt": "file content\n" });
+    const response = new Response(Bun.file(join(String(dir), "in.txt")));
+    const result = await $`false && echo out < ${response}`.env(bunEnv).quiet().nothrow();
+    expect({ exitCode: result.exitCode, bodyUsed: response.bodyUsed }).toEqual({ exitCode: 1, bodyUsed: false });
+    expect(await response.text()).toBe("file content\n");
+  });
 });
 
 test("cd treats interpolated arguments starting with tilde or dash as literal directory names", async () => {

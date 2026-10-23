@@ -9,7 +9,8 @@ use std::sync::Arc;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
+    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, RedirectTarget, is_pollable_from_mode,
+    shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -525,30 +526,24 @@ impl Builtin {
         let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
 
-        match &node.redirect_file {
-            Some(ast::Redirect::Atom(_)) => {
+        let target = match &node.redirect_file {
+            Some(redirect_file) => match interp.redirect_target(cmd, redirect_file) {
+                Ok(target) => Some(target),
+                Err(_) => return Some(Yield::Failed(cmd)),
+            },
+            None => None,
+        };
+
+        match target {
+            Some(RedirectTarget::Path(path_buf, response)) => {
                 // ── File redirect (`> path` / `< path` / `>> path` / `&> path`).
-                if interp.as_cmd(cmd).redirection_file.is_empty() {
+                if path_buf.is_empty() {
                     return Some(Self::cmd_write_failing_error(
                         interp,
                         cmd,
                         format_args!("bun: ambiguous redirect: at `{}`\n", kind.as_str()),
                     ));
                 }
-
-                // `redirection_file` was NUL-terminated by Expansion; build a
-                // `&ZStr` over it (path = bytes excluding the trailing NUL).
-                // Clone the path bytes so the
-                // `&mut interp` open call below doesn't overlap a borrow into
-                // the Cmd node.
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(cmd).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                // SAFETY: `path_buf` ends in NUL by construction.
                 let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
@@ -605,6 +600,9 @@ impl Builtin {
                         Ok(f) => f,
                     }
                 };
+                if let Some(response) = response {
+                    response.consume_body();
+                }
 
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
@@ -647,22 +645,8 @@ impl Builtin {
                     });
                 }
             }
-            Some(ast::Redirect::JsBuf(jsbuf)) => {
+            Some(RedirectTarget::Object(global, jsval)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
-                // Safe accessor — single `unsafe` deref lives in
-                // `Interpreter::global_this_ref`.
-                let Some(global) = interp.global_this_ref() else {
-                    interp.throw(crate::shell::ShellErr::Custom(
-                        b"Invalid JS object reference in shell"
-                            .to_vec()
-                            .into_boxed_slice(),
-                    ));
-                    return Some(Yield::Failed(cmd));
-                };
-                let Ok(jsval) = interp.jsobj(global, jsbuf.idx) else {
-                    return Some(Yield::Failed(cmd));
-                };
-
                 if jsval.js_type().is_array_buffer_like() {
                     // Each slot gets its own pin + GC root; `None` has thrown OOM.
                     let root = || {

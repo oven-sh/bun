@@ -343,6 +343,106 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
   }, 30_000);
 
+  // `bun init` leaves these fields of a package.json as they are, so only a dependency can change.
+  const configured = {
+    name: "pkg",
+    module: "index.ts",
+    type: "module",
+    private: true,
+    scripts: { typecheck: "bun check" },
+  };
+
+  // Runs `bun init` over a package.json. The registry records each request of the nested `bun install`.
+  async function initOverPackageJson(manifest: object, args: string) {
+    const requests: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests.push(decodeURIComponent(new URL(request.url).pathname));
+        return new Response(null, { status: 404 });
+      },
+    });
+    await using temp = tempDir("bun-init-listed-dependency", {
+      "package.json": JSON.stringify(manifest, null, 2) + "\n",
+      "index.ts": "export {};\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", ...args.split(" ")],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...initEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: path.join(temp, ".bun-cache"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    return { manifest: await Bun.file(path.join(temp, "package.json")).json(), requests, stdout, stderr, exitCode };
+  }
+
+  test.each([
+    {
+      args: "-y",
+      where: "dependencies lists both packages",
+      groups: { dependencies: { "@types/bun": "1.1.0", typescript: "5.6.2" } },
+    },
+    {
+      args: "-y",
+      where: "optionalDependencies lists both packages",
+      groups: { optionalDependencies: { "@types/bun": "1.1.0", typescript: "5.6.2" } },
+    },
+    {
+      args: "-m -y",
+      where: "dependencies lists both packages",
+      groups: { dependencies: { "@types/bun": "1.1.0", typescript: "5.6.2" } },
+    },
+    {
+      // These are the groups that `bun init` writes to.
+      args: "-y",
+      where: "devDependencies lists @types/bun and peerDependencies lists typescript",
+      groups: { devDependencies: { "@types/bun": "1.1.0" }, peerDependencies: { typescript: "5.6.2" } },
+    },
+  ])("bun init $args adds no dependency when $where", async ({ args, groups }) => {
+    const manifest = { ...configured, ...groups };
+
+    const after = await initOverPackageJson(manifest, args);
+
+    expect({ manifest: after.manifest, requests: after.requests }).toEqual({ manifest, requests: [] });
+    expect(after).toMatchObject({ exitCode: 0 });
+  });
+
+  test.each([
+    {
+      args: "-y",
+      where: "dependencies lists typescript",
+      groups: { dependencies: { typescript: "5.6.2" } },
+      added: { devDependencies: { "@types/bun": "latest" } },
+    },
+    {
+      args: "-y",
+      where: "dependencies lists @types/bun",
+      groups: { dependencies: { "@types/bun": "1.1.0" } },
+      added: { peerDependencies: { typescript: "^7" } },
+    },
+    {
+      // `bun install` does not install every peer, so `bun init` adds @types/bun beside a peer entry.
+      args: "-m -y",
+      where: "peerDependencies lists @types/bun",
+      groups: { peerDependencies: { "@types/bun": "1.1.0" } },
+      added: { devDependencies: { "@types/bun": "latest" } },
+    },
+  ])("bun init $args adds only the dependency that is missing when $where", async ({ args, groups, added }) => {
+    const manifest = { ...configured, ...groups };
+
+    const after = await initOverPackageJson(manifest, args);
+
+    expect(after.manifest).toEqual({ ...manifest, ...added });
+    // `bun init` added a dependency, so the nested `bun install` runs and asks for @types/bun.
+    expect(after.requests).toContain("/@types/bun");
+  });
+
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
 

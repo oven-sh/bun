@@ -707,42 +707,39 @@ impl InitCommand {
                 true,
             );
 
+            let dependency_groups =
+                bun_install_types::DependencyGroup::FOUR.map(|group| object.get(group.prop));
+            // `bun install` does not install every peer, so a peer counts only when the new entry is a peer too.
+            let declares_dependency = |name: &[u8], target: &[u8]| {
+                bun_install_types::DependencyGroup::FOUR
+                    .iter()
+                    .zip(dependency_groups)
+                    .any(|(group, listed)| {
+                        (group.prop == target || group.prop != b"peerDependencies")
+                            && listed.is_some_and(|listed| listed.get(name).is_some())
+                    })
+            };
+
             let needs_dependencies = 'brk: {
-                if let Some(deps) = object.get(b"dependencies") {
-                    for (i, dep) in dependencies.iter().enumerate() {
-                        if deps.get(dep.name).is_some() {
-                            needed_dependencies.unset(i);
-                        }
+                for (i, dep) in dependencies.iter().enumerate() {
+                    if declares_dependency(dep.name, b"dependencies") {
+                        needed_dependencies.unset(i);
                     }
                 }
                 break 'brk needed_dependencies.count() > 0;
             };
 
             let needs_dev_dependencies = 'brk: {
-                if let Some(deps) = object.get(b"devDependencies") {
-                    for (i, dep) in dev_dependencies.iter().enumerate() {
-                        if deps.get(dep.name).is_some() {
-                            needed_dev_dependencies.unset(i);
-                        }
+                for (i, dep) in dev_dependencies.iter().enumerate() {
+                    if declares_dependency(dep.name, b"devDependencies") {
+                        needed_dev_dependencies.unset(i);
                     }
                 }
                 break 'brk needed_dev_dependencies.count() > 0;
             };
 
-            let needs_typescript_dependency = !minimal
-                && 'brk: {
-                    if let Some(deps) = object.get(b"devDependencies") {
-                        if deps.has_any_property_named(&[b"typescript"]) {
-                            break 'brk false;
-                        }
-                    }
-                    if let Some(deps) = object.get(b"peerDependencies") {
-                        if deps.has_any_property_named(&[b"typescript"]) {
-                            break 'brk false;
-                        }
-                    }
-                    true
-                };
+            let needs_typescript_dependency =
+                !minimal && !declares_dependency(b"typescript", b"peerDependencies");
 
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;

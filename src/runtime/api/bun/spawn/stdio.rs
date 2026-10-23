@@ -88,13 +88,7 @@ impl ToSpawnOptsError {
 }
 
 impl Stdio {
-    /// Copies the bytes of an in-memory `Blob` into a memfd for the child to read as its stdin,
-    /// and leaves `Ignore` in the slot: the parent has nothing to write. The caller lends the
-    /// memfd to `spawn_process` and closes it once that returns, as the child has its own
-    /// descriptor by then. On `None` the `Blob` stays, and its bytes go through a pipe.
-    ///
-    /// Only input travels this way. An output has to signal EOF, and a memfd cannot: what a
-    /// grandchild writes after the child exits would be lost.
+    /// Moves an in-memory `Blob` into a memfd for the child's stdin. Input only: an output needs the EOF that a memfd cannot signal.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn take_as_memfd(&mut self) -> Option<sys::File> {
         use crate::api::bun_process::spawn_sys;

@@ -945,8 +945,7 @@ fn spawn_maybe_sync(
     }
     let _ = &inherited_env_storage;
 
-    // Bytes for the child's stdin. The child gets its own descriptor in `spawn_process`,
-    // so ours is closed as soon as that returns, and at every earlier return.
+    // The child's stdin bytes. Ours only until `spawn_process` has given the child its own descriptor.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut stdin_memfd = stdio[0].take_as_memfd();
     #[cfg(any(target_os = "linux", target_os = "android"))]

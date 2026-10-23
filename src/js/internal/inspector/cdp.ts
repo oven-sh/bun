@@ -7,12 +7,43 @@
 // JSC-protocol JSON from the backend connection. Command ids from the client
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
+
+// Type-only, so the builtin bundler erases it.
+import type { JSC } from "../../../../packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts";
+
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { isAbsolute } = require("node:path");
 
 const EXECUTION_CONTEXT_ID = 1;
 
+// CDP (client-facing) shapes stay untyped.
 type AnyObject = Record<string, any>;
+
+type BackendResult = JSC.ResponseMap[keyof JSC.ResponseMap];
+
+// BackendDispatcher::sendPendingErrors in InspectorBackendDispatcher.cpp.
+type BackendError = { code: number; message: string };
+
+// A response to one of this adapter's commands, or an event.
+type BackendMessage = {
+  id?: number | null;
+  result?: BackendResult;
+  error?: BackendError;
+  method?: string;
+  params?: unknown;
+};
+
+// Discriminated on `method`, which JSC.Event's default instantiation is not.
+type BackendEvent = { [M in keyof JSC.EventMap]: { method: M; params: JSC.EventMap[M] } }[keyof JSC.EventMap];
+
+// The JSC response answering each CDP command that #translateResult reshapes.
+type TranslatedResponses = {
+  "Runtime.evaluate": JSC.Runtime.EvaluateResponse | JSC.Runtime.AwaitPromiseResponse;
+  "Runtime.callFunctionOn": JSC.Runtime.CallFunctionOnResponse;
+  "Debugger.evaluateOnCallFrame": JSC.Debugger.EvaluateOnCallFrameResponse;
+  "Runtime.getProperties": JSC.Runtime.GetPropertiesResponse;
+  "Debugger.getPossibleBreakpoints": JSC.Debugger.GetBreakpointLocationsResponse;
+};
 
 function toCdpUrl(url: string): string {
   // V8 reports filesystem-backed scripts with file:// URLs; JSC script URLs
@@ -54,7 +85,7 @@ function breakpointUrlRegex(url: string): string {
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
 }
 
-const SCOPE_TYPE_MAP: Record<string, string> = {
+const SCOPE_TYPE_MAP: Record<JSC.Debugger.Scope["type"], string> = {
   global: "global",
   with: "with",
   closure: "closure",
@@ -68,7 +99,7 @@ const SCOPE_TYPE_MAP: Record<string, string> = {
 // { type: "log", level: "warning"/"error"/... }, so a type-level match on "log"
 // would mask the level. #translateConsoleMessage falls through to
 // CONSOLE_LEVEL_MAP for those and for console.log itself.
-const CONSOLE_TYPE_MAP: Record<string, string> = {
+const CONSOLE_TYPE_MAP: Partial<Record<NonNullable<JSC.Console.ConsoleMessage["type"]>, string>> = {
   dir: "dir",
   dirxml: "dirxml",
   table: "table",
@@ -83,7 +114,7 @@ const CONSOLE_TYPE_MAP: Record<string, string> = {
   profileEnd: "profileEnd",
 };
 
-const CONSOLE_LEVEL_MAP: Record<string, string> = {
+const CONSOLE_LEVEL_MAP: Record<JSC.Console.ConsoleMessage["level"], string> = {
   log: "log",
   info: "info",
   warning: "warning",
@@ -98,7 +129,12 @@ class InspectorCDPAdapter {
   #nextExceptionId = 1;
   #pending = new Map<
     number,
-    { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
+    {
+      clientId: number | string | null;
+      method: string;
+      // Typed per command at #sendToBackend.
+      onResult?: (result: any, error?: BackendError) => void;
+    }
   >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
 
@@ -125,7 +161,7 @@ class InspectorCDPAdapter {
   }
 
   handleBackendMessage(message: string): void {
-    let parsed: AnyObject;
+    let parsed: BackendMessage;
     try {
       parsed = JSON.parse(message);
     } catch {
@@ -150,7 +186,7 @@ class InspectorCDPAdapter {
       return;
     }
     if (typeof method === "string") {
-      this.#translateBackendEvent(method, parsed.params || {});
+      this.#translateBackendEvent({ method, params: parsed.params || {} } as BackendEvent);
     }
   }
 
@@ -168,13 +204,13 @@ class InspectorCDPAdapter {
 
   // `clientId` undefined/null marks an adapter-internal command whose response
   // is dropped instead of being forwarded to the client. `onResult` intercepts
-  // the response for adapter-side chaining (e.g. Runtime.evaluate awaitPromise).
-  #sendToBackend(
-    method: string,
-    params?: AnyObject,
+  // the response for adapter-side chaining; on a backend error it gets `{}`.
+  #sendToBackend<M extends keyof JSC.RequestMap>(
+    method: M,
+    params?: JSC.RequestMap[M],
     clientId: number | string | null = null,
-    clientMethod = method,
-    onResult?: (result: AnyObject, error?: AnyObject) => void,
+    clientMethod: string = method,
+    onResult?: (result: JSC.ResponseMap[M], error?: BackendError) => void,
   ): void {
     const id = this.#nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
@@ -220,7 +256,7 @@ class InspectorCDPAdapter {
       case "Runtime.evaluate": {
         // JSC's JSGlobalObjectRuntimeAgent rejects any contextId ("only one
         // execution context"), so drop it even though CDP clients echo it.
-        const jscParams = {
+        const jscParams: JSC.Runtime.EvaluateRequest = {
           expression: params.expression,
           objectGroup: params.objectGroup,
           includeCommandLineAPI: params.includeCommandLineAPI,
@@ -292,7 +328,7 @@ class InspectorCDPAdapter {
 
       case "Runtime.callFunctionOn": {
         const { objectId, executionContextId } = params;
-        const forward = (targetObjectId: unknown) =>
+        const forward = (targetObjectId: JSC.Runtime.RemoteObjectId) =>
           this.#sendToBackend(
             "Runtime.callFunctionOn",
             {
@@ -339,7 +375,7 @@ class InspectorCDPAdapter {
 
       case "Runtime.releaseObject":
       case "Runtime.releaseObjectGroup":
-        this.#sendToBackend(method, params, id, method);
+        this.#sendToBackend(method, params as JSC.RequestMap[typeof method], id, method);
         return;
 
       case "Runtime.getIsolateId":
@@ -382,7 +418,7 @@ class InspectorCDPAdapter {
       case "Debugger.removeBreakpoint":
       case "Debugger.continueToLocation":
       case "Debugger.getScriptSource":
-        this.#sendToBackend(method, params, id, method);
+        this.#sendToBackend(method, params as JSC.RequestMap[typeof method], id, method);
         return;
 
       case "Debugger.setPauseOnExceptions":
@@ -400,9 +436,9 @@ class InspectorCDPAdapter {
 
       case "Debugger.setBreakpointByUrl": {
         const { condition, urlRegex, url } = params;
-        const options: AnyObject = {};
+        const options: JSC.Debugger.BreakpointOptions = {};
         if (condition) options.condition = condition;
-        const jscParams: AnyObject = {
+        const jscParams: JSC.Debugger.SetBreakpointByUrlRequest = {
           lineNumber: params.lineNumber,
           columnNumber: params.columnNumber,
           options,
@@ -520,14 +556,16 @@ class InspectorCDPAdapter {
     }
   }
 
-  #translateResult(method: string, result: AnyObject): AnyObject {
+  // `method` is the CDP command being answered; see TranslatedResponses.
+  #translateResult(method: string, response: BackendResult): AnyObject {
     switch (method) {
       case "Debugger.enable":
-        return { debuggerId: "(bun)", ...result };
+        return { debuggerId: "(bun)", ...response };
 
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":
       case "Debugger.evaluateOnCallFrame": {
+        const result = response as TranslatedResponses[typeof method];
         const out: AnyObject = { result: result.result ?? { type: "undefined" } };
         if (result.wasThrown) {
           out.exceptionDetails = {
@@ -542,7 +580,8 @@ class InspectorCDPAdapter {
       }
 
       case "Runtime.getProperties": {
-        const properties = (result.properties ?? []).map((property: AnyObject) => ({
+        const result = response as TranslatedResponses[typeof method];
+        const properties = (result.properties ?? []).map(property => ({
           configurable: false,
           enumerable: false,
           ...property,
@@ -553,15 +592,17 @@ class InspectorCDPAdapter {
         return out;
       }
 
-      case "Debugger.getPossibleBreakpoints":
+      case "Debugger.getPossibleBreakpoints": {
+        const result = response as TranslatedResponses[typeof method];
         return { locations: result.locations ?? [] };
+      }
 
       default:
-        return result;
+        return response;
     }
   }
 
-  #translateBackendEvent(method: string, params: AnyObject): void {
+  #translateBackendEvent({ method, params }: BackendEvent): void {
     switch (method) {
       case "Debugger.scriptParsed": {
         const url = params.sourceURL || params.url || "";
@@ -590,12 +631,12 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
+        const callFrames = (params.callFrames ?? []).map(frame => ({
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
           location: frame.location,
           url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
-          scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
+          scopeChain: (frame.scopeChain ?? []).map(scope => ({
             type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
             object: scope.object,
             name: scope.name,
@@ -612,9 +653,11 @@ class InspectorCDPAdapter {
           case "assert":
             cdpParams.reason = "assert";
             break;
-          case "Breakpoint":
-            if (data?.breakpointId) cdpParams.hitBreakpoints = [data.breakpointId];
+          case "Breakpoint": {
+            const hit = data as JSC.Debugger.BreakpointPauseReason | undefined;
+            if (hit?.breakpointId) cdpParams.hitBreakpoints = [hit.breakpointId];
             break;
+          }
         }
         if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
         this.#emitToClient("Debugger.paused", cdpParams);
@@ -637,7 +680,7 @@ class InspectorCDPAdapter {
         return;
 
       case "Console.messageAdded":
-        this.#translateConsoleMessage(params.message || {});
+        this.#translateConsoleMessage(params.message);
         return;
 
       default:
@@ -646,10 +689,10 @@ class InspectorCDPAdapter {
     }
   }
 
-  #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {
+  #translateStackTrace(stackTrace: JSC.Console.StackTrace | undefined): AnyObject | undefined {
     if (!stackTrace) return undefined;
     const translated: AnyObject = {
-      callFrames: (stackTrace.callFrames ?? []).map((frame: AnyObject) => ({
+      callFrames: (stackTrace.callFrames ?? []).map(frame => ({
         functionName: frame.functionName ?? "",
         scriptId: frame.scriptId ?? "",
         url: toCdpUrl(frame.url ?? ""),
@@ -664,7 +707,7 @@ class InspectorCDPAdapter {
     return translated;
   }
 
-  #translateConsoleMessage(message: AnyObject): void {
+  #translateConsoleMessage(message: JSC.Console.ConsoleMessage): void {
     const level = message.level ?? "log";
     const args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
 

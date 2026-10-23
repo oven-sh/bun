@@ -1900,51 +1900,33 @@ type HookOptions = {
   timeout?: number;
 };
 
+// Port of createSubtest(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1013-L1025
 function parseTestArgs(arg0: unknown, arg1: unknown, arg2: unknown) {
-  let name: string;
-  let options: TestOptions;
-  let fn: TestFn;
+  let options = arg1;
+  let fn = arg2;
 
   if (typeof arg0 === "function") {
-    name = arg0.name || kDefaultName;
-    fn = arg0 as TestFn;
-    if (typeof arg1 === "object") {
-      options = (arg1 ?? kDefaultOptions) as TestOptions;
-    } else {
-      options = kDefaultOptions;
-    }
-  } else if (typeof arg0 === "string") {
-    name = arg0;
-    if (typeof arg1 === "object") {
-      options = (arg1 ?? kDefaultOptions) as TestOptions;
-      if (typeof arg2 === "function") {
-        fn = arg2 as TestFn;
-      } else {
-        fn = kDefaultFunction;
-      }
-    } else if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
-      options = kDefaultOptions;
-    } else {
-      fn = kDefaultFunction;
-      options = kDefaultOptions;
-    }
-  } else if (typeof arg0 === "object" && arg0 !== null) {
-    options = arg0 as TestOptions;
-    if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
-      name = fn.name || kDefaultName;
-    } else {
-      fn = kDefaultFunction;
-      name = kDefaultName;
-    }
-  } else {
-    name = kDefaultName;
-    fn = kDefaultFunction;
-    options = kDefaultOptions;
+    fn = arg0;
+  } else if (arg0 !== null && typeof arg0 === "object") {
+    fn = options;
+    options = arg0;
+  } else if (typeof options === "function") {
+    fn = options;
   }
 
-  return { name, options, fn };
+  if (options === null || typeof options !== "object") {
+    options = kDefaultOptions;
+  }
+  // Not ported: node spreads the options over { fn, name } at #L1038, so options.name and options.fn win there.
+  const hasFn = typeof fn === "function";
+  // The Test constructor (#L575-L581) defaults fn first. Its noop has no name, kDefaultFunction has one.
+  const name: string =
+    typeof arg0 === "string" && arg0 !== "" ? arg0 : (hasFn && (fn as Function).name) || kDefaultName;
+  if (!hasFn) {
+    fn = kDefaultFunction;
+  }
+
+  return { name, options: options as TestOptions, fn: fn as TestFn };
 }
 
 // Shared by test and hook options: Node validates both the same way.

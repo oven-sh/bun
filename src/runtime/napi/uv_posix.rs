@@ -1402,6 +1402,7 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     let cx = unsafe { loop_ref.as_ref() }
         .global()
         .js_thread_of_caller_no_frame();
+    // SAFETY: the loop is alive (fn contract), and this is the JS thread.
     let loop_ = unsafe { loop_ref.as_ref() };
     loop_.work_in_flight.set(loop_.work_in_flight.get() + 1);
     // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).

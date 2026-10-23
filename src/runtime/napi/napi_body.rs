@@ -1957,15 +1957,19 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// The env's global, not one cached at creation: `bun test --isolate`
+    /// retargets the env when the creating file's global is swapped out.
+    fn global(&self) -> &JSGlobalObject {
+        // SAFETY: the work holds a ref on its env.
+        unsafe { &*self.env.get() }.to_js()
+    }
+
     /// Returns false if the VM is closed. The addon still has to delete the work.
     pub(crate) fn schedule(&mut self) -> bool {
         if self.scheduled {
             return true;
         }
-        // The env's global, not one cached at creation: `bun test --isolate`
-        // retargets the env when the creating file's global is swapped out.
-        // SAFETY: the work holds a ref on its env.
-        let vm = unsafe { &*self.env.get() }.to_js().bun_vm();
+        let vm = self.global().bun_vm();
         // A finalizer can call this during the GC that destroys the heap.
         if vm.closed() {
             return false;
@@ -2335,11 +2339,7 @@ extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    // SAFETY: the work holds a ref on its env.
-    debug_assert!(core::ptr::eq(
-        env.to_js(),
-        unsafe { &*work.env.get() }.to_js()
-    ));
+    debug_assert!(core::ptr::eq(env.to_js(), work.global()));
     napi_async_work::destroy(work_);
     env.ok()
 }
@@ -2352,11 +2352,7 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    // SAFETY: the work holds a ref on its env.
-    debug_assert!(core::ptr::eq(
-        env.to_js(),
-        unsafe { &*work.env.get() }.to_js()
-    ));
+    debug_assert!(core::ptr::eq(env.to_js(), work.global()));
     if !work.schedule() {
         return env.cannot_run_js();
     }
@@ -2371,11 +2367,7 @@ extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    // SAFETY: the work holds a ref on its env.
-    debug_assert!(core::ptr::eq(
-        env.to_js(),
-        unsafe { &*work.env.get() }.to_js()
-    ));
+    debug_assert!(core::ptr::eq(env.to_js(), work.global()));
     if work.cancel() {
         return env.ok();
     }

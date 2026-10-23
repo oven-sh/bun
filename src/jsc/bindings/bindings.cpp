@@ -6818,21 +6818,21 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     return JSC::JSValue::encode(result);
 }
 
-// REPL completion function - gets completions for a partial property access
-// Returns an array of completion strings, or undefined if no completions
-extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
+// REPL completion: calls `visit` with each own and inherited string property name of the
+// target (of globalThis when it is undefined or null) that starts with the UTF-8 prefix.
+// The name is lent for the call, and `visit` takes a reference to keep it. `visit` must not
+// run JS or allocate in the JSC heap, and returns false to stop the walk.
+extern "C" void Bun__REPL__forEachCompletion(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue targetValue,
     const unsigned char* prefixPtr,
-    size_t prefixLen)
+    size_t prefixLen,
+    void* ctx,
+    bool (*visit)(void* ctx, const BunString* name))
 {
     auto& vm = JSC::getVM(globalObject);
     // The Rust caller (repl.rs) has no exception scope, so nothing may escape.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto clearAndEncode = [&](JSC::JSValue v) {
-        scope.clearException();
-        return JSC::JSValue::encode(v);
-    };
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -6841,8 +6841,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     if (!target.isObject()) {
         JSObject* boxed = target.toObject(globalObject);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(JSC::jsUndefined());
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return;
+        }
         target = boxed;
     }
 
@@ -6852,11 +6854,12 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     // Walk the prototype chain as JSObject::getPropertyNames does (the builder dedups,
     // the depth cap stops misbehaving proxy chains), but skip own index names where that
-    // is safe: an index name is never an identifier completion (repl.rs filters them),
-    // and collecting one Identifier per element of a large typed array blocks the REPL
-    // for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names). Classes that
-    // override getOwnPropertyNames with their own keys logic (Proxy traps, module
-    // namespaces, ...) keep the full hook; their key counts are not element counts.
+    // is safe: an index name is never an identifier completion (repl.rs keeps identifier
+    // names only), and collecting one Identifier per element of a large typed array blocks
+    // the REPL for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names). Classes
+    // that override getOwnPropertyNames with their own keys logic (Proxy traps, String
+    // objects, arguments, module namespaces, ...) keep the full hook. A String object and a
+    // Proxy over an indexed target still produce one name per element there.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     unsigned prototypeCount = 0;
@@ -6865,32 +6868,28 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
             current->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
         else
             current->methodTable()->getOwnPropertyNames(current, globalObject, propertyNames, DontEnumPropertiesMode::Include);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(JSC::jsUndefined());
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return;
+        }
 
         JSC::JSValue prototype = current->getPrototype(globalObject);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(JSC::jsUndefined());
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return;
+        }
         if (!prototype.isObject() || ++prototypeCount > JSC::JSObject::maximumPrototypeChainDepth)
             break;
         current = JSC::asObject(prototype);
     }
 
-    JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    if (scope.exception()) [[unlikely]]
-        return clearAndEncode(JSC::jsUndefined());
-
-    unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
-        WTF::String name = propertyName.string();
-        if (prefix.isEmpty() || name.startsWith(prefix)) {
-            completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-            if (scope.exception()) [[unlikely]]
-                return clearAndEncode(JSC::jsUndefined());
+        if (prefix.isEmpty() || propertyName.string().startsWith(prefix)) {
+            BunString name = Bun::toString(propertyName.impl());
+            if (!visit(ctx, &name))
+                break;
         }
     }
-
-    return JSC::JSValue::encode(completions);
 }
 
 // One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
@@ -6901,7 +6900,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     size_t nameLen)
 {
     auto& vm = JSC::getVM(globalObject);
-    // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
+    // As in Bun__REPL__forEachCompletion: the Rust caller has no exception scope.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSValue base = JSC::JSValue::decode(baseValue);

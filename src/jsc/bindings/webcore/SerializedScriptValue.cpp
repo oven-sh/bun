@@ -1395,7 +1395,7 @@ private:
                     return true;
                 }
                 uint32_t index = m_wasmMemoryHandles.size();
-                m_wasmMemoryHandles.append(memory->memory().shared());
+                m_wasmMemoryHandles.append({ memory->memory().shared(), memory->memory().addressType() == Wasm::AddressType::I64 });
                 write(WasmMemoryTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
@@ -3835,12 +3835,9 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
-            // Memory64 is not yet serialized in WasmMemoryTag, so we only
-            // support I32 address type for structured clone. Upstream WebKit
-            // has the same limitation (it calls result->memory().addressType()
-            // on an uninitialized stub here, which happens to return I32).
-            constexpr auto addressType = Wasm::AddressType::I32;
-            if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
+            auto& handle = m_wasmMemoryHandles->at(index);
+            auto addressType = handle.isMemory64 ? Wasm::AddressType::I64 : Wasm::AddressType::I32;
+            if (RefPtr<SharedArrayBufferContents> contents = handle.contents) {
                 if (!contents->memoryHandle()) {
                     fail();
                     return JSValue();
@@ -4312,9 +4309,9 @@ size_t SerializedScriptValue::computeMemoryCost() const
     // We are not supporting WebAssembly Module memory estimation yet.
     if (m_wasmMemoryHandlesArray) {
         // A shared memory with a maximum of zero has null contents.
-        for (auto& content : *m_wasmMemoryHandlesArray) {
-            if (content)
-                cost += content->sizeInBytes(std::memory_order_relaxed);
+        for (auto& handle : *m_wasmMemoryHandlesArray) {
+            if (handle.contents)
+                cost += handle.contents->sizeInBytes(std::memory_order_relaxed);
         }
     }
 #endif

@@ -5358,6 +5358,223 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
   });
 });
 
+// `open` follows symlinks, so it returns ENOENT for a dangling symlink and for a name that doesn't exist alike. The
+// listing of the directory still names the symlink. npm reads the listing first and stops on such an ignore file.
+describe.concurrent("an ignore file that is a dangling symlink", () => {
+  const manifest = (fields: object = {}) => JSON.stringify({ name: "pack-ignore-link", version: "1.0.0", ...fields });
+  const tarball = "pack-ignore-link-1.0.0.tgz";
+  const linkFailed = (ignoreFile: string, at: string = "") =>
+    `ENOENT: failed to open ${ignoreFile} at: "<dir>/${at}${ignoreFile}": link target does not exist`;
+
+  async function bun(dir: string, command: string, cwd: string = dir) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...command.split(" ")],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+      env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(stdout, dir), err: normalizeBunSnapshot(stderr, dir), exitCode };
+  }
+
+  async function danglingSymlink(path: string) {
+    await symlink("gone", path, "file");
+    expect((await lstat(path)).isSymbolicLink()).toBe(true);
+    expect(existsSync(path)).toBe(false);
+  }
+
+  const files = {
+    "index.js": indexJs,
+    "lib/index.js": indexJs,
+    "lib/secret.txt": "the ignore file is there to keep this one out",
+    "lib/sub/index.js": indexJs,
+  };
+
+  // One row for each walk that reads ignore files. `at` is the directory that has the dangling symlink.
+  const walks = [
+    { walk: "the package root", fields: {}, at: "" },
+    { walk: "a subdirectory", fields: {}, at: "lib/" },
+    { walk: 'a directory that "files" includes', fields: { files: ["lib"] }, at: "lib/" },
+    { walk: 'a directory that a "files" glob matches', fields: { files: ["lib/**"] }, at: "lib/sub/" },
+    // `files` keeps the package's own walk out of the directory, so only directories.bin leads there.
+    { walk: "directories.bin", fields: { files: ["index.js"], directories: { bin: "lib" } }, at: "lib/" },
+  ];
+  test.each(walks.flatMap(walk => [".npmignore", ".gitignore"].map(ignoreFile => ({ ...walk, ignoreFile }))))(
+    "$ignoreFile in $walk",
+    async ({ fields, at, ignoreFile }) => {
+      using dir = tempDir("pack-ignore-link", { "package.json": manifest(fields), ...files });
+      await danglingSymlink(join(dir, at, ignoreFile));
+
+      expect(await bun(dir, "pm pack")).toEqual({
+        out: "bun pack <version> (<revision>)",
+        err: linkFailed(ignoreFile, at),
+        exitCode: 1,
+      });
+      expect(await exists(join(dir, tarball))).toBeFalse();
+    },
+  );
+
+  // `bun publish` and `bun pm diff <folder>` run the same scan. The package is folder `b`, and `a` is a copy without
+  // the symlink.
+  test.each([
+    { command: "pm pack --dry-run", cwd: "b", banner: "bun pack <version> (<revision>)" },
+    { command: "publish", cwd: "b", banner: "bun publish <version> (<revision>)" },
+    { command: "publish --dry-run", cwd: "b", banner: "bun publish <version> (<revision>)" },
+    { command: "pm diff ./a ./b --name-only", cwd: "", banner: "" },
+  ])("bun $command", async ({ command, cwd, banner }) => {
+    const folder = { "package.json": manifest(), ...files };
+    using dir = tempDir("pack-ignore-link-command", { a: folder, b: folder });
+    await danglingSymlink(join(dir, "b", ".npmignore"));
+
+    expect(await bun(dir, command, join(dir, cwd))).toEqual({
+      out: banner,
+      err: linkFailed(".npmignore", "b/"),
+      exitCode: 1,
+    });
+  });
+
+  // The .gitignore isn't used in its place.
+  test("an .npmignore beside a .gitignore", async () => {
+    using dir = tempDir("pack-ignore-link-beside", {
+      "package.json": manifest(),
+      ...files,
+      ".gitignore": "index.js\n",
+    });
+    await danglingSymlink(join(dir, ".npmignore"));
+
+    expect(await bun(dir, "pm pack")).toEqual({
+      out: "bun pack <version> (<revision>)",
+      err: linkFailed(".npmignore"),
+      exitCode: 1,
+    });
+    expect(await exists(join(dir, tarball))).toBeFalse();
+  });
+
+  test("a prepack script removes the symlink's target", async () => {
+    using dir = tempDir("pack-ignore-link-prepack", {
+      "shared-ignore": "secret.txt\n",
+      "pkg/package.json": manifest({ scripts: { prepack: `${bunExe()} remove.js` } }),
+      "pkg/remove.js": `require("fs").unlinkSync("../shared-ignore");`,
+      "pkg/index.js": indexJs,
+      "pkg/secret.txt": "the ignore file is there to keep this one out",
+    });
+    const pkg = join(dir, "pkg");
+    await symlink(join("..", "shared-ignore"), join(pkg, ".npmignore"), "file");
+
+    const { out, err, exitCode } = await bun(dir, "pm pack", pkg);
+    expect(err.split("\n").at(-1)).toBe(linkFailed(".npmignore", "pkg/"));
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await exists(join(pkg, tarball))).toBeFalse();
+  });
+
+  // A bundled workspace is packed by its own rules. Skipped on Windows like the bundled workspace tests above: the
+  // symlinks in node_modules are made as on POSIX.
+  test.skipIf(isWindows)("in a workspace that the packed package bundles", async () => {
+    using dir = tempDir("pack-ignore-link-bundled", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/lib/package.json": manifest({ dependencies: { other: "workspace:*" }, bundledDependencies: ["other"] }),
+      "packages/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+      "packages/other/index.js": indexJs,
+      "packages/other/secret.txt": "the ignore file is there to keep this one out",
+      "node_modules": {},
+    });
+    await symlink(join("..", "packages", "other"), join(dir, "node_modules", "other"));
+    await danglingSymlink(join(dir, "packages", "other", ".npmignore"));
+    const lib = join(dir, "packages", "lib");
+
+    expect(await bun(dir, "pm pack", lib)).toEqual({
+      out: "bun pack <version> (<revision>)",
+      err: linkFailed(".npmignore", "packages/other/"),
+      exitCode: 1,
+    });
+    expect(await exists(join(lib, tarball))).toBeFalse();
+  });
+
+  // A monorepo keeps one ignore file and links to it from each package. A symlink to a file that exists is read. In
+  // the second row the package root has no ignore file, which says nothing about the directory below it.
+  test.each(
+    [".gitignore", ".npmignore"].flatMap(ignoreFile => [
+      { ignoreFile, where: "the package root", at: "", target: join("..", "shared-ignore") },
+      { ignoreFile, where: "a subdirectory", at: "lib", target: join("..", "..", "shared-ignore") },
+    ]),
+  )("a $ignoreFile in $where that is a symlink to a file is read", async ({ ignoreFile, at, target }) => {
+    using dir = tempDir("pack-ignore-link-to-file", {
+      "shared-ignore": "secret.txt\n",
+      pkg: { "package.json": manifest(), ...files },
+    });
+    const pkg = join(dir, "pkg");
+    await symlink(target, join(pkg, at, ignoreFile), "file");
+
+    const { err, exitCode } = await bun(dir, "pm pack", pkg);
+    expect(err).toBe("");
+    expect(tarballEntries(join(pkg, tarball))).toEqual([
+      "package/package.json",
+      "package/index.js",
+      "package/lib/index.js",
+      "package/lib/sub/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // ENOENT is the only error with two meanings. A symlink to itself fails with ELOOP, and the message has no suffix.
+  test("a symlink to itself", async () => {
+    using dir = tempDir("pack-ignore-link-loop", { "package.json": manifest(), ...files });
+    await symlink(".npmignore", join(dir, ".npmignore"), "file");
+
+    expect(await bun(dir, "pm pack")).toEqual({
+      out: "bun pack <version> (<revision>)",
+      err: 'ELOOP: failed to open .npmignore at: "<dir>/.npmignore"',
+      exitCode: 1,
+    });
+    expect(await exists(join(dir, tarball))).toBeFalse();
+  });
+
+  // Pack doesn't open the symlink in these cases, so it doesn't stop. npm opens every ignore file that a directory
+  // lists, and stops in all of them but the second.
+  test.each([
+    {
+      where: "a .gitignore beside an .npmignore, which wins",
+      fields: {},
+      ignore: { ".npmignore": "secret.txt\n" },
+      link: ".gitignore",
+      packed: ["index.js", "lib/index.js", "lib/sub/index.js"],
+    },
+    {
+      where: "in a directory that the ignore file of its parent excludes",
+      fields: {},
+      ignore: { ".npmignore": "lib\n" },
+      link: "lib/.npmignore",
+      packed: ["index.js"],
+    },
+    {
+      where: 'in the package root when "files" is set',
+      fields: { files: ["lib"] },
+      ignore: {},
+      link: ".npmignore",
+      packed: ["lib/index.js", "lib/secret.txt", "lib/sub/index.js"],
+    },
+    {
+      where: 'in the directory that a "files" glob starts from',
+      fields: { files: ["lib/**"] },
+      ignore: {},
+      link: "lib/.npmignore",
+      packed: ["lib/index.js", "lib/secret.txt", "lib/sub/index.js"],
+    },
+  ])("is not read: $where", async ({ fields, ignore, link, packed }) => {
+    using dir = tempDir("pack-ignore-link-unread", { "package.json": manifest(fields), ...files, ...ignore });
+    await danglingSymlink(join(dir, link));
+
+    const { err, exitCode } = await bun(dir, "pm pack");
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, tarball))).toEqual(["package.json", ...packed].map(path => `package/${path}`));
+    expect(exitCode).toBe(0);
+  });
+});
+
 test.concurrent("unicode", async () => {
   using dir = tempDir("pack-unicode", {
     "package.json": JSON.stringify({ name: "pack-unicode", version: "1.1.1" }),

@@ -5,6 +5,7 @@
 import { readTarball } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, dtUnknownReaddir, tempDir } from "harness";
+import { existsSync, realpathSync } from "node:fs";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -16,7 +17,7 @@ beforeAll(async () => {
   if (dtUnknownReaddir.available) env = await dtUnknownReaddir.env();
 }, 30_000);
 
-async function run(cwd: string, ...args: string[]) {
+async function spawnBun(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
@@ -27,6 +28,11 @@ async function run(cwd: string, ...args: string[]) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(dtUnknownReaddir.marker);
+  return { stdout, stderr, exitCode };
+}
+
+async function run(cwd: string, ...args: string[]) {
+  const { stdout, stderr, exitCode } = await spawnBun(cwd, ...args);
   expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
   return stdout;
 }
@@ -62,6 +68,23 @@ describe.skipIf(!dtUnknownReaddir.available)("pack on a filesystem whose readdir
       "package/lib/out",
       "package/package.json",
     ]);
+  });
+
+  // The listing has no kinds, so `lstat` is what says that the entry is a symlink.
+  test.concurrent.each([".npmignore", ".gitignore"])("stops on a %s that is a dangling symlink", async ignoreFile => {
+    using dir = tempDir("dt-unknown-ignore-link", {
+      "package.json": JSON.stringify({ name: "dt-unknown-ignore-link", version: "1.0.0" }),
+      "index.js": "",
+      "lib/a.js": "",
+      "lib/secret.txt": "",
+    });
+    await symlink("gone", join(String(dir), "lib", ignoreFile));
+
+    const { stderr, exitCode } = await spawnBun(String(dir), "pm", "pack");
+    const path = join(realpathSync(String(dir)), "lib", ignoreFile);
+    expect(stderr).toContain(`ENOENT: failed to open ${ignoreFile} at: "${path}": link target does not exist`);
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "dt-unknown-ignore-link-1.0.0.tgz"))).toBe(false);
   });
 
   test.concurrent('packs what "files" selects', async () => {

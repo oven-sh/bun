@@ -1062,13 +1062,17 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth) {
+        let mut not_found = IgnoreFilesNotFound::default();
+        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth, &mut not_found) {
             ignores.push(patterns);
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
         while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
+                if entry.kind == bun_sys::FileKind::SymLink {
+                    IgnorePatterns::fail_if_dangling(dir, entry.name.slice_u8(), not_found);
+                }
                 continue;
             }
 
@@ -2936,6 +2940,14 @@ pub(crate) enum IgnorePatternsKind {
     PackageJson,
 }
 
+/// The ignore files of a directory, in the order they're opened. The first one that can be opened
+/// wins.
+const IGNORE_FILES: [IgnorePatternsKind; 2] =
+    [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore];
+
+/// One flag per entry of `IGNORE_FILES`: true if opening it failed with ENOENT.
+type IgnoreFilesNotFound = [bool; IGNORE_FILES.len()];
+
 impl IgnorePatterns {
     /// Fatal, because otherwise the tarball would include the files that were supposed to be
     /// ignored.
@@ -2944,6 +2956,7 @@ impl IgnorePatterns {
         ignore_kind: IgnorePatternsKind,
         action: &str,
         err: bun_sys::Error,
+        reason: &str,
     ) -> ! {
         let mut buf = bun_paths::path_buffer_pool::get();
         let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
@@ -2952,13 +2965,14 @@ impl IgnorePatterns {
         };
         Output::err(
             crate::Error::from(err),
-            "failed to {} {} at: \"{}{}{}\"",
+            "failed to {} {} at: \"{}{}{}\"{}",
             (
                 action,
                 <&str>::from(ignore_kind),
                 bstr::BStr::new(strings::without_trailing_slash(dir_path)),
                 SEP_STR,
                 <&str>::from(ignore_kind),
+                reason,
             ),
         );
         Global::crash();
@@ -2992,24 +3006,39 @@ impl IgnorePatterns {
         }
     }
 
+    /// Exits if `link_name` is an ignore file whose open failed with ENOENT. `open` follows
+    /// symlinks, so it returns ENOENT for a dangling symlink and for a missing name alike.
+    fn fail_if_dangling(dir: &Dir, link_name: &[u8], not_found: IgnoreFilesNotFound) {
+        for (kind, not_found) in IGNORE_FILES.into_iter().zip(not_found) {
+            if not_found && link_name == <&str>::from(kind).as_bytes() {
+                let err = bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open);
+                Self::ignore_file_fail(dir, kind, "open", err, ": link target does not exist");
+            }
+        }
+    }
+
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns> {
+    fn read_from_disk(
+        dir: &Dir,
+        dir_depth: usize,
+        not_found: &mut IgnoreFilesNotFound,
+    ) -> Option<IgnorePatterns> {
         let mut opened: Option<(File, IgnorePatternsKind)> = None;
-        for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
+        for (kind, not_found) in IGNORE_FILES.into_iter().zip(not_found) {
             match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
                 Ok(file) => {
                     opened = Some((file, kind));
                     break;
                 }
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-                Err(err) => Self::ignore_file_fail(dir, kind, "open", err),
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => *not_found = true,
+                Err(err) => Self::ignore_file_fail(dir, kind, "open", err, ""),
             }
         }
         let (ignore_file, ignore_kind) = opened?;
 
         let contents = ignore_file
             .read_to_end()
-            .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err));
+            .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err, ""));
         let _ = ignore_file.close();
 
         let mut patterns: Vec<Pattern> = Vec::new();

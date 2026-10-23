@@ -1254,7 +1254,11 @@ function expectBundled(
             keepNames: keepNames,
           },
           naming: {
-            entry: useOutFile ? path.basename(outfile!) : entryNaming,
+            // An executable takes its name from `compile.outfile`. One name for several entry points collides.
+            entry:
+              useOutFile && !(compile && entryPaths.length + (entryPointsRaw?.length ?? 0) > 1)
+                ? path.basename(outfile!)
+                : entryNaming,
             chunk: chunkNaming,
             asset: assetNaming,
           },

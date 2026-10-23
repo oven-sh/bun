@@ -673,26 +673,38 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
     ).toEqual({ result: { live: 1 }, stderr: "", exitCode: 0 });
   });
 
-  test("a Worker's contexts go with the Worker", async () => {
+  // A Worker's thread reports 'close' as its last step, after its VM and the cache in it are gone, so there's nothing to wait for after that.
+  // The Worker counts for itself, because one that has nothing left to do may be gone by the time its message arrives.
+  test.each([
+    ["terminate()", "if (i < 19) listener.stop();", "worker.terminate();"],
+    ["the end of its script", "listener.stop();", ""],
+  ])("a Worker's contexts go with the Worker, after %s", async (_name, stop, end) => {
     expect(
       await inAFreshProcess(`
         const before = sslCtxLiveCount();
-        const worker = new Worker(
-          "data:text/javascript," +
-            encodeURIComponent(\`
-              const tls = \${JSON.stringify(tls)};
-              for (let i = 0; i < 20; i++) {
-                Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ...tls, passphrase: String(i) }, socket: { data() {} } }).stop();
-              }
-              postMessage("done");
-            \`),
-        );
-        await new Promise(resolve => (worker.onmessage = resolve));
-        result.whileTheWorkerRuns = sslCtxLiveCount() - before;
-        await worker.terminate();
-        result.afterItsEnd = await settle(before, 0);
+        result.whileAWorkerRuns = [];
+        result.afterItsEnd = [];
+        for (let workers = 0; workers < 2; workers++) {
+          const worker = new Worker(
+            "data:text/javascript," +
+              encodeURIComponent(\`
+                import { sslCtxLiveCount } from "bun:internal-for-testing";
+                const tls = \${JSON.stringify(tls)};
+                for (let i = 0; i < 20; i++) {
+                  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ...tls, passphrase: String(i) }, socket: { data() {} } });
+                  ${stop}
+                }
+                postMessage(sslCtxLiveCount());
+              \`),
+          );
+          const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+          result.whileAWorkerRuns.push((await new Promise(resolve => (worker.onmessage = resolve))).data - before);
+          ${end}
+          await closed;
+          result.afterItsEnd.push(sslCtxLiveCount() - before);
+        }
       `),
-    ).toEqual({ result: { whileTheWorkerRuns: 16, afterItsEnd: 0 }, stderr: "", exitCode: 0 });
+    ).toEqual({ result: { whileAWorkerRuns: [16, 16], afterItsEnd: [0, 0] }, stderr: "", exitCode: 0 });
   });
 });
 

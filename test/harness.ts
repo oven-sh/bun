@@ -155,7 +155,9 @@ for (let key in bunEnv) {
 }
 
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
+// Bun reads its mode from BUN_ENV, then NODE_ENV. Tests choose the mode, not the shell that runs them.
 delete bunEnv.NODE_ENV;
+delete bunEnv.BUN_ENV;
 
 if (isDebug) {
   // This makes debug build memory leak tests more reliable.

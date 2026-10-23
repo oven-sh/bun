@@ -5805,6 +5805,92 @@ describe("css tests", () => {
       });
     }
 
+    // Any pseudo-class or pseudo-element can follow ::details-content and
+    // ::picker(), as after ::part(). ::details-content is an element-backed
+    // pseudo-element (https://drafts.csswg.org/css-pseudo-4/#element-backed).
+    // ::picker() is part-like by https://github.com/w3c/csswg-drafts/issues/10758.
+    for (const name of ["::picker(select)", "::details-content"]) {
+      for (const origin of ["", "a", "::part(x)"]) {
+        const sel = origin + name;
+        minify_test(`${sel}:popover-open {color:red}`, `${sel}:popover-open{color:red}`);
+        minify_test(`${sel}:open {color:red}`, `${sel}:open{color:red}`);
+        minify_test(`${sel}:not(:popover-open) {color:red}`, `${sel}:not(:popover-open){color:red}`);
+        minify_test(`${sel}:is(:popover-open, :hover) {color:red}`, `${sel}:is(:popover-open,:hover){color:red}`);
+        minify_test(`${sel}:where(:popover-open) {color:red}`, `${sel}:where(:popover-open){color:red}`);
+        minify_test(`${sel}:dir(rtl) {color:red}`, `${sel}:dir(rtl){color:red}`);
+        minify_test(`${sel}::before {color:red}`, `${sel}:before{color:red}`);
+      }
+      minify_test(`::slotted(x)${name}::before {color:red}`, `::slotted(x)${name}:before{color:red}`);
+      minify_test(
+        `@starting-style { ${name}:popover-open {opacity:0} }`,
+        `@starting-style{${name}:popover-open{opacity:0}}`,
+      );
+      minify_test(`@scope (.a) to (${name}:open) { .b {color:red} }`, `@scope(.a) to (${name}:open){.b{color:red}}`);
+
+      // These stay an error on purpose. Chrome drops each of these rules.
+      test.each([
+        [`${name}::before:popover-open`, "Invalid pseudo-class after pseudo-element"],
+        [`${name}::before:dir(rtl)`, "Token is not allowed in this state"],
+        [`${name}::before::after`, "Token is not allowed in this state"],
+        [`${name}::part(x)`, "Token is not allowed in this state"],
+        [`${name}::slotted(x)`, "Token is not allowed in this state"],
+        [`${name}:nth-child(2)`, "Token is not allowed in this state"],
+        [`${name}.x`, "Unexpected selector after pseudo-element: ."],
+        [`${name}[open]`, "Unexpected selector after pseudo-element: ["],
+        [`${name}:not(.x)`, "Unexpected selector after pseudo-element: ."],
+        [`${name} .x`, "Unexpected selector after pseudo-element: ."],
+        [`${name} > .x`, "Unexpected selector after pseudo-element: >"],
+        [`::before${name}`, "Token is not allowed in this state"],
+      ])("ERROR: %s {color:red}", (selector, message) => {
+        expect(() => minify_test_with_options(`${selector} {color:red}`, "")).toThrow(message);
+      });
+
+      // ::slotted() takes no pseudo-class after it. That still holds after
+      // ::slotted(x)::details-content and ::slotted(x)::picker(), as in 1.4.0.
+      test.each([":popover-open", ":open", ":not(:popover-open)", ":dir(rtl)"])(
+        `ERROR: ::slotted(x)${name}%s {color:red}`,
+        pseudoClass => {
+          expect(() => minify_test_with_options(`::slotted(x)${name}${pseudoClass} {color:red}`, "")).toThrow(
+            "Token is not allowed in this state",
+          );
+        },
+      );
+    }
+
+    // A functional pseudo-class is valid after ::part().
+    minify_test("::part(x):dir(rtl) {color:red}", "::part(x):dir(rtl){color:red}");
+    minify_test("::part(x):lang(en) {color:red}", "::part(x):lang(en){color:red}");
+    minify_test("::part(x):state(y) {color:red}", "::part(x):state(y){color:red}");
+    minify_test("::part(x):is(:dir(rtl)) {color:red}", "::part(x):dir(rtl){color:red}");
+    minify_test("::part(x):not(:lang(en)) {color:red}", "::part(x):not(:lang(en)){color:red}");
+
+    // ::checkmark and ::picker-icon are not element-backed: only a user action
+    // pseudo-class can follow them. ::slotted() takes no pseudo-class after it.
+    // Chrome drops each of these rules.
+    test.each([
+      ["::checkmark:checked", "Invalid pseudo-class after pseudo-element"],
+      ["::picker-icon:disabled", "Invalid pseudo-class after pseudo-element"],
+      ["::checkmark::before", "Token is not allowed in this state"],
+      ["::picker-icon:dir(rtl)", "Token is not allowed in this state"],
+      ["::slotted(x):hover", "Token is not allowed in this state"],
+      ["::slotted(x):dir(rtl)", "Token is not allowed in this state"],
+      ["::slotted(x)::before:dir(rtl)", "Token is not allowed in this state"],
+    ])("ERROR: %s {color:red}", (selector, message) => {
+      expect(() => minify_test_with_options(`${selector} {color:red}`, "")).toThrow(message);
+    });
+
+    // :is() cannot hold a pseudo-element, so a list that has one is split.
+    prefix_test(
+      "a::picker(select), b::picker(select) {color:red}",
+      "a::picker(select) { color: red; } b::picker(select) { color: red; }",
+      { chrome: 100 << 16 },
+    );
+    prefix_test(
+      "a::details-content:open, b::details-content:open {color:red}",
+      "a::details-content:open { color: red; } b::details-content:open { color: red; }",
+      { chrome: 100 << 16 },
+    );
+
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");
     minify_test(".foo::deep .bar {width: 20px}", ".foo::deep .bar{width:20px}");
     minify_test(".foo ::deep.bar {width: 20px}", ".foo ::deep.bar{width:20px}");

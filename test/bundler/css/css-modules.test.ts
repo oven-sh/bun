@@ -24,6 +24,58 @@ describe("css", () => {
     },
   });
 
+  // A pseudo-class is valid after ::part(), ::picker() and ::details-content.
+  itBundled("css-module/PseudoClassAfterPartLikePseudoElement", {
+    files: {
+      "index.module.css": /* css */ `
+      :global(.a)::part(x):lang(en) {
+        color: red;
+      }
+      :global(.b)::picker(select):popover-open {
+        opacity: 1;
+      }
+      :global(.c)::details-content:not(:hover) {
+        height: auto;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    onAfterBundle(api) {
+      api.expectFile("/out/index.module.css").toEqualIgnoringWhitespace(`
+      /* index.module.css */
+      .a::part(x):lang(en) {
+        color: red;
+      }
+      .b::picker(select):popover-open {
+        opacity: 1;
+      }
+      .c::details-content:not(:hover) {
+        height: auto;
+      }
+      `);
+    },
+  });
+
+  // :global() and :local() print their argument in place. `.a::part(x).g` is
+  // not a selector, so they stay an error there.
+  for (const [name, selector] of [
+    ["Part", ".a::part(x):global(.g)"],
+    ["Picker", ".a::picker(select):global(.g)"],
+    ["DetailsContent", ".a::details-content:local(.l)"],
+  ]) {
+    itBundled(`css-module/GlobalOrLocalAfter${name}IsAnError`, {
+      files: {
+        "index.module.css": `${selector} { color: red; }`,
+      },
+      outdir: "/out",
+      entryPoints: ["/index.module.css"],
+      bundleErrors: {
+        "/index.module.css": ["Invalid selector. Token is not allowed in this state"],
+      },
+    });
+  }
+
   itBundled("css-module/BundleTwoFilesWithoutCodeSplitting", {
     files: {
       "/foo-entry.js": `

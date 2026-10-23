@@ -164,10 +164,6 @@ pub struct Formatter<'a> {
 
 impl fmt::Display for Formatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.range.left.op == Op::Unset && self.range.right.op == Op::Unset {
-            return Ok(());
-        }
-
         if self.range.right.op == Op::Unset {
             write!(f, "{}", self.range.left.fmt(self.buffer))
         } else {

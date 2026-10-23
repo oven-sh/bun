@@ -2216,6 +2216,31 @@ describe("minimum-release-age", () => {
       expect(output).toContain("bugfix-package");
     });
 
+    // regular-package: 1.0.0 (30 days), 2.0.0 (10 days), 2.1.0 (6 days), 3.0.0 (1 day, latest).
+    test.concurrent.each([
+      ["1.0.0 || 2.0.0 || 3.0.0", "==1.0.0 || ==2.0.0 || ==3.0.0", "2.0.0"],
+      [">=1.0.0 <4.0.0 <5.0.0", ">=1.0.0 && <4.0.0 && <5.0.0", "2.1.0"],
+    ])("prints each alternative and each comparator of the range %s once", async (range, printed, selected) => {
+      using dir = tempDir("verbose-range", {
+        "package.json": JSON.stringify({ dependencies: { "regular-package": range } }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify", "--verbose"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.split(/\r?\n/).filter(line => line.includes("[minimum-release-age]"))).toEqual([
+        `[minimum-release-age] regular-package@${printed} selected ${selected} instead of 3.0.0 due to ${5 * SECONDS_PER_DAY}-second filter`,
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
     test("warnings only for direct dependencies", async () => {
       // This would need a more complex setup with transitive dependencies
       // For now, we verify that direct deps show warnings

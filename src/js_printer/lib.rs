@@ -3072,7 +3072,24 @@ pub(crate) mod __gated_printer {
         #[inline]
         pub(crate) fn print_pure(&mut self) {
             if self.options.print_dce_annotations {
+                let from = self.writer.written();
+                // Avoid forming a single-line comment
+                if from > 0 && self.writer.prev_char() == b'/' {
+                    self.print(b" ");
+                }
                 self.print_whitespacer(ws!(b"/* @__PURE__ */ "));
+                let to = self.writer.written();
+                // Every expression start mark goes here: the comment precedes the first token.
+                for mark in [
+                    &mut self.stmt_start,
+                    &mut self.export_default_start,
+                    &mut self.arrow_expr_start,
+                    &mut self.for_of_init_start,
+                ] {
+                    if *mark == from {
+                        *mark = to;
+                    }
+                }
             }
         }
 
@@ -3510,11 +3527,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     if has_pure_comment {
-                        let was_stmt_start = self.stmt_start == self.writer.written();
                         self.print_pure();
-                        if was_stmt_start {
-                            self.stmt_start = self.writer.written();
-                        }
                     }
                     // We only want to generate an unbound eval() in CommonJS
                     self.call_target = Some(e.target.data);

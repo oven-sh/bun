@@ -3957,11 +3957,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
-        // TODO: do we need to %-encode the path?
-        let source_url_len = source.path.text.len();
-        const SOURCE_MAPPING_URL: &[u8] = b"\n//# sourceURL=";
-        let prefix_len =
-            SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
+        let prefix_len = SOURCE_MAP_URL_PREFIX_START.len();
 
         self.vm_source_mappings_mut()
             .put_mappings(source, chunk.buffer)
@@ -4005,12 +4001,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             // spare capacity reserved by `grow_if_needed` above.
             unsafe { bun_core::vec::commit_spare(buf, wrote) };
         }
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAPPING_URL);
-        // TODO: do we need to %-encode the path?
-        printer.ctx.buffer.append_assume_capacity(source.path.text);
         printer.ctx.buffer.append(b"\n")?;
         Ok(())
     }

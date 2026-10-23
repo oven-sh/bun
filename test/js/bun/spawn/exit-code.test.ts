@@ -117,13 +117,15 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
       {
         "entry.mjs": `
           import { stat } from "node:fs/promises";
+          import { getEventLoopStats } from "bun:internal-for-testing";
           ${exitListeners}
           const { promise, resolve } = Promise.withResolvers();
           setTimeout(() => {
             stat(".").then(resolve);
-            // Give the thread pool time to finish stat() and queue its result before the error.
-            const end = performance.now() + 100;
-            while (performance.now() < end);
+            // The error has to find the result of stat() queued by the thread pool.
+            const deadline = performance.now() + 3000;
+            while (getEventLoopStats().concurrentTasksEmpty && performance.now() < deadline);
+            console.log("queued", !getEventLoopStats().concurrentTasksEmpty);
             throw new Error("boom");
           }, 1);
           await promise;
@@ -133,7 +135,7 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
       "entry.mjs",
     );
     expect(stderr).toContain("error: boom");
-    expect({ stdout, exitCode }).toEqual({ stdout: "exit 1\n", exitCode: 1 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "queued true\nexit 1\n", exitCode: 1 });
   });
 
   it("under --print: the result prints as the pending promise it is", async () => {
@@ -148,6 +150,18 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
     );
     expect(stderr).toContain("error: boom");
     expect({ stdout, exitCode }).toEqual({ stdout: "Promise { <pending> }\n", exitCode: 1 });
+  });
+
+  it("under --print: an error that a --preload left behind leaves the result its turn", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      { "preload.mjs": `queueMicrotask(() => { throw new Error("boom"); });` },
+      "--preload",
+      "./preload.mjs",
+      "--print",
+      `Bun.sleep(10).then(() => 5)`,
+    );
+    expect(stderr).toContain("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "5\n", exitCode: 1 });
   });
 
   const onUncaughtException = `process.on("uncaughtException", e => console.log("caught", e.message));\n`;

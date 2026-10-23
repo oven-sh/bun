@@ -199,6 +199,8 @@ const ANDROID = def1([
 const DARWIN = def1([
   "HAVE_SYS_EVENT_H", "HAVE_SYS_SOCKIO_H",
   "HAVE_KQUEUE", "HAVE_ARC4RANDOM_BUF",
+  // The only switch for TCP Fast Open on macOS (ares_set_socket_functions.c).
+  "HAVE_CONNECTX",
 ]);
 
 // prettier-ignore

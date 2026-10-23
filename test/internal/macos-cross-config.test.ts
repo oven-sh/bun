@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { cares } from "../../scripts/build/deps/cares.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
@@ -209,6 +210,25 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const lto = webkit.source(resolveDarwin());
     if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
     expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
+  });
+
+  test("c-ares gets HAVE_CONNECTX, its only switch for TCP Fast Open on macOS, for darwin targets only", () => {
+    // Without the name in ares_config.h, DNS over TCP on macOS uses a plain
+    // connect() and nothing fails. Linux and FreeBSD have no connectx().
+    const definesConnectx = (partial: PartialConfig) => {
+      const cfg = resolveConfig({ arch: "x64", buildType: "Release", ...partial }, mockToolchain());
+      const build = cares.build(cfg);
+      if (build.kind !== "direct") throw new Error(`expected a direct c-ares build, got ${build.kind}`);
+      const header = build.headers?.["ares_config.h"];
+      if (typeof header !== "string") throw new Error("expected a literal ares_config.h");
+      return header.split("\n").includes("#define HAVE_CONNECTX 1");
+    };
+    expect({
+      darwinArm64: definesConnectx({ os: "darwin", arch: "aarch64" }),
+      darwinX64: definesConnectx({ os: "darwin" }),
+      linux: definesConnectx({ os: "linux", abi: "gnu", linuxSysroot: "/fake" }),
+      freebsd: definesConnectx({ os: "freebsd", freebsdSysroot: "/fake" }),
+    }).toEqual({ darwinArm64: true, darwinX64: true, linux: false, freebsd: false });
   });
 
   test("ELF links compress debug sections at link time, with and without LTO", () => {

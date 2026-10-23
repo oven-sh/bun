@@ -1,4 +1,3 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 // Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
@@ -205,7 +204,7 @@ pub use windows_errno::{posix, *};
 // `E`); this block is the shared POSIX-target definition.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(not(windows))]
-#[allow(non_camel_case_types, non_snake_case)]
+#[allow(non_camel_case_types)]
 pub mod posix {
     /// glibc/musl/bionic `mode_t` == `unsigned int`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -293,6 +292,17 @@ impl SystemErrno {
 #[inline]
 pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
+}
+
+impl SystemErrno {
+    /// `None` if `err` is not an OS error or its code has no `SystemErrno`.
+    pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
+        // A Win32 code there, which the `u32` entry point maps (`i64` would take it for an errno).
+        #[cfg(windows)]
+        return SystemErrno::init(err.raw_os_error()? as u32);
+        #[cfg(not(windows))]
+        return SystemErrno::init(i64::from(err.raw_os_error()?));
+    }
 }
 
 #[cfg(not(windows))]
@@ -500,6 +510,21 @@ mod errno_name_tests {
         assert_eq!(<&'static str>::from(E::SUCCESS), "SUCCESS");
         #[cfg(windows)]
         assert_eq!(<&'static str>::from(E::UV_ENOENT), "UV_ENOENT");
+    }
+
+    #[test]
+    fn io_error_to_errno() {
+        let of = |code| SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(code));
+        #[cfg(not(windows))]
+        assert_eq!(of(SystemErrno::ENOMEM as i32), Some(SystemErrno::ENOMEM));
+        // Win32 ERROR_NOT_ENOUGH_MEMORY / ERROR_ACCESS_DENIED; as errno values 8 and 5 are ENOEXEC and EIO.
+        #[cfg(windows)]
+        assert_eq!(
+            (of(8), of(5)),
+            (Some(SystemErrno::ENOMEM), Some(SystemErrno::EPERM))
+        );
+        let not_os = std::io::Error::other("not from the OS");
+        assert_eq!(SystemErrno::from_io_error(&not_os), None);
     }
 
     #[test]

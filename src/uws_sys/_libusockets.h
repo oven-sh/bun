@@ -112,6 +112,8 @@ typedef struct {
     /* Maximum socket lifetime in seconds before forced closure (defaults to
      * disabled) */
     unsigned short maxLifetime;
+    bool autoPong;
+    bool skipUTF8Validation;
 
     uws_websocket_upgrade_handler upgrade;
     uws_websocket_handler open;

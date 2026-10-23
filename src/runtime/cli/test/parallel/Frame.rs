@@ -4,7 +4,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Kind {
+pub(crate) enum Kind {
     // worker → coordinator
     /// (empty)
     Ready,
@@ -60,7 +60,7 @@ pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 /// then flush in a single write so partial reads on the other side never see a
 /// torn header.
 #[derive(Default)]
-pub struct Frame {
+pub(crate) struct Frame {
     buf: Vec<u8>,
 }
 
@@ -117,7 +117,7 @@ impl Frame {
 // `deinit` dropped: `Vec<u8>` frees on Drop.
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
-pub struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     pub p: &'a [u8],
 }
 

@@ -4,7 +4,7 @@
 //! it does not belong in this namespace.
 
 #![cfg(windows)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
@@ -78,6 +78,18 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
+        /// `lpOverlapped` may be null for a handle opened without `FILE_FLAG_OVERLAPPED`.
+        pub fn DeviceIoControl(
+            hDevice: HANDLE,
+            dwIoControlCode: DWORD,
+            lpInBuffer: *mut c_void,
+            nInBufferSize: DWORD,
+            lpOutBuffer: *mut c_void,
+            nOutBufferSize: DWORD,
+            lpBytesReturned: *mut DWORD,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
+
         // ── SRW locks / condition variables (`bun_threading` windows arm) ──
         pub fn ReleaseSRWLockExclusive(SRWLock: *mut SRWLOCK);
         pub fn SleepConditionVariableSRW(
@@ -131,6 +143,8 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
+/// `FSCTL_SET_SPARSE` (winioctl.h).
+pub const FSCTL_SET_SPARSE: DWORD = 0x0009_00C4;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
@@ -180,16 +194,6 @@ pub use bun_core::windows_sys::{
 /// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
 pub(crate) const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
 
-/// Convert a 64-bit Windows `FILETIME`
-/// (100-ns intervals since 1601-01-01 UTC, as projected in
-/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
-/// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
-/// `bun_core::time::nano_timestamp()` reports.
-#[inline]
-pub const fn from_sys_time(nt_time: i64) -> i128 {
-    (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
-}
-
 /// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
 /// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
 /// Matches libuv's `uv__filetime_to_timespec`.
@@ -217,9 +221,7 @@ pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
-#[cfg(windows)]
 pub use bun_paths::PathBuffer;
-#[cfg(windows)]
 pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
@@ -503,7 +505,23 @@ pub fn CreateHardLinkW(
     rc
 }
 
-pub use bun_windows_sys::externs::CopyFileW;
+/// Calls `CopyFileW`. kernel32 reads the code unit before an empty destination
+/// name, so an empty `dest` is replaced with a pointer to the second of two NULs.
+///
+/// # Safety
+/// `source` and `dest` must point to NUL-terminated wide strings that are
+/// valid for the duration of the call.
+pub unsafe fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL {
+    static EMPTY_DEST: [u16; 2] = [0, 0];
+    // SAFETY: the caller guarantees `dest` is NUL-terminated, so its first unit is readable.
+    let dest = if unsafe { *dest } == 0 {
+        EMPTY_DEST[1..].as_ptr()
+    } else {
+        dest
+    };
+    // SAFETY: same contract. `EMPTY_DEST[1..]` is also NUL-terminated.
+    unsafe { externs::CopyFileW(source, dest, bFailIfExists) }
+}
 
 /// `bun.windows.Error` — alias for `Win32Error`.
 pub type Error = Win32Error;
@@ -1559,19 +1577,15 @@ pub fn become_watcher_manager() -> ! {
     }
 
     loop {
-        if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
-            bun_core::handle_error_return_trace(err);
-            if err == bun_errno::SystemErrno::EIO {
-                // This read is best-effort — Drop guards inside
-                // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
-                // via HeapFree) may have clobbered the thread's last-error
-                // before we get here. A proper fix would thread the captured
-                // Win32 code through the error payload, which requires
-                // changing `spawn_watcher_child`'s return type.
-                let last = Win32Error::get();
-                bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
-            }
-            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
+        if let Err(code) = spawn_watcher_child(&mut procinfo, job) {
+            // The executable can be renamed or replaced while `--watch` runs.
+            bun_core::err_generic!(
+                "Failed to start \"<b>{}<r>\": {} <d>(CreateProcessW)<r>",
+                bun_core::fmt::utf16(exe_path_w().as_slice()),
+                <&'static str>::from(code.to_system_errno()),
+            );
+            bun_core::Output::flush();
+            bun_core::Global::exit(1);
         }
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
         // (by-value `HANDLE`/`DWORD` only); check `WAIT_FAILED` inline.
@@ -1605,10 +1619,11 @@ pub fn become_watcher_manager() -> ! {
     }
 }
 
+/// Returns the failing call's `GetLastError()` as `Err`.
 pub(crate) fn spawn_watcher_child(
     procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
-) -> Result<(), bun_errno::SystemErrno> {
+) -> Result<(), Win32Error> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
@@ -1620,7 +1635,7 @@ pub(crate) fn spawn_watcher_child(
     if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
         == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(Win32Error::get());
     }
     let mut job_local = job;
     // SAFETY: p initialized above; job_local valid for sizeof(HANDLE)
@@ -1636,7 +1651,7 @@ pub(crate) fn spawn_watcher_child(
         )
     } == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(Win32Error::get());
     }
 
     // The win32 layer exposes these as DWORD constants — assemble the raw mask.
@@ -1732,7 +1747,7 @@ pub(crate) fn spawn_watcher_child(
         )
     };
     if rc == 0 {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(Win32Error::get());
     }
     let mut is_in_job: BOOL = 0;
     let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
@@ -1748,11 +1763,6 @@ pub(crate) fn spawn_watcher_child(
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
-    #[cfg(not(windows))]
-    {
-        compile_error!("unreachable");
-    }
-
     let mut buf = bun_paths::w_path_buffer_pool::get();
     // The path is JS-supplied; over-length input must surface as the same
     // `null + GetLastError()` shape `LoadLibraryExW` itself would yield, not
@@ -1850,16 +1860,27 @@ pub fn move_opened_file_at(
             new_file_name.len(),
         );
     }
-    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
-        ntdll::NtSetInformationFile(
-            src_fd.native(),
-            &mut io_status_block,
-            rename_info.cast::<c_void>(),
-            u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
-            win32::FileInformationClass::FileRenameInformationEx,
-        )
+    let mut rename_as = |class: win32::FileInformationClass, flags: ULONG| {
+        // SAFETY: src_fd valid; rename_info is aligned and has struct_len initialized bytes
+        unsafe {
+            ptr::addr_of_mut!((*rename_info).Flags).write(flags);
+            ntdll::NtSetInformationFile(
+                src_fd.native(),
+                &mut io_status_block,
+                rename_info.cast::<c_void>(),
+                u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
+                class,
+            )
+        }
     };
+    let mut rc = rename_as(win32::FileInformationClass::FileRenameInformationEx, flags);
+    // exFAT and FAT32 only implement the legacy class, where `Flags` is `BOOLEAN ReplaceIfExists`.
+    if rc == win32::ntstatus::INVALID_PARAMETER {
+        rc = rename_as(
+            win32::FileInformationClass::FileRenameInformation,
+            ULONG::from(replace_if_exists),
+        );
+    }
     bun_sys::syslog!(
         "moveOpenedFileAt({} ->> {} '{}', {}) = {}",
         src_fd,

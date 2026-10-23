@@ -60,7 +60,7 @@ const scanRoots = [
 ];
 
 // ───────────────────────── module-path resolver ─────────────────────────────
-// Same walk as generate-classes.ts::rustModuleResolver — map an absolute .rs
+// Map an absolute .rs
 // file to its `crate::a::b` path by following `mod foo;` declarations from
 // each crate's `lib.rs`. We need this so the emitted thunk can name the impl
 // fn by its fully-qualified path from inside `bun_runtime::generated_host_exports`.
@@ -126,9 +126,9 @@ interface Export {
 }
 
 const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
-// `pub fn name(` — capture name; the param list and return type are pulled by
+// `pub fn name(` or `pub(crate) fn name(` — capture name; the param list and return type are pulled by
 // a small balanced-paren scanner because params routinely span lines.
-const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+const fnHeadRe = /^\s*pub(?:\([^)]*\))?\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
 function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
@@ -233,7 +233,8 @@ for (const { dir, crate } of scanRoots) {
       const isUnsafe = !!head[1];
       const fnName = head[2];
       // Balanced-paren scan for the param list + return type.
-      let buf = lines[j].slice(lines[j].indexOf("(") + 1);
+      // The head match ends at the param list's `(`: not the first paren on the line, which a `pub(crate)` has.
+      let buf = lines[j].slice(head.index + head[0].length);
       let depth = 1,
         k = j;
       while (depth > 0) {

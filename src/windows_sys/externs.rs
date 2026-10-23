@@ -377,7 +377,7 @@ pub struct FILE_DIRECTORY_INFORMATION {
 pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
-    pub const FileBasicInformation: Self = Self(4);
+    pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
@@ -825,6 +825,10 @@ pub mod kernel32 {
     pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
     pub const PAGE_GUARD: u32 = 0x100;
 
+    // `LockFileEx` dwFlags (`minwinbase.h`).
+    pub const LOCKFILE_FAIL_IMMEDIATELY: DWORD = 0x0000_0001;
+    pub const LOCKFILE_EXCLUSIVE_LOCK: DWORD = 0x0000_0002;
+
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -875,6 +879,15 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
+        pub fn LockFileEx(
+            hFile: HANDLE,
+            dwFlags: DWORD,
+            dwReserved: DWORD,
+            nNumberOfBytesToLockLow: DWORD,
+            nNumberOfBytesToLockHigh: DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,

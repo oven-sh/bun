@@ -14,6 +14,8 @@ using namespace WTF;
 
 // Minimal GLib type definitions to avoid linking against GLib
 typedef struct _GError GError;
+typedef struct _GHashTable GHashTable;
+typedef struct _GList GList;
 typedef struct _SecretSchema SecretSchema;
 
 typedef int gboolean;
@@ -73,6 +75,12 @@ public:
 
     // GLib function pointers
     void (*g_error_free)(GError* error);
+    void (*g_free)(gpointer mem);
+    GHashTable* (*g_hash_table_new)(void* hash_func, void* key_equal_func);
+    void (*g_hash_table_destroy)(GHashTable* hash_table);
+    gpointer (*g_hash_table_lookup)(GHashTable* hash_table, gpointer key);
+    void (*g_hash_table_insert)(GHashTable* hash_table, gpointer key, gpointer value);
+    void (*g_list_free)(GList* list);
 
     // libsecret function pointers
     gboolean (*secret_password_store_sync)(const SecretSchema* schema,
@@ -153,6 +161,12 @@ private:
     {
         // Load GLib functions
         g_error_free = (void (*)(GError*))dlsym(glib_handle, "g_error_free");
+        g_free = (void (*)(gpointer))dlsym(glib_handle, "g_free");
+        g_hash_table_new = (GHashTable * (*)(void*, void*)) dlsym(glib_handle, "g_hash_table_new");
+        g_hash_table_destroy = (void (*)(GHashTable*))dlsym(glib_handle, "g_hash_table_destroy");
+        g_hash_table_lookup = (gpointer (*)(GHashTable*, gpointer))dlsym(glib_handle, "g_hash_table_lookup");
+        g_hash_table_insert = (void (*)(GHashTable*, gpointer, gpointer))dlsym(glib_handle, "g_hash_table_insert");
+        g_list_free = (void (*)(GList*))dlsym(glib_handle, "g_list_free");
 
         // Load libsecret functions
         secret_password_store_sync = (gboolean (*)(const SecretSchema*, const gchar*, const gchar*, const gchar*, void*, GError**, ...))
@@ -163,7 +177,7 @@ private:
             dlsym(secret_handle, "secret_password_clear_sync");
         secret_password_free = (void (*)(gchar*))dlsym(secret_handle, "secret_password_free");
 
-        return g_error_free && secret_password_store_sync && secret_password_lookup_sync && secret_password_clear_sync && secret_password_free;
+        return g_error_free && g_free && g_hash_table_new && g_hash_table_destroy && g_hash_table_lookup && g_hash_table_insert && g_list_free && secret_password_store_sync && secret_password_lookup_sync && secret_password_clear_sync && secret_password_free;
     }
 };
 
@@ -210,7 +224,7 @@ static void updateError(Error& err, GError* gerror)
     }
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
+Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CString&& password, bool allowUnrestrictedAccess, Persist)
 {
     Error err;
 
@@ -234,18 +248,18 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     GError* gerror = nullptr;
     // Combine service and name for label
-    auto label = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    auto label = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto labelUtf8 = label.utf8();
 
     gboolean result = framework->secret_password_store_sync(
         get_bun_schema(),
         nullptr, // Let libsecret handle collection creation automatically
-        labelUtf8.data(),
-        password.data(),
+        labelUtf8.legacyCStringPointer(),
+        password.legacyCStringPointer(),
         nullptr, // cancellable
         &gerror,
-        "service", service.data(),
-        "account", name.data(),
+        "service", service.legacyCStringPointer(),
+        "account", name.legacyCStringPointer(),
         nullptr // end of attributes
     );
 
@@ -260,7 +274,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     return err;
 }
 
-std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err)
+std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -277,8 +291,8 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
         get_bun_schema(),
         nullptr, // cancellable
         &gerror,
-        "service", service.data(),
-        "account", name.data(),
+        "service", service.legacyCStringPointer(),
+        "account", name.legacyCStringPointer(),
         nullptr // end of attributes
     );
 
@@ -304,7 +318,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     return result;
 }
 
-bool deletePassword(const CString& service, const CString& name, Error& err)
+bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -321,8 +335,8 @@ bool deletePassword(const CString& service, const CString& name, Error& err)
         get_bun_schema(),
         nullptr, // cancellable
         &gerror,
-        "service", service.data(),
-        "account", name.data(),
+        "service", service.legacyCStringPointer(),
+        "account", name.legacyCStringPointer(),
         nullptr // end of attributes
     );
 

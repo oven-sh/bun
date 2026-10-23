@@ -7852,10 +7852,7 @@ describe("css tests", () => {
     minify_test(".foo { list-style-type: NONE }", ".foo{list-style-type:none}");
     minify_test('.foo { list-style-type: "★" }', '.foo{list-style-type:"★"}');
     minify_test(".foo { list-style-type: '-' }", '.foo{list-style-type:"-"}');
-    minify_test(
-      ".foo { list-style-type: symbols(cyclic '○' '●') }",
-      '.foo{list-style-type:symbols(cyclic "○" "●")}',
-    );
+    minify_test(".foo { list-style-type: symbols(cyclic '○' '●') }", '.foo{list-style-type:symbols(cyclic "○" "●")}');
     minify_test(".foo { list-style-type: symbols('○' '●') }", '.foo{list-style-type:symbols("○" "●")}');
     minify_test(".foo { list-style-type: symbols(symbolic '○' '●') }", '.foo{list-style-type:symbols("○" "●")}');
     minify_test(
@@ -7890,10 +7887,7 @@ describe("css tests", () => {
       ".foo { list-style: thumbs linear-gradient(red, blue) inside }",
       ".foo{list-style:inside linear-gradient(red,#00f) thumbs}",
     );
-    minify_test(
-      ".foo { list-style: symbols('○' '●') inside }",
-      '.foo{list-style:inside symbols("○" "●")}',
-    );
+    minify_test(".foo { list-style: symbols('○' '●') inside }", '.foo{list-style:inside symbols("○" "●")}');
     // One `none` is the value of whichever of the image and the type is not given. Two are both.
     minify_test(".foo { list-style: none }", ".foo{list-style:none}");
     minify_test(".foo { list-style: NONE none outside }", ".foo{list-style:none}");
@@ -7943,8 +7937,11 @@ describe("css tests", () => {
       ".a { list-style-type: symbols('a' 'b') } .b { list-style-type: symbols('a' 'c') }",
       '.a{list-style-type:symbols("a" "b")}.b{list-style-type:symbols("a" "c")}',
     );
-    minify_test('.a { list-style-type: "a" } .b { list-style-type: \'a\' }', '.a,.b{list-style-type:"a"}');
-    minify_test('.a { list-style-type: "a" } .b { list-style-type: a }', '.a{list-style-type:"a"}.b{list-style-type:a}');
+    minify_test(".a { list-style-type: \"a\" } .b { list-style-type: 'a' }", '.a,.b{list-style-type:"a"}');
+    minify_test(
+      '.a { list-style-type: "a" } .b { list-style-type: a }',
+      '.a{list-style-type:"a"}.b{list-style-type:a}',
+    );
     // A rule is not a duplicate of a later rule that sets another property.
     minify_test(
       "ul { list-style: none } .b { color: red } ul { float: left }",

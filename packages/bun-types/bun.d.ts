@@ -9651,9 +9651,15 @@ declare module "bun" {
     /**
      * A [ThumbHash](https://github.com/evanw/thumbhash)-rendered low-quality
      * placeholder of the *source* image as a `data:image/png;base64,…` URL —
-     * a ≤32px blur with the right average colour, aspect ratio and rough
+     * a ≤32px blur with the right average colour, rough aspect ratio and
      * structure, ~400–700 bytes. Ready for `<img src>` or Next's
      * `blurDataURL`; no client-side decoder needed.
+     *
+     * ThumbHash stores the aspect ratio in 3 bits, so the placeholder's shape
+     * is approximate. The most elongated placeholder is 32×5 (32×6 when the
+     * source has transparency). Give the `<img>` the source's shape with CSS
+     * `aspect-ratio`, from the `width` and `height` of {@link metadata}, so
+     * the layout stays the same when the real image loads.
      *
      * ```ts
      * const lqip = await Bun.file("hero.jpg").image().placeholder();

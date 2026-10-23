@@ -16740,6 +16740,130 @@ export declare const d1: Array<{ a: D1 }>;
       expect(exitCode).toBe(1);
     });
 
+    test("the type arguments of an import type are only checked if it refers to a generic type", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "noUnusedLocals": true, "allowJs": true, "checkJs": true, "types": [] } }
+`,
+        "ok.ts": `export type Box<T> = { value: T };
+export type Plain = 1;
+export namespace ns { export type Inner<T> = T[] }
+export interface Face<T extends string> { value: T }
+export class Klass<T> { value!: T }
+export type Z = 1;
+export type Y = 2;
+export type W = 3;
+`,
+        "a.ts": `export type A1 = import("./missing").Box<import("./missing2").Other>;
+export type A2 = import("./missing").Box<import("./missing2").Other<import("./missing3").Third>>;
+export type A3 = import("./ok").Box<import("./missing2").Other>;
+export type A4 = import("./ok").Box<import("./missing2").Other<import("./missing3").Third>>;
+export type A5 = import("./ok").Nope<import("./missing2").Other>;
+export type A6 = import("./ok").Plain<import("./missing2").Other>;
+export type A7 = import("./missing").Box<Undeclared>;
+export type A8 = import("./missing").Box<Undeclared[]>;
+export type A9 = import("./missing").Box<[import("./missing2").Other]>;
+export type B1 = import("./missing").Box<import("./missing2").Other | 1>;
+export type B2 = import("./missing").Box<typeof import("./missing2")>;
+export type B3 = import("./missing").Box<Array<import("./missing2").Other>>;
+export type B4 = import("./ok").ns.Nope<import("./missing2").Other>;
+export type B5 = import("./ok").ns.Inner<import("./missing2").Other>;
+export type B6 = typeof import("./missing")<import("./missing2").Other>;
+export declare function f<T = import("./missing").Box<{}, import("./missing2").Other>>(x: T): import("./missing").Box<import("./missing2").Other>;
+export interface I { [key: string]: import("./missing").Box<{}, import("./missing2").Other> }
+`,
+        "b.ts": `import type { Z, Y, W } from "./ok";
+type Local = 1;
+type Local2 = 1;
+export type C1 = import("./ok").Box<Undeclared>;
+export type C2 = import("./ok").Box<import("./m2").X, import("./m3").Y>;
+export type C3 = import("./ok").Face<import("./m2").X>;
+export type C4 = import("./ok").Face<number>;
+export type C5 = import("./ok").Klass<import("./m2").X>;
+export type C6 = import("./ok").Klass<import("./m2").X, import("./m3").Y>;
+export type C7 = import("./ok").Box<{ a: import("./m2").O }>;
+export type C8 = import("./missing").Box<{ a: import("./m2").O }>;
+export type C9 = import("./missing").Box<Z>;
+export type D1 = import("./ok").Box<Y>;
+export type D2 = import("./missing").Box<Local>;
+export type D3 = import("./ok").Nope<Local2, W>;
+export type D4 = import("./ok").Box<import("./ok").Nope<import("./m2").X>>;
+export type D5 = import("./ok").Box<import("./ok").Box<import("./m2").X>>;
+export type D6<T> = import("./missing").Box<T extends infer U ? U : never>;
+export type D7 = import("./missing").Box<typeof undeclaredValue>;
+export type D8 = import("./missing").Box<keyof import("./m2").X>;
+export type D9 = import("./missing").Box<\`\${import("./m2").X}\`>;
+export type E1 = import("./missing").Box<import("./m2")>;
+export type E2 = import("./ok").Box<>;
+export type E3 = import("./missing").Box<>;
+export const v = null! as import("./missing").Box<import("./m2").X>;
+export function g(x: import("./missing").Box<import("./m2").X>) { return x; }
+export class K<T = import("./missing").Box<import("./m2").X>> implements import("./missing").I<import("./m2").X> { t!: T }
+`,
+        "j.js": `/** @type {import("./missing").Box<import("./m2").X>} */
+export const a = null;
+/** @param {import("./ok").Box<import("./m2").X>} x */
+export function f(x) { return x; }
+/** @typedef {import("./missing").Box<import("./m2").X>} T */
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(2,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(3,44): error TS2307: Cannot find module './missing2' or its corresponding type declarations.
+        a.ts(4,44): error TS2307: Cannot find module './missing2' or its corresponding type declarations.
+        a.ts(5,33): error TS2694: Namespace '"<dir>/ok"' has no exported member 'Nope'.
+        a.ts(6,18): error TS2315: Type 'Plain' is not generic.
+        a.ts(7,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(8,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(9,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(10,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(11,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(12,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(13,36): error TS2694: Namespace '"<dir>/ok".ns' has no exported member 'Nope'.
+        a.ts(14,49): error TS2307: Cannot find module './missing2' or its corresponding type declarations.
+        a.ts(15,32): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(16,38): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(16,102): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(17,44): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(1,15): error TS6196: 'Z' is declared but never used.
+        b.ts(1,21): error TS6196: 'W' is declared but never used.
+        b.ts(2,6): error TS6196: 'Local' is declared but never used.
+        b.ts(3,6): error TS6196: 'Local2' is declared but never used.
+        b.ts(4,37): error TS2304: Cannot find name 'Undeclared'.
+        b.ts(5,18): error TS2314: Generic type 'Box' requires 1 type argument(s).
+        b.ts(6,45): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        b.ts(7,38): error TS2344: Type 'number' does not satisfy the constraint 'string'.
+        b.ts(8,46): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        b.ts(9,18): error TS2314: Generic type 'Klass<T>' requires 1 type argument(s).
+        b.ts(11,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(12,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(14,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(15,33): error TS2694: Namespace '"<dir>/ok"' has no exported member 'Nope'.
+        b.ts(16,52): error TS2694: Namespace '"<dir>/ok"' has no exported member 'Nope'.
+        b.ts(17,63): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        b.ts(18,28): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(19,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(20,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(21,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(22,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(23,18): error TS2314: Generic type 'Box' requires 1 type argument(s).
+        b.ts(24,25): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(25,34): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(26,29): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(27,27): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        b.ts(27,74): error TS2500: A class can only implement an identifier/qualified-name with optional type arguments.
+        b.ts(27,103): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
+        j.js(1,19): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        j.js(3,39): error TS2307: Cannot find module './m2' or its corresponding type declarations.
+        j.js(5,22): error TS2307: Cannot find module './missing' or its corresponding type declarations."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("an import type with type arguments that's first reached from another file leaves that file's errors alone", async () => {
       using dir = project({
         // a.ts comes first in the program, and asks for the type of `x`.

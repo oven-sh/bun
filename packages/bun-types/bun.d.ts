@@ -1683,17 +1683,21 @@ declare module "bun" {
       align?: "left" | "center" | "right";
     }
     interface LinkProps extends ChildrenProps {
-      /** Link URL. */
+      /**
+       * Link URL, with backslash escapes and character references resolved:
+       * `[a](/x\_y?a=1&amp;b=2)` gives `"/x_y?a=1&b=2"`. An e-mail or `www.`
+       * autolink has its scheme (`mailto:`, `http://`). Not percent-encoded.
+       */
       href: string;
-      /** Link title attribute. */
+      /** Link title attribute, with backslash escapes and character references resolved. */
       title?: string;
     }
     interface ImageProps {
-      /** Image URL. */
+      /** Image URL, with backslash escapes and character references resolved. Not percent-encoded. */
       src: string;
       /** Alt text. */
       alt?: string;
-      /** Image title attribute. */
+      /** Image title attribute, with backslash escapes and character references resolved. */
       title?: string;
     }
 
@@ -1789,17 +1793,21 @@ declare module "bun" {
 
     /** Meta passed to the `link` callback. */
     interface LinkMeta {
-      /** Link URL. */
+      /**
+       * Link URL, with backslash escapes and character references resolved:
+       * `[a](/x\_y?a=1&amp;b=2)` gives `"/x_y?a=1&b=2"`. An e-mail or `www.`
+       * autolink has its scheme (`mailto:`, `http://`). Not percent-encoded.
+       */
       href: string;
-      /** Link title attribute. */
+      /** Link title attribute, with backslash escapes and character references resolved. */
       title?: string;
     }
 
     /** Meta passed to the `image` callback. */
     interface ImageMeta {
-      /** Image URL. */
+      /** Image URL, with backslash escapes and character references resolved. Not percent-encoded. */
       src: string;
-      /** Image title attribute. */
+      /** Image title attribute, with backslash escapes and character references resolved. */
       title?: string;
     }
 
@@ -1995,7 +2003,7 @@ declare module "bun" {
      *
      * // With parser options as third argument
      * const text = Bun.markdown.render("Visit www.example.com", {
-     *   link: (children, { href }) => `[${children}](${href})`,
+     *   link: (children, { href }) => `<a href="${Bun.escapeHTML(href)}">${children}</a>`,
      *   paragraph: (children) => children,
      * }, { autolinks: true });
      * ```

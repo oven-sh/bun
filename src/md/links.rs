@@ -64,12 +64,15 @@ pub(crate) struct ParsedDest<'a> {
     pub(crate) dest: &'a [u8],
     /// Position just past the destination (past the `>` of the angle-bracket form).
     pub(crate) end_pos: usize,
+    /// `dest` holds a `\` or a `&`.
+    pub(crate) has_escape: bool,
 }
 
 /// CommonMark §6.3 link destination, shared by inline links, the link lookahead and reference definitions.
 pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedDest<'_>> {
     let escapes_next = |p: usize| p + 1 < text.len() && helpers::is_ascii_punctuation(text[p + 1]);
     let mut p = start;
+    let mut has_escape = false;
 
     if p < text.len() && text[p] == b'<' {
         p += 1;
@@ -80,10 +83,18 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
                     return Some(ParsedDest {
                         dest: &text[dest_start..p],
                         end_pos: p + 1,
+                        has_escape,
                     });
                 }
                 b'<' | b'\n' | b'\r' => return None,
-                b'\\' if escapes_next(p) => p += 2,
+                b'\\' => {
+                    has_escape = true;
+                    p += if escapes_next(p) { 2 } else { 1 };
+                }
+                b'&' => {
+                    has_escape = true;
+                    p += 1;
+                }
                 _ => p += 1,
             }
         }
@@ -93,10 +104,14 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
     let mut paren_depth: u32 = 0;
     while p < text.len() && !helpers::is_whitespace(text[p]) {
         match text[p] {
-            b'\\' if escapes_next(p) => {
-                p += 2;
-                continue;
+            b'\\' => {
+                has_escape = true;
+                if escapes_next(p) {
+                    p += 2;
+                    continue;
+                }
             }
+            b'&' => has_escape = true,
             b'(' => {
                 paren_depth += 1;
                 if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
@@ -120,6 +135,7 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
     Some(ParsedDest {
         dest: &text[start..p],
         end_pos: p,
+        has_escape,
     })
 }
 
@@ -307,36 +323,24 @@ impl Parser<'_> {
         title: &[u8],
         is_image: bool,
         reference: Reference,
+        // `dest` or `title` holds a `\` or a `&`, as the scan that cut them saw.
+        has_escape: bool,
         // Where the `[` is in the block's inline content.
         bracket: usize,
     ) -> Result<LabelLeave, parser::Error> {
         if self.image_nesting_level > 0 {
             // Inside image alt text: emit only text, no HTML tags
-            Ok(LabelLeave::AltText)
-        } else if is_image {
+            return Ok(LabelLeave::AltText);
+        }
+        let attrs = SpanAttrs::link(dest, title, reference, has_escape);
+        if is_image {
             self.at(bracket - 1, bracket + 1);
-            self.renderer.enter_span(
-                Span::Img,
-                SpanAttrs {
-                    href: dest,
-                    title,
-                    reference,
-                    ..Default::default()
-                },
-            )?;
+            self.renderer.enter_span(Span::Img, attrs)?;
             self.image_nesting_level += 1;
             Ok(LabelLeave::Image)
         } else {
             self.at(bracket, bracket + 1);
-            self.renderer.enter_span(
-                Span::A,
-                SpanAttrs {
-                    href: dest,
-                    title,
-                    reference,
-                    ..Default::default()
-                },
-            )?;
+            self.renderer.enter_span(Span::A, attrs)?;
             self.link_nesting_level += 1;
             Ok(LabelLeave::Link)
         }
@@ -373,9 +377,11 @@ impl Parser<'_> {
                 pos += 1;
             }
 
+            let mut has_escape = false;
             let dest: &[u8] = match scan_link_destination(content, pos) {
                 Some(parsed) => {
                     pos = parsed.end_pos;
+                    has_escape = parsed.has_escape;
                     parsed.dest
                 }
                 None => {
@@ -410,10 +416,16 @@ impl Parser<'_> {
                 pos += 1;
                 let title_start = pos;
                 let mut title_valid = true;
+                let mut title_has_escape = false;
                 while pos < content.len() && content[pos] != close_char {
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                        continue;
+                    if content[pos] == b'\\' {
+                        title_has_escape = true;
+                        if pos + 1 < content.len() {
+                            pos += 2;
+                            continue;
+                        }
+                    } else if content[pos] == b'&' {
+                        title_has_escape = true;
                     }
                     // A ()-delimited title may not contain an unescaped '('
                     if close_char == b')'
@@ -426,6 +438,7 @@ impl Parser<'_> {
                     pos += 1;
                 }
                 if title_valid {
+                    has_escape |= title_has_escape;
                     title = &content[title_start..pos];
                     if pos < content.len() {
                         pos += 1; // skip closing quote
@@ -448,8 +461,14 @@ impl Parser<'_> {
             if pos < content.len() && content[pos] == b')' {
                 pos += 1;
 
-                let leave =
-                    self.enter_label_span(dest, title, is_image, Reference::None, base + start)?;
+                let leave = self.enter_label_span(
+                    dest,
+                    title,
+                    is_image,
+                    Reference::None,
+                    has_escape,
+                    base + start,
+                )?;
                 return Ok(Some(LabelParse {
                     label_start: start + 1,
                     label_end,
@@ -490,11 +509,18 @@ impl Parser<'_> {
                     // lookup_ref_def is dropped before &mut self calls.
                     let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                     let title: Box<[u8]> = Box::from(&ref_def.title[..]);
+                    let has_escape = ref_def.has_escape;
                     if !self.charge_ref_def_output(dest.len(), title.len()) {
                         return Ok(None);
                     }
-                    let leave =
-                        self.enter_label_span(&dest, &title, is_image, reference, base + start)?;
+                    let leave = self.enter_label_span(
+                        &dest,
+                        &title,
+                        is_image,
+                        reference,
+                        has_escape,
+                        base + start,
+                    )?;
                     return Ok(Some(LabelParse {
                         label_start: start + 1,
                         label_end,
@@ -519,6 +545,7 @@ impl Parser<'_> {
                 // lookup_ref_def is dropped before &mut self calls.
                 let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                 let title: Box<[u8]> = Box::from(&ref_def.title[..]);
+                let has_escape = ref_def.has_escape;
                 if !self.charge_ref_def_output(dest.len(), title.len()) {
                     return Ok(None);
                 }
@@ -527,6 +554,7 @@ impl Parser<'_> {
                     &title,
                     is_image,
                     Reference::Shortcut,
+                    has_escape,
                     base + start,
                 )?;
                 return Ok(Some(LabelParse {
@@ -769,13 +797,8 @@ impl Parser<'_> {
 
         // Render the wikilink
         self.at(base + start, base + start + 2);
-        self.renderer.enter_span(
-            Span::Wikilink,
-            SpanAttrs {
-                href: target,
-                ..Default::default()
-            },
-        )?;
+        self.renderer
+            .enter_span(Span::Wikilink, SpanAttrs::wikilink(target))?;
         let label_start = match m.pipe_pos {
             Some(pp) => pp + 1,
             None => m.inner_start,
@@ -895,15 +918,8 @@ impl Parser<'_> {
         beg: usize,
     ) -> crate::types::JsResult<()> {
         self.at(beg, beg + 1);
-        self.renderer.enter_span(
-            Span::A,
-            SpanAttrs {
-                href: url,
-                autolink: true,
-                autolink_email: is_email,
-                ..Default::default()
-            },
-        )?;
+        self.renderer
+            .enter_span(Span::A, SpanAttrs::autolink(url, is_email))?;
         self.at(beg + 1, beg + 1 + url.len());
         self.emit_text(TextType::Normal, url)?;
         self.at(beg + 1 + url.len(), beg + 2 + url.len());
@@ -943,14 +959,8 @@ impl Parser<'_> {
             return Ok(());
         }
         self.at(beg, beg + 2);
-        self.renderer.enter_span(
-            Span::A,
-            SpanAttrs {
-                href: label,
-                reference: Reference::Footnote,
-                ..Default::default()
-            },
-        )?;
+        self.renderer
+            .enter_span(Span::A, SpanAttrs::footnote_reference(label))?;
         self.at(beg + 2 + label.len(), beg + 3 + label.len());
         self.renderer.leave_span(Span::A)
     }

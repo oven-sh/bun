@@ -648,13 +648,11 @@ impl Parser<'_> {
                         self.at(base + a.beg, base + a.beg);
                         self.renderer.enter_span(
                             SpanType::A,
-                            crate::types::SpanDetail {
-                                href: link_text,
-                                permissive_autolink: true,
-                                autolink_email: c == b'@',
-                                autolink_www: c == b'.',
-                                ..Default::default()
-                            },
+                            crate::types::SpanDetail::permissive_autolink(
+                                link_text,
+                                c == b'@',
+                                c == b'.',
+                            ),
                         )?;
                         self.at(base + a.beg, base + a.end);
                         self.emit_text(TextType::Normal, link_text)?;

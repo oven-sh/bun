@@ -273,38 +273,38 @@ impl<'src> HtmlRenderer<'src> {
                     if detail.autolink_www {
                         self.write(b"http://");
                     }
-                    self.write_html_escaped(detail.href);
+                    self.write_html_escaped(detail.href_as_written());
                 } else if detail.autolink {
                     // Standard autolinks: percent-encode only, no entity/escape processing
                     if detail.autolink_email {
                         self.write(b"mailto:");
                     }
-                    self.write_url_escaped(detail.href);
+                    self.write_url_escaped(detail.href_as_written());
                 } else {
                     // Regular links: full entity/escape processing
                     if detail.autolink_email {
                         self.write(b"mailto:");
                     }
-                    self.write_url_with_escapes(detail.href);
+                    self.write_url_with_escapes(detail.href_as_written());
                 }
                 self.write(b"\"");
-                if !detail.title.is_empty() {
+                if !detail.title_as_written().is_empty() {
                     self.write(b" title=\"");
-                    self.write_title_with_escapes(detail.title);
+                    self.write_title_with_escapes(detail.title_as_written());
                     self.write(b"\"");
                 }
                 self.write(b">");
             }
             SpanType::Img => {
-                self.saved_img_title = Box::from(detail.title);
+                self.saved_img_title = Box::from(detail.title_as_written());
                 self.write(b"<img src=\"");
-                self.write_url_with_escapes(detail.href);
+                self.write_url_with_escapes(detail.href_as_written());
                 self.write(b"\" alt=\"");
                 self.image_nesting_level += 1;
             }
             SpanType::Wikilink => {
                 self.write(b"<x-wikilink data-target=\"");
-                self.write_html_escaped(detail.href);
+                self.write_html_escaped(detail.href_as_written());
                 self.write(b"\">");
             }
         }

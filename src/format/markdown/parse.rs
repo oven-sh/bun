@@ -1881,20 +1881,20 @@ impl RendererImpl for Builder<'_> {
                 let url = if detail.autolink_email {
                     self.tree.owned(|out| {
                         out.extend_from_slice(b"mailto:");
-                        out.extend_from_slice(detail.href);
+                        out.extend_from_slice(detail.href_as_written());
                     })
                 } else if detail.autolink {
                     let nul = self.nul;
                     self.tree
-                        .owned(|out| push_without_nul(detail.href, nul, out))
-                } else if detail.href.is_empty() {
+                        .owned(|out| push_without_nul(detail.href_as_written(), nul, out))
+                } else if detail.href_as_written().is_empty() {
                     Str::EMPTY
                 } else {
-                    self.decoded(detail.href)
+                    self.decoded(detail.href_as_written())
                 };
-                let title = match detail.title.is_empty() {
+                let title = match detail.title_as_written().is_empty() {
                     true => Str::NO,
-                    false => self.title(detail.title),
+                    false => self.title(detail.title_as_written()),
                 };
                 if let Some(node) = self.tree.get_mut(node) {
                     (node.value, node.second) = (url, title);
@@ -1910,9 +1910,9 @@ impl RendererImpl for Builder<'_> {
                 }
             }
             Kind::FootnoteReference => {
-                let normalized = normalize_identifier(detail.href);
+                let normalized = normalize_identifier(detail.href_as_written());
                 let (label, identifier) = (
-                    self.decoded(detail.href),
+                    self.decoded(detail.href_as_written()),
                     self.tree.owned(|out| push_lowercase(&normalized, out)),
                 );
                 if let Some(node) = self.tree.get_mut(node) {

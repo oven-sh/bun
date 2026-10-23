@@ -16,6 +16,8 @@ pub(crate) const MAX_LINK_LABEL_LEN: usize = 999;
 pub(crate) struct RefDef {
     pub(crate) dest: Box<[u8]>,  // raw destination (slice of source)
     pub(crate) title: Box<[u8]>, // raw title (slice of source)
+    /// `dest` or `title` holds a `\` or a `&`.
+    pub(crate) has_escape: bool,
 }
 
 pub(crate) struct ParsedRefDef<'a> {
@@ -23,11 +25,15 @@ pub(crate) struct ParsedRefDef<'a> {
     pub(crate) label: &'a [u8],
     pub(crate) dest: &'a [u8],
     pub(crate) title: &'a [u8],
+    /// `dest` or `title` holds a `\` or a `&`.
+    pub(crate) has_escape: bool,
 }
 
 pub(crate) struct ParsedTitle<'a> {
     pub(crate) title: &'a [u8],
     pub(crate) end_pos: usize,
+    /// `title` holds a `\` or a `&`.
+    pub(crate) has_escape: bool,
 }
 
 impl Parser<'_> {
@@ -149,6 +155,7 @@ impl Parser<'_> {
         let dest_result = self.parse_ref_def_dest(text, p)?;
         p = dest_result.end_pos;
         let dest = dest_result.dest;
+        let dest_has_escape = dest_result.has_escape;
 
         // Save position before trying title (may need to backtrack)
         let pos_after_dest = p;
@@ -192,6 +199,7 @@ impl Parser<'_> {
                             label,
                             dest,
                             title,
+                            has_escape: dest_has_escape || title_result.has_escape,
                         });
                     }
                     // Title present but not followed by end of line — if title was on same line as dest, invalid
@@ -225,6 +233,7 @@ impl Parser<'_> {
             label,
             dest,
             title,
+            has_escape: dest_has_escape,
         })
     }
 
@@ -273,27 +282,37 @@ impl Parser<'_> {
         };
         p += 1;
         let title_start = p;
+        let mut has_escape = false;
 
         while p < text.len() && text[p] != close_char {
-            if text[p] == b'\\' && p + 1 < text.len() {
-                p += 2;
-            } else {
-                // For () titles, nested ( is not allowed
-                if open_char == b'('
-                    && text[p] == b'('
-                    && !compat::parenthesis_can_be_in_a_title(&self.flags)
-                {
-                    return None;
+            if text[p] == b'\\' {
+                has_escape = true;
+                if p + 1 < text.len() {
+                    p += 2;
+                    continue;
                 }
-                p += 1;
+            } else if text[p] == b'&' {
+                has_escape = true;
             }
+            // For () titles, nested ( is not allowed
+            if open_char == b'('
+                && text[p] == b'('
+                && !compat::parenthesis_can_be_in_a_title(&self.flags)
+            {
+                return None;
+            }
+            p += 1;
         }
         if p >= text.len() {
             return None; // no closing quote/paren
         }
         let title = &text[title_start..p];
         p += 1; // skip close
-        Some(ParsedTitle { title, end_pos: p })
+        Some(ParsedTitle {
+            title,
+            end_pos: p,
+            has_escape,
+        })
     }
 
     pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
@@ -396,6 +415,7 @@ impl Parser<'_> {
                     self.ref_defs.push(RefDef {
                         dest: dest_dupe,
                         title: title_dupe,
+                        has_escape: result.has_escape,
                     });
                 }
 

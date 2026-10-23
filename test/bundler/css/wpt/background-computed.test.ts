@@ -56,6 +56,20 @@ describe("background-computed", () => {
     "12px 13px, 50% 6px, 30px -10px, -7px 8px",
     "12px 13px, 50% 6px, 30px -10px, -7px 8px",
   );
+  runTest("background-position", "right 40%", "right 40%");
+  runTest("background-position", "10px bottom", "10px bottom");
+  // A gradient position has no three-value form: `at right top 40%` and `at left 10px bottom` are invalid.
+  runTest(
+    "background-image",
+    "radial-gradient(circle at right 40%, red, blue)",
+    "radial-gradient(circle at right 40%, red, #00f)",
+  );
+  runTest(
+    "background-image",
+    "radial-gradient(circle at 10px bottom, red, blue)",
+    "radial-gradient(circle at 10px bottom, red, #00f)",
+  );
+  runTest("background-image", "conic-gradient(at right 40%, red, blue)", "conic-gradient(at right 40%, red, #00f)");
   runTest("background-position-x", "0.5em", ".5em");
   runTest("background-position-x", "-20%, 10px", "-20%, 10px");
   runTest("background-position-x", "center, left, right", "center, left, right");

@@ -2959,8 +2959,11 @@ describe("css tests", () => {
     );
 
     minify_test(".foo { background-position: bottom left }", ".foo{background-position:0 100%}");
-    minify_test(".foo { background-position: left 10px center }", ".foo{background-position:10px 50%}");
+    minify_test(".foo { background-position: left 10px center }", ".foo{background-position:10px}");
     minify_test(".foo { background-position: right 10px center }", ".foo{background-position:right 10px center}");
+    minify_test(".foo { background-position: center top 10px }", ".foo{background-position:50% 10px}");
+    minify_test(".foo { background-position: center bottom 10px }", ".foo{background-position:center bottom 10px}");
+    minify_test(".foo { background-position: center 10px }", ".foo{background-position:50% 10px}");
     minify_test(".foo { background-position: right 10px top 20px }", ".foo{background-position:right 10px top 20px}");
     minify_test(".foo { background-position: left 10px top 20px }", ".foo{background-position:10px 20px}");
     minify_test(
@@ -2969,6 +2972,11 @@ describe("css tests", () => {
     );
     minify_test(".foo { background-position: left 10px top }", ".foo{background-position:10px 0}");
     minify_test(".foo { background-position: bottom right }", ".foo{background-position:100% 100%}");
+    minify_test(".foo { background-position: center top }", ".foo{background-position:top}");
+    minify_test(".foo { background-position: center bottom }", ".foo{background-position:bottom}");
+    minify_test(".foo { background-position: left center }", ".foo{background-position:0}");
+    minify_test(".foo { background-position: right center }", ".foo{background-position:100%}");
+    minify_test(".foo { background-position: 20px center }", ".foo{background-position:20px}");
 
     minify_test(
       ".foo { background: url('img-sprite.png') no-repeat bottom right }",
@@ -3418,6 +3426,121 @@ describe("css tests", () => {
       {
         chrome: 99 << 16,
       },
+    );
+  });
+
+  // One function prints the position of background-position, of the background and mask
+  // shorthands, and of radial and conic gradients. The expected text is what lightningcss 1.33.0 prints.
+  describe("position", () => {
+    // [source, printed, printed with minify]
+    const sites = [
+      ["background-position: <position>", "background-position: <position>", "background-position:<position>"],
+      [
+        "background: url(img.png) <position> no-repeat",
+        'background: url("img.png") <position> no-repeat',
+        "background:url(img.png) <position> no-repeat",
+      ],
+      [
+        "background: radial-gradient(circle at <position>, red, blue)",
+        "background: radial-gradient(circle at <position>, red, #00f)",
+        "background:radial-gradient(circle at <position>,red,#00f)",
+      ],
+      [
+        "background: repeating-radial-gradient(circle at <position>, red, blue)",
+        "background: repeating-radial-gradient(circle at <position>, red, #00f)",
+        "background:repeating-radial-gradient(circle at <position>,red,#00f)",
+      ],
+      [
+        "background: conic-gradient(from 45deg at <position>, red, blue)",
+        "background: conic-gradient(from 45deg at <position>, red, #00f)",
+        "background:conic-gradient(from 45deg at <position>,red,#00f)",
+      ],
+      ["mask: url(img.png) <position>", 'mask: url("img.png") <position>', "mask:url(img.png) <position>"],
+      [
+        "-webkit-mask: url(img.png) <position>",
+        '-webkit-mask: url("img.png") <position>',
+        "-webkit-mask:url(img.png) <position>",
+      ],
+    ];
+    // [as written, as printed]. Only background-position has a three-value form, so a gradient
+    // with `at right top 40%` or `at left 10px bottom` is invalid and a browser drops it.
+    const positions = [
+      ["right 40%", "right 40%"],
+      ["10px bottom", "10px bottom"],
+      ["right center", "100%"],
+      ["50% bottom", "bottom"],
+    ];
+    for (const [source, printed, minified] of sites) {
+      for (const [written, position] of positions) {
+        const input = `.foo { ${source.replace("<position>", written)} }`;
+        cssTest(input, `.foo { ${printed.replace("<position>", position)}; }`);
+        minify_test(input, `.foo{${minified.replace("<position>", position)}}`);
+      }
+    }
+
+    // background-position-x and background-position-y each take any axis shape. They merge into
+    // background-position, or into the background shorthand when the other longhands are known.
+    // Every cell is a value that background-position accepts.
+    const xs = ["center", "10px", "left", "left 10px", "right", "right 10px"];
+    const ys = ["center", "20px", "top", "top 20px", "bottom", "bottom 20px"];
+    // prettier-ignore
+    const merged = [
+      // y: center           20px                   top               top 20px               bottom               bottom 20px
+      ["center",            "50% 20px",            "top",            "50% 20px",            "bottom",            "center bottom 20px"],     // x: center
+      ["10px",              "10px 20px",           "10px 0",         "10px 20px",           "10px bottom",       "left 10px bottom 20px"],  // x: 10px
+      ["0",                 "0 20px",              "0 0",            "0 20px",              "0 100%",            "left bottom 20px"],       // x: left
+      ["10px",              "10px 20px",           "10px 0",         "10px 20px",           "left 10px bottom",  "left 10px bottom 20px"],  // x: left 10px
+      ["100%",              "right 20px",          "100% 0",         "right top 20px",      "100% 100%",         "right bottom 20px"],      // x: right
+      ["right 10px center", "right 10px top 20px", "right 10px top", "right 10px top 20px", "right 10px bottom", "right 10px bottom 20px"], // x: right 10px
+    ];
+    xs.forEach((x, i) => {
+      ys.forEach((y, j) => {
+        const position = merged[i][j];
+        // `center center` is the only cell that minify changes.
+        const minified = position === "center" ? "50%" : position;
+        const axes = `background-position-x: ${x}; background-position-y: ${y}`;
+        cssTest(`.foo { ${axes} }`, `.foo { background-position: ${position}; }`);
+        minify_test(`.foo { ${axes} }`, `.foo{background-position:${minified}}`);
+        cssTest(`.foo { background: url(img.png); ${axes} }`, `.foo { background: url("img.png") ${position}; }`);
+        minify_test(`.foo { background: url(img.png); ${axes} }`, `.foo{background:url(img.png) ${minified}}`);
+      });
+    });
+
+    // An axis longhand after background-position replaces that axis.
+    cssTest(
+      ".foo { background-position: left 10px top 5px; background-position-y: 40% }",
+      ".foo { background-position: 10px 40%; }",
+    );
+    minify_test(
+      ".foo { background-position: left 10px top 5px; background-position-y: 40% }",
+      ".foo{background-position:10px 40%}",
+    );
+    // The axes merge across adjacent rules with the same selector.
+    cssTest(
+      ".foo { background-position-x: 10px } .foo { background-position-y: top 5px }",
+      ".foo { background-position: 10px 5px; }",
+    );
+    minify_test(
+      ".foo { background-position-x: 10px } .foo { background-position-y: top 5px }",
+      ".foo{background-position:10px 5px}",
+    );
+    // background-position after the axis longhands replaces both axes.
+    cssTest(
+      ".foo { background-position-x: right 10px; background-position-y: 20px; background-position: 10px bottom }",
+      ".foo { background-position: 10px bottom; }",
+    );
+    minify_test(
+      ".foo { background-position-x: right 10px; background-position-y: 20px; background-position: 10px bottom }",
+      ".foo{background-position:10px bottom}",
+    );
+    // Each layer merges on its own.
+    cssTest(
+      ".foo { background-position-x: 10px, right, center; background-position-y: top 5px, 40%, bottom 10px }",
+      ".foo { background-position: 10px 5px, right 40%, center bottom 10px; }",
+    );
+    minify_test(
+      ".foo { background-position-x: 10px, right, center; background-position-y: top 5px, 40%, bottom 10px }",
+      ".foo{background-position:10px 5px,right 40%,center bottom 10px}",
     );
   });
 

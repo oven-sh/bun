@@ -686,6 +686,20 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
+// A <number> cannot be added to a <percentage>, so this is not a color.
+test("a calculation that adds a number to a percentage is null", () => {
+  expect(color("rgb(calc(10 + 10%) 0 0)", "css")).toBeNull();
+});
+
+// These are null: the parser reads a channel keyword as a <percentage> where the channel takes
+// only one, and a <number> cannot be added to it. https://github.com/oven-sh/bun/pull/45362
+test.todo.each([
+  ["hsl(from blue h s calc(l + 20))", "#66f"],
+  ["lab(from lab(50% 10 20) calc(l + 20) a b)", "lab(70% 10 20)"],
+])("%s is %s", (input, expected) => {
+  expect(color(input, "css")).toBe(expected);
+});
+
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing
   // in another channel's place shows up in the output. Mixing a color with

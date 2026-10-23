@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -187,6 +188,74 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // A <number> and a <percentage> cannot be added. The declaration is left as written.
+    minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
+    minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
+    minify_test(`a { color: rgb(calc(10 + 10%) 0 0) }`, `a{color:rgb(calc(10 + 10%)0 0)}`);
+    minify_test(`a { color: color(srgb calc(1 + 50%) 0 0) }`, `a{color:color(srgb calc(1 + 50%)0 0)}`);
+    minify_test(`a { color: rgb(from #336699 calc(10 + 10%) g b) }`, `a{color:rgb(from #369 calc(10 + 10%)g b)}`);
+    // max() of a number and a percentage is not reduced. The sum around it does not become a `none` channel.
+    minify_test(
+      `a { color: rgb(from #336699 r g calc(b + max(10, 20%))) }`,
+      `a{color:rgb(from #369 r g calc(b + max(10,20%)))}`,
+    );
+    // A channel that takes only a <percentage> reads its keyword of a relative color as one, so
+    // `calc(l + 20)` is such a sum too.
+    minify_test(`a { color: lab(from red calc(l + 20) a b) }`, `a{color:lab(from red calc(l + 20)a b)}`);
+    minify_test(`a { color: lch(from red calc(l + 20) c h) }`, `a{color:lch(from red calc(l + 20)c h)}`);
+    minify_test(`a { color: oklab(from red calc(l + .1) a b) }`, `a{color:oklab(from red calc(l + .1)a b)}`);
+    minify_test(`a { color: oklch(from #ff876a calc(l - .08) c h) }`, `a{color:oklch(from #ff876a calc(l - .08)c h)}`);
+    minify_test(`a { color: hsl(from blue h calc(s - 20) l) }`, `a{color:hsl(from blue h calc(s - 20)l)}`);
+    minify_test(`a { color: hsl(from blue h s calc(l + 20)) }`, `a{color:hsl(from blue h s calc(l + 20))}`);
+    minify_test(`a { color: hwb(from blue h calc(w + 20) b) }`, `a{color:hwb(from blue h calc(w + 20)b)}`);
+    minify_test(`a { color: hwb(from blue h w calc(b + 20)) }`, `a{color:hwb(from blue h w calc(b + 20))}`);
+    minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
+    // Every other reader of a <percentage> keeps the declaration as written too.
+    minify_test(`a { font-stretch: calc(50% + 1) }`, `a{font-stretch:calc(50% + 1)}`);
+    minify_test(`a { scale: 1 calc(50% + 1) }`, `a{scale:1 calc(50% + 1)}`);
+    minify_test(`a { transform: scale(calc(50% + 1)) }`, `a{transform:scale(calc(50% + 1))}`);
+    minify_test(`a { border-image-slice: calc(50% + 1) }`, `a{border-image-slice:calc(50% + 1)}`);
+    minify_test(`a { mask-border-slice: calc(50% + 1) }`, `a{mask-border-slice:calc(50% + 1)}`);
+    minify_test(
+      `@font-face { font-family: x; src: url(a.woff); font-stretch: calc(50% + 1); }`,
+      `@font-face{font-family:x;src:url(a.woff);font-stretch:calc(50% + 1)}`,
+    );
+    // A keyframe with such a selector is dropped. Chrome drops a keyframe whose selector is a math function.
+    minify_test(`@keyframes k { calc(50% + 1) { color: red } to { color: blue } }`, `@keyframes k{to{color:#00f}}`);
+    minify_test(`@keyframes k { calc(50% + 25%) { color: red } }`, `@keyframes k{75%{color:red}}`);
+    const property = (syntax: string, value: string) =>
+      cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
+    const rule = (syntax: string, value: string) =>
+      `@property --p{syntax:"${syntax}";inherits:false;initial-value:${value}}`;
+    test("@property with an initial-value that is a sum of percentages", () => {
+      expect(property("<percentage>", "calc(50% + 25%)")).toBe(rule("<percentage>", "75%"));
+      // The universal syntax has no type, so the value stays as written.
+      expect(property("*", "calc(50% + 1)")).toBe(rule("*", "calc(50% + 1)"));
+    });
+    // A typed `initial-value` has no unparsed form, so each of these is an `Unexpected token` error.
+    // https://github.com/oven-sh/bun/pull/45806 keeps a typed value that no component matches as written.
+    test.todo("@property with a typed initial-value that is not reduced", () => {
+      expect({
+        "<percentage>": property("<percentage>", "calc(50% + 1)"),
+        "<color>": property("<color>", "rgb(calc(10 + 10%) 0 0)"),
+        "<image>": property("<image>", "linear-gradient(rgb(calc(10 + 10%) 0 0), red)"),
+        "<transform-function>": property("<transform-function>", "scale(calc(50% + 1))"),
+        "<transform-list>": property("<transform-list>", "scale(calc(50% + 1))"),
+        // The next two values are valid.
+        "<color>, relative": property("<color>", "hsl(from blue h s calc(l + 20))"),
+        "<percentage>, abs()": property("<percentage>", "calc(50% + abs(-10%))"),
+      }).toEqual({
+        "<percentage>": rule("<percentage>", "calc(50% + 1)"),
+        "<color>": rule("<color>", "rgb(calc(10 + 10%)0 0)"),
+        "<image>": rule("<image>", "linear-gradient(rgb(calc(10 + 10%)0 0),red)"),
+        "<transform-function>": rule("<transform-function>", "scale(calc(50% + 1))"),
+        "<transform-list>": rule("<transform-list>", "scale(calc(50% + 1))"),
+        "<color>, relative": rule("<color>", "hsl(from blue h s calc(l + 20))"),
+        "<percentage>, abs()": rule("<percentage>", "calc(50% + abs(-10%))"),
+      });
+    });
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.

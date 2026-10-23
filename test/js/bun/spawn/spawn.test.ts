@@ -2264,62 +2264,121 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     });
   });
 
-  it.concurrent.skipIf(!isLinux)("a memfd that is moved off fd 1 keeps its close-on-exec state", async () => {
-    // bun closes its own descriptor of a stdin memfd inside the spawn call, so this makes a memfd with the
-    // same flags directly. /proc/self/fdinfo shows FD_CLOEXEC as O_CLOEXEC in "flags".
-    const memfd = (closeFirst: boolean) =>
-      run(`
-        const { memfd_create } = require("bun:internal-for-testing");
+  it.concurrent.skipIf(!isLinux)("a stdin memfd that is moved off fd 1 keeps its close-on-exec state", async () => {
+    // bun closes its own descriptor of the memfd before the spawn call returns, so the call is held
+    // open for an observer. The child's stdout is a fifo. The child opens it before it execs, and
+    // that open waits for a reader. The observer becomes the reader when it has looked.
+    // /proc/<pid>/fdinfo shows FD_CLOEXEC as O_CLOEXEC in "flags".
+    const stdinMemfd = (closeFirst: boolean) => {
+      const fifo = join(tmpdirSync(), "stdout.fifo");
+      expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      const observer = `
+        const fs = require("node:fs");
+        const parent = "/proc/" + process.ppid;
+        let memfd;
+        try {
+          while (!memfd) {
+            for (const fd of fs.readdirSync(parent + "/fd")) {
+              let link = "";
+              try {
+                link = fs.readlinkSync(parent + "/fd/" + fd);
+              } catch {}
+              if (!link.startsWith("/memfd:spawn_stdio_stdin")) continue;
+              const flags = fs.readFileSync(parent + "/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
+              memfd = { aboveStdio: Number(fd) > 2, cloexec: (parseInt(flags, 8) & 0o2000000) !== 0 };
+            }
+            if (!memfd) Bun.sleepSync(1);
+          }
+        } finally {
+          fs.writeSync(2, "REPORT " + JSON.stringify(memfd ?? "no memfd") + "\\n");
+          // Without a memfd the parent is gone: then nothing may be there to wait for.
+          const { O_RDONLY, O_NONBLOCK } = fs.constants;
+          fs.closeSync(fs.openSync(${JSON.stringify(fifo)}, memfd ? O_RDONLY : O_RDONLY | O_NONBLOCK));
+        }
+      `;
+      return run(`
         ${closeFirst ? "fs.closeSync(1);" : ""}
-        const fd = memfd_create(1);
-        const flags = fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
-        report(2, { aboveStdio: fd > 2, cloexec: (parseInt(flags, 8) & 0o2000000) !== 0 });
+        const observer = Bun.spawn({
+          cmd: [process.execPath, "-e", ${JSON.stringify(observer)}],
+          stdio: [nul, nul, "inherit"],
+        });
+        const proc = Bun.spawn({
+          cmd: ["true"],
+          stdin: new Blob(["hi"]),
+          stdout: Bun.file(${JSON.stringify(fifo)}),
+          stderr: nul,
+        });
+        await Promise.all([proc.exited, observer.exited]);
       `);
-    const [moved, inPlace] = await Promise.all([memfd(true), memfd(false)]);
+    };
+    const [moved, inPlace] = await Promise.all([stdinMemfd(true), stdinMemfd(false)]);
     expect(inPlace).toEqual({ report: { aboveStdio: true, cloexec: true }, exitCode: 0 });
     expect(moved).toEqual(inPlace);
   });
+
+  // Runs the script in a process that has no free descriptor but the closed fd 1, and reports the
+  // `result` that the script defines.
+  async function runAtDescriptorLimit(script: string) {
+    const fixture = `
+      ${prelude}
+      const held = [];
+      for (;;) {
+        try {
+          held.push(fs.openSync("/dev/null", "r"));
+        } catch {
+          break;
+        }
+      }
+      fs.closeSync(1);
+      // What a spawn with the options does.
+      const outcome = async options => {
+        try {
+          return "exit " + (await Bun.spawn(options).exited);
+        } catch (e) {
+          return "threw " + e.code;
+        }
+      };
+      ${script}
+      // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
+      for (const fd of held) fs.closeSync(fd);
+      report(2, { atTheLimit: held.length > 0, ...result });
+    `;
+    await using proc = spawn({
+      cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
+    return { report: line ? JSON.parse(line) : { stdout, stderr }, exitCode };
+  }
 
   it.concurrent.skipIf(!isLinux)(
     "at the descriptor limit a spawn still works when only the closed fd 1 is free",
     async () => {
       // No number at 3 or above is free, so the pidfd (or the waiter thread's eventfd) cannot move.
       // It stays at fd 1. A move that fails instead would kill the child or stop the process.
-      const fixture = `
-        ${prelude}
-        const held = [];
-        for (;;) {
-          try {
-            held.push(fs.openSync("/dev/null", "r"));
-          } catch {
-            break;
-          }
-        }
-        fs.closeSync(1);
-        let outcome;
-        try {
-          const proc = Bun.spawn({ cmd: ["true"], stdio: [nul, nul, nul] });
-          outcome = "exit " + (await proc.exited);
-        } catch (e) {
-          outcome = "threw " + e.code;
-        }
-        // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
-        for (const fd of held) fs.closeSync(fd);
-        report(2, { atTheLimit: held.length > 0, outcome });
-      `;
-      await using proc = spawn({
-        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
-      expect({ report: line ? JSON.parse(line) : { stdout, stderr }, exitCode }).toEqual({
-        report: { atTheLimit: true, outcome: "exit 0" },
-        exitCode: 0,
-      });
+      const result = await runAtDescriptorLimit(`
+        const result = { outcome: await outcome({ cmd: ["true"], stdio: [nul, nul, nul] }) };
+      `);
+      expect(result).toEqual({ report: { atTheLimit: true, outcome: "exit 0" }, exitCode: 0 });
     },
   );
+
+  it.concurrent.skipIf(!isLinux)("at the descriptor limit a stdin memfd does not stay on the closed fd 1", async () => {
+    // The memfd cannot move either, and bun never closes its own descriptor at fd 1. So bun gives
+    // the memfd up. The bytes then need a socketpair, and one free number is not enough for it.
+    const result = await runAtDescriptorLimit(`
+      const result = {
+        outcome: await outcome({ cmd: ["true"], stdin: new Blob(["hi"]), stdout: nul, stderr: nul }),
+        after: at(1),
+      };
+    `);
+    expect(result).toEqual({
+      report: { atTheLimit: true, outcome: "threw EMFILE", after: "closed" },
+      exitCode: 0,
+    });
+  });
 
   // On Linux a Blob, string or buffer stdin travels in a memfd. It is created before the socketpairs.
   describe.each(["spawn", "spawnSync"])("a Blob stdin with Bun.%s", method => {

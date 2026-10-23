@@ -1199,9 +1199,8 @@ describe.concurrent("directories named by config files", () => {
     ])("%s cafile", async (_, config) => {
       using dir = tempDir("config-tilde-cafile", { ...files, ...config });
       const { stderr, exitCode } = await run(String(dir), ["add", "no-deps"], noDirs);
-      // The HTTP thread prints this and exits; the main thread may get "Resolving dependencies" out first.
       // What follows the ~ is appended as written.
-      expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), "home")}/missing.pem'\n`);
+      expect(stderr).toBe(`HTTPThread: could not find CA file: '${join(String(dir), "home")}/missing.pem'\n`);
       expect(exitCode).toBe(1);
     });
 

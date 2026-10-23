@@ -94,6 +94,30 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("references in the class body see a class replacement", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function replace(cls, _ctx) {
+          return class extends cls {};
+        }
+        let thunk;
+        function capture(fn) {
+          thunk = fn;
+          return (_value, _ctx) => {};
+        }
+        @replace class Model {
+          static self = () => Model;
+          @capture(() => Model) field = 1;
+          method() { return Model; }
+        }
+        console.log(thunk() === Model);
+        console.log(Model.self() === Model);
+        console.log(new Model().method() === Model);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\ntrue\ntrue\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("multiple class decorators apply in reverse order", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const order = [];

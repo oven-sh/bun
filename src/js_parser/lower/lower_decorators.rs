@@ -35,7 +35,28 @@ impl PrivateLoweredInfo {
     }
 }
 
-type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
+#[derive(Default)]
+struct PrivateLoweredMap {
+    names: HashMap<u32, PrivateLoweredInfo>,
+    /// `(original, decorated)`: ordinary self-references observe a class
+    /// decorator's replacement. Direct private accesses keep `original`
+    /// because the replacement does not carry the original class's brand.
+    class_binding: Option<(Ref, Ref)>,
+}
+
+impl core::ops::Deref for PrivateLoweredMap {
+    type Target = HashMap<u32, PrivateLoweredInfo>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.names
+    }
+}
+
+impl core::ops::DerefMut for PrivateLoweredMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.names
+    }
+}
 
 struct LoweredClass {
     /// `var` statement for the temporaries the class body now refers to.
@@ -274,6 +295,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    fn is_original_class_binding(expr: Expr, map: &PrivateLoweredMap) -> bool {
+        let Some((original, _)) = map.class_binding else {
+            return false;
+        };
+        matches!(expr.data, js_ast::ExprData::EIdentifier(id) if id.ref_ == original)
+    }
+
     fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
@@ -281,9 +309,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let expr_loc = expr.loc;
         match &mut expr.data {
+            js_ast::ExprData::EIdentifier(id) => {
+                if let Some((original, decorated)) = map.class_binding
+                    && id.ref_ == original
+                {
+                    let symbol = &mut self.symbols[original.inner_index() as usize];
+                    symbol.use_count_estimate = symbol.use_count_estimate.saturating_sub(1);
+                    self.record_usage(decorated);
+                    id.ref_ = decorated;
+                }
+            }
             js_ast::ExprData::EIndex(e) => {
                 let mut tgt = e.target;
-                self.rewrite_private_accesses_in_expr(&mut tgt, map);
+                let is_private = matches!(e.index.data, js_ast::ExprData::EPrivateIdentifier(_));
+                if !is_private || !Self::is_original_class_binding(tgt, map) {
+                    self.rewrite_private_accesses_in_expr(&mut tgt, map);
+                }
                 e.target = tgt;
                 if let js_ast::ExprData::EPrivateIdentifier(pi) = &e.index.data {
                     if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
@@ -302,7 +343,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let js_ast::ExprData::EPrivateIdentifier(pi) = &left_idx.index.data {
                             if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                                 let mut lt = left_idx.target;
-                                self.rewrite_private_accesses_in_expr(&mut lt, map);
+                                if !Self::is_original_class_binding(lt, map) {
+                                    self.rewrite_private_accesses_in_expr(&mut lt, map);
+                                }
                                 let mut rt = e.right;
                                 self.rewrite_private_accesses_in_expr(&mut rt, map);
                                 *expr = self.private_set_expr(lt, &info, rt, expr_loc);
@@ -315,7 +358,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let js_ast::ExprData::EPrivateIdentifier(pi) = &e.left.data {
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut rt = e.right;
-                            self.rewrite_private_accesses_in_expr(&mut rt, map);
+                            if !Self::is_original_class_binding(rt, map) {
+                                self.rewrite_private_accesses_in_expr(&mut rt, map);
+                            }
                             let storage = self.use_ref(info.storage_ref, expr_loc);
                             *expr = self.call_rt(expr_loc, b"__privateIn", &[storage, rt]);
                             return;
@@ -345,7 +390,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let js_ast::ExprData::EPrivateIdentifier(pi) = &tgt_idx.index.data {
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut obj_expr = tgt_idx.target;
-                            self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
+                            if !Self::is_original_class_binding(obj_expr, map) {
+                                self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
+                            }
                             // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
                             // references the receiver twice. Only identifiers and `this` can
                             // be repeated safely; any other receiver is captured in a
@@ -1321,7 +1368,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         constructor_effects.extend_from_slice(&instance_effects);
 
         let mut leading = (!leading.is_empty()).then(|| p.make_static_block(&leading, loc));
-        if !private_lowered_map.is_empty() {
+        if let (Some(name), Some(decorators)) = (class.class_name, class_decorators_result.as_ref())
+        {
+            private_lowered_map.class_binding = Some((name.ref_, decorators.decorated));
+        }
+        if !private_lowered_map.is_empty() || private_lowered_map.class_binding.is_some() {
             for member in members.iter_mut().chain(leading.as_mut()) {
                 p.rewrite_private_accesses_in_property(member, &private_lowered_map);
             }

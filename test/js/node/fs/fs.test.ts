@@ -2514,7 +2514,112 @@ describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
   });
 });
 
+// write(fd, buffer[, offset[, length[, position]]]) in all three forms (writeSync,
+// callback write, filehandle.write). Each case runs against a file that already
+// holds `positionalWriteHead` with the file offset at its end, so a write at
+// position 0 and a write at the current position are distinguishable.
+// Expectations are Node v26's.
+const positionalWriteHead = "PPPPPPPPPPPP";
+const positionalWriteBuffer = Buffer.from("0123456789abcdef");
+const positionalWriteCases: [args: unknown[], written: number, file: string][] = [
+  // A nullish offset is 0; the length and position after it still apply.
+  [[undefined, 8, 0], 8, "01234567PPPP"],
+  [[undefined, undefined, 0], 16, "0123456789abcdef"],
+  [[undefined, undefined, 2], 16, "PP0123456789abcdef"],
+  [[0, undefined, 2], 16, "PP0123456789abcdef"],
+  [[undefined, 8], 8, positionalWriteHead + "01234567"],
+  // A non-number length is the rest of the buffer; the position still applies.
+  [[undefined, "8", 0], 16, "0123456789abcdef"],
+  [[undefined, 8n, 0], 16, "0123456789abcdef"],
+  [[4, undefined, 0], 12, "456789abcdef"],
+  [[4, null, 0], 12, "456789abcdef"],
+  // A non-numeric position writes at the current file offset.
+  [[4, 8, undefined], 8, positionalWriteHead + "456789ab"],
+  [[4, 8, null], 8, positionalWriteHead + "456789ab"],
+  [[4, 8, "2"], 8, positionalWriteHead + "456789ab"],
+  [[4, 8, 2], 8, "PP456789abPP"],
+  // An offset equal to byteLength is allowed and writes nothing.
+  [[16], 0, positionalWriteHead],
+  // `null` and objects take the options form, which discards the trailing
+  // positional arguments.
+  [[null, 8, 0], 16, positionalWriteHead + "0123456789abcdef"],
+  [[{ offset: 4, length: 8, position: 0 }], 8, "456789abPPPP"],
+  // Inside the options object, a `null` offset is 0 and the other fields apply.
+  [[{ offset: null, length: 8, position: 0 }], 8, "01234567PPPP"],
+  [[{ offset: null, position: 0 }], 16, "0123456789abcdef"],
+];
+// The offset and length are validated against the buffer even when the
+// arguments after them are omitted.
+const positionalWriteErrors: [args: unknown[], error: unknown][] = [
+  [[17], outOfRange("offset", "<= 16", 17)],
+  [[1.5], outOfRange("offset", "an integer", 1.5)],
+  [[undefined, 17], outOfRange("length", "<= 16", 17)],
+  [[undefined, -1], outOfRange("length", ">= 0", -1)],
+  [[4, 13], outOfRange("length", "<= 12", 13)],
+  [[0, Infinity], outOfRange("length", "<= 16", Infinity)],
+  // A number that is not an integer is a length (it is not defaulted), and
+  // Node rejects it after the bounds checks.
+  [[undefined, NaN], outOfRange("length", "an integer", NaN)],
+  [[0, 1.5], outOfRange("length", "an integer", 1.5)],
+];
+function outOfRange(argument: string, bound: string, received: number) {
+  return {
+    name: "RangeError",
+    code: "ERR_OUT_OF_RANGE",
+    message: `The value of "${argument}" is out of range. It must be ${bound}. Received ${received}`,
+  };
+}
+/** The return value of `fn`, or the shape of what it threw. */
+function outcomeOf(fn: () => unknown): unknown {
+  try {
+    return fn();
+  } catch (error: any) {
+    return { name: error.name, code: error.code, message: error.message };
+  }
+}
+
 describe("writeSync", () => {
+  it("reads offset, length and position positionally", () => {
+    using dir = tempDir("fs-writeSync-positional", {});
+    const dest = join(String(dir), "out.bin");
+    for (const [args, written, file] of positionalWriteCases) {
+      const fd = openSync(dest, "w+");
+      let outcome: unknown;
+      try {
+        writeSync(fd, positionalWriteHead);
+        outcome = outcomeOf(() => (writeSync as Function)(fd, positionalWriteBuffer, ...args));
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({ args, outcome: written, file });
+    }
+  });
+
+  it("validates offset and length against the buffer even when the later arguments are omitted", () => {
+    using dir = tempDir("fs-writeSync-positional-errors", {});
+    const dest = join(String(dir), "out.bin");
+    const errors: [args: unknown[], error: unknown][] = [
+      ...positionalWriteErrors,
+      // Unlike fs.write, writeSync takes no callback, so a function is not an offset.
+      [[() => {}, 8, 0], expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" })],
+    ];
+    for (const [args, error] of errors) {
+      const fd = openSync(dest, "w+");
+      let outcome: unknown;
+      try {
+        writeSync(fd, positionalWriteHead);
+        outcome = outcomeOf(() => (writeSync as Function)(fd, positionalWriteBuffer, ...args));
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({
+        args,
+        outcome: error,
+        file: positionalWriteHead,
+      });
+    }
+  });
+
   it("treats a bigint position as the current offset", () => {
     // Node's fs.write does `if (typeof position !== 'number') position = null`
     // for the buffer overload; GetOffset then returns -1. fs.read accepts
@@ -5509,6 +5614,97 @@ describe("fs.write", () => {
       }
       done();
     });
+  });
+
+  it("reads offset, length and position positionally", async () => {
+    using dir = tempDir("fs-write-positional", {});
+    const dest = join(String(dir), "out.bin");
+    const cases: typeof positionalWriteCases = [
+      ...positionalWriteCases,
+      // fs.write(fd, buffer, callback): the callback sits in the offset slot.
+      [[], 16, positionalWriteHead + "0123456789abcdef"],
+      // A function in `options.offset` is 0 as well.
+      [[{ offset: () => {}, length: 8, position: 0 }], 8, "01234567PPPP"],
+    ];
+    for (const [args, written, file] of cases) {
+      const fd = openSync(dest, "w+");
+      let outcome: unknown;
+      try {
+        writeSync(fd, positionalWriteHead);
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        (fs.write as Function)(fd, positionalWriteBuffer, ...args, (err: unknown, bytesWritten: number) =>
+          err ? reject(err) : resolve(bytesWritten),
+        );
+        outcome = await promise;
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({ args, outcome: written, file });
+    }
+
+    for (const [args, written, file] of positionalWriteCases) {
+      const handle = await promises.open(dest, "w+");
+      let outcome: unknown;
+      try {
+        await handle.write(positionalWriteHead);
+        outcome = (await (handle.write as Function)(positionalWriteBuffer, ...args)).bytesWritten;
+      } finally {
+        await handle.close();
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({ args, outcome: written, file });
+    }
+  });
+
+  it("throws synchronously for an offset or length outside the buffer", () => {
+    using dir = tempDir("fs-write-positional-errors", {});
+    const dest = join(String(dir), "out.bin");
+    function mustNotCall() {
+      throw new Error("fs.write must throw instead of calling back");
+    }
+    const errors: [args: unknown[], error: unknown][] = [
+      ...positionalWriteErrors,
+      // `options.offset` is 0 for a function, so `options.length` defaults to
+      // `byteLength - offset` with the function still in `offset`: NaN.
+      [[{ offset: () => {} }], outOfRange("length", "an integer", NaN)],
+    ];
+    for (const [args, error] of errors) {
+      const fd = openSync(dest, "w+");
+      let outcome: unknown;
+      try {
+        writeSync(fd, positionalWriteHead);
+        outcome = outcomeOf(() => (fs.write as Function)(fd, positionalWriteBuffer, ...args, mustNotCall));
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({
+        args,
+        outcome: error,
+        file: positionalWriteHead,
+      });
+    }
+  });
+
+  it("filehandle.write rejects an offset or length outside the buffer", async () => {
+    using dir = tempDir("fs-filehandle-write-positional-errors", {});
+    const dest = join(String(dir), "out.bin");
+    for (const [args, error] of positionalWriteErrors) {
+      const handle = await promises.open(dest, "w+");
+      let outcome: unknown;
+      try {
+        await handle.write(positionalWriteHead);
+        outcome = await (handle.write as Function)(positionalWriteBuffer, ...args).then(
+          (result: { bytesWritten: number }) => result.bytesWritten,
+          (err: any) => ({ name: err.name, code: err.code, message: err.message }),
+        );
+      } finally {
+        await handle.close();
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({
+        args,
+        outcome: error,
+        file: positionalWriteHead,
+      });
+    }
   });
 
   it("should work with (fd, string, position, encoding, callback)", done => {

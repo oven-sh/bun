@@ -226,6 +226,8 @@ pub mod dir_iterator {
     #[cfg(windows)]
     pub struct Name {
         native: Vec<OSPathChar>,
+        /// UTF-8 transcode of `native`, with a trailing NUL (excluded from
+        /// `slice_u8()`) so `as_zstr()` works on every platform.
         utf8: Vec<u8>,
     }
     impl Name {
@@ -247,7 +249,8 @@ pub mod dir_iterator {
             v.extend_from_slice(s);
             v.push(0);
             // Trust that Windows gives us valid UTF-16LE.
-            let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
+            let mut utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
+            utf8.push(0);
             Name { native: v, utf8 }
         }
         /// Borrow the name as `&[OSPathChar]` (no NUL).
@@ -277,14 +280,21 @@ pub mod dir_iterator {
         #[cfg(windows)]
         #[inline]
         pub fn slice_u8(&self) -> &[u8] {
-            &self.utf8
+            &self.utf8[..self.utf8.len() - 1]
         }
+        /// Borrow the entry name as a NUL-terminated UTF-8 string, for the
+        /// `*at(dirfd, name)` syscall wrappers.
         #[cfg(not(windows))]
         #[inline]
         pub fn as_zstr(&self) -> &bun_core::ZStr {
             // SAFETY: `dirent::parse` checked that `ptr[len] == 0`. See the
             // `borrow()` debug_assert.
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
+        }
+        #[cfg(windows)]
+        #[inline]
+        pub fn as_zstr(&self) -> &bun_core::ZStr {
+            bun_core::ZStr::from_slice_with_nul(&self.utf8)
         }
     }
 

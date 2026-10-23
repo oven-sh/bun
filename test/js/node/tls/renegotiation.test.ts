@@ -476,8 +476,13 @@ const backToBackRenegotiationServer = /* js */ `
         socket.resume();
         const responseFirst = head.startsWith("GET /response-first ");
         let asked = 0;
+        let answered = false;
         (function ask() {
-          if (asked === 3 && responseFirst) socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          // Since Node.js 26.10 the request of a renegotiate() leaves ahead of a write() that has not finished.
+          if (asked === 3 && responseFirst && !answered) {
+            answered = true;
+            return socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok", ask);
+          }
           if (asked === 4) {
             if (isHttp) socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
             return;

@@ -5021,9 +5021,7 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
     connect(https), createServer, createSecureServer, performServerHandshake
 { unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
-    connect(http), connect(https), connect(createConnection)
-  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
-    createServer, createSecureServer, performServerHandshake
+    every entry point
 other calls
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
     connect("not a url", { strictSingleValueFields: "yes" })
@@ -5044,12 +5042,12 @@ other calls
   rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
     promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
 `;
-// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
+// Before v26.11.0 node checked the options in another order, and the macOS CI hosts can have an older node.
 const optionChecksNode = (() => {
   const node = nodeExe();
   if (!node) return null;
   const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
+  return Bun.semver.order(stdout.toString().trim(), "26.11.0") >= 0 ? node : null;
 })();
 
 for (const [name, runtime] of [

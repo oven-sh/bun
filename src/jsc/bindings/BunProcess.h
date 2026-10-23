@@ -17,6 +17,8 @@ using namespace JSC;
 extern "C" int getRSS(size_t* rss);
 extern "C" int getPeakRSS(size_t* peak);
 
+JSC::JSArray* constructProcessReportNativeStack(JSC::JSGlobalObject*);
+
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
 

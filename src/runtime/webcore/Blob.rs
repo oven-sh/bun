@@ -2063,7 +2063,8 @@ impl BlobExt for Blob {
                 }
                 self.size.set(0);
             }
-            store::DataTag::S3 => self.size.set(0),
+            // An S3 object has no size before the download: there is nothing to resolve.
+            store::DataTag::S3 => {}
         }
     }
 
@@ -2106,7 +2107,7 @@ impl BlobExt for Blob {
                 }
                 (self.offset.get(), 0)
             }
-            store::DataTag::S3 => (self.offset.get(), 0),
+            store::DataTag::S3 => (self.offset.get(), self.size.get()),
         }
     }
     fn constructor(

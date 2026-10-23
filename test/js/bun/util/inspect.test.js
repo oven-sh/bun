@@ -10,6 +10,7 @@ import {
   withoutAggressiveGC,
 } from "harness";
 import { join } from "path";
+import { serve } from "s3-server";
 import util from "util";
 it("prototype", () => {
   const prototypes = [
@@ -166,6 +167,30 @@ it("printing a Response over a Bun.file() that does not exist yet leaves its bod
     before: "Response {",
     after: "Response (7 bytes) {",
     text: "created",
+  });
+});
+
+it("Response and Request print no size for an S3 file body, and send no request", async () => {
+  await using server = serve({ buckets: ["bucket"] });
+  const s3file = new Bun.S3Client(server.clientOptions("bucket")).file("key");
+  // new Response(s3file) is a redirect with no body. fetch() of a blob: URL gives a Response that holds the S3 blob.
+  const firstLines = async blob => {
+    const url = URL.createObjectURL(blob);
+    const response = await fetch(url);
+    URL.revokeObjectURL(url);
+    return [
+      Bun.inspect(response).split("\n")[0],
+      Bun.inspect(new Request("http://example.com/", { method: "POST", body: blob })).split("\n")[0],
+    ];
+  };
+  expect({
+    file: await firstLines(s3file),
+    slice: await firstLines(s3file.slice(10, 30)),
+    requests: server.requests.length,
+  }).toEqual({
+    file: ["Response {", "Request {"],
+    slice: ["Response (20 bytes) {", "Request (20 bytes) {"],
+    requests: 0,
   });
 });
 

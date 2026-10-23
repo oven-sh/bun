@@ -3168,6 +3168,35 @@ test("HEAD for a Response with an S3-backed Blob body doesn't wait for S3", asyn
   expect(exitCode).toBe(0);
 });
 
+// A slice of an S3 file knows its length, but GET sends none of the object for a Blob body.
+test("HEAD for a Response with a slice of an S3 file as its body reports the length that GET sends", async () => {
+  let s3Requests = 0;
+  await using s3Origin = Bun.serve({
+    port: 0,
+    fetch() {
+      s3Requests++;
+      return new Response(Buffer.alloc(100, "0123456789"));
+    },
+  });
+  const s3 = new Bun.S3Client({
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my-bucket",
+    endpoint: s3Origin.url.href,
+  });
+  await using app = Bun.serve({
+    port: 0,
+    fetch: () => fetch(URL.createObjectURL(s3.file("object.txt").slice(10, 30))),
+  });
+  const head = await fetch(app.url, { method: "HEAD" });
+  const requestsForHead = s3Requests;
+  const get = await fetch(app.url);
+  expect({ head: head.headers.get("content-length"), requestsForHead }).toEqual({
+    head: get.headers.get("content-length"),
+    requestsForHead: 0,
+  });
+});
+
 // Handler callbacks (fetch/error/websocket.*) are stored on the JS wrapper and
 // traced by the GC rather than independently rooted. These tests lock in that
 // reload/stop transitions never leave a window where a handler is collected

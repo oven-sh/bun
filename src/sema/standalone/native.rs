@@ -950,6 +950,8 @@ extern "C" fn bun_cpu_features() -> u8 {
     0
 }
 #[unsafe(no_mangle)]
+extern "C" fn bun_initialize_process() {}
+#[unsafe(no_mangle)]
 extern "C" fn bun_restore_stdio() {}
 #[unsafe(no_mangle)]
 extern "C" fn on_before_reload_process_posix() {}

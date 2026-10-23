@@ -22,15 +22,16 @@ async function install(files: Record<string, object>) {
   return packageDir;
 }
 
-/** What the matcher reports for the project: one line for each dependency that node_modules gets wrong. */
-function problems(dir: string, lockfile = parseLockfile(dir)) {
-  const { pass, message } = toMatchNodeModulesAt(lockfile, dir);
-  return pass
-    ? []
-    : message()
-        .split("\n")
-        .slice(1)
-        .map(line => line.trim());
+/** What a failed `expect(lockfile).toMatchNodeModulesAt(dir)` lists: a line for each dependency that is wrong. */
+function problems(dir: string, lockfile = parseLockfile(dir)): string[] {
+  try {
+    expect(lockfile).toMatchNodeModulesAt(dir);
+    return [];
+  } catch (e) {
+    const lines = (e as Error).message.split("\n");
+    const header = lines.findIndex(line => line.endsWith("does not match the lockfile:"));
+    return lines.slice(header + 1).map(line => line.trim());
+  }
 }
 
 function editJson(path: string, edit: (json: any) => void) {
@@ -53,18 +54,19 @@ describe.concurrent("toMatchNodeModulesAt", () => {
 
     // The lockfile resolves a dependency to another version than the one on disk.
     const lockfile = parseLockfile(dir);
-    lockfile.packages.find((pkg: any) => pkg.name === "a-dep").resolution.value = "1.0.2";
-    expect(problems(dir, lockfile)).toEqual([
-      ". depends on aliased@npm:a-dep@1.0.1 (a-dep@1.0.2), but node_modules/aliased is a-dep@1.0.1",
-    ]);
+    lockfile.packages.find((pkg: any) => pkg.name === "one-fixed-dep").resolution.value = "1.0.1";
     expect(lockfile).not.toMatchNodeModulesAt(dir);
+    expect(problems(dir, lockfile)).toEqual([
+      ". depends on one-fixed-dep@1.0.0 (one-fixed-dep@1.0.1), but node_modules/one-fixed-dep is one-fixed-dep@1.0.0",
+    ]);
 
     // A package on disk is another version than the one the lockfile resolves.
-    editJson(join(nodeModules, "one-fixed-dep", "package.json"), json => (json.version = "3.0.0"));
+    const aliased = join(nodeModules, "aliased", "package.json");
+    editJson(aliased, json => (json.version = "1.0.2"));
     expect(problems(dir)).toEqual([
-      ". depends on one-fixed-dep@1.0.0 (one-fixed-dep@1.0.0), but node_modules/one-fixed-dep is one-fixed-dep@3.0.0",
+      ". depends on aliased@npm:a-dep@1.0.1 (a-dep@1.0.1), but node_modules/aliased is a-dep@1.0.2",
     ]);
-    editJson(join(nodeModules, "one-fixed-dep", "package.json"), json => (json.version = "1.0.0"));
+    editJson(aliased, json => (json.version = "1.0.1"));
     expect(problems(dir)).toEqual([]);
 
     // Without its nested copy, one-fixed-dep loads the root's no-deps.

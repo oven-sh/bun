@@ -970,6 +970,21 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
+/// `Bun__Process__exit` on the main thread of `bun test`.
+#[cold]
+pub(crate) fn on_process_exit(
+    runner: core::ptr::NonNull<jest::TestRunner<'static>>,
+    vm: &mut VirtualMachine,
+) {
+    // SAFETY: `RUNNER` is only accessed on the main thread, which the caller checked. `bail_out` holds
+    // `&mut CommandLineReporter` below this call and does not run again: the caller ends in `global_exit()`.
+    let ended_early = unsafe { (*runner.as_ptr()).ended_early };
+    // One of the 'exit' listeners that `--bail` runs calls `process.exit(0)`.
+    if ended_early && vm.exit_handler.exit_code == 0 {
+        vm.exit_handler.exit_code = 1;
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
@@ -1435,6 +1450,7 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
+        self.jest.ended_early = true;
         vm.exit_handler.exit_code = 1;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
@@ -1443,6 +1459,10 @@ impl CommandLineReporter {
         // `run_with_api_lock` takes `&self` only, so the closure holds the
         // unique mutable access on this single-threaded path.
         vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        // An 'exit' listener can store exit code 0 with `process.exitCode`.
+        if vm.exit_handler.exit_code == 0 {
+            vm.exit_handler.exit_code = 1;
+        }
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -1877,6 +1897,7 @@ impl TestCommand {
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
+                ended_early: false,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context); cast back to a typed `NonNull` —

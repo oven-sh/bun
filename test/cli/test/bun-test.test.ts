@@ -1886,6 +1886,37 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    // Serial: three node:test files at once take seconds to load in a debug build.
+    test.serial("cannot make a run that --bail stops exit 0", async () => {
+      const run = (listener: string) =>
+        runFiles(
+          {
+            "node-bail.test.ts": `
+              import { test } from "node:test";
+              import assert from "node:assert";
+              process.on("exit", code => { console.log("exit listener ran with", code); ${listener}; });
+              test("fails", () => assert.strictEqual(1, 2));
+            `,
+          },
+          "--bail",
+          "node-bail.test.ts",
+        );
+      const [stores0, exits0, stores3] = await Promise.all([
+        run("process.exitCode = 0"),
+        run("process.exit(0)"),
+        run("process.exitCode = 3"),
+      ]);
+      for (const { stdout, stderr } of [stores0, exits0, stores3]) {
+        expect(stdout).toContain("exit listener ran with 1");
+        expect(stderr.match(/Bailed out after 1 failure/g)).toHaveLength(1);
+      }
+      expect({ stores0: stores0.exitCode, exits0: exits0.exitCode, stores3: stores3.exitCode }).toEqual({
+        stores0: 1,
+        exits0: 1,
+        stores3: 3,
+      });
+    });
+
     test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
       using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
       await using proc = Bun.spawn({

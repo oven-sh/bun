@@ -263,7 +263,7 @@ function underCaret(preview: string, text: string) {
   const caret = lines.findIndex(line => /^\s*\^$/.test(line));
   if (caret < 1) return lines.some(line => Buffer.byteLength(line) > 1024) ? text : preview;
   const under = lines[caret - 1].slice(lines[caret].indexOf("^"));
-  // In most lanes `new X()` is at `new`, where V8 has it, until the stack of the error is read, and at `X` after that.
+  // `new X()` is at `new`, where V8 has it. A lane that prints the text of a frame is at `X` (the text after "new ").
   return (under.startsWith("new " + text) ? under.slice(4) : under).slice(0, text.length);
 }
 
@@ -276,31 +276,40 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
     expect(lanes[laneName].failed).toEqual({});
   });
 
+  // The runtime transpiler and a minified build make `new RangeError()` a call, which is at its callee.
+  const dropsNew = laneName === "run" || laneName === "minified";
+
   test.each(Object.keys(variants))("%s: where a call or an error is", variantName => {
     const wrong: Record<string, unknown> = {};
     let checked = 0;
-    for (const { id, file, line, column, text } of probes) {
+    for (const probe of probes) {
+      const { id, file, line } = probe;
       if (!file.startsWith(variantName + "/")) continue;
       const said = lanes[laneName][id];
       if (!said?.stack) continue;
       checked++;
-      const expected = `${file}:${line}:${column}`;
-      const frames = said.stack.split("\n").slice(1).map(position);
-      const frame = frames.findIndex(frame => frame.startsWith(file + ":"));
-      const got = {
-        stack: frames[frame],
-        ...(said.callSite && { callSite: position(said.callSite), getCallSites: position(said.getCallSites) }),
-        // The preview is of the first frame.
-        preview: frame === 0 ? underCaret(said.preview, text) : text,
-        previewAfterStack: frame === 0 && hasPreviewAfterStack ? underCaret(said.previewAfterStack, text) : text,
-      };
-      const want = {
-        stack: expected,
-        ...(said.callSite && { callSite: expected, getCallSites: expected }),
-        preview: text,
-        previewAfterStack: text,
-      };
-      if (!Bun.deepEquals(got, want)) wrong[`${expected} ${text}`] = got;
+      const places = [probe];
+      if (dropsNew && probe.text.startsWith("new ")) places.push({ ...probe, column: probe.column + 4, text: probe.text.slice(4) });
+      const results = places.map(({ column, text }) => {
+        const expected = `${file}:${line}:${column}`;
+        const frames = said.stack.split("\n").slice(1).map(position);
+        const frame = frames.findIndex(frame => frame.startsWith(file + ":"));
+        const got = {
+          stack: frames[frame],
+          ...(said.callSite && { callSite: position(said.callSite), getCallSites: position(said.getCallSites) }),
+          // The preview is of the first frame.
+          preview: frame === 0 ? underCaret(said.preview, text) : text,
+          previewAfterStack: frame === 0 && hasPreviewAfterStack ? underCaret(said.previewAfterStack, text) : text,
+        };
+        const want = {
+          stack: expected,
+          ...(said.callSite && { callSite: expected, getCallSites: expected }),
+          preview: text,
+          previewAfterStack: text,
+        };
+        return { expected, text, got, right: Bun.deepEquals(got, want) };
+      });
+      if (!results.some(result => result.right)) wrong[`${results[0].expected} ${results[0].text}`] = results[0].got;
     }
     expect(wrong).toEqual({});
     expect(checked).toBeGreaterThan(0);

@@ -5,11 +5,14 @@
 
 #pragma once
 
-#include "ErrorStackTrace.h"
+#include "root.h"
+#include "headers-handwritten.h"
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
+#include <JavaScriptCore/StackFrame.h>
 #include "BunClientData.h"
+#include "ZigGlobalObject.h"
 #include "wtf/text/OrdinalNumber.h"
 
 using namespace JSC;
@@ -17,8 +20,9 @@ using namespace WebCore;
 
 namespace Zig {
 
-class JSCStackFrame;
-
+// A frame of a stack trace as Error.prepareStackTrace sees it: a view over the record that
+// Bun::populateStackFrame derives from the JSC::StackFrame, plus what only the frame has (the callee,
+// its strictness, the source ID).
 class CallSite final : public JSC::JSNonFinalObject {
 public:
     enum class Flags {
@@ -30,12 +34,15 @@ public:
         IsFunction = 32,
         IsAsync = 64,
         IsSloppyFunctionCall = 128,
+        IsBuiltin = 256,
     };
 
 private:
     JSC::WriteBarrier<JSC::Unknown> m_thisValue;
     JSC::WriteBarrier<JSC::Unknown> m_function;
     JSC::WriteBarrier<JSC::Unknown> m_functionName;
+    // The record's source URL: empty for a host function, a builtin, a WebAssembly function and a
+    // script with no URL. fileName() stands in a placeholder for those.
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
     OrdinalNumber m_lineNumber;
     OrdinalNumber m_columnNumber;
@@ -45,11 +52,11 @@ private:
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const JSC::StackFrame& stackFrame, const ZigStackFrame& record, bool encounteredStrictFrame)
     {
         auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
-        callSite->finishCreation(vm, stackFrame, encounteredStrictFrame);
+        callSite->finishCreation(vm, stackFrame, record, encounteredStrictFrame);
         return callSite;
     }
 
@@ -71,7 +78,8 @@ public:
     JSC::JSValue thisValue() const { return m_thisValue.get(); }
     JSC::JSValue function() const { return m_function.get(); }
     JSC::JSValue functionName() const { return m_functionName.get(); }
-    JSC::JSValue sourceURL() const { return m_sourceURL.get(); }
+    // What getFileName() returns: the source URL, or a placeholder for a frame that has none.
+    JSC::JSString* fileName(JSC::VM&) const;
     OrdinalNumber lineNumber() const { return m_lineNumber; }
     OrdinalNumber columnNumber() const { return m_columnNumber; }
     intptr_t sourceID() const { return m_sourceID; }
@@ -79,13 +87,12 @@ public:
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
+    bool isWasm() const { return m_flags & static_cast<unsigned int>(Flags::IsWasm); }
+    bool isBuiltin() const { return m_flags & static_cast<unsigned int>(Flags::IsBuiltin); }
     bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
     bool isSloppyFunctionCall() const { return m_flags & static_cast<unsigned int>(Flags::IsSloppyFunctionCall); }
 
-    void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
-    void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
-    void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
-
+    // The line of error.stack for this frame, without its "    at ".
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:
@@ -98,7 +105,7 @@ private:
     {
     }
 
-    void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, const JSC::StackFrame& stackFrame, const ZigStackFrame& record, bool encounteredStrictFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

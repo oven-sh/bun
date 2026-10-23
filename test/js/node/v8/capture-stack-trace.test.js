@@ -2138,7 +2138,7 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
-    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (unknown)" },
     stderr: "",
   });
   expect(exitCode).toBe(0);

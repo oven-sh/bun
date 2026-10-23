@@ -94,25 +94,6 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
     return implementationVisibility != ImplementationVisibility::Public;
 }
 
-JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames)
-{
-    WTF::Vector<JSCStackFrame> newFrames;
-
-    size_t frameCount = existingFrames.size();
-    if (0 == frameCount) {
-        return JSCStackTrace();
-    }
-
-    newFrames.reserveInitialCapacity(frameCount);
-    for (size_t i = 0; i < frameCount; i++) {
-        if (!isImplementationVisibilityPrivate(existingFrames.at(i))) {
-            newFrames.constructAndAppend(vm, existingFrames.at(i));
-        }
-    }
-
-    return JSCStackTrace(newFrames);
-}
-
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
@@ -169,8 +150,9 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             break;
         }
         if (!callerName.isEmpty()) {
-            WTF::String frameName = Zig::functionName(vm, frame, nullptr);
-            if (frameName == callerName) {
+            Bun::OwnedZigStackFrames record(1);
+            Bun::populateStackFrame(vm, frame, record[0]);
+            if (record[0].function_name.toWTFString(BunString::ZeroCopy) == callerName) {
                 removeCount = i + 1;
                 break;
             }
@@ -182,170 +164,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);
-}
-
-static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
-{
-    if (!codeBlock->ownerExecutable()) {
-        return false;
-    }
-
-    const JSC::SourceCode& source = codeBlock->source();
-    return !Zig::sourceURL(source).isEmpty();
-}
-
-JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
-    : m_vm(vm)
-    , m_stackFrame(&frame)
-    , m_codeBlock(nullptr)
-    , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL()
-    , m_functionName()
-    , m_isWasmFrame(false)
-    , m_isAsync(frame.isAsyncFrame())
-    , m_sourcePositionsState(SourcePositionsState::NotCalculated)
-{
-    m_callee = frame.callee();
-
-    // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
-    if (frame.isWasmFrame()) {
-        m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
-        m_isWasmFrame = true;
-    } else if (auto* codeBlock = frame.codeBlock()) {
-        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
-            m_codeBlock = codeBlock;
-            m_bytecodeIndex = frame.bytecodeIndex();
-        }
-
-        auto codeType = codeBlock->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
-    }
-
-    if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
-        auto lineColumn = frame.computeLineAndColumn();
-        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
-        m_sourcePositionsState = SourcePositionsState::Calculated;
-        auto codeType = frame.codeBlock()->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
-    }
-}
-
-intptr_t JSCStackFrame::sourceID() const
-{
-    return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
-}
-
-JSC::JSString* JSCStackFrame::sourceURL()
-{
-    if (!m_sourceURL) {
-        m_sourceURL = retrieveSourceURL();
-    }
-
-    return jsString(this->m_vm, m_sourceURL);
-}
-
-JSC::JSString* JSCStackFrame::functionName()
-{
-    if (!m_functionName) {
-        m_functionName = retrieveFunctionName();
-    }
-
-    return jsString(this->m_vm, m_functionName);
-}
-
-JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
-{
-    if (SourcePositionsState::NotCalculated == m_sourcePositionsState) {
-        m_sourcePositionsState = calculateSourcePositions() ? SourcePositionsState::Calculated : SourcePositionsState::Failed;
-    }
-
-    return (SourcePositionsState::Calculated == m_sourcePositionsState) ? &m_sourcePositions : nullptr;
-}
-
-ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
-{
-    static const auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
-
-    if (m_isWasmFrame) {
-        return String(sourceURLWasmString);
-    }
-
-    auto url = Zig::sourceURL(m_codeBlock);
-    if (!url.isEmpty()) {
-        return url;
-    }
-
-    if (m_callee && m_callee->isObject()) {
-        if (auto* jsFunction = dynamicDowncast<JSFunction>(m_callee)) {
-            WTF::String url = Zig::sourceURL(m_vm, jsFunction);
-            if (!url.isEmpty()) {
-                return url;
-            }
-        }
-    }
-
-    // BUGFIX: Don't return empty string which breaks the 'bindings' npm package
-    // The bindings package uses Error.prepareStackTrace to find the calling module
-    // but empty filenames cause it to use the wrong module root directory
-    // Instead, try to get some identifying information for this frame
-
-    // Try to use sourceID if available
-    if (m_codeBlock) {
-        auto sourceID = m_codeBlock->ownerExecutable()->sourceID();
-        if (sourceID != JSC::noSourceID) {
-            // Use a placeholder that includes the sourceID to make frames distinguishable
-            return makeString("[source:"_s, sourceID, "]"_s);
-        }
-    }
-
-    // Last resort: return a distinguishable placeholder instead of empty string
-    return "[unknown]"_s;
-}
-
-ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
-{
-
-    if (m_isWasmFrame) {
-        return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
-    }
-
-    if (m_callee) {
-        auto* calleeObject = m_callee->getObject();
-        if (calleeObject) {
-            return Zig::functionName(m_vm, calleeObject);
-        }
-    }
-
-    if (m_codeBlock) {
-        auto functionName = Zig::functionName(m_vm, m_codeBlock);
-        if (!functionName.isEmpty()) {
-            return functionName;
-        }
-    }
-
-    return emptyString();
-}
-
-// General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)
-bool JSCStackFrame::calculateSourcePositions()
-{
-    if (!m_codeBlock) {
-        return false;
-    }
-    if (!hasBytecodeIndex()) {
-        return false;
-    }
-
-    auto location = Bun::getAdjustedPositionForBytecode(m_codeBlock, m_bytecodeIndex);
-    m_sourcePositions.line = location.line();
-    m_sourcePositions.column = location.column();
-
-    return true;
 }
 
 String sourceURL(const JSC::SourceOrigin& origin)
@@ -399,19 +217,6 @@ String sourceURL(JSC::CodeBlock* codeBlock)
     }
 
     return Zig::sourceURL(*codeBlock);
-}
-
-String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
-{
-    if (frame.isWasmFrame()) {
-        return "[wasm code]"_s;
-    }
-
-    if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
-        return "[native code]"_s;
-    }
-
-    return sourceURL(frame.codeBlock());
 }
 
 String sourceURL(JSC::StackVisitor& visitor)
@@ -501,57 +306,6 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
             }
         }
-    }
-
-    return functionName;
-}
-
-String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
-{
-    bool isConstructor = false;
-    WTF::String functionName;
-    JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
-
-    if (frame.hasLineAndColumnInfo()) {
-        auto* codeblock = frame.codeBlock();
-        if (codeblock->isConstructor()) {
-            isConstructor = true;
-        }
-
-        auto codeType = codeblock->codeType();
-        switch (codeType) {
-        case JSC::CodeType::FunctionCode:
-        case JSC::CodeType::EvalCode: {
-            if (flags) {
-                if (codeType == JSC::CodeType::EvalCode) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
-                } else {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                }
-            }
-            if (callee) {
-                functionName = Zig::functionName(vm, callee);
-
-                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                }
-            }
-            break;
-        }
-        default: {
-            break;
-        }
-        }
-
-        if (functionName.isEmpty()) {
-            functionName = Zig::functionName(vm, codeblock);
-        }
-    } else if (callee) {
-        functionName = Zig::functionName(vm, callee);
-    }
-
-    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {
-        return makeString("new "_s, functionName);
     }
 
     return functionName;

@@ -63,64 +63,14 @@ enum PopulateStackTraceFlags {
 
 #define SYNTAX_ERROR_CODE 4
 
-static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stackFrame, ZigStackFrame& frame)
-{
-    if (stackFrame.isWasmFrame()) {
-        frame.code_type = ZigStackFrameCodeWasm;
-
-        auto name = Zig::functionName(vm, stackFrame, nullptr);
-        if (!name.isEmpty()) {
-            frame.function_name = Bun::toStringRef(name);
-        }
-
-        auto sourceURL = Zig::sourceURL(vm, stackFrame);
-        if (sourceURL != "[wasm code]"_s) {
-            // [wasm code] is a useless source URL, so we don't bother to set it.
-            // It is the default value JSC returns.
-            frame.source_url = Bun::toStringRef(sourceURL);
-        }
-        return;
-    }
-
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
-    auto m_codeBlock = stackFrame.codeBlock();
-    if (m_codeBlock) {
-        switch (m_codeBlock->codeType()) {
-        case JSC::EvalCode: {
-            frame.code_type = ZigStackFrameCodeEval;
-            return;
-        }
-        case JSC::ModuleCode: {
-            frame.code_type = ZigStackFrameCodeModule;
-            return;
-        }
-        case JSC::GlobalCode: {
-            frame.code_type = ZigStackFrameCodeGlobal;
-            return;
-        }
-        case JSC::FunctionCode: {
-            frame.code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
-            break;
-        }
-        default:
-            ASSERT_NOT_REACHED();
-        }
-    }
-
-    WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
-    if (!functionName.isEmpty())
-        frame.function_name = Bun::toStringRef(functionName);
-
-    frame.is_async = stackFrame.isAsyncFrame();
-}
-
-static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
+// The lines of source around the frame, for the preview under an uncaught error. `position` is the
+// frame's own (the record's, before any source map), so it locates the text of the file that ran.
+static void populateStackFrameSourceLines(const JSC::StackFrame& stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
+    const ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider)
 {
     auto code = stackFrame.codeBlock();
-    if (!code)
+    if (!code || position.byte_position < 0)
         return;
 
     auto* provider = code->source().provider();
@@ -132,21 +82,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (sourceString.isNull()) [[unlikely]]
         return;
 
-    if (!stackFrame.hasBytecodeIndex()) {
-        if (stackFrame.hasLineAndColumnInfo()) {
-            auto lineColumn = stackFrame.computeLineAndColumn();
-            position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-            position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
-        }
-
-        position.byte_position = -1;
-        return;
-    }
-
-    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
-    memcpy(&position, &location, sizeof(ZigStackFramePosition));
-    if (flags == PopulateStackTraceFlags::OnlyPosition)
-        return;
+    ZigStackFramePosition location = position;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit() && !sourceString.isEmpty()) {
         unsigned int maxSearch = sourceString.length();
@@ -217,14 +153,9 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
     ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
-        populateStackFrameMetadata(vm, stackFrame, frame);
-        populateStackFramePosition(stackFrame, nullptr,
-            nullptr,
-            0, frame.position, referenced_source_provider, flags);
-    } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
-            is_top ? trace.source_lines_numbers : nullptr,
-            is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
+        Bun::populateStackFrame(vm, stackFrame, frame);
+    } else if (flags == PopulateStackTraceFlags::OnlySourceLines && is_top) {
+        populateStackFrameSourceLines(stackFrame, trace.source_lines_ptr, trace.source_lines_numbers, trace.source_lines_to_collect, frame.position, referenced_source_provider);
     }
 }
 

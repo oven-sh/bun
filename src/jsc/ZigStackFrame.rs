@@ -9,7 +9,7 @@ use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
 use crate::exception_list;
-use crate::{ZigStackFrameCode, ZigStackFramePosition};
+use crate::{ZigStackFrameCode, ZigStackFrameKind, ZigStackFramePosition};
 
 /// Represents a single frame in a stack trace
 #[repr(C)]
@@ -23,9 +23,14 @@ pub struct ZigStackFrame {
     /// This informs formatters whether to display as a blob URL or not
     pub remapped: bool,
 
+    pub kind: ZigStackFrameKind,
+
     /// -1 means not set.
     pub jsc_stack_frame_index: i32,
 }
+
+// Shared with C++ as `ZigStackFrame` in `headers-handwritten.h`.
+const _: () = assert!(size_of::<ZigStackFrame>() == 2 * size_of::<BunString>() + 24);
 
 impl ZigStackFrame {
     pub(crate) fn snapshot(
@@ -58,6 +63,7 @@ impl ZigStackFrame {
         position: ZigStackFramePosition::INVALID,
         is_async: false,
         remapped: false,
+        kind: ZigStackFrameKind::SCRIPT,
         jsc_stack_frame_index: -1,
     };
 

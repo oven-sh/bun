@@ -24,7 +24,7 @@ use bun_core::{String as BunString, strings};
 use bun_io::Write as _;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
-    ZigStackFramePosition, ZigStackTrace,
+    ZigStackFrameKind, ZigStackFramePosition, ZigStackTrace,
 };
 use bun_paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};
@@ -152,6 +152,7 @@ impl ErrorReportRequest {
                 code_type: ZigStackFrameCode::NONE,
                 is_async: false,
                 remapped: false,
+                kind: ZigStackFrameKind::SCRIPT,
                 jsc_stack_frame_index: -1,
             });
         }

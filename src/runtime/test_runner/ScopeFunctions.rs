@@ -455,7 +455,7 @@ impl ScopeFunctions {
         if cfg.self_mode == SelfMode::Failing && self.mode == Mode::Describe {
             return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         }
-        if cfg.self_only {
+        if cfg.self_only && !jest::Jest::runner().is_some_and(|runner| runner.only) {
             error_in_ci(global, b".only")?;
         }
         let Some(extended) = self.cfg.extend(cfg) else {
@@ -468,7 +468,7 @@ impl ScopeFunctions {
 fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     if bun_core::ci_info::is_ci() {
         return Err(global.throw(format_args!(
-            "{} is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
+            "{} is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.",
             bstr::BStr::new(signature)
         )));
     }

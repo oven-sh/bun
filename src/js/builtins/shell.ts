@@ -2,12 +2,12 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   const createShellInterpreter = createShellInterpreter_ as (
     resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
     reject: (error: unknown) => void,
-    args: $ZigGeneratedClasses.ParsedShellScript,
-  ) => $ZigGeneratedClasses.ShellInterpreter;
+    args: $Bindgen.ParsedShellScript,
+  ) => $Bindgen.ShellInterpreter;
   const createParsedShellScript = createParsedShellScript_ as (
     raw: string,
     args: string[],
-  ) => $ZigGeneratedClasses.ParsedShellScript;
+  ) => $Bindgen.ParsedShellScript;
 
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
@@ -104,13 +104,13 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   }
 
   class ShellPromise extends Promise<ShellOutput> {
-    #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
+    #args: $Bindgen.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (error: unknown) => void;
 
-    constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
+    constructor(args: $Bindgen.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace
@@ -131,7 +131,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        // Only for a failure to build the output buffers; exit codes go through `resolve`.
+        // Only for a JS error raised by the interpreter itself; exit codes go through `resolve`.
         reject = error => {
           potentialError = undefined;
           rej(error);
@@ -245,7 +245,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return this;
     }
 
-    then(onfulfilled, onrejected) {
+    then<TResult1 = ShellOutput, TResult2 = never>(
+      onfulfilled?: ((value: ShellOutput) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+    ): Promise<TResult1 | TResult2> {
       this.#run();
 
       return super.then(onfulfilled, onrejected);
@@ -341,7 +344,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return new ShellPromise(parsed_shell_script, throws);
     };
 
-    Object.setPrototypeOf(Shell, ShellPrototype.prototype);
+    const prototype = new.target.prototype;
+    Object.setPrototypeOf(Shell, $isObject(prototype) ? prototype : ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
 
     Shell[cwdSymbol] = defaultCwd;

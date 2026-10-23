@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-use crate::dependency::{Dependency, DependencyExt as _};
+use crate::dependency::{Dependency, DependencyExt as _, TagExt as _, VersionTag};
 
 #[derive(Clone, Copy)]
 pub(crate) struct PackageSelector<'a> {
@@ -37,7 +37,14 @@ pub(crate) fn parse_package_segment(segment: &[u8]) -> Result<PackageSelector<'_
     if is_bare_scope(name) {
         return Err(SelectorError::InvalidName);
     }
-    let range = strings::without_prefix(range.unwrap_or(b""), b"npm:");
+    let range = range.unwrap_or(b"");
+    // `npm:^1` is the range `^1`. `npm:other` and `npm:other@^1` are aliases and keep the prefix.
+    // Unlike `dependency::without_npm_protocol`, this also reads `npm:1` and `npm:x` as ranges,
+    // because an override key only selects versions and never names a package to fetch.
+    let range = match range.strip_prefix(b"npm:") {
+        Some(rest) if rest.is_empty() || VersionTag::infer(rest) == VersionTag::Npm => rest,
+        _ => range,
+    };
     if range.is_empty() && segment.len() > name.len() {
         return Err(SelectorError::EmptyRange);
     }
@@ -60,13 +67,14 @@ pub(crate) fn parse_selector(key: &[u8]) -> Result<Selector<'_>, SelectorError> 
     parse_yarn_path(key)
 }
 
-/// pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` not preceded by a space, `|` or `@`.
+/// Finds pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` that doesn't come after a
+/// space, `|`, `@`, or the `:` in Yarn's `name@npm:>=1`.
 fn pnpm_delimiter(key: &[u8]) -> Option<usize> {
     let mut from = 1;
     while from < key.len() {
         let i = from + strings::index_of_char_usize(&key[from..], b'>')?;
         match key[i - 1] {
-            b' ' | b'|' | b'@' => from = i + 1,
+            b' ' | b'|' | b'@' | b':' => from = i + 1,
             _ => return Some(i),
         }
     }
@@ -124,6 +132,14 @@ fn parse_yarn_path(key: &[u8]) -> Result<Selector<'_>, SelectorError> {
                 return Err(SelectorError::EmptyName);
             }
             end = name_start + name.len();
+        }
+        // In `name@npm:@scope/other@^1` the `/` is part of the alias target, not a path separator.
+        if strings::contains(&key[start..end], b"@npm:@")
+            && let Some(rest_start) = cursor
+        {
+            let (rest, after) = next_token(key, rest_start);
+            cursor = after;
+            end = rest_start + rest.len();
         }
         if count == segments.len() {
             return Err(SelectorError::TooDeep);

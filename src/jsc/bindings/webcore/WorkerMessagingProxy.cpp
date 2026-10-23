@@ -127,12 +127,10 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     if (!Bun::tryReserveCapacityWithinLimit(preloadModules, m_options.preloadModules.size())) [[unlikely]]
         return Exception { OutOfMemoryError };
     for (auto& str : m_options.preloadModules) {
-        if (str.startsWith("file://"_s)) {
-            WTF::URL urlObject = WTF::URL(str);
-            if (!urlObject.isValid())
-                return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
-            str = urlObject.fileSystemPath();
-        }
+        auto resolved = Worker::resolveScriptURL(str);
+        if (resolved.hasException())
+            return resolved.releaseException();
+        str = resolved.releaseReturnValue();
         preloadModules.append(Bun::toString(str));
     }
 

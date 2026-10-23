@@ -740,6 +740,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
+                // The file's own `require` variable (`Ast::owns_require_ref`)
+                // keeps its value on the hoisted declaration: in an import
+                // cycle a hoisted function can run before the wrapper does.
+                let own_require_ref = ast
+                    .flags
+                    .contains(AstFlags::OWNS_REQUIRE_REF)
+                    .then_some(ast.require_ref);
+
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
                     let mut end: usize = 0;
@@ -762,8 +770,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
-                                        if initializer.can_be_moved()
-                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                        if matches!(decl.binding.data, B::B::BIdentifier(id)
+                                            if initializer.can_be_moved()
+                                                || own_require_ref == Some(id.get().r#ref))
                                         {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {

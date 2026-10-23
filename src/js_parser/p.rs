@@ -306,6 +306,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) has_called_runtime: bool,
 
+    /// Code that can run stores into the free `require`, and the store prints
+    /// as `ERequireCallTarget`. Unlike `has_been_assigned_to` of `require_ref`,
+    /// not set by a store in dead code, in a `with` body, or that a `define`
+    /// replaced.
+    pub(crate) assigns_free_require: bool,
+
     /// The current part's symbol uses, built from `part_uses` when the part
     /// is done (`take_symbol_uses`); empty while visiting.
     pub(crate) symbol_uses: SymbolUseMap,
@@ -6008,6 +6014,105 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// A bundle has one `require` for all of its files. A file that assigns
+    /// the free `require` gets a variable of its own instead, and the printer
+    /// spells every `ERequireCallTarget` of that file as the variable.
+    ///
+    /// Returns the variable and the part `var <variable> = <the bundle's require>;`.
+    /// The part is not removable: no other part lists the variable as a use.
+    #[cold]
+    pub(crate) fn declare_own_require(&mut self) -> Result<(Ref, js_ast::Part), crate::Error> {
+        debug_assert!(self.options.features.per_file_require);
+        let loc = bun_ast::Loc::EMPTY;
+
+        let bundle_require = match self.options.output_format {
+            options::Format::Esm => {
+                self.record_usage_of_runtime_require();
+                self.new_expr(
+                    E::ImportIdentifier::new(self.runtime_imports.__require, false),
+                    loc,
+                )
+            }
+            // `typeof require === "undefined" ? undefined : require`: the
+            // output can run where there is no `require`.
+            options::Format::Cjs => {
+                let require = Expr::init_identifier(self.require_ref, loc);
+                let test = self.check_if_defined_helper(require)?;
+                let yes = self.new_expr(E::Undefined {}, loc);
+                self.new_expr(
+                    E::If {
+                        test,
+                        yes,
+                        no: require,
+                    },
+                    loc,
+                )
+            }
+            // `hmr.require.bind(hmr)`
+            options::Format::InternalBakeDev => {
+                let hmr = Expr::init_identifier(self.hmr_api_ref, loc);
+                let require = self.new_expr(
+                    E::Dot {
+                        target: hmr,
+                        name: b"require".into(),
+                        name_loc: loc,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                let bind = self.new_expr(
+                    E::Dot {
+                        target: require,
+                        name: b"bind".into(),
+                        name_loc: loc,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                self.new_expr(
+                    E::Call {
+                        target: bind,
+                        args: ExprNodeList::init_one(hmr),
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            }
+            options::Format::Iife => unreachable!("`per_file_require` is off for iife output"),
+        };
+
+        let ref_ = self.declare_generated_symbol(js_ast::symbol::Kind::Hoisted, b"require");
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::init_capacity(1)?;
+        declared_symbols.append_assume_capacity(DeclaredSymbol {
+            ref_,
+            is_top_level: true,
+        });
+
+        let binding = self.b(B::Identifier { r#ref: ref_ }, loc);
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::s::Kind::KVar,
+                decls: G::DeclList::from_slice(&[Decl {
+                    binding,
+                    value: Some(bundle_require),
+                }]),
+                ..Default::default()
+            },
+            loc,
+        );
+        let stmts = self.arena.alloc_slice_fill_with::<Stmt, _>(1, |_| stmt);
+
+        Ok((
+            ref_,
+            js_ast::Part {
+                stmts: stmts.into(),
+                declared_symbols,
+                symbol_uses: self.take_symbol_uses()?,
+                ..Default::default()
+            },
+        ))
+    }
+
     #[inline]
     pub(crate) fn value_for_import_meta_main(&mut self, inverted: bool, loc: bun_ast::Loc) -> Expr {
         if let Some(known) = self.options.import_meta_main_value {
@@ -8811,6 +8916,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        // The variable from `declare_own_require`, if the file has one.
+        own_require_ref: Option<Ref>,
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -9265,7 +9372,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (self.options.code_splitting
                     || exports_kind == js_ast::ExportsKind::Cjs
                     || force_cjs_to_esm
-                    || self.needs_wrapper_ref(parts.as_slice()))
+                    || self.needs_wrapper_ref(parts.as_slice(), own_require_ref))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -9324,10 +9431,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // parser's accumulated runtime-helper refs into the Ast so the linker /
         // printer can emit `__require`, `__toESM`, etc. Precompute `require_ref`
         // first since it reads `__require` from the same struct we're taking.
-        let require_ref = self
-            .runtime_imports
-            .__require
-            .to_nullable()
+        let require_ref = own_require_ref
+            .or(self.runtime_imports.__require.to_nullable())
             .unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
@@ -9376,6 +9481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             nested_scope_slot_counts,
 
             require_ref,
+            owns_require_ref: own_require_ref.is_some(),
 
             force_cjs_to_esm,
             commonjs_lifted_to_esm: force_cjs_to_esm && !self.has_es_module_syntax,
@@ -9485,7 +9591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///
     /// The logic in this function must be in sync with the hoisting
     /// logic in `LinkerContext.generateCodeForFileInChunkJS`
-    fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
+    fn needs_wrapper_ref(&self, parts: &[js_ast::Part], own_require_ref: Option<Ref>) -> bool {
         debug_assert!(self.options.bundle);
         for part in parts {
             // Part.stmts is an arena-owned slice valid for 'a.
@@ -9508,12 +9614,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
                                     // The linker keeps a pattern inside the wrapper.
+                                    // It hoists the declaration from `declare_own_require` whole.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
-                                        && (!value.can_be_moved()
-                                            || !matches!(
-                                                decl.binding.data,
-                                                js_ast::b::B::BIdentifier(_)
-                                            ))
+                                        && !matches!(
+                                            decl.binding.data,
+                                            js_ast::b::B::BIdentifier(id)
+                                                if value.can_be_moved()
+                                                    || own_require_ref == Some(id.r#ref)
+                                        )
                                     {
                                         return true;
                                     }
@@ -9734,6 +9842,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
+            assigns_free_require: false,
             symbol_uses,
             part_uses: Vec::new(),
             part_use_slot: Vec::new(),

@@ -2431,6 +2431,14 @@ impl<'a> LinkerContext<'a> {
             // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
 
+        let bundle_require_ref = match self.options.output_format {
+            Format::Cjs => None, // use unbounded global
+            _ => runtime_require_ref,
+        };
+        // A file that assigns `require` assigns its own variable, so that the
+        // other files of the bundle keep `bundle_require_ref`.
+        let owns_require_ref = ast.flags.contains(AstFlags::OWNS_REQUIRE_REF);
+
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
@@ -2469,10 +2477,12 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            require_ref: match self.options.output_format {
-                Format::Cjs => None, // use unbounded global
-                _ => runtime_require_ref,
+            require_ref: if owns_require_ref {
+                Some(ast.require_ref)
+            } else {
+                bundle_require_ref
             },
+            bundle_require_ref: owns_require_ref.then_some(bundle_require_ref),
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),

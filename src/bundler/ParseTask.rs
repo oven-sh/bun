@@ -2564,6 +2564,16 @@ pub mod parse_worker {
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+        // Node and Bun give each module its own `require`. For a browser it
+        // is a global that scripts share.
+        opts.features.per_file_require = !task.source_index.is_runtime()
+            && match output_format {
+                // `hmr.require` also loads the bundled imports of the module.
+                options::Format::InternalBakeDev => true,
+                // The runtime's `__require` for node cannot load in a script.
+                options::Format::Iife => false,
+                options::Format::Esm | options::Format::Cjs => target.is_server_side(),
+            };
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler = if topts.react_compiler.is_enabled()

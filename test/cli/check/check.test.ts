@@ -15594,6 +15594,61 @@ export const d5 = v[2];
       expect(exitCode).toBe(1);
     });
 
+    // https://github.com/oven-sh/bun/issues/46470. The contextual parameter type mentions a type the inference context
+    // instantiates, but not the type parameter being inferred. The arrow's return type must still be inferred from.
+    test("infers the return type of a context sensitive function whose parameter type has an instantiated type argument", async () => {
+      using dir = project({
+        // `infer Rest` twice keeps `Rest` in the literal's mapper, so `typeof spread` is instantiated with the context.
+        "spread.ts": `type Parse<S extends string> = S extends \`\${infer Rest},\${infer Rest}\` ? never : { type: "field"; name: S };
+type Pick1<F extends { name: string }> = { [K in F["name"]]: string };
+declare const row: Pick1<Parse<"id">>;
+const spread = { ...row };
+interface State<TExtra = typeof spread> { isLoading: boolean; extra: TExtra; }
+declare function useSelector<TSelected>(selector: (state: State) => TSelected): TSelected;
+export const isLoading: never = useSelector((state) => state.isLoading);
+export const one: never = useSelector((state) => 1);
+export const id: never = useSelector((state) => state.extra.id);
+`,
+        // The type argument has a call signature.
+        "signature.ts": `declare function idf<T>(f: (x: T) => T): (x: T) => T;
+const g = idf(<U>(x: U) => x);
+interface State<TExtra> { isLoading: boolean; extra: TExtra; }
+declare function useSelector<TSelected>(selector: (state: State<typeof g>) => TSelected): TSelected;
+export const one: never = useSelector((state) => 1);
+export const extra: never = useSelector((state) => state.extra);
+`,
+        // The contextual signature is an instantiation, so its parameter types are read through its mapper.
+        "callable.ts": `declare function idf<T>(f: (x: T) => T): (x: T) => T;
+const g = idf(<U>(x: U) => x);
+interface Selector<R> { (state: typeof g): R }
+declare function useSelector<TSelected>(selector: Selector<TSelected>): TSelected;
+export const one: never = useSelector((state) => 1);
+`,
+        // Instantiating `typeof spread` counts once towards the depth limit, not once more per member.
+        "deep.ts": `type Parse<S extends string> = S extends \`\${infer Rest},\${infer Rest}\` ? never : { type: "field"; name: S };
+type Pick1<F extends { name: string }> = { [K in F["name"]]: string };
+declare const row: Pick1<Parse<"id">>;
+declare const inner: Parse<"id">;
+const spread = { ...row, inner };
+type Wrap<T> = { w: T };
+type Deep<N extends number, A extends any[] = []> = A["length"] extends N ? Wrap<Wrap<typeof spread>> : Wrap<Deep<N, [...A, 1]>>;
+export const probe: never = null! as Deep<47>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.replace(repeat("Wrap<", 49), "<49 Wrap<>").replace(repeat(">", 18), "<18 >>"))
+        .toMatchInlineSnapshot(`
+        "callable.ts(5,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        deep.ts(8,14): error TS2322: Type '<49 Wrap<>{ inner: { type: "field"; name: "id"; }; id: string; }<18 >>...' is not assignable to type 'never'.
+        signature.ts(5,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        signature.ts(6,14): error TS2322: Type '<U>(x: U) => U' is not assignable to type 'never'.
+        spread.ts(7,14): error TS2322: Type 'boolean' is not assignable to type 'never'.
+        spread.ts(8,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        spread.ts(9,14): error TS2322: Type 'string' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("`this` is the type parameter if its constraint is a tuple type intersected with its alias", async () => {
       using dir = project({
         "a.ts": `type NS = [number, string[]];

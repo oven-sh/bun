@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 // Find the slowest test files in a CI build.
 //
-// Downloads every test-bun job log from a BuildKite build, parses per-file
-// wall-clock from the `_bk;t=<ms>` timestamps that prefix each
+// Downloads the log of every test-bun job that started in a BuildKite build,
+// parses per-file wall-clock from the `_bk;t=<ms>` timestamps that prefix each
 // `[N/TOTAL] <file>` header, aggregates as MAX across all platforms, and
-// prints the top N.
+// prints the top N. Exits 1 with nothing on stdout when the build has no test
+// timings.
 //
 // Usage:
 //   bun scripts/ci-slowest-tests.ts                 # auto-pick a recent merged-PR build, top 500
@@ -19,6 +20,65 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
+
+// As `bk build view` and `bk build list` print them. `bk` leaves `started_at`
+// out for a job that never started.
+type BkJob = { id: string; name?: string; raw_log_url?: string; retried?: boolean; started_at?: string | null };
+type BkBuild = { number: number; state: string; finished_at?: string | null; jobs?: BkJob[] };
+type TestJob = BkJob & { name: string; raw_log_url: string };
+
+// A job that never started (its platform's build failed, no agent took it)
+// still has a raw_log_url, which answers 200 with an empty body. The test is
+// `started_at`, not `finished_at` or `state`: a job killed mid-run keeps its
+// partial log, and parseLog reads it on purpose.
+export function jobCoverage(jobs: BkJob[]) {
+  const timed: TestJob[] = [];
+  // One entry per distinct job name, for example `:debian: 13 x64 - test-bun`.
+  const platforms = new Map<string, { name: string; started: number; total: number }>();
+  let total = 0;
+  for (const job of jobs) {
+    if (!job.name || !job.raw_log_url || !job.name.includes("test-bun") || job.retried) continue;
+    total++;
+    let platform = platforms.get(job.name);
+    if (!platform) platforms.set(job.name, (platform = { name: job.name, started: 0, total: 0 }));
+    platform.total++;
+    if (!job.started_at) continue;
+    platform.started++;
+    timed.push(job as TestJob);
+  }
+  // `total > 0`: a build with no test-bun job (`[skip tests]`) is not complete.
+  return { timed, total, platforms: [...platforms.values()], complete: total > 0 && timed.length === total };
+}
+export type JobCoverage = ReturnType<typeof jobCoverage>;
+
+// The auto-pick. A build with a job that never started is passed over: the
+// report is the MAX across platforms, so the hole would not show. `bk build
+// list` returns each build with its jobs, so judging a build costs no request.
+export async function findBuild<PR extends { headRefName: string }>(
+  prs: PR[],
+  listBuilds: (branch: string) => Promise<BkBuild[]>,
+) {
+  const skipped: { pr: PR; build: BkBuild; coverage: JobCoverage }[] = [];
+  const failedLists: { pr: PR; error: unknown }[] = [];
+  for (const pr of prs) {
+    let builds: BkBuild[];
+    try {
+      builds = await listBuilds(pr.headRefName);
+    } catch (error) {
+      // A list that fails does not end the walk. The caller reports it.
+      failedLists.push({ pr, error });
+      continue;
+    }
+    for (const build of builds) {
+      // `failed` is fine: flaky tests fail most merged-PR builds, and the timings are still valid.
+      if (!build.finished_at || build.state === "canceled" || build.state === "running") continue;
+      const coverage = jobCoverage(build.jobs ?? []);
+      if (coverage.complete) return { picked: { pr, build, coverage }, skipped, failedLists };
+      skipped.push({ pr, build, coverage });
+    }
+  }
+  return { picked: undefined, skipped, failedLists };
+}
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). See
@@ -91,28 +151,48 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  // Auto-pick a build: most-recent merged PR whose branch has a finished build.
-  // Merged-PR builds usually report state=failed (flaky tests) — that's fine,
-  // we only need the timing data.
+  // The auto-pick sets this from the jobs of `bk build list`. Only a build number needs `bk build view`.
+  let coverage: JobCoverage | undefined;
   if (!BUILD) {
     console.error("no build given, finding a recent merged-PR build...");
-    const prs = await $`gh pr list --state merged --limit 10 --json number,headRefName`.json();
-    for (const pr of prs) {
-      const builds = await $`bk build list --branch ${pr.headRefName}`
-        .quiet()
-        .json()
-        .catch(() => []);
-      const done = builds.find((b: any) => b.finished_at && b.state !== "canceled" && b.state !== "running");
-      if (done) {
-        BUILD = String(done.number);
-        console.error(`  using build #${BUILD} (PR #${pr.number}, ${pr.headRefName}, state=${done.state})`);
-        break;
-      }
+    const prs: { number: number; headRefName: string }[] =
+      await $`gh pr list --state merged --limit 10 --json number,headRefName`.json();
+    const { picked, skipped, failedLists } = await findBuild(prs, branch =>
+      $`bk build list --branch ${branch}`.quiet().json(),
+    );
+    for (const { pr, build, coverage: ran } of skipped) {
+      console.error(
+        `  skipped build #${build.number} (PR #${pr.number}, ${pr.headRefName}, state=${build.state}): ` +
+          `${ran.timed.length} of ${ran.total} test-bun jobs started`,
+      );
     }
-    if (!BUILD) {
-      console.error("error: no finished build found among the last 10 merged PRs");
+    for (const { pr, error } of failedLists) {
+      // `$` rejects with the stderr of `bk`, or with a SyntaxError when the output is not JSON.
+      const why = (error as any)?.stderr?.toString().trim() || (error as any)?.message || String(error);
+      console.error(`  failed to list the builds of ${pr.headRefName} (PR #${pr.number}): ${why}`);
+    }
+    if (!picked) {
+      console.error(
+        failedLists.length && failedLists.length === prs.length
+          ? `error: \`bk build list\` failed for each of the last ${prs.length} merged PRs, so no build was examined`
+          : `error: no finished build in which every test-bun job started among the last ${prs.length} merged PRs`,
+      );
+      // The skipped build with the most timings, the first one listed on a tie.
+      let best: (typeof skipped)[number] | undefined;
+      for (const s of skipped) if (s.coverage.timed.length > (best?.coverage.timed.length ?? 0)) best = s;
+      if (best) {
+        console.error(
+          `note: build #${best.build.number} has timings from ${best.coverage.timed.length} of ` +
+            `${best.coverage.total} test-bun jobs. Pass its number to report on it.`,
+        );
+      }
       process.exit(1);
     }
+    BUILD = String(picked.build.number);
+    coverage = picked.coverage;
+    console.error(
+      `  using build #${BUILD} (PR #${picked.pr.number}, ${picked.pr.headRefName}, state=${picked.build.state})`,
+    );
   }
 
   const CACHE = join(tmpdir(), `bun-ci-logs-${BUILD}`);
@@ -120,15 +200,25 @@ if (import.meta.main) {
 
   type Job = { id: string; name: string; raw_log_url: string; retried?: boolean };
 
-  const buildJson = JSON.parse(
-    await new Response(spawn({ cmd: ["bk", "build", "view", BUILD], stdout: "pipe" }).stdout).text(),
-  );
-  const jobs: Job[] = buildJson.jobs.filter(
-    (j: any) => j.name && j.raw_log_url && j.name.includes("test-bun") && !j.retried,
-  );
+  if (!coverage) {
+    const buildJson = JSON.parse(
+      await new Response(spawn({ cmd: ["bk", "build", "view", BUILD], stdout: "pipe" }).stdout).text(),
+    );
+    coverage = jobCoverage(buildJson.jobs ?? []);
+  }
+  const jobs: Job[] = coverage.timed;
   console.error(
-    `build #${BUILD}: ${jobs.length} test-bun jobs across ${new Set(jobs.map(j => j.name)).size} platforms`,
+    `build #${BUILD}: ${jobs.length} of ${coverage.total} test-bun jobs started, ` +
+      `on ${coverage.platforms.filter(p => p.started).length} of ${coverage.platforms.length} platforms`,
   );
+  if (jobs.length === 0) {
+    console.error(
+      `error: build #${BUILD} has no test timings: ` +
+        (coverage.total ? `none of its ${coverage.total} test-bun jobs started` : "it has no test-bun jobs") +
+        "\nnote: pass another build number, or none to pick a recent merged-PR build",
+    );
+    process.exit(1);
+  }
 
   const platOf = (name: string) =>
     name
@@ -182,14 +272,32 @@ if (import.meta.main) {
   // `package.json` / `test/package.json` are setup steps, not tests.
   const isTest = (f: string) => /\.(m|c)?(j|t)sx?$/.test(f);
 
-  const sorted = [...agg.entries()]
+  const testFiles = [...agg.entries()]
     .filter(([file]) => isTest(file))
     .map(([file, a]) => ({ file, maxMs: a.maxMs, maxPlat: a.maxPlat }))
-    .sort((a, b) => b.maxMs - a.maxMs)
-    .slice(0, TOP_N);
+    .sort((a, b) => b.maxMs - a.maxMs);
+  const sorted = testFiles.slice(0, TOP_N);
 
   console.error(`${agg.size} unique entries, ${sorted.length} test files after filtering`);
   console.error(`logs cached at ${CACHE}`);
+
+  // Started jobs can still leave no timings: they ended before their first test, or no log came down.
+  if (testFiles.length === 0) {
+    console.error(
+      `error: build #${BUILD} has no test timings: ` +
+        `no test file in the logs of its ${jobs.length} started test-bun jobs\n` +
+        "note: a `failed <job id>` line above is a log that could not be downloaded",
+    );
+    process.exit(1);
+  }
+  const holes = coverage.platforms.filter(p => p.started < p.total);
+  if (holes.length) {
+    console.error(
+      `warning: build #${BUILD}: ${coverage.total - jobs.length} of ${coverage.total} test-bun jobs never started, ` +
+        `so the report lacks their timings: ` +
+        holes.map(p => `${platOf(p.name)} (${p.started} of ${p.total} started)`).join(", "),
+    );
+  }
 
   if (json) {
     console.log(JSON.stringify({ build: BUILD, count: agg.size, top: sorted }, null, 2));

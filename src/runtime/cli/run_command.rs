@@ -23,7 +23,8 @@ use bun_options_types::schema::api;
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::package_json::PackageJSON;
+use bun_resolver::dir_info::ScriptPackage;
+use bun_resolver::package_json::{LoadError, PackageJSON};
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_which::which;
 
@@ -746,7 +747,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         bun_install::RunCommand::seed_script_env(env_loader);
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
+        if let ScriptPackage::Loaded(package_json) = root_dir_info.script_package() {
             if !package_json.name.is_empty() {
                 env_loader
                     .map
@@ -1949,7 +1950,7 @@ impl RunCommand {
     ) -> crate::Result<()> {
         let mut package_json_dir: &[u8] = b"";
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
+        if let ScriptPackage::Loaded(package_json) = root_dir_info.script_package() {
             if root_dir_info.package_json.is_none() {
                 // no trailing slash
                 package_json_dir =
@@ -2390,6 +2391,54 @@ impl RunCommand {
         }
     }
 
+    /// Says why the nearest package.json, the file in `dir`, did not load.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn print_unloadable_package_json(
+        ctx: &mut ContextData,
+        dir: &[u8],
+        error: LoadError,
+    ) {
+        // The path as `PackageJSON::parse` makes it, which is the one in the log.
+        let path = bun_resolver::fs::FileSystem::instance()
+            .abs(&[dir, b"package.json"])
+            .to_vec();
+        let file = (bstr::BStr::new(&path),);
+        match error {
+            LoadError::Syntax => {
+                // SAFETY: `ctx.log` is the process-lifetime log of the CLI, and no resolver runs.
+                let log = unsafe { ctx.log() };
+                // Out of the log: a runtime that starts here next (`bun bake`, `.bunx`) prints it.
+                let mut of_file = bun_ast::Log::init();
+                of_file.level = log.level;
+                of_file.msgs.extend(log.msgs.extract_if(.., |msg| {
+                    (msg.data.location.as_ref()).is_some_and(|location| *location.file == *path)
+                }));
+                for msg in &of_file.msgs {
+                    let (left, taken) = match msg.kind {
+                        bun_ast::Kind::Err => (&mut log.errors, &mut of_file.errors),
+                        bun_ast::Kind::Warn => (&mut log.warnings, &mut of_file.warnings),
+                        _ => continue,
+                    };
+                    *left = left.saturating_sub(1);
+                    *taken += 1;
+                }
+                // Out of memory, the parser fails with no message.
+                if of_file.msgs.is_empty() {
+                    Output::err_generic("failed to parse '{}'", file);
+                }
+                let _ = of_file.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+            }
+            LoadError::NotAnObject => {
+                Output::err_generic("package.json root must be an object: '{}'", file);
+            }
+        }
+        // Ahead of what an executable that runs next writes.
+        Output::flush();
+    }
+
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
         let bin_dirs_only = cfg.bin_dirs_only;
@@ -2486,16 +2535,21 @@ impl RunCommand {
             .put(b"npm_command", b"run-script")
             .expect("unreachable");
 
-        let root_dir = root_dir_info;
+        let script_package = root_dir_info.script_package();
 
         // ── empty command → print help ──────────────────────────────────────
         if target_name.is_empty() {
-            if let Some(package_json) = root_dir.enclosing_package_json {
-                Self::print_help(Some(package_json));
-            } else {
-                Self::print_help(None);
-                prettyln!("\n<r><yellow>No package.json found.<r>\n");
-                Output::flush();
+            match script_package {
+                ScriptPackage::Loaded(package_json) => Self::print_help(Some(package_json)),
+                ScriptPackage::Unloadable { dir, error } => {
+                    Self::print_unloadable_package_json(ctx, dir, error);
+                    Global::exit(1);
+                }
+                ScriptPackage::Absent => {
+                    Self::print_help(None);
+                    prettyln!("\n<r><yellow>No package.json found.<r>\n");
+                    Output::flush();
+                }
             }
             return Ok(true);
         }
@@ -2507,7 +2561,7 @@ impl RunCommand {
 
         // ── package.json script lookup ──────────────────────────────────────
         if !skip_script_check {
-            if let Some(package_json) = root_dir.enclosing_package_json {
+            if let ScriptPackage::Loaded(package_json) = script_package {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
                         bun_core::scoped_log!(
@@ -2700,6 +2754,15 @@ impl RunCommand {
             }
         }
 
+        // What is left is an executable, or nothing. The name can also be a script that is there.
+        let unloadable = match script_package {
+            ScriptPackage::Unloadable { dir, error } if !skip_script_check => {
+                Self::print_unloadable_package_json(ctx, dir, error);
+                true
+            }
+            _ => false,
+        };
+
         // ── Windows .bunx fast-path ──────────────────────────────────────────
         // With `--check` the way below is taken, on which the project is checked.
         #[cfg(windows)]
@@ -2784,6 +2847,9 @@ impl RunCommand {
 
         // ── failure ─────────────────────────────────────────────────────────
         if ctx.runtime_options.if_present {
+            if unloadable {
+                Global::exit(1);
+            }
             return Ok(true);
         }
 
@@ -3892,7 +3958,7 @@ impl RunCommand {
             || FILTER == Filter::AllPlusBunJs
             || FILTER == Filter::ScriptAndDescriptions
         {
-            if let Some(package_json) = root_dir_info.enclosing_package_json {
+            if let ScriptPackage::Loaded(package_json) = root_dir_info.script_package() {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     results.ensure_unused_capacity(scripts.count())?;
                     if FILTER == Filter::ScriptAndDescriptions {

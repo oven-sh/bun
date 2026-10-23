@@ -97,6 +97,7 @@ myscript.sh
 node_modules
 node_modules_*
 !test/aot/programs/**/node_modules/
+!test/aot/programs/**/dist/
 !test/aot/ir/**/node_modules/
 out
 out.*

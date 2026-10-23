@@ -22,10 +22,11 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14), Winsock /
 // console-resize watcher / suspend-resume detection initialized on first use
 // instead of in uv__init, with uv__winsock_ensure() for callers that reach
-// ws2_32 directly (oven-sh/libuv#15), and LoadLibraryExW for those lazy
-// loads (oven-sh/libuv#16).
+// ws2_32 directly (oven-sh/libuv#15), LoadLibraryExW for those lazy
+// loads (oven-sh/libuv#16), and UV_FS_O_NOFOLLOW mapped to
+// FILE_FLAG_OPEN_REPARSE_POINT in uv_fs_open (oven-sh/libuv#18).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
+const LIBUV_COMMIT = "e337c914f78012babb43eb2a44c3e32b42abe7eb";
 
 // prettier-ignore
 const SHARED = [

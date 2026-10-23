@@ -2712,6 +2712,331 @@ describe("condexprs", () => {
   TestBuilder.command`LOL=; [[ $LOl == $LOL ]] && echo yes!`.stdout("yes!\n").runAsTest("== empty");
   TestBuilder.command`LOL=; [[ $LOl != $LOL ]] && echo yes!`.exitCode(1).runAsTest("!= empty");
 
+  // bash does no word splitting, brace expansion or pathname expansion on the
+  // words between `[[` and `]]`.
+  describe("an operand expands to exactly one word", () => {
+    // The expected branch of each row is the one bash 5.2 takes.
+    const rows: [condition: string, expected: boolean][] = [
+      // An unquoted command substitution keeps its blanks.
+      [`[[ $(echo a b) == "a b" ]]`, true],
+      [`[[ "a b" == $(echo a b) ]]`, true],
+      [`[[ $(echo a b) != "a b" ]]`, false],
+      [`[[ "a b" != $(echo a b) ]]`, false],
+      [`[[ $(echo a b) == ab ]]`, false],
+      [`[[ $(echo a b) != ab ]]`, true],
+      [`[[ $(echo a b) == $(echo ab) ]]`, false],
+      [`[[ $(echo a b) == $(echo a b) ]]`, true],
+      [`[[ -f $(echo my file.txt) ]]`, true],
+      [`[[ -d $(echo my dir) ]]`, true],
+      [`[[ x$(echo a b)y == "xa by" ]]`, true],
+      [`[[ $(echo a b)$(echo c d) == "a bc d" ]]`, true],
+      [`[[ $(echo "a  b") == "a  b" ]]`, true],
+      [`[[ $(echo "  a") == "  a" ]]`, true],
+      [`[[ $(echo a && echo b) == "a\nb" ]]`, true],
+      [`[[ $(echo a && echo b) == "a b" ]]`, false],
+      // Braces are text.
+      [`[[ {a,b} == "{a,b}" ]]`, true],
+      [`[[ "{a,b}" == {a,b} ]]`, true],
+      [`[[ a{b,c} == "a{b,c}" ]]`, true],
+      [`[[ -f {a,b}.txt ]]`, true],
+      // `*` is text in every operand that is not a pattern.
+      [`[[ a*.txt == "a*.txt" ]]`, true],
+      [`[[ * == "*" ]]`, true],
+      [`[[ -f a*.txt ]]`, false],
+      [`[[ -n *.nomatch ]]`, true],
+      [`[[ -z *.nomatch ]]`, false],
+      [`[[ *.nomatch == x ]]`, false],
+      [`[[ *.nomatch != x ]]`, true],
+      // A quoted or escaped `*` in the right operand is text too.
+      [`[[ a.txt == "*.txt" ]]`, false],
+      [`[[ "*.txt" == "*.txt" ]]`, true],
+      [`[[ a.txt == \\*.txt ]]`, false],
+      [`[[ "$(echo a b)" == "a b" ]]`, true],
+      [`[[ -z $(echo) ]]`, true],
+      [`[[ -n $(echo) ]]`, false],
+      [`[[ $(echo) == "" ]]`, true],
+      // The quoted and the unquoted substitution give the same text.
+      [`[[ "$(echo "a ")" == $(echo "a ") ]]`, true],
+      [`[[ $(echo "a ") == "$(echo "a ")" ]]`, true],
+      [`n="       3"; [[ $(echo $(echo $n)) == 3 ]]`, true],
+      // A `~` that is not at the start of the operand is text.
+      [`[[ "a"~ == "a~" ]]`, true],
+      [`x=1; [[ $x~ == "1~" ]]`, true],
+    ];
+    for (const [condition, expected] of rows) {
+      TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .file("my file.txt", "x")
+        .directory("my dir")
+        .file("a.txt", "x")
+        .file("b.txt", "x")
+        .file("{a,b}.txt", "x")
+        .stdout(expected ? "yes!\n" : "")
+        .stderr("")
+        .exitCode(expected ? 0 : 1)
+        .runAsTest(condition.replaceAll("\n", "\\n"));
+    }
+
+    TestBuilder.command`V="a b"; [[ $V == "a b" ]] && echo yes!`.stdout("yes!\n").runAsTest("a variable with a blank");
+    TestBuilder.command`[[ ${"a b"} == "a b" ]] && echo yes!`.stdout("yes!\n").runAsTest("an interpolated blank");
+
+    TestBuilder.command`if [[ $(echo a b) == "a b" ]]; then echo same; else echo different; fi`
+      .stdout("same\n")
+      .runAsTest("in an if condition");
+    TestBuilder.command`echo $([[ $(echo a b) == "a b" ]] && echo inner)`
+      .stdout("inner\n")
+      .runAsTest("inside a command substitution");
+    TestBuilder.command`([[ $(echo a b) == "a b" ]] && echo yes!)`.stdout("yes!\n").runAsTest("inside a subshell");
+    TestBuilder.command`true | [[ $(echo a b) == "a b" ]] && echo yes!`
+      .stdout("yes!\n")
+      .runAsTest("as the last member of a pipeline");
+    TestBuilder.command`[[ $(echo a b) == ab ]] || echo no`.stdout("no\n").runAsTest("left of ||");
+  });
+
+  // bash matches the right operand of `==` and `!=` as a pattern when it has
+  // an unquoted `*`. The files in the directory have no part in it.
+  describe("an unquoted * in the right operand of == and != is a pattern", () => {
+    // The expected branch of each row is the one bash 5.2 takes.
+    const rows: [condition: string, expected: boolean][] = [
+      [`[[ a.txt == *.txt ]]`, true],
+      [`[[ a.txt != *.txt ]]`, false],
+      [`[[ README == *.txt ]]`, false],
+      [`[[ README != *.txt ]]`, true],
+      [`[[ greeting.txt == greet* ]]`, true],
+      [`[[ greeting.txt == *eet* ]]`, true],
+      [`[[ greeting.txt == g*.txt ]]`, true],
+      [`[[ greeting.txt == g*x ]]`, false],
+      [`[[ abc == a*b*c ]]`, true],
+      [`[[ ac == a*b*c ]]`, false],
+      [`[[ abcabc == a*c ]]`, true],
+      [`[[ ab == ab*b ]]`, false],
+      [`[[ aba == a*a ]]`, true],
+      [`[[ a == a*a ]]`, false],
+      [`[[ abc == * ]]`, true],
+      [`[[ "" == * ]]`, true],
+      [`[[ "" != * ]]`, false],
+      [`[[ abc == A* ]]`, false],
+      // `*` also matches `/` and a leading `.`.
+      [`[[ a/b == a* ]]`, true],
+      [`[[ .hidden == * ]]`, true],
+      // Two `*` with nothing between them are one.
+      [`[[ abc == a**c ]]`, true],
+      [`[[ abc == *""* ]]`, true],
+      [`needle=; [[ "a,b,c" == *"$needle"* ]]`, true],
+      [`[[ abd == a*""*c ]]`, false],
+      // Only the right operand is a pattern.
+      [`[[ a*c == a*c ]]`, true],
+      // A quoted or escaped `*` matches only itself.
+      [`[[ "a*bc" == a"*"* ]]`, true],
+      [`[[ abc == a"*"* ]]`, false],
+      [`[[ "a*bc" == a\\** ]]`, true],
+      // Braces are text in a pattern too.
+      [`[[ "a{b,c}d" == a{b,c}* ]]`, true],
+      [`[[ "aXbXcXd" == a{b,c}* ]]`, false],
+      // The other operand and the rest of the pattern expand as usual.
+      [`[[ $(echo hello world) == hello* ]]`, true],
+      [`[[ $(echo hello world) != *world ]]`, false],
+      [`x=v2; [[ v2-beta == $x-* ]]`, true],
+      [`x=v2; [[ v3-beta == $x-* ]]`, false],
+      [`[[ "a b c" == $(echo a b)* ]]`, true],
+      [`[[ "ab c" == $(echo a b)* ]]`, false],
+      [`HOME=/home/user USERPROFILE=/home/user && [[ /home/user/x == ~/* ]]`, true],
+      [`HOME=/home/user USERPROFILE=/home/user && [[ /home/other/x == ~/* ]]`, false],
+      // A `~` that is not at the start of the pattern is text.
+      [`[[ "notes.txt~" == *~ ]]`, true],
+      [`[[ "notes.txt~" != *~ ]]`, false],
+      [`[[ "~1.2.3" != *~* ]]`, false],
+      [`[[ "x$HOME" == *~ ]]`, false],
+      [`[[ "a~b" == "a"~* ]]`, true],
+      // A quoted or escaped `?` or `[` beside the `*` matches only itself.
+      [`[[ "fix [skip ci] now" == *"[skip ci]"* ]]`, true],
+      [`[[ "fix now" != *"[skip ci]"* ]]`, true],
+      [`[[ "what? yes" == "what?"* ]]`, true],
+      [`[[ "whatX yes" == "what?"* ]]`, false],
+      [`[[ "a?b" == *"?"* ]]`, true],
+      [`[[ "?x" == \\?* ]]`, true],
+      [`[[ x == \\?* ]]`, false],
+      [`[[ x != \\?* ]]`, true],
+      [`[[ "a [skip ci] b" == *\\[skip\\ ci\\]* ]]`, true],
+      // So does one that a command substitution prints.
+      [`[[ "a?b" == $(echo a\\?)* ]]`, true],
+    ];
+    for (const [condition, expected] of rows) {
+      TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .file("a.txt", "x")
+        .file("b.txt", "x")
+        .file("greeting.txt", "x")
+        .stdout(expected ? "yes!\n" : "")
+        .stderr("")
+        .exitCode(expected ? 0 : 1)
+        .runAsTest(condition);
+    }
+
+    TestBuilder.command`if [[ bun == npm* ]]; then echo npm; elif [[ bun == bu* ]]; then echo bun; else echo unknown; fi`
+      .stdout("bun\n")
+      .runAsTest("in an if chain");
+    TestBuilder.command`echo $([[ a == * ]] && echo inner)`
+      .stdout("inner\n")
+      .runAsTest("inside a command substitution");
+    TestBuilder.command`[[ ${"v?1"} == ${"v?"}* ]] && echo yes!`
+      .stdout("yes!\n")
+      .runAsTest("an interpolated ? beside the * matches only itself");
+    TestBuilder.command`[[ "??x" == ${"??"}* ]] && echo yes!`
+      .stdout("yes!\n")
+      .runAsTest("two interpolated ? beside the * match only themselves");
+
+    // A `*` or `?` that comes from an expansion is data, like in an argv word:
+    // https://github.com/oven-sh/bun/pull/31220
+    TestBuilder.command`P="*.txt"; [[ a.txt == $P ]] && echo yes!`.exitCode(1).runAsTest("a * from a variable is text");
+    TestBuilder.command`P="*.txt"; [[ "*.txt" == $P ]] && echo yes!`
+      .stdout("yes!\n")
+      .runAsTest("a * from a variable matches itself");
+    TestBuilder.command`P="a?"; [[ a1.txt == $P* ]] && echo yes!`
+      .exitCode(1)
+      .runAsTest("a ? from a variable beside the * is text");
+    TestBuilder.command`[[ "*" == ${"*"} ]] && echo yes!`.stdout("yes!\n").runAsTest("an interpolated * is text");
+    TestBuilder.command`[[ abc == $(echo "a*") ]] && echo yes!`
+      .exitCode(1)
+      .runAsTest("a * from a command substitution is text");
+  });
+
+  // The shell matches `*` only. It cannot tell what an unquoted `?` or `[`
+  // beside the `*` must match, so that test fails with a message.
+  describe("an unquoted ? or [ in a pattern", () => {
+    const refused = (operand: string) =>
+      `bun: ? and [ are not supported in a [[ ]] pattern: ${operand}\n` + `note: a quoted ? or [ is matched as text\n`;
+
+    const rows: [condition: string, operand: string][] = [
+      [`[[ v1.2 == v[0-9]* ]]`, "v[0-9]*"],
+      [`[[ main.c == *.[ch] ]]`, "*.[ch]"],
+      [`[[ x != ?* ]]`, "?*"],
+      [`x=v2; [[ $x == $x-?* ]]`, "v2-?*"],
+      [`[[ ab == $(echo a)?* ]]`, "a?*"],
+    ];
+    for (const [condition, operand] of rows) {
+      TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr(refused(operand))
+        .runAsTest(condition);
+    }
+    TestBuilder.command`[[ "??x" == ${"??"}?* ]] && echo yes!`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(refused("???*"))
+      .runAsTest("an unquoted ? after an interpolated one");
+    TestBuilder.command`[[ a == ?* ]] || echo went on`
+      .ensureTempDir()
+      .stdout("went on\n")
+      .stderr(refused("?*"))
+      .runAsTest("the script goes on after the message");
+    TestBuilder.command`if false; then [[ $(echo ran > side.txt) == ?* ]]; fi; echo done`
+      .ensureTempDir()
+      .stdout("done\n")
+      .doesNotExist("side.txt")
+      .runAsTest("a test in a branch that does not run has no message");
+  });
+
+  // With no `*` in the operand, `==` and `!=` compare text. These rows have the same answer in bash.
+  describe("a ? or [ with no * in the right operand is text", () => {
+    const rows: [condition: string, expected: boolean][] = [
+      [`[[ "[]" == [] ]]`, true],
+      [`[[ "[1]" != [] ]]`, true],
+      [`[[ n != [Yy] ]]`, true],
+      [`[[ "what?" == what? ]]`, true],
+      [`[[ "?" == \\? ]]`, true],
+      [`[[ x == \\? ]]`, false],
+    ];
+    for (const [condition, expected] of rows) {
+      TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .ensureTempDir()
+        .stdout(expected ? "yes!\n" : "")
+        .stderr("")
+        .exitCode(expected ? 0 : 1)
+        .runAsTest(condition);
+    }
+  });
+
+  describe("still different from bash", () => {
+    // Each row has the branch that bash 5.2 takes.
+    const rows: [condition: string, expected: boolean][] = [
+      // A substitution whose text is kept whole loses its trailing blanks:
+      // https://github.com/oven-sh/bun/pull/45339
+      [`[[ -z $(echo " ") ]]`, false],
+      [`[[ -n $(echo " ") ]]`, true],
+      [`[[ $(echo "a ") == "a " ]]`, true],
+      // The same trim. When the substitution was field split, this row took the bash branch.
+      [`[[ $(echo " a ") == " a" ]]`, false],
+      // `$n` is not field split, so `echo` prints the blanks. Before, the field split of the substitution hid that.
+      [`n="       3"; [[ $(echo $n) == 3 ]]`, true],
+      // bash matches `?` and `[...]` as a pattern also when the operand has no `*`.
+      [`[[ a == ? ]]`, true],
+      [`[[ a == [abc] ]]`, true],
+      // `${NAME}` is not expanded.
+      ["NAME=foo.md; [[ ${NAME} == *.md ]]", true],
+    ];
+    for (const [condition, expected] of rows) {
+      const builder = TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .ensureTempDir()
+        .stdout(expected ? "yes!\n" : "")
+        .exitCode(expected ? 0 : 1);
+      test.failing(condition, () => builder.run());
+    }
+  });
+
+  // `bun check.sh` runs the shell on the mini event loop, with no JS VM.
+  test("in a script file", async () => {
+    using dir = tempDir("condexpr-script", {
+      "greeting.txt": "hello world\n",
+      "version.txt": "v1.2.3 stable\n",
+      "my file.txt": "x\n",
+      "check.sh": [
+        `if [[ $(cat greeting.txt) == "hello world" ]]; then echo "1 same"; else echo "1 DIFFERENT"; fi`,
+        `if [[ "$(cat greeting.txt)" == "hello world" ]]; then echo "2 same"; else echo "2 DIFFERENT"; fi`,
+        `if [[ $(cat greeting.txt) == helloworld ]]; then echo "3 EQUAL TO helloworld"; else echo "3 not helloworld"; fi`,
+        `if [[ $(cat version.txt) != "v1.2.3 stable" ]]; then echo "4 WOULD UPGRADE"; else echo "4 up to date"; fi`,
+        `if [[ -f $(echo my file.txt) ]]; then echo "5 found"; else echo "5 MISSING"; fi`,
+        `if [[ $(cat greeting.txt) == hello* ]]; then echo "6 matches"; else echo "6 NO MATCH"; fi`,
+        `if [[ $(cat greeting.txt) != *world ]]; then echo "7 NO MATCH"; else echo "7 matches"; fi`,
+        `if [[ $(cat greeting.txt) == h?llo* ]]; then echo "8 matches"; else echo "8 refused"; fi`,
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.sh"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "1 same\n2 same\n3 not helloworld\n4 up to date\n5 found\n6 matches\n7 matches\n8 refused\n",
+      stderr: "bun: ? and [ are not supported in a [[ ]] pattern: h?llo*\nnote: a quoted ? or [ is matched as text\n",
+      exitCode: 0,
+    });
+  });
+
+  // The `==` rows of bash's cond.tests that need only `*`. TDIR is set as in
+  // that file, and `unset` is not a builtin here.
+  describe("ported from GNU bash: pattern matching", () => {
+    TestBuilder.command`TDIR=/usr/homes/chet; [[ $TDIR == /usr/homes/* ]]`
+      .exitCode(0)
+      .runAsTest("the == and != operators do pattern matching");
+    TestBuilder.command`TDIR=/usr/homes/chet; [[ $TDIR == /usr/homes/\* ]]`
+      .exitCode(1)
+      .runAsTest("...but you can quote any part of the pattern to have it matched as a string (escaped)");
+    TestBuilder.command`TDIR=/usr/homes/chet; [[ $TDIR == '/usr/homes/*' ]]`
+      .exitCode(1)
+      .runAsTest("...but you can quote any part of the pattern to have it matched as a string (quoted)");
+    TestBuilder.command`[[ $filename == *.c ]]`.exitCode(1).runAsTest("more pattern matching tests (unset)");
+    TestBuilder.command`
+filename=patmatch.c
+[[ $filename == *.c ]]
+`
+      .exitCode(0)
+      .runAsTest("more pattern matching tests (set)");
+  });
+
   describe.todo("ported from GNU bash", () => {
     TestBuilder.command`
     [[ foo > bar && $PWD -ef . ]]
@@ -2756,16 +3081,6 @@ describe("condexprs", () => {
 
     TestBuilder.command`[[ -n $UNSET ]]`.exitCode(1).runAsTest("unset variables don't need to be quoted");
     TestBuilder.command`[[ -z $UNSET ]]`.exitCode(0).runAsTest("unset variables don't need to be quoted");
-
-    TestBuilder.command`[[ $TDIR == /usr/homes/* ]]`
-      .exitCode(0)
-      .runAsTest("the ==/= and != operators do pattern matching");
-    TestBuilder.command`[[ $TDIR == /usr/homes/\\* ]]`
-      .exitCode(1)
-      .runAsTest("...but you can quote any part of the pattern to have it matched as a string");
-    TestBuilder.command`[[ $TDIR == '/usr/homes/*' ]]`
-      .exitCode(1)
-      .runAsTest("...but you can quote any part of the pattern to have it matched as a string");
 
     TestBuilder.command`[[ -n $UNSET && $UNSET == foo ]]`
       .exitCode(1)
@@ -2863,20 +3178,6 @@ A=7
       .runAsTest(
         "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
       );
-
-    TestBuilder.command`
-unset IVAR A
-[[ $filename == *.c ]]
-`
-      .exitCode(1)
-      .runAsTest("more pattern matching tests");
-
-    TestBuilder.command`
-filename=patmatch.c
-[[ $filename == *.c ]]
-`
-      .exitCode(0)
-      .runAsTest("more pattern matching tests");
 
     TestBuilder.command`
 shopt -s extglob

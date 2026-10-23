@@ -2428,6 +2428,14 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             }
                             buf_offset = buf_size;
                             buf_size += 1;
+                            // A first part that fills tmp_buf to its end leaves no
+                            // room for the separator.
+                            if buf_size > tmp_buf.len() {
+                                return Err(bun_sys::Error::from_code(
+                                    bun_sys::E::ENAMETOOLONG,
+                                    bun_sys::Tag::TODO,
+                                ));
+                            }
                             tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
                             let slice_len = j - last;
                             buf_offset = buf_size;

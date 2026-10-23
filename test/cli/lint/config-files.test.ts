@@ -4562,6 +4562,35 @@ describe.concurrent("ESLint 8 config files", () => {
     expect(after.problems).toEqual(["a.js:2:10 no-inner-declarations", "a.js:3:1 no-constant-binary-expression"]);
   });
 
+  // Same as ESLint 8.57.1. ESLint 10.12.0 finds 11, 4, 3, 3, 4 and 3, and reports the head of a function.
+  test("complexity doesn't count optional chaining and default values, and reports the whole function", async () => {
+    const { raw } = await lint(
+      {
+        ".eslintrc.json": rc({
+          parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+          rules: { complexity: ["error", 0] },
+        }),
+        "a.js": `function a(x, y = 1, { z = 2 } = {}, [w = 3] = []) {
+  return x?.y?.z ?? (x ? y : z) ?? w;
+}
+class B {
+  method(x) { return x?.a || x?.b; }
+  static { if (a) a(); else if (B) a(1); }
+  field = a ? 1 : a?.b;
+}
+const c = x => { ({ x = 1 } = x); [x = 2] = x; x ||= 1; return x; };
+const d = { e(x) { return x && x.y && x.z; } };
+console.log(a, B, c, d);
+`,
+      },
+      ["a.js"],
+    );
+    const found = (JSON.parse(raw).results[0].messages as any[]).map(
+      it => `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${/complexity of (\d+)/.exec(it.message)?.[1]}`,
+    );
+    expect(found).toEqual(["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]);
+  });
+
   test("with @rushstack/eslint-patch/modern-module-resolution, a plugin is resolved from the config that lists it", async () => {
     const { problems } = await lint({
       ".eslintrc.json": rc({ extends: "patched" }),

@@ -749,6 +749,13 @@ function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
     byteOffset = -0x80000000;
   }
   byteOffset = +byteOffset; // Coerce to Number.
+  // Node truncates the offset toward zero, so the search starts on a byte that
+  // exists. Without this a fractional offset reads a hole in the buffer and
+  // never matches, and Math.trunc(NaN) is NaN, so the check below still works.
+  byteOffset = Math.trunc(byteOffset);
+  // Math.trunc keeps a zero's sign, and a -0 offset would be reported back as
+  // -0 where Node reports 0.
+  if (byteOffset === 0) byteOffset = 0;
   if (Number.isNaN(byteOffset)) {
     // byteOffset: it it's undefined, null, NaN, "foo", etc, search whole buffer
     byteOffset = dir ? 0 : buffer.length - 1;
@@ -861,7 +868,11 @@ Buffer.prototype.lastIndexOf = function lastIndexOf(val, byteOffset, encoding) {
 function hexWrite(buf, string, offset, length) {
   offset = Number(offset) || 0;
   const remaining = buf.length - offset;
-  if (!length) {
+  // Buffer#write resolves an omitted length to `remaining` before calling here,
+  // so `length` is a number and an explicit 0 must write nothing. Testing it for
+  // truthiness instead made hex the one encoding that filled the rest of the
+  // buffer when asked for a zero-length write.
+  if (length === undefined) {
     length = remaining;
   } else {
     length = Number(length);

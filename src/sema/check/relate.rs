@@ -4383,9 +4383,52 @@ impl<'p, 's> Checker<'p, 's> {
             stacks.into_iter().filter_map(first).min()
         };
         t == last
-            || (self.types().nesting_order(t, last))
-                .then_with(|| pushed(t).cmp(&pushed(last)))
-                .is_ge()
+            || !self.is_reached_through_checked_type_node(t, last, stacks)
+                && (self.types().nesting_order(t, last))
+                    .then_with(|| pushed(t).cmp(&pushed(last)))
+                    .is_ge()
+    }
+
+    /// True if a type argument of `last` is on a stack between `last` and `t`, and it's a function type or a type literal
+    /// as it's written, in a file that's checked. `checkTypeReferenceNode` checks the type arguments first, so what's
+    /// written in them has lower ids than the reference. In a file that isn't checked, and in an instantiation, the
+    /// types of signatures and members are created when they're first requested.
+    fn is_reached_through_checked_type_node(
+        &self,
+        t: TypeId,
+        last: TypeId,
+        stacks: [&[(TypeId, u32)]; 2],
+    ) -> bool {
+        let is_written = |&(on_stack, _): &(TypeId, u32)| {
+            let (file, mapper) = match self.data(on_stack) {
+                TypeData::Fns { decls, mapper } => match decls.first() {
+                    Some(first) => (first.0, *mapper),
+                    None => return false,
+                },
+                &TypeData::Anon {
+                    origin: Origin::TypeLiteral(file, _),
+                    mapper,
+                } => (file, mapper),
+                _ => return false,
+            };
+            let is_argument = match self.data(last) {
+                &TypeData::Anon { mapper, .. } => {
+                    (self.types().mapping(mapper).iter()).any(|pair| pair.1 == on_stack)
+                }
+                TypeData::Ref { args, .. } => {
+                    (args.actual()).is_some_and(|arguments| arguments.contains(&on_stack))
+                }
+                _ => false,
+            };
+            is_argument
+                && (self.types().mapping(mapper).iter()).all(|pair| pair.0 == pair.1)
+                && self.reports_semantic_errors(file)
+        };
+        stacks.into_iter().any(|stack| {
+            let from = stack.iter().position(|it| it.0 == last);
+            let to = stack.iter().rposition(|it| it.0 == t);
+            matches!((from, to), (Some(from), Some(to)) if from < to && stack[from + 1..to].iter().any(is_written))
+        })
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for

@@ -17724,6 +17724,61 @@ export function f<U extends string, T extends Readonly<[U, ...U[]]>>(values: T |
       expect(exitCode).toBe(1);
     });
 
+    test("infers through a Record in a function type or a type literal that's written in the type argument of a Record", async () => {
+      using dir = project({
+        "a.ts": `interface Props0<F> { frontmatter: F }
+type File<F> = Props0<F> & Record<string, unknown>;
+type DocMap<F> = Record<string, (() => Promise<File<F>>) & { base: string }>;
+declare function load<F>(files: Record<string, () => Promise<File<F>>>): F;
+declare const m: DocMap<{ title: string }>;
+declare const r: Record<string, () => Promise<File<{ title: string }>>>;
+export const pa: 0 = load(m);
+export const pb: 0 = load(r);
+interface Loader<F> { preload: (path: string) => Promise<File<F>> }
+declare function load2<F>(files: Record<string, () => Promise<File<F>>>): Loader<F>;
+export const pc: 0 = load2(m);
+export const pd: 0 = load2(r);
+`,
+        "c.ts": `interface Props0<F> { frontmatter: F }
+type File<F> = Props0<F> & Record<string, unknown>;
+type File2<F> = Props0<F> & { [key: string]: unknown };
+type X = { title: string };
+declare function l10<F>(x: Record<string, () => File<F>>): F;
+declare function l11<F>(x: Record<string, Promise<File<F>>>): F;
+declare function l12<F>(x: Record<string, () => Promise<File<F>>>): F;
+declare function l13<F>(x: Record<string, () => Promise<File2<F>>>): F;
+declare function l14<F>(x: Record<string, () => Promise<Props0<F>>>): F;
+declare function l15<F>(x: Record<string, () => File<F>[]>): F;
+declare function l16<F>(x: Record<string, { a: File<F> }>): F;
+declare function l17<F>(x: { [key: string]: () => Promise<File<F>> }): F;
+export const p10: 0 = l10(null! as Record<string, () => File<X>>);
+export const p11: 0 = l11(null! as Record<string, Promise<File<X>>>);
+export const p12: 0 = l12(null! as Record<string, () => Promise<File<X>>>);
+export const p13: 0 = l13(null! as Record<string, () => Promise<File2<X>>>);
+export const p14: 0 = l14(null! as Record<string, () => Promise<Props0<X>>>);
+export const p15: 0 = l15(null! as Record<string, () => File<X>[]>);
+export const p16: 0 = l16(null! as Record<string, { a: File<X> }>);
+export const p17: 0 = l17(null! as { [key: string]: () => Promise<File<X>> });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,14): error TS2322: Type '{ title: string; }' is not assignable to type '0'.
+        a.ts(8,14): error TS2322: Type '{ title: string; }' is not assignable to type '0'.
+        a.ts(11,14): error TS2322: Type 'Loader<{ title: string; }>' is not assignable to type '0'.
+        a.ts(12,14): error TS2322: Type 'Loader<{ title: string; }>' is not assignable to type '0'.
+        c.ts(13,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(14,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(15,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(16,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(17,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(18,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(19,14): error TS2322: Type 'X' is not assignable to type '0'.
+        c.ts(20,14): error TS2322: Type 'X' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

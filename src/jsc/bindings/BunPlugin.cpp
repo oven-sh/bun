@@ -570,12 +570,8 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     return loaded;
 }
 
-// Modules that already linked against the loaded record hold bindings into its environment, so an export
-// the record lacks cannot be added to it. The registry entry is replaced by a synthetic record that holds
-// the new exports and re-exports every export of the loaded record from it, the way `export { a } from`
-// does. A later importer links against the full set, an import() that is in flight gets this record, and
-// a later mock.module() patches its namespace, which writes the loaded record's bindings for the names
-// it re-exports: importers from before and after the replacement keep one value per export.
+// Importers already linked to the loaded record bind into its environment, so it cannot gain exports. The
+// replacement re-exports the old names (not copies) so a later mock.module() still writes those bindings.
 static void replaceOutgrownESModule(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* loadedNamespace, const Vector<JSC::Identifier, 4>& newNames, const MarkedArgumentBuffer& newValues, const String& specifier)
 {
     auto& vm = JSC::getVM(globalObject);

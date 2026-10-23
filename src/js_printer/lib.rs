@@ -3203,54 +3203,18 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// Text the program can read back as written: `RegExp#source`, template `.raw`, `Function#toString`.
+        fn print_verbatim(&mut self, text: &[u8]) {
+            let start = self.writer.slice().len();
+            let wide_line_terminator = self.writer.print_verbatim_utf8(text);
+            if GENERATE_SOURCE_MAP && wide_line_terminator {
+                self.source_map_builder
+                    .update_generated_verbatim(self.writer.slice(), start, text);
+            }
+        }
+
         fn print_raw_template_literal(&mut self, bytes: &[u8]) {
-            if IS_JSON || !ASCII_ONLY {
-                self.print(bytes);
-                return;
-            }
-
-            // Translate any non-ASCII to unicode escape sequences
-            // Note that this does not correctly handle malformed template literal strings
-            // template literal strings can contain invalid unicode code points
-            // and pretty much anything else
-            //
-            // we use WTF-8 here, but that's still not good enough.
-            //
-            let mut ascii_start: usize = 0;
-            let mut is_ascii = false;
-            let iter = CodepointIterator::init(bytes);
-            let mut cursor = strings::Cursor::default();
-
-            while iter.next(&mut cursor) {
-                match cursor.c as u32 {
-                    // unlike other versions, we only want to mutate > 0x7F
-                    0..=LAST_ASCII => {
-                        if !is_ascii {
-                            ascii_start = cursor.i as usize;
-                            is_ascii = true;
-                        }
-                    }
-                    _ => {
-                        if is_ascii {
-                            self.print(&bytes[ascii_start..(cursor.i as usize)]);
-                            is_ascii = false;
-                        }
-
-                        match cursor.c as u32 {
-                            c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                            _ => {
-                                self.print(b"\\u{");
-                                let _ = self.fmt(format_args!("{:x}", cursor.c));
-                                self.print(b"}");
-                            }
-                        }
-                    }
-                }
-            }
-
-            if is_ascii {
-                self.print(&bytes[ascii_start..]);
-            }
+            self.print_verbatim(bytes);
         }
 
         pub(crate) fn check_stack_overflow(&self) -> crate::Result<()> {
@@ -4542,7 +4506,7 @@ pub(crate) mod __gated_printer {
                     self.print_expr(e.value, level, flags);
                     if !self.options.minify_whitespace && !self.options.minify_identifiers {
                         self.print(b" /* ");
-                        self.print(&e.comment[..]);
+                        self.print_verbatim(&e.comment[..]);
                         self.print(b" */");
                     }
                 }
@@ -4703,41 +4667,7 @@ pub(crate) mod __gated_printer {
                 self.print(b" ");
             }
 
-            if IS_BUN_PLATFORM {
-                // Translate any non-ASCII to unicode escape sequences
-                let mut ascii_start: usize = 0;
-                let mut is_ascii = false;
-                let iter = CodepointIterator::init(&e.value);
-                let mut cursor = strings::Cursor::default();
-                while iter.next(&mut cursor) {
-                    match cursor.c as u32 {
-                        FIRST_ASCII..=LAST_ASCII => {
-                            if !is_ascii {
-                                ascii_start = cursor.i as usize;
-                                is_ascii = true;
-                            }
-                        }
-                        _ => {
-                            if is_ascii {
-                                self.print(&e.value[ascii_start..(cursor.i as usize)]);
-                                is_ascii = false;
-                            }
-
-                            match cursor.c as u32 {
-                                c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                                c => self.print(&surrogate_pair_escape(c)[..]),
-                            }
-                        }
-                    }
-                }
-
-                if is_ascii {
-                    self.print(&e.value[ascii_start..]);
-                }
-            } else {
-                // UTF8 sequence is fine
-                self.print(&e.value[..]);
-            }
+            self.print_verbatim(&e.value[..]);
 
             // Need a space before the next identifier to avoid it turning into flags
             self.prev_reg_exp_end = self.writer.written();
@@ -6823,7 +6753,7 @@ pub(crate) mod __gated_printer {
                 // TODO: rewrite this to handle </script>
                 if !strings::contains(comment, b"*/") {
                     self.print(b" /* ");
-                    self.print(comment);
+                    self.print_verbatim(comment);
                     self.print(b" */");
                 }
             }
@@ -7001,22 +6931,22 @@ pub(crate) mod __gated_printer {
                     let newline_index = newline_index as usize;
                     // Skip over \r if it precedes \n
                     if newline_index > 0 && text[newline_index - 1] == b'\r' {
-                        self.print(&text[..newline_index - 1]);
+                        self.print_verbatim(&text[..newline_index - 1]);
                         self.print(b"\n");
                     } else {
-                        self.print(&text[..newline_index + 1]);
+                        self.print_verbatim(&text[..newline_index + 1]);
                     }
                     self.print_indent();
                     text = &text[newline_index + 1..];
                 }
-                self.print(text);
+                self.print_verbatim(text);
                 self.print_newline();
             } else {
                 // Print a mandatory newline after single-line comments
                 if !text.is_empty() && text[text.len() - 1] == b'\r' {
                     text = &text[..text.len() - 1];
                 }
-                self.print(text);
+                self.print_verbatim(text);
                 self.print(b"\n");
             }
         }
@@ -7284,6 +7214,11 @@ impl HasDefaultValue for js_ast::ArrayBinding {
 pub trait WriterContext {
     fn write_byte(&mut self, char: u8);
     fn write_all(&mut self, buf: &[u8]);
+    /// Returns true when an 8-bit context took U+2028 or U+2029, which [`WriterContext::slice`] cannot show.
+    fn write_verbatim_utf8(&mut self, text: &[u8]) -> bool;
+    fn output_encoding(&self) -> OutputEncoding;
+    /// Put the buffer into its final encoding. Nothing is printed after this.
+    fn resolve_encoding(&mut self);
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
     fn reserve_next(&mut self, count: u64) -> *mut u8;
@@ -7300,6 +7235,11 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
+    /// See [`WriterContext::write_verbatim_utf8`].
+    fn print_verbatim_utf8(&mut self, text: &[u8]) -> bool;
+    fn output_encoding(&self) -> OutputEncoding;
+    /// See [`WriterContext::resolve_encoding`].
+    fn resolve_encoding(&mut self);
     fn reserve(&mut self, count: u64) -> *mut u8;
     fn advance(&mut self, count: u64);
     /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
@@ -7376,6 +7316,10 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.write_all(s);
     }
 
+    pub(crate) fn print_verbatim_utf8(&mut self, text: &[u8]) -> bool {
+        self.ctx.write_verbatim_utf8(text)
+    }
+
     pub(crate) fn done(&mut self) {
         self.ctx.done()
     }
@@ -7402,6 +7346,18 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
     #[inline]
     fn print_slice(&mut self, s: &[u8]) {
         self.print_slice(s)
+    }
+    #[inline]
+    fn print_verbatim_utf8(&mut self, text: &[u8]) -> bool {
+        self.print_verbatim_utf8(text)
+    }
+    #[inline]
+    fn output_encoding(&self) -> OutputEncoding {
+        self.ctx.output_encoding()
+    }
+    #[inline]
+    fn resolve_encoding(&mut self) {
+        self.ctx.resolve_encoding()
     }
     #[inline]
     fn reserve(&mut self, count: u64) -> *mut u8 {
@@ -7448,6 +7404,18 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
+    fn print_verbatim_utf8(&mut self, text: &[u8]) -> bool {
+        (**self).print_verbatim_utf8(text)
+    }
+    #[inline]
+    fn output_encoding(&self) -> OutputEncoding {
+        (**self).output_encoding()
+    }
+    #[inline]
+    fn resolve_encoding(&mut self) {
+        (**self).resolve_encoding()
+    }
+    #[inline]
     fn reserve(&mut self, count: u64) -> *mut u8 {
         (**self).reserve(count)
     }
@@ -7473,7 +7441,42 @@ impl<W: WriterTrait> WriterTrait for &mut W {
 // DirectWriter / BufferWriter
 // ───────────────────────────────────────────────────────────────────────────
 
+/// How the bytes in a [`BufferWriter`] are to be read. See [`WriterContext`].
+pub type OutputEncoding = strings::EncodingNonAscii;
+
+/// The native-endian code units of an [`OutputEncoding::Utf16`] buffer. Copied only when it is odd-aligned.
+pub fn utf16_units(bytes: &[u8]) -> std::borrow::Cow<'_, [u16]> {
+    match bytemuck::try_cast_slice::<u8, u16>(bytes) {
+        Ok(units) => std::borrow::Cow::Borrowed(units),
+        Err(_) => std::borrow::Cow::Owned(
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| u16::from_ne_bytes(pair))
+                .collect(),
+        ),
+    }
+}
+
+/// A writer's output as a JSC string of the width it was printed in.
+pub fn clone_as_string(bytes: &[u8], encoding: OutputEncoding) -> bun_core::String {
+    match encoding {
+        OutputEncoding::Utf8 => bun_core::String::clone_utf8(bytes),
+        OutputEncoding::Latin1 => bun_core::String::clone_latin1(bytes),
+        OutputEncoding::Utf16 => bun_core::String::clone_utf16_wide(&utf16_units(bytes)),
+    }
+}
+
 pub struct BufferWriter {
+    /// `Latin1` is one byte per code unit. [`Self::resolve_encoding`] can turn it into `Utf16` ([`utf16_units`]).
+    encoding: OutputEncoding,
+    /// What [`Self::reset`] returns `encoding` to.
+    initial_encoding: OutputEncoding,
+    /// The code units above U+00FF of a `Latin1` writer, in buffer order. The buffer has a placeholder byte for each.
+    wide_units: Vec<u16>,
+    /// `(offset of its first placeholder, length)` of each run in `wide_units`.
+    wide_runs: Vec<(u32, u32)>,
     pub buffer: MutableString,
     /// Watermark into `buffer.list` set by `done()`. Rust can't keep a
     /// self-borrowing slice in a field, so store the length and
@@ -7498,11 +7501,12 @@ impl BufferWriter {
     }
 
     pub fn init() -> BufferWriter {
-        BufferWriter {
-            buffer: MutableString::init_empty(),
-            written_len: 0,
-            append_newline: false,
-        }
+        Self::with_capacity_and_encoding(0, OutputEncoding::Utf8)
+    }
+
+    /// A writer whose output JSC takes as it is: Latin-1, or UTF-16 when the text needs it.
+    pub fn init_latin1() -> BufferWriter {
+        Self::with_capacity_and_encoding(0, OutputEncoding::Latin1)
     }
 
     /// Like [`init`], but pre-sizes the output buffer. The transpiled output is
@@ -7511,21 +7515,191 @@ impl BufferWriter {
     /// otherwise do as the printer appends token-by-token. (`MutableString::init`
     /// is a no-op when `capacity == 0`.)
     pub(crate) fn with_capacity(capacity: usize) -> BufferWriter {
+        Self::with_capacity_and_encoding(capacity, OutputEncoding::Utf8)
+    }
+
+    fn with_capacity_and_encoding(capacity: usize, encoding: OutputEncoding) -> BufferWriter {
+        debug_assert!(encoding != OutputEncoding::Utf16);
         BufferWriter {
+            encoding,
+            initial_encoding: encoding,
+            wide_units: Vec::new(),
+            wide_runs: Vec::new(),
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
             append_newline: false,
         }
     }
 
+    pub fn output_encoding(&self) -> OutputEncoding {
+        self.encoding
+    }
+
+    /// The finished text as a JSC string, in the width it was printed in.
+    pub fn clone_written_as_string(&self) -> bun_core::String {
+        debug_assert!(self.wide_runs.is_empty());
+        clone_as_string(self.get_written(), self.encoding)
+    }
+
     #[inline]
     pub(crate) fn write_byte(&mut self, byte: u8) {
+        debug_assert!(
+            self.encoding == OutputEncoding::Utf8
+                || (self.encoding == OutputEncoding::Latin1 && byte < 0x80)
+        );
         self.buffer.list.push(byte);
     }
 
     #[inline]
     pub(crate) fn write_all(&mut self, bytes: &[u8]) {
+        #[cfg(debug_assertions)]
+        if self.encoding != OutputEncoding::Utf8 {
+            self.assert_accepts_printed_bytes(bytes);
+        }
         self.buffer.list.extend_from_slice(bytes);
+    }
+
+    /// Only `write_verbatim_utf8` stores non-ASCII in a Latin-1 buffer. Nothing is printed into a UTF-16 buffer.
+    #[cfg(debug_assertions)]
+    #[inline(never)] // Inlined, the message's temporaries take stack in each frame of the printer.
+    fn assert_accepts_printed_bytes(&self, bytes: &[u8]) {
+        assert!(
+            self.encoding == OutputEncoding::Latin1 && strings::is_all_ascii(bytes),
+            "printed into a {:?} buffer: {:?}",
+            self.encoding,
+            bstr::BStr::new(bytes)
+        );
+    }
+
+    /// Ill-formed bytes become the lexer's decode of them. A lone surrogate is an escape in UTF-8, a unit in Latin-1.
+    pub fn write_verbatim_utf8(&mut self, text: &[u8]) -> bool {
+        if self.encoding == OutputEncoding::Utf8 && strings::is_valid_utf8(text) {
+            self.buffer.list.extend_from_slice(text);
+            return false;
+        }
+        debug_assert!(self.encoding != OutputEncoding::Utf16);
+        let mut wide_line_terminator = false;
+        // Start of the pending run of ASCII bytes, copied in one go.
+        let mut run_start = 0usize;
+        let iter = CodepointIterator::init(text);
+        let mut cursor = strings::Cursor::default();
+        while iter.next(&mut cursor) {
+            let c = cursor.c as u32;
+            if c < 0x80 {
+                continue;
+            }
+            let start = cursor.i as usize;
+            if start > run_start {
+                self.buffer.list.extend_from_slice(&text[run_start..start]);
+            }
+            run_start = start + cursor.width as usize;
+            if self.encoding == OutputEncoding::Utf8 {
+                if (FIRST_HIGH_SURROGATE..=LAST_LOW_SURROGATE).contains(&c) {
+                    // After an odd number of backslashes, the last one escapes it and starts the `\u`.
+                    let backslashes = text[..start].iter().rev().take_while(|&&b| b == b'\\');
+                    self.buffer
+                        .list
+                        .extend_from_slice(&bmp_escape(c)[backslashes.count() % 2..]);
+                } else {
+                    let mut utf8 = [0u8; 4];
+                    let len = bun_core::encode_wtf8_rune(&mut utf8, c);
+                    self.buffer.list.extend_from_slice(&utf8[..len]);
+                }
+            } else if c <= 0xFF {
+                self.buffer.list.push(c as u8);
+            } else if c <= 0xFFFF {
+                wide_line_terminator |= c == 0x2028 || c == 0x2029;
+                self.push_wide_unit(c as u16);
+            } else {
+                let [lead, trail] = strings::encode_surrogate_pair(c);
+                self.push_wide_unit(lead);
+                self.push_wide_unit(trail);
+            }
+        }
+        if text.len() > run_start {
+            self.buffer.list.extend_from_slice(&text[run_start..]);
+        }
+        wide_line_terminator
+    }
+
+    /// `unit` is above U+00FF. The placeholder reads as a letter to [`Self::get_last_byte`].
+    fn push_wide_unit(&mut self, unit: u16) {
+        let offset = self.buffer.list.len() as u32;
+        match self.wide_runs.last_mut() {
+            Some((start, len)) if *start + *len == offset => *len += 1,
+            _ => self.wide_runs.push((offset, 1)),
+        }
+        self.wide_units.push(unit);
+        self.buffer.list.push(0xFF);
+    }
+
+    /// Call when the print is over. Only [`Self::append_ascii`] may add to the buffer after it.
+    #[inline]
+    pub fn resolve_encoding(&mut self) {
+        if !self.wide_runs.is_empty() {
+            self.widen_to_utf16();
+        }
+    }
+
+    /// In place, from the end: the bytes of unit `i` (`2i`, `2i + 1`) never overlap a byte `j < i` still to be read.
+    #[cold]
+    #[inline(never)]
+    fn widen_to_utf16(&mut self) {
+        debug_assert!(self.encoding == OutputEncoding::Latin1);
+        let list = &mut self.buffer.list;
+        let len = list.len();
+        list.reserve(len);
+        let ptr = list.as_mut_ptr();
+        for i in (0..len).rev() {
+            // SAFETY: `i < len` is initialized, `2i + 1 < 2 * len <= capacity`, and the write is unaligned.
+            unsafe {
+                let unit = u16::from(*ptr.add(i));
+                ptr.add(2 * i).cast::<u16>().write_unaligned(unit);
+            }
+        }
+        let mut units = self.wide_units.iter();
+        for &(start, run_len) in &self.wide_runs {
+            for (i, &unit) in (start as usize..).zip(units.by_ref().take(run_len as usize)) {
+                debug_assert!(i < len);
+                // SAFETY: each run is a range of placeholder offsets below `len`.
+                unsafe { ptr.add(2 * i).cast::<u16>().write_unaligned(unit) };
+            }
+        }
+        // SAFETY: every byte in `0..2 * len` was written by the first loop.
+        unsafe { list.set_len(2 * len) };
+        self.encoding = OutputEncoding::Utf16;
+        self.wide_units.clear();
+        self.wide_runs.clear();
+    }
+
+    /// Add ASCII to a buffer whose encoding is final.
+    pub fn append_ascii(&mut self, bytes: &[u8]) {
+        debug_assert!(self.wide_runs.is_empty() && strings::is_all_ascii(bytes));
+        if self.encoding != OutputEncoding::Utf16 {
+            self.buffer.list.extend_from_slice(bytes);
+            return;
+        }
+        self.buffer.list.reserve(2 * bytes.len());
+        for &byte in bytes {
+            self.buffer
+                .list
+                .extend_from_slice(&u16::from(byte).to_ne_bytes());
+        }
+    }
+
+    /// [`Self::append_ascii`] for text that `fill` writes into `capacity` bytes. `fill` returns the count.
+    pub fn append_ascii_with(&mut self, capacity: usize, fill: impl FnOnce(&mut [u8]) -> usize) {
+        if self.encoding == OutputEncoding::Utf16 {
+            let mut bytes = vec![0u8; capacity];
+            let wrote = fill(&mut bytes);
+            return self.append_ascii(&bytes[..wrote]);
+        }
+        debug_assert!(self.wide_runs.is_empty());
+        let list = &mut self.buffer.list;
+        let len = list.len();
+        list.resize(len + capacity, 0);
+        let wrote = fill(&mut list[len..]);
+        list.truncate(len + wrote);
     }
 
     #[inline]
@@ -7564,6 +7738,9 @@ impl BufferWriter {
     pub fn reset(&mut self) {
         self.buffer.reset();
         self.written_len = 0;
+        self.encoding = self.initial_encoding;
+        self.wide_units.clear();
+        self.wide_runs.clear();
     }
 
     pub fn written_without_trailing_zero(&self) -> &[u8] {
@@ -7575,9 +7752,10 @@ impl BufferWriter {
     }
 
     pub(crate) fn done(&mut self) {
+        self.resolve_encoding();
         if self.append_newline {
             self.append_newline = false;
-            self.buffer.list.push(b'\n');
+            self.append_ascii(b"\n");
         }
         self.written_len = self.buffer.list.len();
     }
@@ -7591,6 +7769,17 @@ impl WriterContext for BufferWriter {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) {
         self.write_all(buf)
+    }
+    fn write_verbatim_utf8(&mut self, text: &[u8]) -> bool {
+        self.write_verbatim_utf8(text)
+    }
+    #[inline]
+    fn output_encoding(&self) -> OutputEncoding {
+        self.output_encoding()
+    }
+    #[inline]
+    fn resolve_encoding(&mut self) {
+        self.resolve_encoding()
     }
     #[inline]
     fn get_last_byte(&self) -> u8 {
@@ -7844,12 +8033,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
-    let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
+    let mut source_map_builder = get_source_map_builder::<ASCII_ONLY>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
         tree,
     );
+    source_map_builder.output_encoding = writer.output_encoding();
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
@@ -7923,6 +8113,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         None
     };
 
+    // After the source map builder, before the first consumer.
+    printer.writer.resolve_encoding();
+
     if let Some(cache) = printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
         if have_module_info {
@@ -7937,6 +8130,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(
             printer.writer.slice(),
+            printer.writer.output_encoding(),
             source_maps_chunk
                 .as_ref()
                 .map(|c| c.buffer.list.as_slice())
@@ -8086,6 +8280,8 @@ pub(crate) fn print_with_writer_and_platform<
         Printer<'a, W, /*ASCII_ONLY=*/ B, B, false, G>;
     let module_type = opts.module_type;
     let mut opts = opts;
+    // The chunk is generated after `done()`, which a `Latin1` writer may widen in.
+    debug_assert!(writer.output_encoding() == OutputEncoding::Utf8);
     let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(
         GenerateSourceMap::eager_if(GENERATE_SOURCE_MAPS),
         &mut opts,

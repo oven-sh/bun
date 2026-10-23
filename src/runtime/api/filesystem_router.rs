@@ -55,7 +55,11 @@ struct RefCountedString(BackRef<RefString>);
 
 impl RefCountedString {
     fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
-        let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
+        let string = BackRef::from(vm.ref_counted_string(
+            bytes,
+            bun_core::strings::EncodingNonAscii::Latin1,
+            None,
+        )?);
         // The cache adds no ref on a hit.
         string.ref_();
         Ok(Self(string))

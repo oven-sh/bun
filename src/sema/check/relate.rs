@@ -4766,17 +4766,20 @@ impl<'p, 's> Checker<'p, 's> {
         optionals_only: bool,
         state: u8,
     ) -> Ternary {
+        let apparent = self.apparent_type(source);
         if !self.is_intersection(source) {
-            return self.properties_related_to::<REPORT>(
+            // `getApparentTypeOfMappedType`: a tuple for `{ [P in keyof T]: T[P] }` with a `T` that extends a tuple.
+            return self.properties_related_to_ex::<REPORT>(
                 r,
                 source,
+                (apparent != source).then_some(apparent),
                 target,
                 &[],
                 optionals_only,
                 state,
+                &mut None,
             );
         }
-        let apparent = self.apparent_type(source);
         // `createUnionOrIntersectionProperty` reads the apparent type of each member.
         let mut members: SmallVec<[TypeId; 8]> = self
             .parts(apparent)

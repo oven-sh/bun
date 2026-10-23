@@ -17621,6 +17621,109 @@ export const p3: 0 = q[s];
       expect(exitCode).toBe(1);
     });
 
+    test("relates a mapped type over a type parameter that extends an array or a tuple to an intersection", async () => {
+      using dir = project({
+        "a.ts": `type Writable<T> = { -readonly [P in keyof T]: T[P] };
+interface Config { name: string; enumValues: string[] | undefined }
+type Constraint = Config & { enumValues: [string, ...string[]] };
+export function g<U extends string, T extends Readonly<[U, ...U[]]>, N extends string>(w: Writable<T>, n: N) {
+  const a: [string, ...string[]] = w;
+  const b: string[] | undefined = w;
+  const c: string[] & [string, ...string[]] = w;
+  const d: { enumValues: [string, ...string[]] } = { enumValues: w };
+  const e: Constraint = null! as { name: N; enumValues: Writable<T> };
+  const f: Constraint["enumValues"] = w;
+  return [a, b, c, d, e, f];
+}
+declare class B1<T extends Constraint> { t: T; constructor(name: T["name"]); }
+declare class B2<T extends Constraint> { t: T; constructor(name: T["name"], e: { v: T["enumValues"] }); }
+declare class B3<T extends { enumValues: [string, ...string[]] }> { t: T; constructor(e: { v: T["enumValues"] }); }
+export function h<U extends string, T extends Readonly<[U, ...U[]]>, N extends string>(w: Writable<T>, n: N) {
+  const r1: B1<{ name: N; enumValues: Writable<T> }> = new B1(n);
+  const r2: B2<{ name: N; enumValues: Writable<T> }> = new B2(n, { v: w });
+  const r3: B3<{ enumValues: Writable<T> }> = new B3({ v: w });
+  return [r1, r2, r3];
+}
+`,
+        "b.ts": `type Writable<T> = { -readonly [P in keyof T]: T[P] };
+type Numbers<T> = { [P in keyof T]: number };
+type Optional<T> = { [P in keyof T]?: T[P] };
+export function arrays<T extends readonly string[]>(w: Writable<T>, n: Numbers<T>, o: Optional<T>) {
+  const a: string[] & { length: number } = w;
+  const b: string[] & { extra: 1 } = w;
+  const c: string[] & number[] = w;
+  const d: number[] & { length: number } = n;
+  const e: string[] & { length: number } = n;
+  const f: (string | undefined)[] & { length: number } = o;
+  const g: readonly string[] & { readonly length: number } = w;
+  return [a, b, c, d, e, f, g];
+}
+export function tuples<T extends readonly [string, number]>(w: Writable<T>) {
+  const a: [string, number] & { length: 2 } = w;
+  const b: [string, number] & { length: 3 } = w;
+  const c: (string | number)[] & [string, number] = w;
+  return [a, b, c];
+}
+export function objects<T extends { a: 1 }>(w: Writable<T>) {
+  const a: { a: 1 } & { b?: 2 } = w;
+  const b: { a: 1 } & { a: number } = w;
+  return [a, b];
+}
+`,
+        "c.ts": `type Writable<T> = { -readonly [P in keyof T]: T[P] };
+interface Config<D extends string, C extends string> {
+  name: string;
+  dataType: D;
+  columnType: C;
+  data: unknown;
+  driverParam: unknown;
+  enumValues: string[] | undefined;
+}
+type Initial<TName extends string, TValues extends [string, ...string[]]> = Builder<{
+  name: TName;
+  dataType: "string";
+  columnType: "PgEnumColumn";
+  data: TValues[number];
+  enumValues: TValues;
+  driverParam: string;
+}>;
+interface PgEnum<TValues extends [string, ...string[]]> {
+  <TName extends string>(name?: TName): Initial<TName, TValues>;
+  readonly enumValues: TValues;
+}
+class Builder<T extends Config<"string", "PgEnumColumn"> & { enumValues: [string, ...string[]] }> {
+  config!: T;
+  constructor(name: T["name"], enumInstance: PgEnum<T["enumValues"]>) {}
+}
+export function f<U extends string, T extends Readonly<[U, ...U[]]>>(values: T | Writable<T>): PgEnum<Writable<T>> {
+  const enumInstance: PgEnum<Writable<T>> = Object.assign(
+    <TName extends string>(name?: TName): Initial<TName, Writable<T>> => new Builder(name ?? ("" as TName), enumInstance),
+    { enumValues: values } as const,
+  );
+  return enumInstance;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "b.ts(6,9): error TS2322: Type 'Writable<T>' is not assignable to type 'string[] & { extra: 1; }'.
+          Type 'Writable<T>' is not assignable to type '{ extra: 1; }'.
+            Property 'extra' is missing in type 'string[]' but required in type '{ extra: 1; }'.
+        b.ts(7,9): error TS2322: Type 'Writable<T>' is not assignable to type 'string[] & number[]'.
+          Type 'Writable<T>' is not assignable to type 'number[]'.
+            Type 'string' is not assignable to type 'number'.
+        b.ts(8,9): error TS2322: Type 'Numbers<T>' is not assignable to type 'number[] & { length: number; }'.
+          Type 'Numbers<T>' is not assignable to type 'number[]'.
+        b.ts(9,9): error TS2322: Type 'Numbers<T>' is not assignable to type 'string[] & { length: number; }'.
+          Type 'Numbers<T>' is not assignable to type 'string[]'.
+        b.ts(10,9): error TS2322: Type 'Optional<T>' is not assignable to type '(string | undefined)[] & { length: number; }'.
+          Type 'Optional<T>' is not assignable to type '(string | undefined)[]'.
+        b.ts(16,9): error TS2322: Type 'Writable<T>' is not assignable to type 'never'.
+          The intersection '[string, number] & { length: 3; }' was reduced to 'never' because property 'length' has conflicting types in some constituents."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

@@ -965,6 +965,23 @@ describe("CLI argument error messages", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.each([
+    [["--target=nodejs"], `error: Invalid value for --target: "nodejs". Must be 'browser', 'bun', or 'node'.`],
+    [["--target=browser", "--bytecode"], "error: target must be 'bun' when bytecode is true. Received: browser"],
+  ])("%j names the flag and the value", async (flags, expected) => {
+    using dir = tempDir("build-target-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...flags, "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: normalizeBunSnapshot(stderr) }).toEqual({ stdout: "", stderr: expected });
+    expect(exitCode).toBe(1);
+  });
+
   test("--loader without a ':' separator names the flag and the bad token", async () => {
     using dir = tempDir("build-loader-err", { "in.js": "console.log(1)" });
     await using proc = Bun.spawn({

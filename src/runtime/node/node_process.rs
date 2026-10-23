@@ -28,9 +28,21 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     EncodedSlice::from_bytes(argv0).to_js(global_object)
 }
 
+/// `bun.exe`, set when `bunx.exe` runs a bin in its own process. See `BunXFastPath::run_as_bun_exe`.
+pub(crate) static EXEC_PATH_OVERRIDE: std::sync::OnceLock<bun_core::ZBox> =
+    std::sync::OnceLock::new();
+
+/// `process.execPath` and `process.argv[0]`.
+fn exec_path() -> Option<&'static bun_core::ZStr> {
+    match EXEC_PATH_OVERRIDE.get() {
+        Some(path) => Some(path.as_zstr()),
+        None => bun_core::self_exe_path().ok(),
+    }
+}
+
 #[unsafe(export_name = "Bun__Process__getExecPath")]
 extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
-    let Ok(out) = bun_core::self_exe_path() else {
+    let Some(out) = exec_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
@@ -381,8 +393,7 @@ mod _impl {
             // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.push(BunString::static_("bun"));
         } else {
-            let exe_path = bun_core::self_exe_path().ok();
-            args_list.push(match exe_path {
+            args_list.push(match super::exec_path() {
                 Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
                 None => BunString::static_("bun"),
             });

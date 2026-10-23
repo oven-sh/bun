@@ -385,7 +385,7 @@ pub struct ParseOptions<'a> {
     /// such a flag is skipped.
     pub unknown_long_flags_are_positional: bool,
     /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which applies to every
-    /// command.
+    /// command: there it is skipped, and so is its value.
     pub unknown_long_flags_are_errors: bool,
     pub ignored_long_flags: IgnoredLongFlags,
 }
@@ -492,6 +492,11 @@ impl<Id: 'static> Args<Id> {
 
     pub fn remaining(&self) -> &[&'static [u8]] {
         self.clap.remaining()
+    }
+
+    /// Whether a `--` right after the last positional was left out of `remaining`.
+    pub fn remaining_follows_separator(&self) -> bool {
+        self.clap.remaining_follows_separator()
     }
 }
 

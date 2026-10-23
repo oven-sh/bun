@@ -38,6 +38,7 @@ set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)"
 set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune publish init pm x repl check lint fmt
 # The package manager commands and `bun x` reject a flag they do not have.
 set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init
+set -l bun_cmds_without_files create c help upgrade discord install i ci add a remove rm update up audit dedupe prune pm x repl link unlink outdated why info exec completions
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -79,6 +80,9 @@ complete -e -c bun
 # Dynamically emit scripts and binaries
 complete -c bun -f -a "(__bun_complete_bins_scripts)"
 
+# Complete files for `bun <file>`, `bun run <file>`, `bun test <file>` and the arguments of a script.
+complete -c bun -n "not __fish_seen_subcommand_from $bun_cmds_without_files" -F
+
 # Complete flags if we have no subcommand or a flag-friendly one.
 set -l flag_applies "__fish_use_subcommand; or __fish_seen_subcommand_from $bun_builtin_cmds_accepting_flags"
 complete -c bun \
@@ -92,7 +96,29 @@ complete -c bun \
 complete -c bun \
 	-n $flag_applies --no-files -l 'use' -r -d 'Use a framework (ex: next)'
 complete -c bun \
-	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
+	-n $flag_applies --no-files -l 'hot' -d 'Enable hot reloading in Bun\'s JavaScript runtime'
+complete -c bun \
+	-n $flag_applies --no-files -l 'watch' -d 'Automatically restart the process on file change'
+complete -c bun \
+	-n $flag_applies --no-files -l 'no-clear-screen' -d 'Disable clearing the terminal screen on reload when --hot or --watch is enabled'
+complete -c bun \
+	-n $flag_applies --no-files -l 'smol' -d 'Use less memory, but run garbage collection more often'
+complete -c bun \
+	-n $flag_applies --no-files -s 'b' -l 'bun' -d 'Force a script or package to use Bun\'s runtime instead of Node.js'
+complete -c bun \
+	-n $flag_applies --no-files -l 'silent' -d 'Don\'t print the script command'
+complete -c bun \
+	-n $flag_applies --no-files -l 'inspect' -d 'Activate Bun\'s debugger'
+complete -c bun \
+	-n $flag_applies --no-files -l 'inspect-brk' -d 'Activate Bun\'s debugger, set breakpoint on first line of code and wait'
+complete -c bun \
+	-n $flag_applies --no-files -l 'inspect-wait' -d 'Activate Bun\'s debugger, wait for a connection before executing'
+complete -c bun \
+	-n $flag_applies -s 'r' -l 'preload' -r -d 'Import a module before other modules are loaded'
+complete -c bun \
+	-n $flag_applies -l 'cwd' -r -d 'Absolute path to resolve files & entry points from'
+complete -c bun \
+	-n $flag_applies -l 'env-file' -r -d 'Load environment variables from the specified file(s)'
 
 # Complete dev and create as first subcommand.
 complete -c bun \

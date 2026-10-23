@@ -3,7 +3,6 @@
 
 use crate::Error;
 use bun_ast::StoreRef;
-use bun_collections::IntegerBitSet;
 use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
@@ -133,13 +132,10 @@ impl InitCommand {
                 if i == selected.to_index() {
                     if colors {
                         bun_core::pretty!("<r><cyan>❯<r>   ");
-                    } else {
-                        bun_core::pretty!("<r><cyan>><r>   ");
-                    }
-                    if colors {
                         Output::print(format_args!("\x1B[4m{}\x1B[24m\x1B[0K\n", option));
                     } else {
-                        Output::print(format_args!("    {}\x1B[0K\n", option));
+                        bun_core::pretty!("<r><cyan>><r>   ");
+                        Output::print(format_args!("{}\x1B[0K\n", option));
                     }
                 } else {
                     Output::print(format_args!("    {}\x1B[0K\n", option));
@@ -399,6 +395,12 @@ impl InitCommand {
         }
 
         let _ = Fs::FileSystem::init(None)?;
+
+        // The React templates skip a package.json that exists, whatever it holds.
+        if template.is_react() {
+            return template.write_files_and_run_bun_dev();
+        }
+
         let pathname =
             Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
         let destination_dir = Fd::cwd();
@@ -473,24 +475,32 @@ impl InitCommand {
         let mut did_load_package_json = false;
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
+                // Only whitespace is nothing to lose: it is replaced like a missing file.
+                if package_json_contents.list.trim_ascii().is_empty() {
+                    package_json_file = None;
+                    break 'process_package_json;
+                }
+
                 let source = bun_ast::Source::init_path_string(
-                    b"package.json",
+                    Fs::FileSystem::get().abs(&[b"package.json"]),
                     package_json_contents.list.as_slice(),
                 );
                 let mut log = bun_ast::Log::init();
                 let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => e,
-                        Err(_) => {
-                            package_json_file = None;
-                            break 'process_package_json;
+                        Ok(expr) if expr.data.is_e_object() => expr,
+                        result => {
+                            if let Ok(expr) = result {
+                                log.add_error(
+                                    Some(&source),
+                                    expr.loc,
+                                    "package.json root must be an object",
+                                );
+                            }
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                            Global::exit(1);
                         }
                     };
-
-                if !package_json_expr.data.is_e_object() {
-                    package_json_file = None;
-                    break 'process_package_json;
-                }
 
                 fields.object = package_json_expr.data.e_object();
 
@@ -618,12 +628,8 @@ impl InitCommand {
             }
         }
 
-        match template {
-            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn => {
-                template.write_files_and_run_bun_dev()?;
-                return Ok(());
-            }
-            _ => {}
+        if template.is_react() {
+            return template.write_files_and_run_bun_dev();
         }
 
         struct Steps {
@@ -665,18 +671,17 @@ impl InitCommand {
                 object.put_string(&bump, b"name", &fields.name)?;
             }
             if !fields.entry_point.is_empty() {
-                if object.has_property(b"module") {
-                    object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
-                } else if object.has_property(b"main") {
+                if object.has_property(b"main") && !object.has_property(b"module") {
                     object.put_string(&bump, b"main", &fields.entry_point)?;
                 } else {
                     object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
+                    if !object.has_property(b"type") {
+                        object.put_string(&bump, b"type", b"module")?;
+                    }
                 }
             }
 
-            if fields.private {
+            if fields.private && !object.has_property(b"private") {
                 object.put(
                     &bump,
                     b"private",
@@ -687,65 +692,25 @@ impl InitCommand {
 
         let need_run_bun_install;
         {
-            let all_dependencies = template.dependencies();
-            let dependencies = all_dependencies.dependencies;
-            let dev_dependencies = all_dependencies.dev_dependencies;
-            let mut needed_dependencies = IntegerBitSet::<64>::init_empty();
-            let mut needed_dev_dependencies = IntegerBitSet::<64>::init_empty();
-            needed_dependencies.set_range_value(
-                bun_collections::bit_set::Range {
-                    start: 0,
-                    end: dependencies.len(),
-                },
-                true,
+            let needs_bun_types_dependency = !lists_dependency(
+                object,
+                &[b"dependencies", b"devDependencies", b"optionalDependencies"],
+                b"@types/bun",
             );
-            needed_dev_dependencies.set_range_value(
-                bun_collections::bit_set::Range {
-                    start: 0,
-                    end: dev_dependencies.len(),
-                },
-                true,
-            );
-
-            let needs_dependencies = 'brk: {
-                if let Some(deps) = object.get(b"dependencies") {
-                    for (i, dep) in dependencies.iter().enumerate() {
-                        if deps.get(dep.name).is_some() {
-                            needed_dependencies.unset(i);
-                        }
-                    }
-                }
-                break 'brk needed_dependencies.count() > 0;
-            };
-
-            let needs_dev_dependencies = 'brk: {
-                if let Some(deps) = object.get(b"devDependencies") {
-                    for (i, dep) in dev_dependencies.iter().enumerate() {
-                        if deps.get(dep.name).is_some() {
-                            needed_dev_dependencies.unset(i);
-                        }
-                    }
-                }
-                break 'brk needed_dev_dependencies.count() > 0;
-            };
 
             let needs_typescript_dependency = !minimal
-                && 'brk: {
-                    if let Some(deps) = object.get(b"devDependencies") {
-                        if deps.has_any_property_named(&[b"typescript"]) {
-                            break 'brk false;
-                        }
-                    }
-                    if let Some(deps) = object.get(b"peerDependencies") {
-                        if deps.has_any_property_named(&[b"typescript"]) {
-                            break 'brk false;
-                        }
-                    }
-                    true
-                };
+                && !lists_dependency(
+                    object,
+                    &[
+                        b"dependencies",
+                        b"devDependencies",
+                        b"optionalDependencies",
+                        b"peerDependencies",
+                    ],
+                    b"typescript",
+                );
 
-            need_run_bun_install =
-                needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
+            need_run_bun_install = needs_bun_types_dependency || needs_typescript_dependency;
 
             // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
             if !minimal && is_type_script_entry_point(&fields.entry_point) {
@@ -764,30 +729,14 @@ impl InitCommand {
                 }
             }
 
-            if needs_dependencies {
-                let mut dependencies_object = dependency_map(object, b"dependencies");
-                let mut iter = needed_dependencies.iter_set();
-                while let Some(index) = iter.next() {
-                    let dep = &dependencies[index];
-                    dependencies_object.data.as_e_object_mut().put_string(
-                        &bump,
-                        dep.name,
-                        dep.version,
-                    )?;
-                }
-                object.put(&bump, b"dependencies", dependencies_object)?;
-            }
-
-            if needs_dev_dependencies {
-                let mut obj = dependency_map(object, b"devDependencies");
-                let mut iter = needed_dev_dependencies.iter_set();
-                while let Some(index) = iter.next() {
-                    let dep = &dev_dependencies[index];
-                    obj.data
-                        .as_e_object_mut()
-                        .put_string(&bump, dep.name, dep.version)?;
-                }
-                object.put(&bump, b"devDependencies", obj)?;
+            if needs_bun_types_dependency {
+                let mut dev_dependencies = dependency_map(object, b"devDependencies");
+                dev_dependencies.data.as_e_object_mut().put_string(
+                    &bump,
+                    b"@types/bun",
+                    b"latest",
+                )?;
+                object.put(&bump, b"devDependencies", dev_dependencies)?;
             }
 
             if needs_typescript_dependency {
@@ -798,10 +747,6 @@ impl InitCommand {
                     .put_string(&bump, b"typescript", b"^7")?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
-        }
-
-        if template.is_react() {
-            template.write_to_package_json(&mut fields, &bump)?;
         }
 
         'write_package_json: {
@@ -879,6 +824,7 @@ impl InitCommand {
 
                 if !fields.entry_point.is_empty()
                     && is_safe_entry_point_path(&fields.entry_point)
+                    && (!did_load_package_json || is_script_entry_point(&fields.entry_point))
                     && !exists(&fields.entry_point)
                 {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
@@ -997,15 +943,6 @@ impl Assets {
         Self::create_full_inner(asset, asset_name, "", is_template, args)
     }
 
-    pub(crate) fn create_with_contents(
-        asset_name: &[u8],
-        contents: &'static [u8],
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
-        Self::create_full_with_contents(asset_name, contents, "", is_template, args)
-    }
-
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
         // Create parent dirs then open.
         if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
@@ -1061,40 +998,6 @@ impl Assets {
         } else {
             file.write_all(asset)?;
         }
-        bun_core::prettyln!(
-            " + <r><d>{}{}<r>",
-            bstr::BStr::new(filename),
-            message_suffix,
-        );
-        Output::flush();
-        Ok(())
-    }
-
-    fn create_full_with_contents(
-        // name of asset file to create
-        filename: &[u8],
-        contents: &'static [u8],
-        // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
-        message_suffix: &'static str,
-        // Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
-        is_template: bool,
-        // Format arguments
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let file = bun_sys::File::openat(
-            Fd::cwd(),
-            filename,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o666,
-        )?;
-
-        if is_template {
-            let buf = bun_fmt::substitute_named(contents, args);
-            file.write_all(&buf)?;
-        } else {
-            file.write_all(contents)?;
-        }
-
         bun_core::prettyln!(
             " + <r><d>{}{}<r>",
             bstr::BStr::new(filename),
@@ -1195,166 +1098,6 @@ impl RadioChoice for ReactTemplateChoice {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DependencyNeeded / DependencyGroup
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone)]
-pub(crate) struct DependencyNeeded {
-    pub name: &'static [u8],
-    pub version: &'static [u8],
-}
-
-struct DependencyGroup {
-    pub dependencies: &'static [DependencyNeeded],
-    pub dev_dependencies: &'static [DependencyNeeded],
-}
-
-impl DependencyGroup {
-    const BLANK: DependencyGroup = DependencyGroup {
-        dependencies: &[],
-        dev_dependencies: &[DependencyNeeded {
-            name: b"@types/bun",
-            version: b"latest",
-        }],
-    };
-
-    // `const` cannot concat slices; the lists are hand-expanded below.
-    const REACT: DependencyGroup = DependencyGroup {
-        dependencies: &[
-            DependencyNeeded {
-                name: b"react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"react-dom",
-                version: b"^19",
-            },
-        ],
-        dev_dependencies: &[
-            DependencyNeeded {
-                name: b"@types/react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/react-dom",
-                version: b"^19",
-            },
-            // ++ blank.devDependencies
-            DependencyNeeded {
-                name: b"@types/bun",
-                version: b"latest",
-            },
-        ],
-    };
-
-    const TAILWIND: DependencyGroup = DependencyGroup {
-        dependencies: &[
-            DependencyNeeded {
-                name: b"tailwindcss",
-                version: b"^4",
-            },
-            // ++ react.dependencies
-            DependencyNeeded {
-                name: b"react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"react-dom",
-                version: b"^19",
-            },
-        ],
-        dev_dependencies: &[
-            DependencyNeeded {
-                name: b"bun-plugin-tailwind",
-                version: b"latest",
-            },
-            // ++ react.devDependencies
-            DependencyNeeded {
-                name: b"@types/react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/react-dom",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/bun",
-                version: b"latest",
-            },
-        ],
-    };
-
-    const SHADCN: DependencyGroup = DependencyGroup {
-        dependencies: &[
-            DependencyNeeded {
-                name: b"class-variance-authority",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"clsx",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"tailwind-merge",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"tw-animate-css",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"lucide-react",
-                version: b"^1",
-            },
-            DependencyNeeded {
-                name: b"@radix-ui/react-label",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"@radix-ui/react-select",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"@radix-ui/react-slot",
-                version: b"latest",
-            },
-            // ++ tailwind.dependencies
-            DependencyNeeded {
-                name: b"tailwindcss",
-                version: b"^4",
-            },
-            DependencyNeeded {
-                name: b"react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"react-dom",
-                version: b"^19",
-            },
-        ],
-        // ++ tailwind.devDependencies
-        dev_dependencies: &[
-            DependencyNeeded {
-                name: b"bun-plugin-tailwind",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"@types/react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/react-dom",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/bun",
-                version: b"latest",
-            },
-        ],
-    };
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Template
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1387,50 +1130,6 @@ impl Template {
         )
     }
 
-    fn write_to_package_json(
-        self,
-        fields: &mut PackageJSONFields,
-        bump: &bun_alloc::Arena,
-    ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
-        fields.name = self.name().to_vec();
-        // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
-        });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
-            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
-            bun_ast::E::SetError::Clobber => Error::Unexpected,
-        })?;
-        let the_scripts = self.scripts();
-        let mut i: usize = 0;
-        while i < the_scripts.len() {
-            let script_name = the_scripts[i];
-            let script_command = the_scripts[i + 1];
-
-            scripts_json.data.e_object_mut().unwrap().put_string(
-                bump,
-                script_name,
-                script_command,
-            )?;
-            i += 2;
-        }
-        Ok(())
-    }
-
-    fn dependencies(self) -> &'static DependencyGroup {
-        match self {
-            Template::Blank => &DependencyGroup::BLANK,
-            Template::ReactBlank => &DependencyGroup::REACT,
-            Template::ReactTailwind => &DependencyGroup::TAILWIND,
-            Template::ReactTailwindShadcn => &DependencyGroup::SHADCN,
-            Template::TypescriptLibrary => &DependencyGroup::BLANK,
-        }
-    }
-
     fn name(self) -> &'static [u8] {
         match self {
             Template::Blank => b"bun-blank-template",
@@ -1438,24 +1137,6 @@ impl Template {
             Template::ReactBlank => b"bun-react-template",
             Template::ReactTailwind => b"bun-react-tailwind-template",
             Template::ReactTailwindShadcn => b"bun-react-tailwind-shadcn-template",
-        }
-    }
-
-    fn scripts(self) -> &'static [&'static [u8]] {
-        match self {
-            Template::Blank | Template::TypescriptLibrary => &[],
-            Template::ReactTailwind | Template::ReactTailwindShadcn => &[
-                b"dev", b"bun './**/*.html'",
-                b"build", b"bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'",
-            ],
-            Template::ReactBlank => &[
-                b"dev",
-                b"bun --hot .",
-                b"static",
-                b"bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
-                b"build",
-                b"NODE_ENV=production bun .",
-            ],
         }
     }
 
@@ -1656,27 +1337,28 @@ impl Template {
 
         for file in self.files() {
             let path = file.path;
-            let contents = file.contents;
-
-            let result = if path == b"README.md" {
-                Assets::create_with_contents(
-                    b"README.md",
-                    contents,
+            let readme;
+            let contents = if path == b"README.md" {
+                readme = bun_fmt::substitute_named(
+                    file.contents,
                     &[
                         (b"name", self.name()),
                         (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
                         (b"tools", Assets::README_TOOLS),
                     ],
-                )
+                );
+                readme.as_slice()
             } else {
-                let mut p = path.to_vec();
-                p.push(0);
-                Assets::create_new(
-                    ZStr::from_slice_with_nul(&p[..]),
-                    // SAFETY: p[len-1] == 0 written above
-                    contents,
-                )
+                file.contents
             };
+
+            let mut p = path.to_vec();
+            p.push(0);
+            let result = Assets::create_new(
+                ZStr::from_slice_with_nul(&p[..]),
+                // SAFETY: p[len-1] == 0 written above
+                contents,
+            );
             if let Err(err) = result {
                 if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST)) {
                     bun_core::prettyln!(
@@ -1948,12 +1630,28 @@ fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Exp
         .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
 }
 
+/// Whether one of the dependency `groups` of `package_json` lists `name`.
+fn lists_dependency(package_json: &bun_ast::E::Object, groups: &[&[u8]], name: &[u8]) -> bool {
+    groups.iter().any(|group| {
+        package_json
+            .get(group)
+            .is_some_and(|dependencies| dependencies.get(name).is_some())
+    })
+}
+
 fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
     options::DEFAULT_LOADERS
         .get(bun_paths::extension(entry_point))
         .copied()
         .unwrap_or(bun_ast::Loader::Ts)
         .is_type_script()
+}
+
+/// A stub written at an extensionless `"main": "./index"` would be loaded instead of `index.js`.
+fn is_script_entry_point(entry_point: &[u8]) -> bool {
+    options::DEFAULT_LOADERS
+        .get(bun_paths::extension(entry_point))
+        .is_some_and(|loader| loader.is_java_script_like())
 }
 
 /// Refuse entry-point paths that would escape the project directory

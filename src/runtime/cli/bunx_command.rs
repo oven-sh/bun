@@ -1322,7 +1322,7 @@ impl BunxCommand {
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 
-        let spawn_result = match proc_sync::spawn(&proc_sync::Options {
+        let install_status = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
             envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
             cwd: Box::<[u8]>::from(bunx_cache_dir),
@@ -1351,8 +1351,8 @@ impl BunxCommand {
                 );
                 Global::exit(1);
             }
-            Ok(Err(_)) => Global::exit(1),
-            Ok(Ok(result)) => result,
+            Ok(Err(err)) => SpawnStatus::Err(err),
+            Ok(Ok(result)) => result.status,
         };
 
         // These are only for the install. A `bunx` or `bun install` that the tool itself runs must
@@ -1371,7 +1371,7 @@ impl BunxCommand {
             Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal))
         }
 
-        match &spawn_result.status {
+        match &install_status {
             SpawnStatus::Exited(exited) => {
                 if exited.signal != 0 {
                     raise(exited.signal);

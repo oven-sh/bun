@@ -540,6 +540,9 @@ impl<'a> Coordinator<'a> {
                     bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
             }
+            frame::Kind::SnapshotWriteFailed => {
+                self.reporter.worker_snapshot_write_failed = true;
+            }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
     }

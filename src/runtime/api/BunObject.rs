@@ -611,6 +611,12 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
             if strings::ends_with(main, b"[stdin]") {
                 break 'use_resolved_path;
             }
+            // The main module is registered under the path it was given.
+            if bun_options_types::context::try_get()
+                .is_some_and(|ctx| ctx.runtime_options.preserve_symlinks_main_enabled())
+            {
+                break 'use_resolved_path;
+            }
 
             let Ok(fd) = sys::openat_a(
                 if cfg!(windows) {

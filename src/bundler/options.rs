@@ -1756,7 +1756,7 @@ impl<'a> BundleOptions<'a> {
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
-            preserve_symlinks: false,
+            preserve_symlinks: transform.preserve_symlinks.unwrap_or(false),
             preserve_extensions: false,
             production: false,
             output_format: Format::Esm,
@@ -1846,7 +1846,8 @@ impl<'a> BundleOptions<'a> {
             opts.env.files = transform.env_files.clone().into_boxed_slice();
         }
 
-        opts.env.disable_default_env_files = transform.disable_default_env_files;
+        opts.env.disable_default_env_files =
+            transform.disable_default_env_files || transform.skip_default_env_files;
 
         if let Some(origin) = &transform.origin {
             // ownership — `URL<'_>` borrows its input; `OwnedURL` owns the href and
@@ -1857,6 +1858,7 @@ impl<'a> BundleOptions<'a> {
         if let Some(jsx_opts) = &transform.jsx {
             opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
+        opts.jsx.side_effects |= transform.jsx_side_effects;
 
         if !transform.extension_order.is_empty() {
             opts.extension_order.default.default = transform

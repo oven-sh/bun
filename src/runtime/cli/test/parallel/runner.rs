@@ -302,12 +302,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     // (see test_command.rs handle_test_completed), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
-    if opts.repeat_count > 0 {
-        argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
-    }
-    if opts.retry > 0 {
-        argv.push(print_z(format_args!("--retry={}", opts.retry))?);
-    }
+    // Also when 0: the worker reads bunfig.toml too, and only a flag wins over its key.
+    argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
+    argv.push(print_z(format_args!("--retry={}", opts.retry))?);
     argv.push(print_z(format_args!(
         "--max-concurrency={}",
         opts.max_concurrency
@@ -380,6 +377,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
+    // For what a test builds. The worker itself reads no env file.
+    if ctx.args.disable_default_env_files {
+        argv.push(lit(b"--no-env-file\0"));
+    }
     match bun_core::code_generation_from_strings() {
         bun_core::CodeGenerationFromStrings::Allowed => {}
         bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
@@ -418,9 +419,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             "--jsx-runtime={}",
             jsx_runtime_tag_name(jsx.runtime)
         ))?);
-        if jsx.side_effects {
-            argv.push(lit(b"--jsx-side-effects\0"));
-        }
+    }
+    if ctx.args.jsx_side_effects {
+        argv.push(lit(b"--jsx-side-effects\0"));
     }
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));
@@ -711,13 +712,23 @@ fn worker_flush_aggregates(
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
+    let mut snapshots_written = true;
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-        let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
-        let _ = runner.snapshots.write_snapshot_file();
+        snapshots_written = runner.snapshots.write_inline_snapshots().unwrap_or(false);
+        if runner.snapshots.write_snapshot_file().is_err() {
+            bun_core::err_generic!("Failed to write snapshot file");
+            snapshots_written = false;
+        }
     }
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
     let wf = unsafe { &mut *WORKER_FRAME.get() };
+
+    // The coordinator ignores the exit status of a worker that is between files.
+    if !snapshots_written {
+        wf.begin(frame::Kind::SnapshotWriteFailed);
+        cmds.send(wf.finish());
+    }
 
     wf.begin(frame::Kind::RepeatBufs);
     wf.str(reporter.failures_to_repeat_buf.as_slice());

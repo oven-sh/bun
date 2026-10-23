@@ -1003,8 +1003,8 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
-    // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
+  test.concurrent("loader map with an empty-string key does not leave uninitialized slots", async () => {
+    // The empty name was skipped, but `loader_names` was being
     // indexed by the property position instead of a dense counter, leaving garbage in
     // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
     // bundler thread surfaces as a test failure instead of taking down the test runner.
@@ -1034,6 +1034,20 @@ describe("Bun.build", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
     expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the empty key of the loader map is for files with no extension", async () => {
+    using dir = tempDir("bun-build-loader-no-extension", {
+      "entry.ts": `import license from "./LICENSE";\nconsole.log(license);\n`,
+      "LICENSE": "not (valid) typescript: at all",
+    });
+    const outputs = async (loader: Record<string, "text">) => {
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], loader });
+      return build.outputs.map(output => output.kind);
+    };
+    expect(await outputs({ "": "text" })).toEqual(["entry-point"]);
+    // Without it such a file is copied.
+    expect(await outputs({})).toEqual(["entry-point", "asset"]);
   });
 
   test.concurrent("rebuilding busts the directory entries cache", async () => {

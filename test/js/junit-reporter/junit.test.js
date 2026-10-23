@@ -609,6 +609,30 @@ describe("junit reporter", () => {
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
 
+  it.each([
+    [["--reporter=junit", "--reporter=dots", "--reporter-outfile=junit.xml"], true],
+    [["--reporter-outfile=junit.xml"], false],
+    [["--reporter=junit", "--reporter=dots"], false],
+    [["--reporter=bogus", "--reporter=dots"], false],
+  ])("%j writes the report: %p", async (flags, written) => {
+    await using tmpDir = tempDir("junit-and-dots", {
+      "package.json": "{}",
+      "a.test.js": `test("one", () => {});`,
+    });
+    await using proc = spawn([bunExe(), "test", ...flags], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("1 pass");
+    if (flags.includes("--reporter=dots")) expect(stderr).not.toContain("(pass)");
+    expect(await file(join(String(tmpDir), "junit.xml")).exists()).toBe(written);
+    expect(exitCode).toBe(0);
+  });
+
   it("prints a write error when the outfile is longer than the path buffer", async () => {
     // A bunfig value can be longer than the path buffer on every platform.
     const outfile = Buffer.alloc(100_000, "j").toString();

@@ -570,6 +570,25 @@ it("should create template from local folder", async () => {
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
+it.concurrent.each([
+  [["--cwd=proj"], ["dest/tpl.txt"], 0],
+  [["--cwd", "proj"], [], 1],
+])("bun %j create tpl dest writes %j and exits with %d", async (flags, written, expectedExitCode) => {
+  using dir = tempDir("create-after-cwd", { "bun-create/tpl/tpl.txt": "template", "proj/mine.txt": "mine" });
+  await using proc = spawn({
+    cmd: [bunExe(), ...flags, "create", "tpl", "dest", "--no-git"],
+    cwd: String(dir),
+    env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  const exitCode = await proc.exited;
+  expect(Object.keys(await tree(String(dir)))).toEqual(["bun-create/tpl/tpl.txt", ...written, "proj/mine.txt"]);
+  expect(exitCode).toBe(expectedExitCode);
+});
+
 async function tree(dir: string) {
   const files: Record<string, string> = {};
   for (const path of (await Array.fromAsync(new Bun.Glob("**").scan({ cwd: dir, dot: true }))).sort()) {

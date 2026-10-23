@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   isLinux,
+  isMacOS,
   isWindows,
   makeTreeSync,
   MAX_PATH_BYTES,
@@ -145,8 +146,6 @@ function runInCwdSuccess({
   antipattern,
   command = ["present"],
   auto = false,
-  env = {},
-  elideCount,
 }: {
   cwd: string;
   pattern: string | string[];
@@ -154,15 +153,8 @@ function runInCwdSuccess({
   antipattern?: RegExp | RegExp[];
   command?: string[];
   auto?: boolean;
-  env?: Record<string, string | undefined>;
-  elideCount?: number;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
-
-  // Add elide-lines first if specified
-  if (elideCount !== undefined) {
-    cmd.push("--elide-lines", elideCount.toString());
-  }
 
   if (Array.isArray(pattern)) {
     for (const p of pattern) {
@@ -179,7 +171,7 @@ function runInCwdSuccess({
   const { exitCode, stdout, stderr } = spawnSync({
     cwd,
     cmd,
-    env: { ...bunEnv, ...env },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -207,6 +199,30 @@ function runInCwdFailure(cwd: string, pkgname: string, scriptname: string, resul
   expect(stdout.toString()).toBeEmpty();
   expect(stderr.toString()).toMatch(result);
   expect(exitCode).not.toBe(0);
+}
+
+/** Runs `bun <args>` on a pseudo-terminal. `text` is what it drew, without the escape sequences. */
+async function runInTerminal(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
+  const decoder = new TextDecoder();
+  let output = "";
+  const eof = Promise.withResolvers<void>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    // With the NO_COLOR=1 of bunEnv, a terminal gets the same lines as a pipe.
+    env: { ...bunEnv, NO_COLOR: undefined, ...env },
+    terminal: {
+      cols: 250,
+      rows: 50,
+      data: (_terminal, chunk) => void (output += decoder.decode(chunk, { stream: true })),
+      exit: () => eof.resolve(),
+    },
+  });
+  const exitCode = await proc.exited;
+  await eof.promise;
+  proc.terminal!.close();
+  output += decoder.decode();
+  return { exitCode, output, text: Bun.stripANSI(output).replaceAll("\r\n", "\n") };
 }
 
 describe("bun", () => {
@@ -626,101 +642,78 @@ describe("bun", () => {
     expect(exitCode).toBe(128 + signal);
   });
 
-  function runElideLinesTest({
+  const twentyLines = () =>
+    tempDir("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+  // Only a terminal gets the panes that are redrawn, which is where lines are elided.
+  async function runElideLinesTest({
     elideLines,
     target_pattern,
-    antipattern,
+    antipattern = [],
   }: {
     elideLines?: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
   }) {
-    const dir = tempDirWithFiles("testworkspace", {
-      packages: {
-        dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
-          "package.json": JSON.stringify({
-            name: "dep0",
-            scripts: {
-              script: `${bunExe()} run index.js`,
-            },
-          }),
-        },
-      },
-      "package.json": JSON.stringify({
-        name: "ws",
-        workspaces: ["packages/*"],
-      }),
-    });
-
-    if (process.platform === "win32") {
-      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
-      // `state.pretty_output` is false, and `redraw()` short-circuits before
-      // ever emitting elision output. `target_pattern` is intentionally NOT
-      // iterated here: every caller bundles TTY-only regexes such as
-      // `/\[N lines elided\]/` that would never appear in piped Windows output
-      // and would fail the test for the wrong reason. The hardcoded log_line
-      // match covers the non-TTY subset of every caller's target_pattern.
-      // `antipattern` is iterated because absence-checks remain valid on either
-      // code path.
-      const { exitCode, stderr, stdout } = spawnSync({
-        cwd: dir,
-        cmd: [
-          bunExe(),
-          "run",
-          "--filter",
-          "./packages/dep0",
-          ...(elideLines === undefined ? [] : ["--elide-lines", String(elideLines)]),
-          "script",
-        ],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdoutval = stdout.toString();
-      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-      if (antipattern) {
-        for (const r of antipattern) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
-      expect(exitCode).toBe(0);
-      return;
-    }
-
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
-      target_pattern,
-      antipattern,
-      command: ["script"],
-      elideCount: elideLines,
-    });
+    using dir = twentyLines();
+    const { text, exitCode } = await runInTerminal(String(dir), [
+      "run",
+      "--filter",
+      "./packages/dep0",
+      ...(elideLines === undefined ? [] : ["--elide-lines", String(elideLines)]),
+      "script",
+    ]);
+    for (const r of target_pattern) expect(text).toMatch(r);
+    for (const r of antipattern) expect(text).not.toMatch(r);
+    expect(exitCode).toBe(0);
   }
 
-  test("does not elide output by default when using --filter", () => {
-    runElideLinesTest({
+  test.concurrent("does not elide output by default when using --filter", async () => {
+    await runElideLinesTest({
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
     });
   });
 
-  test("respects --elide-lines argument", () => {
-    runElideLinesTest({
+  test.concurrent("respects --elide-lines argument", async () => {
+    await runElideLinesTest({
       elideLines: 15,
-      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){15}/],
     });
   });
 
-  test("--elide-lines=0 shows all output", () => {
-    runElideLinesTest({
+  test.concurrent("--elide-lines=0 shows all output", async () => {
+    await runElideLinesTest({
       elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
     });
+  });
+
+  test.concurrent("FORCE_COLOR=1 does not draw panes into a pipe", async () => {
+    using dir = twentyLines();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "script"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      ...Array(20).fill("dep0 script: log_line"),
+      "dep0 script: Exited with code 0",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
@@ -754,8 +747,7 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
-  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+  test.concurrent("terminal output reports how long a successful script took", async () => {
     using dir = tempDir("filter-done-in", {
       packages: {
         dep0: {
@@ -765,15 +757,8 @@ describe("bun", () => {
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
 
-    const { exitCode, stdout } = spawnSync({
-      cwd: String(dir),
-      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
-      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    const { text, exitCode } = await runInTerminal(String(dir), ["run", "--filter", "dep0", "script"]);
+    expect(text).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
     expect(exitCode).toBe(0);
   });
 
@@ -845,6 +830,146 @@ describe("bun", () => {
     expect(stderr).toContain(`broken${sep}package.json`);
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/21670
+  describe("a workspace directory with an upper-case letter in its name", () => {
+    const member = (name: string) => ({
+      "package.json": JSON.stringify({ name, scripts: { build: `echo BUILD-${name}` } }),
+    });
+
+    const upperAndLower = { Core: member("core"), lower: member("lower") };
+    const below = ["./packages/**"];
+
+    test.concurrent.each([
+      {
+        entry: "a glob",
+        workspaces: ["packages/*"],
+        files: { packages: upperAndLower },
+        paths: below,
+      },
+      {
+        entry: "a nested glob",
+        workspaces: ["packages/*/*"],
+        files: { packages: { UPPER: { Inner: member("core") }, group: { lower: member("lower") } } },
+        paths: below,
+      },
+      // Where names ignore case, what is written in lower case finds the directory.
+      ...(isMacOS || isWindows
+        ? [
+            {
+              entry: "a literal path in lower case",
+              workspaces: ["./packages/core", "packages/lower"],
+              files: { packages: upperAndLower },
+              paths: ["./packages/core", "./packages/lower"],
+            },
+            {
+              entry: "a glob below a directory in lower case",
+              workspaces: ["packages/*"],
+              files: { Packages: upperAndLower },
+              paths: below,
+            },
+          ]
+        : [
+            {
+              entry: "a literal path",
+              workspaces: ["packages/Core", "packages/lower"],
+              files: { packages: upperAndLower },
+              paths: below,
+            },
+          ]),
+    ])("is found through $entry in workspaces", async ({ workspaces, files, paths }) => {
+      using dir = tempDir("filter-upper-case-dir", {
+        ...files,
+        "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
+      });
+
+      async function run(...selection: string[]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", ...selection, "build"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          ran: [...new Set(stdout.match(/BUILD-\w+/g))].sort(),
+          errors: stderr.split("\n").filter(line => line.startsWith("error")),
+          exitCode,
+        };
+      }
+
+      const [all, everyWorkspace, byName, byPath] = await Promise.all([
+        run("--filter", "*"),
+        run("--workspaces"),
+        run("--filter", "lower"),
+        run(...paths.flatMap(path => ["--filter", path])),
+      ]);
+      const both = { ran: ["BUILD-core", "BUILD-lower"], errors: [], exitCode: 0 };
+      expect({ all, everyWorkspace, byName, byPath }).toEqual({
+        all: both,
+        everyWorkspace: both,
+        byName: { ran: ["BUILD-lower"], errors: [], exitCode: 0 },
+        byPath: both,
+      });
+    });
+  });
+});
+
+describe.concurrent('"workspaces" entries that match the same package', () => {
+  function fixture(workspaces: string[] | { packages: string[] }) {
+    return tempDir("filter-workspaces-overlap", {
+      packages: {
+        app: { "package.json": JSON.stringify({ name: "app", scripts: { build: "echo ran-app" } }) },
+        legacy: { "package.json": JSON.stringify({ name: "legacy", scripts: { build: "echo ran-legacy" } }) },
+      },
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
+    });
+  }
+
+  // `ran` has one element per script run, so a package that runs twice is listed twice.
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "build"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: (stdout.match(/ran-\w+/g) ?? []).sort(), stderr, exitCode };
+  }
+
+  test.each([
+    ["a glob and a path", ["packages/*", "packages/legacy"]],
+    ["two globs", ["packages/*", "packages/l*"]],
+    ["one path written two ways", ["packages/app", "packages/legacy", "./packages/legacy/"]],
+    ['the { "packages": [...] } form', { packages: ["packages/*", "packages/legacy"] }],
+  ])("%s: each package runs once", async (_, workspaces) => {
+    using dir = fixture(workspaces);
+    const { ran, exitCode } = await run(String(dir), ["--filter", "*"]);
+    expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
+  });
+
+  test.each([[["--workspaces"]], [["--parallel", "--workspaces"]], [["--sequential", "--filter", "*"]]])(
+    "%j runs each package once",
+    async args => {
+      using dir = fixture(["packages/*", "packages/legacy"]);
+      const { ran, exitCode } = await run(String(dir), args);
+      expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
+    },
+  );
+
+  test("a package.json that fails to parse is reported once", async () => {
+    using dir = fixture(["packages/*", "packages/legacy"]);
+    await Bun.write(join(String(dir), "packages", "legacy", "package.json"), "this is { not valid json");
+    const { ran, stderr, exitCode } = await run(String(dir), ["--filter", "*"]);
+    expect({ ran, warnings: stderr.split("skipping this workspace package").length - 1, exitCode }).toEqual({
+      ran: ["ran-app"],
+      warnings: 1,
+      exitCode: 0,
+    });
   });
 });
 
@@ -1301,6 +1426,115 @@ describe.skipIf(!isWindows).each([
   );
 });
 
+// #42962: the scripts are not on the console of `bun`, so Ctrl+C reaches `bun` alone, on a thread
+// of its own. The helper makes a console, starts `bun` on it and sends a real CTRL_C_EVENT once the
+// script is up. AllocConsole rebinds the std handles, so it reports through a file.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via", ({ argv }) => {
+  test.concurrent(
+    "Ctrl+C ends the run while the script prints nothing",
+    async () => {
+      using dir = tempDir("filter-win-ctrlc", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        "packages/app/server.js": `
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: `"${bunExe()}" server.js` },
+        }),
+        "ctrlc-fixture.js": `
+          const { dlopen, FFIType } = require("bun:ffi");
+          const fs = require("fs");
+          const { setTimeout: sleep } = require("timers/promises");
+          const k32 = dlopen("kernel32.dll", {
+            FreeConsole: { args: [], returns: FFIType.i32 },
+            AllocConsole: { args: [], returns: FFIType.i32 },
+            SetConsoleCtrlHandler: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+            GenerateConsoleCtrlEvent: { args: [FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+          }).symbols;
+          const isAlive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+          const result = { parentExited: false, parentExitCode: null, leafDead: false, error: "" };
+          let parent, leafPid = 0;
+          try {
+            k32.FreeConsole();
+            if (!k32.AllocConsole()) throw new Error("AllocConsole failed");
+            // A CI harness can start the test with Ctrl+C disabled. Children
+            // inherit that attribute, so clear it before the spawn.
+            k32.SetConsoleCtrlHandler(null, 0);
+            parent = Bun.spawn({
+              cmd: [process.execPath, ...JSON.parse(process.env.PARENT_ARGV)],
+              cwd: process.env.PARENT_CWD,
+              env: process.env,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+            });
+            // Ignore Ctrl+C in this process only. Set after the spawn: the
+            // ignore attribute is inherited by children.
+            process.on("SIGINT", () => {});
+            k32.SetConsoleCtrlHandler(null, 1);
+            const deadline = Date.now() + 10000;
+            while (leafPid === 0 && Date.now() < deadline) {
+              try { leafPid = Number(fs.readFileSync(process.env.PIDFILE, "utf8").trim()) || 0; } catch {}
+              if (leafPid === 0) await sleep(25);
+            }
+            if (leafPid === 0) throw new Error("leaf never wrote pidfile");
+            if (!k32.GenerateConsoleCtrlEvent(0, 0)) throw new Error("GenerateConsoleCtrlEvent failed");
+            let timer;
+            result.parentExited = await Promise.race([
+              parent.exited.then(() => true),
+              new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); }),
+            ]);
+            clearTimeout(timer);
+            result.parentExitCode = parent.exitCode;
+            const leafDeadline = Date.now() + 5000;
+            while (isAlive(leafPid) && Date.now() < leafDeadline) await sleep(25);
+            result.leafDead = !isAlive(leafPid);
+          } catch (e) {
+            result.error = String(e);
+          } finally {
+            if (parent) { try { parent.kill("SIGKILL"); } catch {} await parent.exited; }
+            if (leafPid && isAlive(leafPid)) { try { process.kill(leafPid, "SIGKILL"); } catch {} }
+            fs.writeFileSync(process.env.RESULTFILE, JSON.stringify(result));
+          }
+        `,
+      });
+
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: join(String(dir), "leaf.pid"),
+        RESULTFILE: join(String(dir), "result.json"),
+        PARENT_ARGV: JSON.stringify(argv),
+        PARENT_CWD: join(String(dir), "packages", "app"),
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+      };
+      await using helper = Bun.spawn({
+        cmd: [bunExe(), "ctrlc-fixture.js"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([helper.stderr.text(), helper.exited]);
+      expect(stderr).toBe("");
+      expect(await Bun.file(env.RESULTFILE!).json()).toEqual({
+        parentExited: true,
+        parentExitCode: 130,
+        leafDead: true,
+        error: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+    // When the run does not end, the helper needs up to 20 s to report and to
+    // kill the runner and the leaf it started.
+    30000,
+  );
+});
+
 // The script runner never passes the default .env* files into package.json
 // scripts (see "does not pass variables from .env files into scripts" in
 // env.test.ts): the script's own bun instance loads them, so a script such as
@@ -1511,6 +1745,41 @@ describe("output timing", () => {
     // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
     expect(Date.now() - start).toBeLessThan(15000);
   });
+
+  // The terminal sends Ctrl+C to `bun run` and to the script. A second SIGINT from `bun run` would
+  // kill a server in the middle of its shutdown.
+  test.skipIf(isWindows)("Ctrl+C reaches a script that shuts down quietly once", async () => {
+    using dir = tempDir("filter-one-sigint", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/web/package.json": JSON.stringify({ name: "web", scripts: { start: `exec ${bunExe()} server.js` } }),
+      "packages/web/server.js": `
+        process.once("SIGINT", () => {
+          Bun.spawnSync({ cmd: [process.execPath, "-e", ""] });
+          process.exit(0);
+        });
+        setInterval(() => {}, 1000);
+        await Bun.write("ready.txt", "");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "web", "start"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // New session, so the group signal below cannot reach the test runner.
+      detached: true,
+    });
+    const ready = join(String(dir), "packages", "web", "ready.txt");
+    while (!existsSync(ready) && proc.exitCode === null) await Bun.sleep(10);
+    process.kill(-proc.pid, "SIGINT");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "web start: Exited with code 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("auto-discovered bunfig.toml [run] section", () => {
@@ -1534,11 +1803,11 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     });
   }
 
-  function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
+  function run(dir: string, args: string[]) {
     const { exitCode, stdout, stderr } = spawnSync({
       cwd: dir,
       cmd: [bunExe(), ...args],
-      env: { ...bunEnv, ...env },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1563,23 +1832,19 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
-  // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
-  test.skipIf(isWindows)("[run] elide-lines enables elision for --filter", () => {
+  // Elision only happens on a terminal.
+  test("[run] elide-lines enables elision for --filter", async () => {
     using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 15\n");
-    const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
-    expect(r.stdout).toMatch(/\[5 lines elided\]/);
+    const r = await runInTerminal(String(dir), ["run", "--filter", "dep0", "lines"]);
+    expect(r.text).toMatch(/\[5 lines elided\]/);
     expect(r.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
+  test("--elide-lines on the CLI wins over [run] elide-lines", async () => {
     using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
-    const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
-      FORCE_COLOR: "1",
-      NO_COLOR: "0",
-    });
-    expect(r.stdout).not.toMatch(/lines elided/);
-    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
+    const r = await runInTerminal(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"]);
+    expect(r.text).not.toMatch(/lines elided/);
+    expect(r.text).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(r.exitCode).toBe(0);
   });
 
@@ -1614,6 +1879,104 @@ test.concurrent.each([
   expect(stdout).toBe(`a${spelled}b c${spelled}d: hi\na${spelled}b c${spelled}d: Exited with code 0\n`);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/10346
+describe.concurrent("colors in scripts, which write to pipes", () => {
+  const workspace = () =>
+    tempDir("filter-color", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({ name: "a", scripts: { probe: `${bunExe()} probe.js` } }),
+      "packages/a/probe.js": `console.log("FORCE_COLOR=" + process.env.FORCE_COLOR, "colors=" + Bun.enableANSIColors);`,
+    });
+  // What tells how many colors the terminal has.
+  const xterm256 = {
+    TERM: "xterm-256color",
+    COLORTERM: undefined,
+    TERM_PROGRAM: undefined,
+    TMUX: undefined,
+    CI: undefined,
+  };
+  const runners = [[["--filter", "a"]], [["--parallel", "--filter", "a"]]];
+
+  test.each(runners)("%j on a terminal turns them on", async args => {
+    using dir = workspace();
+    const { text, exitCode } = await runInTerminal(String(dir), ["run", ...args, "probe"], xterm256);
+    expect(text).toContain("FORCE_COLOR=2 colors=true");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    [{ NO_COLOR: "1" }, "undefined"],
+    [{ NODE_DISABLE_COLORS: "1" }, "undefined"],
+    [{ FORCE_COLOR: "0" }, "0"],
+  ])("%j on a terminal is left alone", async (env, seen) => {
+    using dir = workspace();
+    const { text, exitCode } = await runInTerminal(String(dir), ["run", "--filter", "a", "probe"], {
+      ...xterm256,
+      ...env,
+    });
+    expect(text).toContain(`FORCE_COLOR=${seen} colors=false`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(runners)("%j into a pipe leaves them off", async args => {
+    using dir = workspace();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "probe"],
+      cwd: String(dir),
+      env: { ...bunEnv, ...xterm256, NO_COLOR: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("FORCE_COLOR=undefined colors=false");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("npm_* variables of a script", () => {
+  const show =
+    "echo name=$npm_package_name version=$npm_package_version json=$npm_package_json " +
+    "port=$npm_package_config_port host=$npm_package_config_host event=$npm_lifecycle_event";
+
+  test.each([
+    [["--filter", "*"]],
+    [["--workspaces"]],
+    [["--parallel", "--filter", "*"]],
+    [["--sequential", "--workspaces"]],
+  ])("%j: they are those of its package, or else of the package that bun runs in", async args => {
+    using dir = tempDir("filter-npm-env", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "3.4.5",
+        config: { port: "1", host: "localhost" },
+        workspaces: ["packages/*"],
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.1.1",
+        config: { port: "8080" },
+        scripts: { preshow: show, show },
+      }),
+      "packages/b/package.json": JSON.stringify({ name: "b", scripts: { show } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "show"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const seen = stdout.replaceAll("\\", "/").match(/name=.*/g)!;
+    expect(seen.map(line => line.replace(/json=.*\/packages/, "json=packages")).sort()).toEqual([
+      "name=a version=1.1.1 json=packages/a/package.json port=8080 host=localhost event=preshow",
+      "name=a version=1.1.1 json=packages/a/package.json port=8080 host=localhost event=show",
+      "name=b version=3.4.5 json=packages/b/package.json port=1 host=localhost event=show",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Windows paths can't be as long as MAX_PATH_BYTES.

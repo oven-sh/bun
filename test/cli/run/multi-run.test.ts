@@ -739,6 +739,16 @@ describe.concurrent("pre/post scripts", () => {
     }
     expect(r.exitCode).toBe(0);
   });
+
+  test("npm_lifecycle_event is the name of the script, and unset for a command that is no script", async () => {
+    const show = "echo event=$npm_lifecycle_event.";
+    using dir = tempDir("mr-lifecycle-event", {
+      "package.json": JSON.stringify({ scripts: { prebuild: show, build: show } }),
+    });
+    const r = await runMulti(["run", "--sequential", "build", show], String(dir));
+    expect(r.stdout.match(/\| event=.*/g)).toEqual(["| event=prebuild.", "| event=build.", "| event=."]);
+    expect(r.exitCode).toBe(0);
+  });
 });
 
 // ─── VALIDATION & ERROR MESSAGES ──────────────────────────────────────────────
@@ -1871,6 +1881,51 @@ describe.concurrent("glob pattern matching", () => {
     expectPrefixed(r.stdout, "build:css", "css");
     expectPrefixed(r.stdout, "build:js", "js");
     expectPrefixed(r.stdout, "test", "test-ran");
+    expect(r.exitCode).toBe(0);
+  });
+});
+
+// ─── ARGUMENTS AFTER `--` ───────────────────────────────────────────────────
+
+describe.concurrent("arguments after --", () => {
+  const code = "$(echo run)";
+
+  test.each([
+    [
+      ["run", "--sequential", "a", "b", "--", "--watch", code],
+      ["a | pre-got", `a | a-got --watch ${code}`, `b | b-got --watch ${code}`],
+    ],
+    [
+      ["run", "--sequential", "a", "--", "b"],
+      ["a | pre-got", "a | a-got b"],
+    ],
+    [["--sequential", "b", "--", "a"], ["b | b-got a"]],
+    [["run", "--sequential", "b", "--"], ["b | b-got"]],
+    [["run", "--sequential", "echo raw-got", "--", "-x", code], [`echo raw-got | raw-got -x ${code}`]],
+    [["run", "--sequential", "./args.js", "--", "-x", "two words"], [`./args.js | file-got ["-x","two words"]`]],
+    // These name scripts, as without the `--`.
+    [
+      ["run", "--sequential", "--", "b", "a"],
+      ["b | b-got", "a | pre-got", "a | a-got"],
+    ],
+  ])("bun %j", async (args, expected) => {
+    using dir = tempDir("mr-arguments", {
+      "args.js": `console.log("file-got", JSON.stringify(process.argv.slice(2)));`,
+      "package.json": JSON.stringify({ scripts: { prea: "echo pre-got", a: "echo a-got", b: "echo b-got" } }),
+    });
+    const r = await runMulti(args, String(dir));
+    expect(r.stdout.match(/^.*-got.*$/gm)?.map(line => line.replace(/ +\| /, " | "))).toEqual(expected);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--filter: they reach the script in every package", async () => {
+    using dir = makeWorkspace("mr-arguments-filter", {
+      "pkg-a": { build: "echo a-got" },
+      "pkg-b": { build: "echo b-got" },
+    });
+    const r = await runMulti(["run", "--parallel", "--filter", "*", "build", "--", "--watch"], String(dir));
+    expectPrefixed(r.stdout, "pkg-a:build", "a-got --watch");
+    expectPrefixed(r.stdout, "pkg-b:build", "b-got --watch");
     expect(r.exitCode).toBe(0);
   });
 });

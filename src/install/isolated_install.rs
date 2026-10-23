@@ -2169,7 +2169,6 @@ pub(crate) fn install_isolated_packages(
         let progress = unsafe { &mut *progress };
 
         if manager.options.log_level.show_progress() {
-            progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
             let root_node = progress.start(b"", 0);
             download_node = root_node.start(ProgressStrings::download(), 0);
             install_node = root_node.start(ProgressStrings::install(), store.entries.len());

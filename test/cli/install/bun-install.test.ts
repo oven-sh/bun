@@ -7585,7 +7585,7 @@ describe.concurrent("bun-install", () => {
                                             ^
         error: dependencies expects a map of specifiers, e.g.
           "dependencies": {
-            <green>"bun"<r>: <green>"latest"<r>
+            "bun": "latest"
           }
             at [dir]/package.json:1:33
         "
@@ -7623,7 +7623,7 @@ describe.concurrent("bun-install", () => {
         `                                    ^`,
         `error: optionalDependencies expects a map of specifiers, e.g.`,
         `  "optionalDependencies": {`,
-        `    <green>"bun"<r>: <green>"latest"<r>`,
+        `    "bun": "latest"`,
         `  }`,
         `    at [dir]/package.json:1:33`,
       ]);
@@ -7631,6 +7631,24 @@ describe.concurrent("bun-install", () => {
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);
     });
+  });
+
+  it("should report error on a dependency version that is not a string", async () => {
+    using dir = tempDir("dependency-version-not-a-string", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bun: 1 } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain(
+      `error: dependencies expects a map of specifiers, e.g.\n  "dependencies": {\n    "bun": "latest"\n  }\n`,
+    );
+    expect(exitCode).toBe(1);
   });
 
   it("should report error on invalid format for workspaces", async () => {
@@ -17686,6 +17704,27 @@ describe.concurrent.each(["hoisted", "isolated"])(
     });
   },
 );
+
+// BUN_INSTALL_PROGRESS=1 asks for the progress bar where stderr is not a terminal.
+it("the progress bar with FORCE_COLOR=1 does not move the cursor in a pipe", async () => {
+  using dir = tempDir("install-progress-pipe", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    dep: { "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", BUN_INSTALL_PROGRESS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // On Windows, only a console gets the bar.
+  if (!isWindows) expect(stderr).toContain("Saving lockfile");
+  // Colors end in `m`.
+  expect(stdout + stderr).not.toMatch(/\x1b\[[\d;]*[^\d;m]/);
+  expect(exitCode).toBe(0);
+});
 
 // `overrides` and `resolutions` values are passed to the resolver unchanged.
 it.concurrent.each(["resolutions", "overrides"])(

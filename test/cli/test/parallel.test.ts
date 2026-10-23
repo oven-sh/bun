@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
+import { symlinkSync } from "node:fs";
 import path from "path";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
@@ -995,6 +996,46 @@ test("--parallel writes new snapshots from every worker", async () => {
   expect(code2).toBe(0);
 });
 
+test("--parallel exits 1 when a worker cannot update an inline snapshot", async () => {
+  using dir = tempDir("parallel-inline-snapshot-conflict", {
+    "a.test.js": `import {test,expect} from "bun:test"; test.each([1, 2])("value %i", v => { expect(v).toMatchInlineSnapshot(); });`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "false" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("Failed to update inline snapshot");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(1);
+});
+
+test.skipIf(!isLinux)("--parallel exits 1 when a worker cannot write a .snap file", async () => {
+  using dir = tempDir("parallel-snap-disk-full", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect("value").toMatchSnapshot());`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
+    "__snapshots__": {},
+  });
+  symlinkSync("/dev/full", path.join(String(dir), "__snapshots__", "a.test.js.snap"));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "false" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("error: Failed to write snapshot file");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(1);
+});
+
 test("--parallel: a test producing a >64MB result line is truncated, not treated as a crash", async () => {
   // Test name just over the 64MB IPC frame limit → the per-test status line
   // itself exceeds it. The encoder must truncate so the receiver doesn't drop
@@ -1253,6 +1294,27 @@ test("--parallel forwards --conditions to workers", async () => {
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--conditions=development"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel forwards --jsx-side-effects to workers", async () => {
+  const fixture = `import {test,expect} from "bun:test"; let calls = 0; const h = () => void calls++; test("t",()=>{ <div />; expect(calls).toBe(1); });`;
+  using dir = tempDir("parallel-jsx-side-effects", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+    "a.test.tsx": fixture,
+    "b.test.tsx": fixture,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--jsx-side-effects"],
     env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
     cwd: String(dir),
     stderr: "pipe",

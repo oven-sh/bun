@@ -695,6 +695,38 @@ test("only imports the function", () => {
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  { threshold: "0.9", message: true, exitCode: 1 },
+  { threshold: "0.25", message: false, exitCode: 0 },
+])("coverageThreshold = $threshold with one of two functions covered exits $exitCode", async expected => {
+  using dir = tempDir("cov-threshold", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = ${expected.threshold}\n`,
+    "subject.ts": `export function called() {
+  return 1;
+}
+export function neverCalled() {
+  return 2;
+}
+`,
+    "subject.test.ts": `import { called } from "./subject.ts";
+test("calls one", () => {
+  called();
+});
+`,
+  });
+  // Without the table, the message is all that says why the run fails.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const message = stderr.includes("error: coverage below coverageThreshold (functions 90.00%, lines 90.00%)\n");
+  expect({ threshold: expected.threshold, message, exitCode }).toEqual(expected);
+});
+
 // https://github.com/oven-sh/bun/issues/40586
 // Each worker executes a different function of the same module; the merged
 // report must count a function as covered if any worker ran it.

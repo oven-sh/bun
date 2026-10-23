@@ -347,9 +347,9 @@ impl Progress {
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
         let stderr = File::stderr();
         self.terminal = None;
-        if stderr.supports_ansi_escape_codes() {
+        self.supports_ansi_escape_codes = stderr.supports_ansi_escape_codes();
+        if self.supports_ansi_escape_codes {
             self.terminal = Some(stderr);
-            self.supports_ansi_escape_codes = true;
         } else {
             #[cfg(windows)]
             if stderr.is_tty() {

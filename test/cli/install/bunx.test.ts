@@ -758,6 +758,21 @@ describe("bunx --no-install", () => {
     expect(exited).toBe(1);
   });
 
+  it.concurrent.skipIf(isWindows)("says why a bin cannot be started, and nothing about a bin's exit code", async () => {
+    const ctx = setup();
+    const bin = join(ctx.x_dir, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "no-interpreter"), "#!/nonexistent\n", { mode: 0o755 });
+    writeFileSync(join(bin, "exits-3"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+
+    expect(await run(ctx, "--no-install", "no-interpreter")).toEqual([
+      `error: Failed to run "no-interpreter" due to:\nENOENT: ${join(bin, "no-interpreter")}: No such file or directory (posix_spawn())\n`,
+      "",
+      1,
+    ]);
+    expect(await run(ctx, "--no-install", "exits-3")).toEqual(["", "", 3]);
+  });
+
   /*
     yes, multiple package tests are neccessary.
       1. there's specialized logic for `bunx tsc` and `bunx typescript`
@@ -821,6 +836,30 @@ describe("bunx --no-install", () => {
   });
 });
 
+// The npm package `bun` has `bin/bunx.exe` on every platform, and a lookup through PATHEXT finds `bunx.EXE`.
+it.concurrent.each(isWindows ? ["bunx.EXE"] : ["bunx.exe", "BUNX"])("is bunx when started as %s", async name => {
+  using dir = tempDir("bunx-by-name", {});
+  if (isWindows) {
+    copyFileSync(bunExe(), join(String(dir), "bunx.exe"));
+  } else {
+    symlinkSync(bunExe(), join(String(dir), name));
+  }
+
+  await using proc = spawn({
+    cmd: [join(String(dir), name), "--help"],
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain("Usage: bunx");
+  expect(out).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
   const { x_dir, env } = setup();
   // Copies rather than symlinks: bun re-runs its own executable path for the
@@ -862,6 +901,49 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(out.trim()).toBe("esbuild 0.28.2 after postinstall --version");
   expect(registry.requests).toEqual(["/esbuild", "/esbuild/-/esbuild-0.28.2.tgz"]);
   expect(exited).toBe(0);
+});
+
+// On Windows `bunx --bun` runs a bin that has a node shebang in its own process.
+it.concurrent.skipIf(!isWindows)("a bin that bunx.exe --bun runs can fork()", async () => {
+  using dir = tempDir("bunx-exe-fork", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { tool: "file:./tool" } }),
+    "tool/package.json": JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "cli.js" } }),
+    "tool/cli.js": `#!/usr/bin/env node
+      const { basename, join } = require("node:path");
+      console.log(basename(process.execPath), basename(process.argv[0]), JSON.stringify(process.execArgv));
+      require("node:child_process").fork(join(__dirname, "child.js"));
+    `,
+    "tool/child.js": `console.log("child ran");`,
+    "exes/.keep": "",
+  });
+  const exes = join(String(dir), "exes");
+  copyFileSync(bunExe(), join(exes, "bun.exe"));
+  copyFileSync(bunExe(), join(exes, "bunx.exe"));
+
+  await using install = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  expect(await install.exited).toBe(0);
+
+  for (const [exe, args, execArgv] of [
+    ["bunx.exe", ["--bun", "--no-install", "tool"], `["--smol"]`],
+    ["bun.exe", ["--bun", "run", "tool"], `["--smol","--bun"]`],
+  ] as const) {
+    await using proc = spawn({
+      cmd: [join(exes, exe), ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_OPTIONS: "--smol" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(`bun.exe bun.exe ${execArgv}\nchild ran\n`);
+    expect(exitCode).toBe(0);
+  }
 });
 
 // Stands in for `bunx --bun @angular/cli`, whose `ng` refuses to start on a

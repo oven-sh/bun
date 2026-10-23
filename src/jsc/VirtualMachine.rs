@@ -4040,10 +4040,7 @@ pub struct Options {
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    // Note: debugger
-    // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
-    // CLI option struct lives in `bun_cli`, a forward dep). See
-    // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
+    pub debugger: bun_options_types::context::Debugger,
     pub is_main_thread: bool,
 }
 
@@ -4899,6 +4896,7 @@ impl VirtualMachine {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
             transform_options: opts.args,
+            debugger: opts.debugger,
             graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,
@@ -4911,6 +4909,7 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
+        vm_ref.dns_result_order = opts.dns_result_order;
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
@@ -5416,10 +5415,20 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // SAFETY: `result_path.text` borrows the resolver's arena, which
+        // `--preserve-symlinks-main`: the entry point keeps the path it was given. `set_realpath` left it in `pretty`.
+        let keeps_given_path = result_path.is_symlink
+            && source == MAIN_FILE_NAME
+            && bun_options_types::context::try_get()
+                .is_some_and(|ctx| ctx.runtime_options.preserve_symlinks_main_enabled());
+        let path = if keeps_given_path {
+            result_path.pretty
+        } else {
+            result_path.text
+        };
+        // SAFETY: `path` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.path = unsafe { bun_ptr::detach_lifetime(path) };
 
         Ok(())
     }

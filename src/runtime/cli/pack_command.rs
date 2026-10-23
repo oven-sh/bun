@@ -1992,7 +1992,6 @@ pub(crate) fn pack(
         let mut progress = Progress::Progress::default();
         let mut node: Option<&mut Progress::Node> = None;
         if log_level.show_progress() {
-            progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
             let started = progress.start(b"", ctx.stats.total_files);
             started.unit = Progress::Unit::Files;
             node = Some(started);

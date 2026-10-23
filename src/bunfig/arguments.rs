@@ -6,7 +6,7 @@
 use bstr::BStr;
 use bun_bundler::options;
 use bun_core::ZStr;
-use bun_core::{self, Global, Output, env_var};
+use bun_core::{self, Global, Output, env_var, strings};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_options_types::schema::api;
@@ -76,11 +76,13 @@ fn unreadable_config(
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum ConfigFile {
+pub(crate) enum ConfigFile {
     /// `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
     User,
     /// `./bunfig.toml`
     Project,
+    /// See [`find_config_above`].
+    ProjectAbove,
     /// `--config`
     Named,
 }
@@ -136,7 +138,147 @@ fn load_bunfig(
         log: log_ptr,
         level: original_level,
     };
-    Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)
+    Bunfig::parse(cmd, &source, file, ctx, tool, counts)
+}
+
+/// Whether the package.json in `root` lists `dir`, which is below `root`, as a workspace. `None` if it has no `workspaces`.
+fn lists_workspace(root: &[u8], dir: &[u8], buf: &mut PathBuffer) -> Option<bool> {
+    let path = join_config_path(root, b"package.json", buf)?;
+    let source = bun_ast::to_source(path, Default::default()).ok()?;
+    bun_ast::stmt::data::Store::create();
+    bun_ast::expr::data::Store::create();
+    let _store_reset = bun_ast::StoreResetGuard::new();
+    let mut log = bun_ast::Log::init();
+    let Ok(json) = bun_parsers::json::ParsedJson::parse_package_json(&source, &mut log) else {
+        return Some(false);
+    };
+    let workspaces = json.root.get(b"workspaces")?;
+    let patterns = workspaces.get(b"packages").unwrap_or(workspaces);
+    let bun_ast::ExprData::EArrayJSON(patterns) = patterns.data else {
+        return Some(false);
+    };
+    let dir = bun_paths::string_paths::without_leading_path_separator(&dir[root.len()..]);
+    let patterns = patterns.get().items().iter().filter_map(|it| match it {
+        bun_ast::E::JsonValue::String(pattern) => Some(pattern.slice()),
+        _ => None,
+    });
+    Some(bun_glob::any_matches(patterns.map(|pattern| {
+        let pattern = strings::remove_leading_dot_slash(pattern);
+        bun_glob::r#match(strings::without_trailing_slash(pattern), dir)
+    })))
+}
+
+/// Whether `path`, not following a link, and its directory `dir` belong to the owner of `cwd`; a hard link gives `path` alone that owner.
+#[cfg(unix)]
+fn has_owner_of(path: &ZStr, dir: &[u8], cwd: &[u8]) -> bool {
+    let Ok(file) = bun_sys::lstat(path) else {
+        return false;
+    };
+    [dir, cwd].into_iter().all(|it| {
+        bun_sys::lstat(&bun_core::ZBox::from_bytes(it)).is_ok_and(|it| it.st_uid == file.st_uid)
+    })
+}
+
+/// The owner of a file or directory.
+#[cfg(windows)]
+struct Owner {
+    /// Points into `descriptor`.
+    sid: *mut core::ffi::c_void,
+    descriptor: *mut core::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl Owner {
+    fn of(path: &[u8]) -> Option<Owner> {
+        use bun_sys::windows::advapi32;
+        use core::ptr::null_mut;
+
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path);
+        let mut owner = Owner {
+            sid: null_mut(),
+            descriptor: null_mut(),
+        };
+        // SAFETY: `wpath` is NUL-terminated, the two out-pointers are valid, and the others may be null.
+        let status = unsafe {
+            advapi32::GetNamedSecurityInfoW(
+                wpath.as_ptr(),
+                advapi32::SE_FILE_OBJECT,
+                advapi32::OWNER_SECURITY_INFORMATION,
+                &raw mut owner.sid,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &raw mut owner.descriptor,
+            )
+        };
+        (status == 0 && !owner.sid.is_null()).then_some(owner)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Owner {
+    fn drop(&mut self) {
+        // SAFETY: `descriptor` is null or what `GetNamedSecurityInfoW` allocated, and nothing else frees it.
+        unsafe { bun_sys::windows::kernel32::LocalFree(self.descriptor) };
+    }
+}
+
+#[cfg(windows)]
+fn has_owner_of(path: &ZStr, dir: &[u8], cwd: &[u8]) -> bool {
+    use bun_sys::windows::advapi32::EqualSid;
+
+    // `Owner::of` follows a link, and another user can make one to a file of the owner of `cwd`.
+    if bun_sys::get_file_attributes(path).is_none_or(|it| it.is_reparse_point) {
+        return false;
+    }
+    let (Some(file), Some(dir), Some(cwd)) =
+        (Owner::of(path.as_bytes()), Owner::of(dir), Owner::of(cwd))
+    else {
+        return false;
+    };
+    // SAFETY: all are valid SIDs in descriptors that `file`, `dir` and `cwd` keep alive.
+    unsafe { EqualSid(file.sid, cwd.sid) != 0 && EqualSid(dir.sid, cwd.sid) != 0 }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn has_owner_of(_: &ZStr, _: &[u8], _: &[u8]) -> bool {
+    false
+}
+
+/// The nearest bunfig.toml above `cwd` that is in the same project: not above the nearest package.json, or the workspace root that lists it.
+fn find_config_above<'buf>(cwd: &[u8], buf: &'buf mut PathBuffer) -> Option<&'buf ZStr> {
+    // A dependency's scripts and a compiled executable are not part of the project they run in.
+    if StandaloneModuleGraph::get_ref().is_some()
+        || bun_paths::string_paths::path_contains_node_modules_folder(cwd)
+    {
+        return None;
+    }
+    let mut config_dir = cwd;
+    loop {
+        config_dir = bun_core::dirname(config_dir)?;
+        let path = join_config_path(config_dir, b"bunfig.toml", buf)?;
+        if has_owner_of(path, config_dir, cwd) {
+            break;
+        }
+    }
+    let mut root = cwd;
+    while !bun_sys::exists_z(join_config_path(root, b"package.json", buf)?) {
+        root = bun_core::dirname(root)?;
+    }
+    if config_dir.len() < root.len() {
+        let package_dir = root;
+        loop {
+            root = bun_core::dirname(root)?;
+            if let Some(is_listed) = lists_workspace(root, package_dir, buf) {
+                if !is_listed || config_dir.len() < root.len() {
+                    return None;
+                }
+                break;
+            }
+        }
+    }
+    join_config_path(config_dir, b"bunfig.toml", buf)
 }
 
 /// The user's own file, once.
@@ -237,6 +379,23 @@ fn load_config_path_for_tool(
     } else {
         ConfigFile::Named
     };
+    let looks_above = matches!(
+        cmd,
+        CommandTag::AutoCommand
+            | CommandTag::RunCommand
+            | CommandTag::TestCommand
+            | CommandTag::BuildCommand
+    );
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if auto_loaded
+        && looks_above
+        && !bun_sys::exists_z(config_path)
+        && let Some(cwd) = ctx.args.absolute_working_dir.as_deref()
+        && let Some(above) = find_config_above(cwd, &mut buf)
+    {
+        let file = ConfigFile::ProjectAbove;
+        return load_bunfig(cmd, file, above, ctx, tool, Counts::Everything);
+    }
     load_bunfig(cmd, file, config_path, ctx, tool, Counts::Everything)
 }
 

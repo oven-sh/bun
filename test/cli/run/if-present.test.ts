@@ -1,6 +1,8 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 
 let cwd: string;
 
@@ -13,7 +15,9 @@ beforeAll(() => {
         "present": "echo 'Here!'",
       },
     }),
+    "node_modules/.bin/tool": "#!/bin/sh\necho tool $@\n",
   });
+  chmodSync(join(cwd, "node_modules", ".bin", "tool"), 0o755);
 });
 
 describe("bun", () => {
@@ -113,6 +117,30 @@ describe("bun --if-present", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toMatch(/Here!/);
+    expect(stderr.toString()).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+  test.skipIf(isWindows)("should not run a program from the system's PATH", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd,
+      cmd: [bunExe(), "run", "--if-present", "test"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    expect(stderr.toString()).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+  test.skipIf(isWindows)("should run a program from node_modules/.bin", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd,
+      cmd: [bunExe(), "run", "--if-present", "tool", "--flag"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBe("tool --flag\n");
     expect(stderr.toString()).toBeEmpty();
     expect(exitCode).toBe(0);
   });

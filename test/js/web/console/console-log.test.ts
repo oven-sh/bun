@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 it("should log to console correctly", async () => {
@@ -178,6 +178,35 @@ NamedError: console.error a named error
 
   Error log"
 `);
+});
+
+it("console.clear() with FORCE_COLOR=1 writes nothing into a pipe", async () => {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", "console.clear(); console.log('after clear');"],
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "after clear\n", stderr: "", exitCode: 0 });
+});
+
+// A Windows pseudoconsole repaints its screen instead of passing the bytes on.
+it.skipIf(isWindows)("console.clear() clears a terminal", async () => {
+  let output = "";
+  const eof = Promise.withResolvers<void>();
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", "console.clear()"],
+    env: { ...bunEnv, NO_COLOR: undefined },
+    terminal: {
+      data: (_terminal, chunk) => void (output += Buffer.from(chunk).toString("latin1")),
+      exit: () => eof.resolve(),
+    },
+  });
+  const exitCode = await proc.exited;
+  await eof.promise;
+  expect(output).toBe("\x1b[2J\x1b[3J\x1b[H");
+  expect(exitCode).toBe(0);
 });
 
 it("console.log with SharedArrayBuffer", () => {

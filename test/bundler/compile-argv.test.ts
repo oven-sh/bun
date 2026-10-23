@@ -487,6 +487,36 @@ describe("bundler", () => {
     },
   });
 
+  // Flags that the VM acts on. `inspector.open()` refuses when `--inspect` has started an inspector.
+  const vmFlags = ["--inspect=127.0.0.1:0", "--dns-result-order=ipv4first"];
+  for (const [name, compile, env] of [
+    ["CompileExecArgv", { execArgv: vmFlags }, {}],
+    ["BunOptionsEnv", true, { BUN_OPTIONS: vmFlags.join(" ") }],
+  ] as const) {
+    itBundled(`compile/${name}InspectAndDnsResultOrder`, {
+      compile,
+      backend: "cli",
+      files: {
+        "/entry.ts": /* js */ `
+          import { getDefaultResultOrder } from "node:dns";
+          import inspector from "node:inspector";
+          let inspect = "off";
+          try {
+            inspector.open(0);
+          } catch (error) {
+            inspect = error.code;
+          }
+          console.log(getDefaultResultOrder(), inspect);
+          process.exit();
+        `,
+      },
+      run: {
+        env,
+        stdout: "ipv4first ERR_INSPECTOR_ALREADY_ACTIVATED",
+      },
+    });
+  }
+
   // `bun -e` / `bun -p` start JSC in one-shot mode (no concurrent JIT, one GC
   // marker). That is decided by scanning argv, and a compiled executable's argv
   // belongs to the program, so `./app -p 8080` must keep the full configuration.

@@ -2591,13 +2591,15 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     ["cannot be parsed", "[install.security\n", unreadable],
     ["configures a scanner", scanner, configured],
   ])("a bunfig.toml that %s", (_, bunfig, why) => {
+    // Run from outside the project: inside it bun reads that file itself, and does not start if it cannot be parsed.
     test("in the project root", async () => {
-      expect(await run({ ...project, "app/bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(refused(why));
+      const options = { cwd: "elsewhere", args: ["../app/src/index.js"] };
+      expect(await run({ ...project, "app/bunfig.toml": bunfig }, options)).toEqual(refused(why));
     });
 
-    test("between the working directory and the project root", async () => {
+    test("between the importing file and the project root", async () => {
       const files = { ...project, "app/src/bunfig.toml": bunfig, "app/src/deep/index.js": requireIt };
-      expect(await run(files, { cwd: "app/src/deep" })).toEqual(refused(why));
+      expect(await run(files, { cwd: "elsewhere", args: ["../app/src/deep/index.js"] })).toEqual(refused(why));
     });
 
     test("above the project root is not read", async () => {
@@ -2635,7 +2637,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
 
   test("the error of an import statement names the file that cannot be parsed", async () => {
     const files = { ...project, "app/bunfig.toml": "[install.security\n", "app/src/index.js": `import "no-deps";\n` };
-    const result = await run(files, { cwd: "app/src" });
+    const result = await run(files, { cwd: "elsewhere", args: ["../app/src/index.js"] });
     expect(result.stderr).toContain(unreadable);
     expect(result.stderr).toMatch(/cannot read or parse "\S+[\\/]bunfig\.toml"/);
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });

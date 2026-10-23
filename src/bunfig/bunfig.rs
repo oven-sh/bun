@@ -8,6 +8,7 @@
 
 #![allow(clippy::collapsible_if)]
 
+use crate::arguments::ConfigFile;
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
@@ -153,6 +154,8 @@ struct Parser<'a, 'tool> {
     /// True for `./bunfig.toml`, which comes with the project. False for the user's own file and
     /// for `--config`.
     is_project_file: bool,
+    /// True for a project file that was found above the working directory. Its `preload` paths are relative to it.
+    is_above_cwd: bool,
     /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
     counts: Counts,
@@ -259,24 +262,29 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
+    fn preload_path(&self, path: Box<[u8]>) -> Box<[u8]> {
+        if !self.is_above_cwd || bun_paths::is_package_path(&path) {
+            return path;
+        }
+        self.install_path(&path)
+    }
+
     fn load_preload(&mut self, expr: &Expr) -> crate::Result<()> {
+        let mut preloads: Vec<Box<[u8]>> = Vec::new();
         match &expr.data {
             ExprData::EArray(array) => {
-                let items = array.items.slice();
-                let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
-                for item in items {
+                for item in array.items.slice() {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            preloads.push(estring_to_owned(s, self.bump));
+                            preloads.push(self.preload_path(estring_to_owned(s, self.bump)));
                         }
                     }
                 }
-                self.ctx.preloads = preloads;
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
+                    preloads.push(self.preload_path(estring_to_owned(s, self.bump)));
                 }
             }
             ExprData::ENull(_) => {}
@@ -284,6 +292,9 @@ impl<'a> Parser<'a, '_> {
                 self.add_error(expr.loc, b"Expected preload to be an array")?;
             }
         }
+        // The ones that are there already come from `--preload`. They run after the file's.
+        preloads.append(&mut self.ctx.preloads);
+        self.ctx.preloads = preloads;
         Ok(())
     }
 
@@ -396,8 +407,16 @@ impl<'a> Parser<'a, '_> {
             self.load_log_level(&expr)?;
         }
 
+        let cli = self.ctx.cli_overrides;
+
         if let Some(expr) = json.get(b"define") {
-            self.ctx.args.define = Some(self.parse_define_map(&expr)?);
+            let mut define = self.parse_define_map(&expr)?;
+            // Of two entries with the same key the later one counts.
+            if let Some(flags) = self.ctx.args.define.take().filter(|_| cli.define) {
+                define.keys.extend(flags.keys);
+                define.values.extend(flags.values);
+            }
+            self.ctx.args.define = Some(define);
         }
 
         if let Some(expr) = json.get(b"origin") {
@@ -441,15 +460,17 @@ impl<'a> Parser<'a, '_> {
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
             if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
+                self.ctx.runtime_options.smol |= expr.as_bool().expect("infallible: type checked");
             }
         }
 
         self.read_for_tool(&json)?;
 
+        // The flags of `bun test` are applied already, and they win over these keys.
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
-                if let Some(root) = test.get(b"root") {
+                // `root` is relative to the working directory, not to the directory of a file found above it.
+                if let Some(root) = test.get(b"root").filter(|_| !self.is_above_cwd) {
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
@@ -465,13 +486,13 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.enabled =
+                    self.ctx.test_options.coverage.enabled |=
                         expr.as_bool().expect("infallible: type checked");
                 }
 
                 if let Some(expr) = test.get(b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.reporters.only_failures =
+                    self.ctx.test_options.reporters.only_failures |=
                         expr.as_bool().expect("infallible: type checked");
                 }
 
@@ -482,19 +503,22 @@ impl<'a> Parser<'a, '_> {
                         if let ExprData::EString(s) = &junit_expr.data {
                             if s.len() > 0 {
                                 self.ctx.test_options.reporters.junit = true;
-                                self.ctx.test_options.reporter_outfile =
-                                    Some(estring_to_owned(s, self.bump));
+                                if self.ctx.test_options.reporter_outfile.is_none() {
+                                    self.ctx.test_options.reporter_outfile =
+                                        Some(estring_to_owned(s, self.bump));
+                                }
                             }
                         }
                     }
                     if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
-                        self.ctx.test_options.reporters.dots =
+                        self.ctx.test_options.reporters.dots |=
                             dots_expr.as_bool().expect("infallible: type checked");
                     }
                 }
 
                 if let Some(expr) = test.get(b"coverageReporter") {
+                    let from_flag = self.ctx.test_options.coverage.reporters;
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
@@ -513,17 +537,22 @@ impl<'a> Parser<'a, '_> {
                             self.apply_coverage_reporter_item(item)?;
                         }
                     }
+                    if cli.coverage_reporter {
+                        self.ctx.test_options.coverage.reporters = from_flag;
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
-                    self.ctx.test_options.coverage.reports_directory = estring_to_owned(
-                        expr.data
-                            .e_string()
-                            .expect("infallible: variant checked")
-                            .get(),
-                        self.bump,
-                    );
+                    if !cli.coverage_dir {
+                        self.ctx.test_options.coverage.reports_directory = estring_to_owned(
+                            expr.data
+                                .e_string()
+                                .expect("infallible: variant checked")
+                                .get(),
+                            self.bump,
+                        );
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverageThreshold") {
@@ -577,7 +606,7 @@ impl<'a> Parser<'a, '_> {
                 if let Some(expr) = test.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     randomize_from_config = expr.as_bool();
-                    self.ctx.test_options.randomize =
+                    self.ctx.test_options.randomize |=
                         expr.as_bool().expect("infallible: type checked");
                 }
 
@@ -596,27 +625,39 @@ impl<'a> Parser<'a, '_> {
                         )?;
                     }
 
-                    self.ctx.test_options.seed = Some(seed_value);
+                    if self.ctx.test_options.seed.is_none() {
+                        self.ctx.test_options.seed = Some(seed_value);
+                    }
                 }
 
                 if let Some(expr) = test.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.retry != 0 {
-                        self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
-                        return Ok(());
+                    if !cli.rerun_each {
+                        if self.ctx.test_options.retry != 0 {
+                            self.add_error(
+                                expr.loc,
+                                b"\"rerunEach\" cannot be used with \"retry\"",
+                            )?;
+                            return Ok(());
+                        }
+                        self.ctx.test_options.repeat_count =
+                            num_to_u32(expr.as_number().expect("infallible: type checked"));
                     }
-                    self.ctx.test_options.repeat_count =
-                        num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
                 if let Some(expr) = test.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.repeat_count != 0 {
-                        self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
-                        return Ok(());
+                    if !cli.retry {
+                        if self.ctx.test_options.repeat_count != 0 {
+                            self.add_error(
+                                expr.loc,
+                                b"\"retry\" cannot be used with \"rerunEach\"",
+                            )?;
+                            return Ok(());
+                        }
+                        self.ctx.test_options.retry =
+                            num_to_u32(expr.as_number().expect("infallible: type checked"));
                     }
-                    self.ctx.test_options.retry =
-                        num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
                 if let Some(expr) = test.get(b"concurrentTestGlob") {
@@ -746,6 +787,45 @@ impl<'a> Parser<'a, '_> {
                         }
                     }
                 }
+
+                if let Some(expr) = test.get(b"filePatterns") {
+                    match &expr.data {
+                        ExprData::EString(s) => {
+                            self.ctx.test_options.file_patterns =
+                                vec![estring_to_owned(s, self.bump)];
+                        }
+                        ExprData::EArray(arr) => {
+                            let items = arr.items.slice();
+                            let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                            for item in items {
+                                let ExprData::EString(s) = &item.data else {
+                                    self.add_error(
+                                        item.loc,
+                                        b"filePatterns array must contain only strings",
+                                    )?;
+                                    return Ok(());
+                                };
+                                patterns.push(estring_to_owned(s, self.bump));
+                            }
+                            self.ctx.test_options.file_patterns = patterns;
+                        }
+                        _ => {
+                            self.add_error(
+                                expr.loc,
+                                b"filePatterns must be a string or array of strings",
+                            )?;
+                            return Ok(());
+                        }
+                    }
+                }
+
+                if let Some(expr) = test.get(b"isolate") {
+                    self.expect(&expr, ExprTag::EBoolean)?;
+                    if !cli.no_isolate {
+                        self.ctx.test_options.isolate |=
+                            expr.as_bool().expect("infallible: type checked");
+                    }
+                }
             }
         }
 
@@ -762,30 +842,33 @@ impl<'a> Parser<'a, '_> {
                 }
 
                 if let Some(auto_install_expr) = install_obj.get(b"auto") {
-                    if let ExprData::EString(_) = &auto_install_expr.data {
+                    let auto_install = if let ExprData::EString(_) = &auto_install_expr.data {
                         let key = auto_install_expr.as_string(self.bump).unwrap_or(b"");
-                        self.ctx.debug.global_cache = match GlobalCache::MAP.get(key) {
+                        match GlobalCache::MAP.get(key) {
                             Some(v) => *v,
                             None => {
                                 self.add_error(
                                     auto_install_expr.loc,
-                                    b"Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"",
+                                    b"Invalid auto install setting, must be one of true, false, \"auto\", \"force\", \"fallback\", or \"disable\"",
                                 )?;
                                 return Ok(());
                             }
-                        };
+                        }
                     } else if let ExprData::EBoolean(b) = auto_install_expr.data {
-                        self.ctx.debug.global_cache = if b.value {
+                        if b.value {
                             GlobalCache::allow_install
                         } else {
                             GlobalCache::disable
-                        };
+                        }
                     } else {
                         self.add_error(
                             auto_install_expr.loc,
-                            b"Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"",
+                            b"Invalid auto install setting, must be one of true, false, \"auto\", \"force\", \"fallback\", or \"disable\"",
                         )?;
                         return Ok(());
+                    };
+                    if !cli.auto_install {
+                        self.ctx.debug.global_cache = auto_install;
                     }
                 }
 
@@ -797,7 +880,7 @@ impl<'a> Parser<'a, '_> {
                     } else {
                         self.add_error(
                             prefer_expr.loc,
-                            b"Invalid prefer setting, must be one of online or offline",
+                            b"Invalid prefer setting, must be one of \"online\", \"offline\", or \"latest\"",
                         )?;
                     }
                 }
@@ -847,10 +930,10 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(shell) = run_expr.get(b"shell") {
                     if let Some(value) = shell.as_string(self.bump) {
-                        if value == b"bun" {
-                            self.ctx.debug.use_system_shell = false;
-                        } else if value == b"system" {
-                            self.ctx.debug.use_system_shell = true;
+                        if value == b"bun" || value == b"system" {
+                            if !cli.shell {
+                                self.ctx.debug.use_system_shell = value == b"system";
+                            }
                         } else {
                             self.add_error(
                                 shell.loc,
@@ -864,7 +947,9 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(bun_flag) = run_expr.get(b"bun") {
                     if let Some(value) = bun_flag.as_bool() {
-                        self.ctx.debug.run_in_bun = value;
+                        if !cli.run_in_bun {
+                            self.ctx.debug.run_in_bun = value;
+                        }
                     } else {
                         self.add_error(bun_flag.loc, b"Expected boolean")?;
                     }
@@ -884,13 +969,15 @@ impl<'a> Parser<'a, '_> {
             if let Some(console_expr) = json.get(b"console") {
                 if let Some(depth) = console_expr.get(b"depth") {
                     if let Some(n) = depth.as_number() {
-                        let depth_value = n as u16;
-                        // Treat depth=0 as maxInt(u16) for infinite depth
-                        self.ctx.runtime_options.console_depth = Some(if depth_value == 0 {
-                            u16::MAX
-                        } else {
-                            depth_value
-                        });
+                        if !cli.console_depth {
+                            let depth_value = n as u16;
+                            // Treat depth=0 as maxInt(u16) for infinite depth
+                            self.ctx.runtime_options.console_depth = Some(if depth_value == 0 {
+                                u16::MAX
+                            } else {
+                                depth_value
+                            });
+                        }
                     } else {
                         self.add_error(depth.loc, b"Expected number")?;
                     }
@@ -1009,12 +1096,12 @@ impl<'a> Parser<'a, '_> {
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
-                if value == b"react" {
+                if value.eq_ignore_ascii_case(b"react") {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"react-jsx" {
+                } else if value.eq_ignore_ascii_case(b"react-jsx") {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
-                } else if value == b"react-jsxDEV" {
+                } else if value.eq_ignore_ascii_case(b"react-jsxdev") {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = true;
                 } else {
@@ -1042,16 +1129,18 @@ impl<'a> Parser<'a, '_> {
         }
         {
             if let Some(jsx) = self.ctx.args.jsx.as_mut() {
-                if !jsx_factory.is_empty() {
+                if !jsx_factory.is_empty() && !cli.jsx_factory {
                     jsx.factory = jsx_factory;
                 }
-                if !jsx_fragment.is_empty() {
+                if !jsx_fragment.is_empty() && !cli.jsx_fragment {
                     jsx.fragment = jsx_fragment;
                 }
-                if !jsx_import_source.is_empty() {
+                if !jsx_import_source.is_empty() && !cli.jsx_import_source {
                     jsx.import_source = jsx_import_source;
                 }
-                jsx.runtime = jsx_runtime;
+                if !cli.jsx_runtime {
+                    jsx.runtime = jsx_runtime;
+                }
                 jsx.development = jsx_dev;
             } else {
                 self.ctx.args.jsx = Some(api::Jsx {
@@ -1079,8 +1168,10 @@ impl<'a> Parser<'a, '_> {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
-                self.ctx.debug.macros =
-                    MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
+                let remaps = parse_macros_json(&expr, self.log, self.source, self.bump);
+                if !cli.macros {
+                    self.ctx.debug.macros = MacroOptions::Map(remaps);
+                }
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
@@ -1117,10 +1208,8 @@ impl<'a> Parser<'a, '_> {
                 let key = key_expr
                     .as_string(self.bump)
                     .expect("infallible: type checked");
-                if key.is_empty() {
-                    continue;
-                }
-                if key[0] != b'.' {
+                // An empty key is for files with no extension, as in `--loader :tsx`.
+                if !key.is_empty() && key[0] != b'.' {
                     self.add_error(
                         key_expr.loc,
                         b"file extension for loader must start with a '.'",
@@ -1139,6 +1228,11 @@ impl<'a> Parser<'a, '_> {
                 loader_names.push(key.into());
                 loader_values.push(loader.to_api());
             }
+            // Of two entries with the same extension the later one counts.
+            if let Some(flags) = self.ctx.args.loaders.take().filter(|_| cli.loaders) {
+                loader_names.extend(flags.extensions);
+                loader_values.extend(flags.loaders);
+            }
             self.ctx.args.loaders = Some(api::LoaderMap {
                 extensions: loader_names,
                 loaders: loader_values,
@@ -1153,7 +1247,7 @@ impl Bunfig {
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
-        is_project_file: bool,
+        file: ConfigFile,
         ctx: &mut ContextData,
         tool: Option<&mut crate::ToolReader<'_>>,
         counts: Counts,
@@ -1228,7 +1322,8 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
-            is_project_file,
+            is_project_file: matches!(file, ConfigFile::Project | ConfigFile::ProjectAbove),
+            is_above_cwd: file == ConfigFile::ProjectAbove,
             tool,
             counts,
         };
@@ -1259,7 +1354,8 @@ impl Bunfig {
             ..Default::default()
         };
         let cmd = CommandTag::InstallCommand;
-        Self::parse(cmd, source, true, &mut ctx, None, Counts::OnlyInstall)?;
+        let file = ConfigFile::Project;
+        Self::parse(cmd, source, file, &mut ctx, None, Counts::OnlyInstall)?;
         Ok(ctx.install)
     }
 }
@@ -1324,7 +1420,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
+    /// Resolves a relative path against the directory that contains the bunfig.toml.
     fn install_path(&self, path: &[u8]) -> Box<[u8]> {
         let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
         api::BunInstall::resolve_path(dir, path)

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isCanary, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
@@ -70,6 +70,51 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
+
+  test.each([
+    [["--smol"], {}, "package.json"],
+    [[], { BUN_OPTIONS: "--smol" }, "package.json"],
+    [["--cwd=target"], {}, "target/package.json"],
+    [["--cwd", "target"], {}, "target/package.json"],
+    // Here `init` is the value of the flag.
+    [["--cwd"], {}, "init/package.json"],
+    [["--filter"], {}, "init/package.json"],
+  ])(
+    "bun %j init, with %j in the environment, writes %s",
+    async (flags, env, expected) => {
+      await using temp = tempDir("bun-init-after-flags", { "target/.gitkeep": "" });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, "init", "-y", "-m"],
+        cwd: String(temp),
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...initEnv, ...env },
+      });
+
+      expect(await proc.exited).toBe(0);
+      const written = ["package.json", "target/package.json", "init/package.json"];
+      expect(written.filter(file => fs.existsSync(path.join(String(temp), file)))).toEqual([expected]);
+    },
+    30_000,
+  );
+
+  test("bun --help init prints the help and writes nothing", async () => {
+    await using temp = tempDir("bun-help-init", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--help", "init"],
+      cwd: String(temp),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+      env: initEnv,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toContain("bun init");
+    expect(readdirSync(String(temp))).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
 
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
     await using temp = tempDir("bun-init-no-tty", {});
@@ -143,6 +188,102 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(output).not.toContain("EndOfStream");
     expect(exitCode).toBe(0);
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+  });
+
+  // Windows is skipped: ConPTY rewrites the child's output into its own escape
+  // sequences, so the raw rows cannot be compared.
+  test.skipIf(isWindows)("bun init template menu marks the selected row when colors are off", async () => {
+    await using temp = tempDir("bun-init-menu-no-color", {});
+
+    const received: string[] = [];
+    let eof = false;
+    let wake: (() => void) | null = null;
+    const decoder = new TextDecoder();
+    // bunEnv sets NO_COLOR=1, so the menu takes its no-color branch: an ASCII
+    // `>` in place of the colored `❯` and no underline on the selected row.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      // An inline terminal is owned by the subprocess: when the child exits, the
+      // remaining output is drained and then `exit` fires. So `eof` means that
+      // no more output can arrive.
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_term, chunk) {
+          received.push(decoder.decode(chunk, { stream: true }));
+          wake?.();
+        },
+        exit() {
+          eof = true;
+          wake?.();
+        },
+      },
+    });
+    await using terminal = proc.terminal!;
+
+    // Resolves with everything received so far, once `ready` accepts it.
+    // Fails at once, with that output, if the process exits first.
+    const waitFor = async (ready: (all: string) => boolean): Promise<string> => {
+      const deadline = Date.now() + 10_000;
+      while (true) {
+        const all = received.join("");
+        if (ready(all)) return all;
+        if (eof) {
+          throw new Error(`bun init exited before the expected output. Received:\n${JSON.stringify(all)}`);
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          throw new Error(`Timed out waiting for the menu. Received so far:\n${JSON.stringify(all)}`);
+        }
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, remaining);
+          wake = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        wake = null;
+      }
+    };
+    // Every draw of the menu ends with "clear to end of screen", then the
+    // process blocks on stdin. So once the `count`-th one has arrived, the
+    // output is complete and stable.
+    const drawn = (count: number) => (all: string) => all.split("\x1b[0J").length > count;
+    // The menu is redrawn in place on every keypress (cursor up, then the three
+    // rows again). The last three non-empty lines are the current state.
+    const currentMenu = (all: string) =>
+      all
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+        .split("\r\n")
+        .filter(Boolean)
+        .slice(-3);
+
+    expect(currentMenu(await waitFor(drawn(1)))).toMatchInlineSnapshot(`
+      [
+        ">   Blank",
+        "    React",
+        "    Library",
+      ]
+    `);
+
+    // Down arrow: the marker follows the selection.
+    terminal.write("\x1b[B");
+    expect(currentMenu(await waitFor(drawn(2)))).toMatchInlineSnapshot(`
+      [
+        "    Blank",
+        ">   React",
+        "    Library",
+      ]
+    `);
+
+    // Ctrl-C cancels the menu without creating a project.
+    terminal.write("\x03");
+    await waitFor(all => all.includes("Cancelled"));
+    const exitCode = await proc.exited;
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+    expect(exitCode).toBe(0);
   });
 
   test("bun init in folder", async () => {
@@ -630,5 +771,149 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "README.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+  });
+});
+
+(isWindows ? describe : describe.concurrent)("bun init beside files that exist", () => {
+  // Where a nested `bun install` runs, it finds no package here and needs no network.
+  const registry = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 404 }) });
+  afterAll(() => registry.stop(true));
+
+  // A package.json that lists these two gets no dependency, so no nested `bun install` runs.
+  const listed = { devDependencies: { "@types/bun": "latest" }, peerDependencies: { typescript: "^7" } };
+
+  async function runInit(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", ...args],
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...initEnv,
+        BUN_CONFIG_REGISTRY: `http://127.0.0.1:${registry.port}/`,
+        BUN_INSTALL_CACHE_DIR: path.join(cwd, ".cache"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    {
+      title: "does not parse",
+      contents: '{\n  "name": "myapp",\n  "dependencies": {\n    "react": "^19"\n  }\n',
+      error: 'error: Expected "}" but found end of file',
+    },
+    { title: "is not an object", contents: '["myapp"]\n', error: "error: package.json root must be an object" },
+  ])("bun init -y exits 1 and writes nothing beside a package.json that $title", async ({ contents, error }) => {
+    await using temp = tempDir("bun-init-unusable-package-json", { "package.json": contents });
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), "-y");
+
+    expect(stderr).toContain(error);
+    expect(stderr).toContain("package.json:");
+    expect(stdout).toBe("");
+    expect(readdirSync(temp)).toEqual(["package.json"]);
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    { title: "no package.json", files: {} },
+    { title: "a package.json of only whitespace", files: { "package.json": "\n" } },
+  ])("bun init -y with $title prints and writes the blank template", async ({ files }) => {
+    await using temp = tempDir("bun-init-blank", files);
+
+    const { stdout, exitCode } = await runInit(String(temp), "-y");
+
+    expect(stdout).toStartWith(
+      " + .gitignore\n + index.ts\n + tsconfig.json (for bun check and editor autocomplete)\n + README.md\n" +
+        "\nTo get started, run:\n\n    bun run index.ts\n\nTo type check, run:\n\n    bun check\n\n",
+    );
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
+      name: path.basename(temp).toLowerCase().replaceAll(" ", "-"),
+      module: "index.ts",
+      type: "module",
+      private: true,
+      scripts: { typecheck: "bun check" },
+      ...listed,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun init --react skips a README.md and an unparsable package.json", async () => {
+    const files = { "README.md": "mine\n", "package.json": '{ "name": ' };
+    await using temp = tempDir("bun-init-react-existing", files);
+
+    const { stdout, exitCode } = await runInit(String(temp), "--react");
+
+    expect(stdout).toContain(" ○ package.json (already exists, skipping)\n");
+    expect(stdout).toContain(" ○ README.md (already exists, skipping)\n");
+    expect({
+      "README.md": await Bun.file(path.join(temp, "README.md")).text(),
+      "package.json": await Bun.file(path.join(temp, "package.json")).text(),
+    }).toEqual(files);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    { args: "-y", does: "writes no file at", main: "./index", written: false },
+    { args: "-y", does: "writes the missing", main: "dist/index.js", written: true },
+    { args: "-m -y", does: "writes the missing", main: "dist/index.js", written: true },
+  ])('bun init $args $does "main": "$main" beside index.js', async ({ args, main, written }) => {
+    await using temp = tempDir("bun-init-main", {
+      "package.json": JSON.stringify({ name: "app", main, ...listed }),
+      "index.js": "module.exports = 1;\n",
+    });
+
+    const { exitCode } = await runInit(String(temp), ...args.split(" "));
+
+    expect(fs.existsSync(path.join(temp, main))).toBe(written);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    { title: "keeps", before: { type: "commonjs", private: false }, after: { type: "commonjs", private: false } },
+    { title: "adds a missing", before: {}, after: { type: "module", private: true } },
+  ])("bun init -y $title type and private", async ({ before, after }) => {
+    const manifest = { name: "app", ...before, ...listed };
+    await using temp = tempDir("bun-init-type-private", {
+      "package.json": JSON.stringify(manifest),
+      "index.js": "module.exports = 1;\n",
+    });
+
+    const { exitCode } = await runInit(String(temp), "-y");
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
+      ...manifest,
+      module: "index.js",
+      ...after,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    { adds: "nothing", group: "dependencies", added: {} },
+    { adds: "nothing", group: "optionalDependencies", added: {} },
+    { adds: "@types/bun", group: "peerDependencies", added: { devDependencies: { "@types/bun": "latest" } } },
+  ])("bun init -y adds $adds where $group lists @types/bun and typescript", async ({ adds, group, added }) => {
+    const manifest = {
+      name: "app",
+      module: "index.ts",
+      type: "module",
+      private: true,
+      scripts: { typecheck: "bun check" },
+      [group]: { "@types/bun": "1.1.0", typescript: "5.6.2" },
+    };
+    await using temp = tempDir("bun-init-listed-dependency", {
+      "package.json": JSON.stringify(manifest),
+      "index.ts": "export {};\n",
+    });
+
+    const { stdout, exitCode } = await runInit(String(temp), "-y");
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({ ...manifest, ...added });
+    // `bun init` runs `bun install` only after it added a dependency.
+    expect(stdout.includes("bun install")).toBe(adds !== "nothing");
+    expect(exitCode).toBe(0);
   });
 });

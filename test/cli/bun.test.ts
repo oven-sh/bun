@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCanary, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCanary, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -175,6 +175,28 @@ describe("bun", () => {
       );
     });
   });
+
+  // `bun discord` runs the platform opener (`xdg-open` on Linux) and prints the
+  // URL when that fails. Linux only: an empty PATH makes `xdg-open` fail to
+  // resolve, while macOS spawns `/usr/bin/open` by absolute path and would
+  // open a browser.
+  describe.skipIf(!isLinux)("discord", () => {
+    test("prints the URL when the opener is not on PATH", async () => {
+      using emptyPath = tempDir("bun-discord-empty-path", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "discord"],
+        env: { ...bunEnv, PATH: String(emptyPath) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("-> https://bun.com/discord\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("getcompletes", () => {
     test("getcompletes should not panic and should not be empty", () => {
       const { stdout, exitCode } = spawnSync({
@@ -414,6 +436,124 @@ describe("bun", () => {
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
       });
     });
+
+    describe("<TAB>", () => {
+      // stdout is a pipe, so the script for $SHELL is printed and not installed.
+      async function script(shell: string) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "completions"],
+          env: { ...bunEnv, SHELL: `/bin/${shell}` },
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(exitCode).toBe(0);
+        return stdout;
+      }
+
+      const project = {
+        "package.json": JSON.stringify({ scripts: { "dev": "echo dev", "test:unit": "echo unit" } }, null, 2),
+        "myscript.ts": "",
+        "foo.txt": "",
+        "src/index.ts": "",
+        "src/other.ts": "",
+        "test/a.test.ts": "",
+        // bun.fish asks `bun getcompletes` for the scripts and bins. This one has no answer.
+        "bin/bun": "#!/bin/sh\n",
+      };
+
+      // What each line offers at its end, sorted.
+      async function offered(dir: string, lines: string[], cmd: (line: string) => string[]) {
+        const replies: Record<string, string[]> = {};
+        for (const line of lines) {
+          await using proc = Bun.spawn({
+            cmd: cmd(line),
+            cwd: dir,
+            env: { ...bunEnv, HOME: dir, PATH: `${join(dir, "bin")}:${bunEnv.PATH}` },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+          expect(stderr).toBe("");
+          // fish prints a description after a tab.
+          replies[line] = stdout
+            .split("\n")
+            .filter(Boolean)
+            .map(reply => reply.split("\t")[0])
+            .sort();
+        }
+        return replies;
+      }
+
+      // The script needs associative arrays. macOS has bash 3.2.
+      const bashVersion = Bun.which("bash")
+        ? Number(spawnSync({ cmd: ["bash", "-c", "echo ${BASH_VERSINFO[0]}"], env: bunEnv }).stdout.toString())
+        : 0;
+
+      test.concurrent.skipIf(bashVersion < 4)("bash offers files and scripts, also after a flag", async () => {
+        using dir = tempDir("completions-bash", { ...project, "two words.ts": "", "bun.bash": await script("bash") });
+        const expected = {
+          "bun sr": ["src/"],
+          "bun src/": ["src/index.ts", "src/other.ts"],
+          "bun run src/": ["src/index.ts", "src/other.ts"],
+          "bun run d": ["dev"],
+          "bun run te": ["test/", "test:unit"],
+          "bun --hot src/o": ["src/other.ts"],
+          "bun --hot run src/o": ["src/other.ts"],
+          "bun --cwd . run src/o": ["src/other.ts"],
+          "bun test te": ["test/"],
+          "bun myscript.ts fo": ["foo.txt"],
+          "bun tw": ["two words.ts"],
+          "bun --silent add --p": ["--peer", "--production"],
+          // As before.
+          "bun add --p": ["--peer", "--production"],
+          "bun r": ["remove", "repl", "run"],
+          "bun te": ["test"],
+        };
+        const replies = await offered(String(dir), Object.keys(expected), line => {
+          const words = line.split(" ");
+          return [
+            "bash",
+            "--norc",
+            "--noprofile",
+            "-c",
+            `source ./bun.bash; COMP_WORDS=(${words.join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
+          ];
+        });
+        expect(replies).toEqual(expected);
+      });
+
+      test.concurrent.skipIf(!Bun.which("fish"))("fish offers files, also after a flag or a script", async () => {
+        using dir = tempDir("completions-fish-tab", { ...project, "bun.fish": await script("fish") });
+        fs.chmodSync(join(String(dir), "bin", "bun"), 0o755);
+        const expected = {
+          "bun run src/": ["src/index.ts", "src/other.ts"],
+          "bun --hot src/o": ["src/other.ts"],
+          "bun --hot run src/o": ["src/other.ts"],
+          "bun test te": ["test/"],
+          "bun myscript.ts fo": ["foo.txt"],
+          // As before.
+          "bun src/": ["src/index.ts", "src/other.ts"],
+          "bun add src/": [],
+          "bun pm ca": ["cache"],
+        };
+        const replies = await offered(String(dir), Object.keys(expected), line => [
+          "fish",
+          "--no-config",
+          "-c",
+          `source ./bun.fish; complete -C '${line}'`,
+        ]);
+        expect(replies).toEqual(expected);
+      });
+
+      test.concurrent.skipIf(!Bun.which("zsh"))("zsh parses the script", async () => {
+        using dir = tempDir("completions-zsh-syntax", { "_bun": await script("zsh") });
+        await using proc = Bun.spawn({ cmd: ["zsh", "-n", "_bun"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    });
   });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };
@@ -440,6 +580,7 @@ describe("bun", () => {
       ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
       ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
       ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+      ["build", "--no-module-preload", "don't emit <link rel=modulepreload> for the chunks"],
       ["add", "-F, --filter", "Add the package(s) to the matching workspaces instead of the current package"],
       ["add", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
       ["remove", "-F, --filter", "Remove the package(s) from the matching workspaces instead of the current package"],
@@ -449,6 +590,7 @@ describe("bun", () => {
       ["audit", "-L, --latest", "Also apply fixes your declared ranges exclude, rewriting package.json"],
       ["update", "-p, --production", "Only update dependencies and optionalDependencies (alias: --prod)"],
       ["install", "-p, --production", "Don't install devDependencies"],
+      ["run", "-l, --loader", "json, toml, yaml, json5, xml, text, md, css, html, wasm, napi, sqlite, file"],
     ];
     test.concurrent.each(flags)("bun %s --help keeps placeholder in %s description", async (cmd, flag, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
@@ -470,6 +612,21 @@ describe("bun", () => {
       expect(out).toContain("\x1b[34m<package>\x1b[0m");
       // raw tag markup must not leak through
       expect(out).not.toContain("<blue>");
+      expect(exitCode).toBe(0);
+    });
+
+    // With colors on, a flag description goes through the runtime markup pass, not the build-time one.
+    test("bun build --help keeps <link rel=modulepreload> with FORCE_COLOR=1", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--help"],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + stderr).split(/\r?\n/).find(l => l.includes("--no-module-preload")) ?? "";
+      // The cyan flag name proves that colors are on, so the runtime pass wrote this line.
+      expect(line).toContain("\x1b[36m--no-module-preload\x1b[0m");
+      expect(line).toContain("don't emit <link rel=modulepreload> for the chunks");
       expect(exitCode).toBe(0);
     });
   });
@@ -511,6 +668,7 @@ describe("bun", () => {
           /^ {2}Also add it to the current project's package\.json as a link: dependency\.\n {2}bun link --save <package>$/m,
         ],
       ],
+      ["bun patch --help", ["patch"], [/^ {2}bun patch --commit --patches-dir 'my-patches' 'node_modules\/jquery'$/m]],
       [
         "bun audit --help",
         ["audit"],
@@ -530,6 +688,125 @@ describe("bun", () => {
       expect(out).not.toContain("bun list ");
       expect(exitCode).toBe(0);
     });
+  });
+
+  describe.concurrent("a flag and its value before the command", () => {
+    const words = ["build", "test", "install", "ci", "pm", "x"];
+    const files = {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["with", "without"] }),
+      // Nothing here may reach a registry.
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/"\n`,
+      ".env.x": "FOO=foo",
+      "pre.ts": `globalThis.PRE = "pre";`,
+      "index.ts": `console.log(process.env.FOO ?? "-", globalThis.PRE ?? "-", typeof X === "undefined" ? "-" : X);`,
+      "with/package.json": JSON.stringify({
+        name: "with",
+        scripts: Object.fromEntries(["dev", "run", ...words].map(word => [word, `echo script-${word}`])),
+      }),
+      "without/package.json": JSON.stringify({ name: "without" }),
+      "without/a.test.ts": `import { test } from "bun:test"; test("in without", () => {});`,
+    };
+
+    async function run(args: string[], env: Record<string, string> = {}) {
+      using dir = tempDir("flag-value-command", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const manifest = fs.readFileSync(join(String(dir), "package.json"), "utf8");
+      return { stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode, manifest };
+    }
+
+    test.each([
+      [["--cwd", "with", "run", "dev"], {}, "script-dev\n"],
+      [["--env-file", ".env.x", "run", "index.ts"], {}, "foo - -\n"],
+      [["--preload", "./pre.ts", "run", "index.ts"], {}, "- pre -\n"],
+      [["-r", "./pre.ts", "run", "index.ts"], {}, "- pre -\n"],
+      [["--define", "X=1", "run", "index.ts"], {}, "- - 1\n"],
+      [["run", "index.ts"], { BUN_OPTIONS: "--preload ./pre.ts" }, "- pre -\n"],
+    ])("bun %j runs what follows `run`", async (args, env, expected) => {
+      const { stdout, exitCode } = await run(args, env);
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(words)("bun --cwd with %s runs the script of that name", async word => {
+      const { stdout, exitCode } = await run(["--cwd", "with", word]);
+      expect(stdout).toBe(`script-${word}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --cwd without test runs the tests, as there is no such script", async () => {
+      const { stderr, exitCode } = await run(["--cwd", "without", "test"]);
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --env-file .env.x exec runs the command", async () => {
+      const { stdout, exitCode } = await run(["--env-file", ".env.x", "exec", "echo $FOO"]);
+      expect(stdout).toBe("foo\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun install with a flag and its value in BUN_OPTIONS adds no package", async () => {
+      const { stdout, exitCode, manifest } = await run(["install"], { BUN_OPTIONS: "--preload ./pre.ts" });
+      expect(stdout).toContain("bun install");
+      expect(manifest).toBe(files["package.json"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([["--filter=with"], ["--workspaces"]])("bun %s test runs the tests", async flag => {
+      const { stdout, stderr, exitCode } = await run([flag, "test"]);
+      expect(stdout).not.toContain("script-test");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter with test runs the script", async () => {
+      const { stdout, exitCode } = await run(["--filter", "with", "test"]);
+      expect(stdout).toContain("script-test");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter=with --cwd . run dev runs the script that is named run", async () => {
+      const { stdout, exitCode } = await run(["--filter=with", "--cwd", ".", "run", "dev"]);
+      expect(stdout).toContain("script-run dev");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["test", "install", "run"])("bun --cwd without --version %s prints the version", async word => {
+      const [printed, expected] = await Promise.all([run(["--cwd", "without", "--version", word]), run(["--version"])]);
+      expect(printed).toEqual(expected);
+    });
+
+    test("bun -p install is bun install --production", async () => {
+      const { stdout, exitCode } = await run(["-p", "install"]);
+      expect(stdout).toContain("bun install");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.concurrent.each([
+    [["--main-fields=module,main", "m.ts"], "module\n"],
+    [["--extension-order=.js,.ts", "r.cjs"], "JS\n"],
+  ])("bun %j reads the value as a list", async (args, expected) => {
+    using dir = tempDir("flag-list-value", {
+      "node_modules/mf/package.json": JSON.stringify({ name: "mf", main: "./main.js", module: "./module.js" }),
+      "node_modules/mf/main.js": `export default "main";`,
+      "node_modules/mf/module.js": `export default "module";`,
+      "m.ts": `import x from "mf"; console.log(x);`,
+      "d.ts": `export default "TS";`,
+      "d.js": `export default "JS";`,
+      "r.cjs": `console.log(require("./d").default);`,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
   });
 
   describe.concurrent("bun lint is a command in canary builds only", () => {

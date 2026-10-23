@@ -162,6 +162,13 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
+static DEFAULT_FILES_DISABLED: AtomicBool = AtomicBool::new(false);
+
+/// `--no-env-file` or bunfig `env = false`: from here on no `Loader` of the process reads a default `.env` file.
+pub fn disable_default_files() {
+    DEFAULT_FILES_DISABLED.store(true, Ordering::Relaxed);
+}
+
 /// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
 fn is_ipc_channel_key(key: &[u8]) -> bool {
     const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
@@ -221,6 +228,16 @@ impl Loader {
 
     pub fn is_test(&self) -> bool {
         self.get_node_env() == Some(b"test")
+    }
+
+    /// Makes `value` win over a `NODE_ENV` or `BUN_ENV` of the process environment.
+    pub fn override_node_env(&mut self, value: &[u8]) -> Result<(), AllocError> {
+        // `load_process` replaces the keys that exist, so it has to come first.
+        self.load_process()?;
+        if self.map.get(b"BUN_ENV").is_some() {
+            self.map.put(b"BUN_ENV", value)?;
+        }
+        self.map.put(b"NODE_ENV", value)
     }
 
     pub fn get_node_path<'b>(
@@ -645,7 +662,7 @@ impl Loader {
             //
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
-            if !skip_default_env {
+            if !skip_default_env && !DEFAULT_FILES_DISABLED.load(Ordering::Relaxed) {
                 self.load_default_files(suffix, dir, &mut value_buffer)?;
             }
         }
@@ -1119,26 +1136,72 @@ impl<'a> Parser<'a> {
         self.pos = end;
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
+}
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
-        if value.len() < 2 {
-            return Ok(None);
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ExpandState {
+    Raw,
+    Expanding,
+    Done,
+}
+
+/// Expands the values of the keys that one file added to `map`. Every other value in it is final.
+struct Expansion<'a> {
+    map: &'a mut Map,
+    /// Index in `map` of the first key that the file added.
+    first: usize,
+    /// One per key that the file added.
+    states: Vec<ExpandState>,
+}
+
+impl Expansion<'_> {
+    /// Expands the value at `index`, a key of the file, in place and only once.
+    fn expand_value(&mut self, index: usize, depth: u8) {
+        let state = index - self.first;
+        if self.states[state] != ExpandState::Raw {
+            return;
         }
-        self.value_buffer.clear();
-        if !Self::expand_into(map, value, self.value_buffer, 0) {
-            return Ok(None);
+        self.states[state] = ExpandState::Expanding;
+        let raw = core::mem::take(&mut self.map.map.values_mut()[index].value);
+        let mut expanded = Vec::new();
+        let changed = raw.len() >= 2 && self.expand_into(&raw, &mut expanded, depth);
+        self.map.map.values_mut()[index].value = if changed {
+            expanded.into_boxed_slice()
+        } else {
+            raw
+        };
+        self.states[state] = ExpandState::Done;
+    }
+
+    /// Appends the expanded value of `key`. False if it is unset, which a key is inside its own value.
+    fn append_value_of(&mut self, key: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+        let Some(index) = self.map.map.get_index(key) else {
+            return false;
+        };
+        if index >= self.first {
+            if self.states[index - self.first] == ExpandState::Expanding {
+                return false;
+            }
+            if depth < 200 {
+                self.expand_value(index, depth + 1);
+            }
         }
-        Ok(Some(self.value_buffer.as_slice()))
+        out.extend_from_slice(&self.map.map.values()[index].value);
+        true
     }
 
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
     /// default clause is expanded recursively.
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    fn expand_into(&mut self, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+        #[inline]
+        fn is_ident_start(b: u8) -> bool {
+            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'_')
         }
 
         let mut pos = 0;
@@ -1197,16 +1260,14 @@ impl<'a> Parser<'a> {
                 let key = &inner[..key_end];
                 let rest = &inner[key_end..];
                 if rest.is_empty() {
-                    if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
-                    }
+                    self.append_value_of(key, out, depth);
                 } else if let Some(default) = rest.strip_prefix(b":-") {
-                    if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
-                    } else if depth < 200 {
-                        Self::expand_into(map, default, out, depth + 1);
-                    } else {
-                        out.extend_from_slice(default);
+                    if !self.append_value_of(key, out, depth) {
+                        if depth < 200 {
+                            self.expand_into(default, out, depth + 1);
+                        } else {
+                            out.extend_from_slice(default);
+                        }
                     }
                 } else {
                     out.extend_from_slice(&value[pos..=close]);
@@ -1214,16 +1275,14 @@ impl<'a> Parser<'a> {
                 pos = close + 1;
                 continue;
             }
-            if is_ident(next) {
+            if is_ident_start(next) {
                 changed = true;
                 let key_start = pos + 1;
                 let mut k = key_start;
                 while k < value.len() && is_ident(value[k]) {
                     k += 1;
                 }
-                if let Some(v) = map.get(&value[key_start..k]) {
-                    out.extend_from_slice(v);
-                }
+                self.append_value_of(&value[key_start..k], out, depth);
                 pos = k;
                 continue;
             }
@@ -1232,12 +1291,14 @@ impl<'a> Parser<'a> {
         }
         changed
     }
+}
 
+impl<'a> Parser<'a> {
     fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
-        let mut count = map.map.count();
+        let count = map.map.count();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
@@ -1260,24 +1321,16 @@ impl<'a> Parser<'a> {
             *entry.value_ptr = HashTableValue { value: value_owned };
         }
         if !IS_PROCESS && EXPAND {
-            // borrowck — index-based iteration: clone the value bytes, run
-            // expansion against an immutable `&Map`, then write back via
-            // `values_mut()`. Values are dupe'd by `parse` above, so length
-            // is bounded by file size.
             let total = map.map.count();
-            let mut idx = count;
-            while idx < total {
-                let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
-                }
-                idx += 1;
+            let mut expansion = Expansion {
+                map,
+                first: count,
+                states: vec![ExpandState::Raw; total - count],
+            };
+            for index in count..total {
+                expansion.expand_value(index, 0);
             }
-            count = 0;
         }
-        let _ = count;
         Ok(())
     }
 

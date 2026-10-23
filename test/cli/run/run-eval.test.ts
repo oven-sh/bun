@@ -108,6 +108,70 @@ for (const flag of ["-e", "--print"]) {
   });
 }
 
+describe.concurrent("bun run -e / -p", () => {
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode };
+  }
+
+  test.each([
+    [["-e", "console.log(process.argv.length)"], "1\n"],
+    [["--eval=console.log(1 + 2)"], "3\n"],
+    [["-p", "1 + 2"], "3\n"],
+  ])("%j evaluates the code", async (args, stdout) => {
+    using dir = tempDir("run-eval", { "package.json": JSON.stringify({ scripts: { dev: "echo dev" } }) });
+    expect(await run(String(dir), ...args)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test("with a script after it, the script runs", async () => {
+    using dir = tempDir("run-eval-target", { "package.json": JSON.stringify({ scripts: { dev: "echo dev" } }) });
+    expect(await run(String(dir), "-p", "3000", "dev")).toEqual({
+      stdout: "dev\n",
+      stderr: "$ echo dev\n",
+      exitCode: 0,
+    });
+  });
+});
+
+describe.concurrent("a word that names a command, after the flag", () => {
+  async function run(...args: string[]) {
+    using dir = tempDir("eval-command-word", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const argv = "JSON.stringify(process.argv.slice(1))";
+
+  test.each([
+    ["--print", "x"],
+    ["--eval", "test"],
+  ])("bun %s %s evaluates the word", async (flag, word) => {
+    const { stdout, stderr, exitCode } = await run(flag, word);
+    expect(stderr).toContain(`ReferenceError: ${word} is not defined`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([[[`--print=${argv}`, "test"]], [[`--eval=console.log(${argv})`, "test"]], [["-p", argv, "test"]]])(
+    "bun %j passes the word to the code",
+    async args => {
+      expect(await run(...args)).toEqual({ stdout: `["test"]\n`, stderr: "", exitCode: 0 });
+    },
+  );
+
+  test("bun -p test runs the tests", async () => {
+    const { stdout } = await run("-p", "test");
+    expect(stdout).toContain("bun test");
+  });
+});
+
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {
     let cwd = tmpdirSync();

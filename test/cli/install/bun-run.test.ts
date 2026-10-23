@@ -1346,7 +1346,7 @@ describe.concurrent("bun run", () => {
 
     {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--shell=system", "say", "%PATH%"],
+        cmd: [bunExe(), "run", "--silent", "--shell=system", "say", "%PATH%"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1359,6 +1359,100 @@ describe.concurrent("bun run", () => {
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  for (const flags of [[], ["--silent"]]) {
+    it.skipIf(isWindows)(`exits 1 at the first script whose shell cannot be started ${flags}`.trim(), async () => {
+      using dir = tempDir("bun-run-broken-shell", {
+        "package.json": JSON.stringify({ scripts: { prehi: "echo pre", hi: "echo hi", posthi: "echo post" } }),
+        // The only shell in PATH. Its interpreter does not exist.
+        "bin/sh": "#!/nonexistent\n",
+      });
+      chmodSync(join(String(dir), "bin", "sh"), 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...flags, "--shell=system", "hi"],
+        cwd: String(dir),
+        env: { ...bunEnv, PATH: join(String(dir), "bin") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.replaceAll(String(dir), "<dir>")).toBe(
+        (flags.length ? "" : "$ echo pre\n") +
+          "error: Failed to run script prehi due to error:\n" +
+          "ENOENT: <dir>/bin/sh: No such file or directory (posix_spawn())\n",
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  it.skipIf(isWindows)("--silent says why a bin in node_modules/.bin cannot be started", async () => {
+    using dir = tempDir("bun-run-broken-bin", {
+      "package.json": "{}",
+      "node_modules/.bin/no-interpreter": "#!/nonexistent\n",
+    });
+    chmodSync(join(String(dir), "node_modules", ".bin", "no-interpreter"), 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--silent", "no-interpreter"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.replaceAll(String(dir), "<dir>")).toBe(
+      'error: Failed to run "no-interpreter" due to:\n' +
+        "ENOENT: <dir>/node_modules/.bin/no-interpreter: No such file or directory (posix_spawn())\n",
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // An ignored SIGCHLD survives exec. The kernel then reaps a child before its parent can wait for it.
+  it.skipIf(isWindows)("reports the exit code of a script when the parent process ignores SIGCHLD", async () => {
+    using dir = tempDir("bun-run-sigchld-ignored", {
+      "package.json": JSON.stringify({ scripts: { bad: "exit 3" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "run", "--shell=system", "bad"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe('$ exit 3\nerror: script "bad" exited with code 3\n');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(3);
+  });
+
+  it("--silent --shell=bun says why a script cannot be run", async () => {
+    using dir = tempDir("bun-run-bun-shell-failure", {
+      "package.json": JSON.stringify({
+        // Nested deeper than bun's shell reads.
+        scripts: { deep: "echo " + Buffer.alloc(400, "$(").toString() + "echo x" + Buffer.alloc(200, ")").toString() },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--silent", "--shell=bun", "deep"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("error: Failed to run script deep due to error SubshellDepthExceeded\n");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 
   // The node/bun shims live in one directory shared by every bun process of

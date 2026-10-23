@@ -39,6 +39,19 @@ impl<P: AsRef<[u8]>> Prepared<P> {
     }
 }
 
+/// Whether one of `results` is a match and none of them is a `!` pattern that rejects the path.
+pub fn any_matches(results: impl Iterator<Item = MatchResult>) -> bool {
+    let mut is_match = false;
+    for result in results {
+        if !result.is_negated() {
+            is_match |= result.matches();
+        } else if !result.matches() {
+            return false;
+        }
+    }
+    is_match
+}
+
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
 // parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;

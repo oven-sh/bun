@@ -11,6 +11,8 @@ Bun relies on pre-existing configuration files like `package.json` and `tsconfig
 
 Put `bunfig.toml` in your project root, alongside your `package.json`.
 
+`bun <file>`, `bun run`, `bun test`, and `bun build` read the `bunfig.toml` in the working directory. If there is none, they read the nearest one in a parent directory of the same project. The search stops at the directory of the nearest `package.json`, or at the workspace root whose `workspaces` lists that directory. Bun reads only one of these files and does not merge them. It skips a file in a parent directory unless the file and its directory have the same owner as the working directory (on Windows, it also skips a symbolic link), and it does not search parent directories when the working directory is inside `node_modules`.
+
 To configure Bun's package manager globally, you can also create a `.bunfig.toml` file at one of the following paths:
 
 - `$HOME/.bunfig.toml`
@@ -36,6 +38,8 @@ An array of scripts/plugins to execute before running a file or script.
 preload = ["./preload.ts"]
 ```
 
+A relative path in `preload` or [`test.preload`](#test-preload) is relative to the directory of the `bunfig.toml` that Bun found. With `--config`, it is relative to the working directory. In a `bunfig.toml` that Bun found in a parent directory, only these two and the paths in [`[install]`](#package-manager) are relative to that file's directory, and [`test.root`](#test-root) is not applied.
+
 ### `jsx`
 
 Configure how Bun handles JSX. You can also set these fields in the `compilerOptions` of your `tsconfig.json`, but `bunfig.toml` supports them for non-TypeScript projects.
@@ -47,11 +51,19 @@ jsxFragment = "Fragment"
 jsxImportSource = "react"
 ```
 
-Refer to the tsconfig docs for more information on these fields.
+`jsx` accepts three values, in upper or lower case. Any other value, such as `"preserve"`, is a configuration error.
+
+| `jsx`            | Transform                                                     |
+| ---------------- | ------------------------------------------------------------- |
+| `"react"`        | Classic: `React.createElement`, or `jsxFactory` when set      |
+| `"react-jsx"`    | Automatic: `jsx` from `react/jsx-runtime`                     |
+| `"react-jsxdev"` | Automatic, development: `jsxDEV` from `react/jsx-dev-runtime` |
+
+Refer to the tsconfig docs for more information on these fields. `jsxFragment` is the `bunfig.toml` name for `jsxFragmentFactory`.
 
 - [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)
 - [`jsxFactory`](https://www.typescriptlang.org/tsconfig#jsxFactory)
-- [`jsxFragment`](https://www.typescriptlang.org/tsconfig#jsxFragment)
+- [`jsxFragment`](https://www.typescriptlang.org/tsconfig#jsxFragmentFactory)
 - [`jsxImportSource`](https://www.typescriptlang.org/tsconfig#jsxImportSource)
 
 ### `smol`
@@ -91,6 +103,8 @@ Configure how Bun maps file extensions to [loaders](/bundler/loaders). Use this 
 [loader]
 # when a .bagel file is imported, treat it like a tsx file
 ".bagel" = "tsx"
+# the empty extension is for files that have none
+"" = "ts"
 ```
 
 Bun supports the following loaders:
@@ -178,7 +192,7 @@ The `[test]` section of `bunfig.toml` configures the test runner.
 
 ### `test.root`
 
-The root directory to run tests from. Default `.`.
+The root directory to run tests from, relative to the working directory. Default `.`. Bun ignores it in a `bunfig.toml` that it found in a parent directory.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -204,6 +218,28 @@ pathIgnorePatterns = ["vendor/**", "submodules/**", "fixtures/**"]
 ```
 
 Equivalent CLI flag: `--path-ignore-patterns`. CLI flags override the `bunfig.toml` value entirely.
+
+### `test.filePatterns`
+
+Choose which files are test files with glob patterns: a string or an array of strings. The patterns replace the default rule, which takes every file whose name ends in `.test`, `_test`, `.spec` or `_spec` before its extension.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+filePatterns = ["**/*.itest.ts", "**/__tests__/*.unit.tsx"]
+```
+
+Each pattern is matched against the file's path relative to the project root, like `pathIgnorePatterns`. `*` does not cross a `/`, so use `**/*.itest.ts` to match at any depth. A pattern that starts with `!` excludes what it matches. Only files with a JavaScript or TypeScript extension are considered. A filter such as `bun test nested` still narrows the set, `pathIgnorePatterns` still excludes from it, and a file passed by path (`bun test ./b.test.ts`) runs whether or not it matches.
+
+### `test.isolate`
+
+Run each test file in a fresh global object, like `--isolate`. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+isolate = true
+```
+
+The `--no-isolate` CLI flag overrides this setting. See [`--isolate`](/test/parallel#--isolate).
 
 ### `test.smol`
 
@@ -383,6 +419,8 @@ Enable the dots reporter, which prints one dot per test. Default `false`.
 dots = true
 ```
 
+Equivalent CLI flag: `--dots`.
+
 #### `test.reporter.junit`
 
 Enable JUnit XML reporting and specify the output file path.
@@ -392,7 +430,7 @@ Enable JUnit XML reporting and specify the output file path.
 junit = "test-results.xml"
 ```
 
-CI systems and other tools can consume the report.
+CI systems and other tools can consume the report. The `--reporter-outfile` CLI flag overrides the output file path.
 
 ## Linter
 

@@ -25,7 +25,7 @@ pub(crate) const IS_ENABLED: bool = bun_core::Environment::IS_CANARY;
 /// it.
 const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
-fn change_directory(cwd: &[u8]) {
+pub(crate) fn change_directory(cwd: &[u8]) {
     // Free the copy here, because `exit` doesn't return and nothing would free it later.
     let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
     if let bun_sys::Result::Err(err) = changed {
@@ -39,7 +39,7 @@ fn change_directory(cwd: &[u8]) {
 }
 
 /// Returns `--cwd` from `bun`'s own flags, which precede `command`.
-fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     let mut found = None;
     let mut args = arguments_before(command).into_iter();
     while let Some(arg) = args.next() {

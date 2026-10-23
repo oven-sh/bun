@@ -1989,6 +1989,33 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
+describe("a syntax error in tsconfig.json", () => {
+  const files = {
+    "tsconfig.json": `{ "compilerOptions": { "paths": { "@m/*": ["./src/*"] } } "include": [] }`,
+    "src/x.ts": `export const x = 1;`,
+    // Nothing is installed on the fly.
+    "node_modules/.keep": "",
+  };
+
+  test.concurrent("is printed when the entry point fails to load", async () => {
+    using dir = tempDir("tsconfig-syntax-error", {
+      ...files,
+      "entry.ts": `import { x } from "@m/x";\nconsole.log(x);`,
+    });
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(`Cannot find module '@m/x'`);
+    expect(result.stderr).toContain(`error: Expected "," but found ""include""`);
+    expect(result.stderr).toContain(join(String(dir), "tsconfig.json") + ":1:");
+    expect(result.exitCode).toBe(1);
+  });
+
+  test.concurrent("is not printed by a script that calls process.exit()", async () => {
+    using dir = tempDir("tsconfig-syntax-error-exit", { ...files, "entry.ts": `console.log("ran"); process.exit(0);` });
+    expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({ stdout: "ran", stderr: "", exitCode: 0 });
+  });
+});
+
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));
@@ -2255,3 +2282,97 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+describe.concurrent("--preserve-symlinks", () => {
+  // app/imported.mjs and app/entry.cjs are links to files of shared/. app/node_modules/foo is a link to store/foo.
+  function makeTree() {
+    const dir = tempDir("preserve-symlinks", {
+      "shared/imported.mjs": `
+        import { relative } from "node:path";
+        import dep from "./dep.mjs";
+        console.log(relative(process.cwd(), import.meta.path).replaceAll("\\\\", "/"), dep, import.meta.main);
+      `,
+      "shared/entry.cjs": `console.log(require("./dep.mjs").default, require.main === module);`,
+      "shared/dep.mjs": `export default "shared/dep.mjs";`,
+      "app/dep.mjs": `export default "app/dep.mjs";`,
+      "app/main.mjs": `import "./imported.mjs";`,
+      "app/worker.mjs": `new Worker("./imported.mjs");`,
+      "app/package-worker.mjs": `new Worker("./node_modules/foo/worker.js");`,
+      "app/node_modules/bar/index.js": `module.exports = "bar of app";`,
+      "store/foo/worker.js": `console.log(require("bar"));`,
+    });
+    const root = String(dir);
+    symlinkSync(join(root, "shared", "imported.mjs"), join(root, "app", "imported.mjs"), "file");
+    symlinkSync(join(root, "shared", "entry.cjs"), join(root, "app", "entry.cjs"), "file");
+    symlinkSync(join(root, "store", "foo"), join(root, "app", "node_modules", "foo"), "junction");
+    return dir;
+  }
+
+  async function run(args: string[], env: Record<string, string | undefined> = {}) {
+    using dir = makeTree();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, ...env },
+      cwd: join(String(dir), "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const atTheLink = "imported.mjs app/dep.mjs";
+  const atTheTarget = "../shared/imported.mjs shared/dep.mjs";
+
+  it.each([
+    ["an imported link runs where the link is", ["--preserve-symlinks", "main.mjs"], {}, `${atTheLink} false\n`],
+    ["so it does with NODE_PRESERVE_SYMLINKS=1", ["main.mjs"], { NODE_PRESERVE_SYMLINKS: "1" }, `${atTheLink} false\n`],
+    ["without the flag it runs where the link points", ["main.mjs"], {}, `${atTheTarget} false\n`],
+    ["an entry point runs where the link points", ["--preserve-symlinks", "imported.mjs"], {}, `${atTheTarget} true\n`],
+    ["a worker runs where the link points", ["--preserve-symlinks", "worker.mjs"], {}, `${atTheTarget} false\n`],
+    [
+      "a worker in a linked package finds the packages of the app",
+      ["--preserve-symlinks", "package-worker.mjs"],
+      {},
+      "bar of app\n",
+    ],
+    [
+      "with --preserve-symlinks-main an entry point runs where the link is",
+      ["--preserve-symlinks-main", "imported.mjs"],
+      {},
+      `${atTheLink} true\n`,
+    ],
+    [
+      "with --preserve-symlinks-main an entry point given without its extension runs where the link is",
+      ["run", "--preserve-symlinks-main", "./imported"],
+      {},
+      `${atTheLink} true\n`,
+    ],
+    [
+      "with --preserve-symlinks-main a CommonJS entry point is require.main",
+      ["--preserve-symlinks-main", "entry.cjs"],
+      {},
+      "app/dep.mjs true\n",
+    ],
+    [
+      "with NODE_PRESERVE_SYMLINKS_MAIN=1 an entry point runs where the link points",
+      ["imported.mjs"],
+      { NODE_PRESERVE_SYMLINKS_MAIN: "1" },
+      `${atTheTarget} true\n`,
+    ],
+    [
+      "with NODE_PRESERVE_SYMLINKS_MAIN=1 an entry point given without its extension runs where the link points",
+      ["run", "./imported"],
+      { NODE_PRESERVE_SYMLINKS_MAIN: "1" },
+      `${atTheTarget} true\n`,
+    ],
+  ])("%s", async (_, args, env, stdout) => {
+    expect(await run(args, env)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  it("bun build bundles an imported link from where the link is", async () => {
+    const { stdout, exitCode } = await run(["build", "--target=bun", "--preserve-symlinks", "main.mjs"]);
+    expect(stdout).toContain(`"app/dep.mjs"`);
+    expect(exitCode).toBe(0);
+  });
+});

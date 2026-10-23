@@ -44,8 +44,7 @@ struct ScriptConfig {
     name: Box<[u8]>,
     command: Box<[u8]>,
     cwd: Box<[u8]>,
-    /// PATH env var value for this script
-    path: Box<[u8]>,
+    env: FilterArg::ScriptEnv,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -150,23 +149,14 @@ impl<'a> ProcessHandle<'a> {
         )?;
 
         let start_time = Instant::now();
-        let envp;
-        let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
-            // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *env_ptr };
-            let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
-            let _ = env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard(original_path, move |original_path| {
-                // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            });
-            // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = crate::cli::script_or_command::with_package_script(
-                unsafe { &mut *env_ptr },
-                &self.config.name,
-                &self.config.cwd,
-                |env| env.map.create_null_delimited_env_map(),
+            let config = self.config;
+            let envp = crate::cli::script_or_command::with_package_script(
+                // SAFETY: state.env points at the process-lifetime DotEnv loader.
+                unsafe { &mut *state.env },
+                &config.name,
+                &config.cwd,
+                |env| config.env.create_envp(&env.map, &config.name),
             )?;
             // SAFETY: `argv` and `envp` are null-terminated C-string arrays
             // (argv[0] non-null) owned by locals that outlive this call.
@@ -609,9 +599,15 @@ impl<'a> State<'a> {
     }
 }
 
-struct AbortHandler;
+/// Shared with `bun run --filter`.
+pub(crate) struct AbortHandler;
 
-static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+
+/// The loop that the run waits in. Windows calls `windows_ctrl_handler` on another thread.
+#[cfg(windows)]
+static LOOP: std::sync::atomic::AtomicPtr<bun_uws::Loop> =
+    std::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
 impl AbortHandler {
     #[cfg(unix)]
@@ -629,12 +625,15 @@ impl AbortHandler {
     ) -> bun_sys::windows::BOOL {
         if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
             SHOULD_ABORT.store(true, Ordering::SeqCst);
+            // SAFETY: `install` stored the main thread's loop, which is never freed, before it
+            // registered this handler. Any thread may call `us_wakeup_loop`.
+            unsafe { bun_uws::us_wakeup_loop(LOOP.load(Ordering::Acquire)) };
             return bun_sys::windows::TRUE;
         }
         bun_sys::windows::FALSE
     }
 
-    fn install() {
+    pub(crate) fn install() {
         #[cfg(unix)]
         {
             // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
@@ -651,6 +650,7 @@ impl AbortHandler {
         }
         #[cfg(not(unix))]
         {
+            LOOP.store(bun_uws::Loop::get(), Ordering::Release);
             let res = bun_sys::windows::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::TRUE,
@@ -663,9 +663,11 @@ impl AbortHandler {
         }
     }
 
-    fn uninstall() {
+    pub(crate) fn uninstall() {
+        // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {
+            // (None, FALSE) only clears the ignore attribute: pass the handler to unregister it.
             let _ = bun_sys::windows::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::FALSE,
@@ -712,6 +714,7 @@ struct GroupInfo {
 
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
+/// `arguments` is appended to the script or the command, not to its pre and post scripts.
 ///
 /// Generic over the scripts map value type so both the single-package path
 /// (values borrow the process-lifetime DirInfo-cached package.json) and the
@@ -723,8 +726,9 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     raw_name: &[u8],
     scripts_map: Option<&StringArrayHashMap<V>>,
     cwd: &[u8],
-    path: &[u8],
+    env: &FilterArg::ScriptEnv,
     label_prefix: Option<&[u8]>,
+    arguments: &[u8],
 ) -> Result<(), Error> {
     let group_start = configs.len();
 
@@ -772,7 +776,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 name: pre_name.into_boxed_slice(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
-                path: Box::from(path),
+                env: env.clone(),
             });
         }
 
@@ -780,13 +784,14 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(content.len() + 1);
             RunCommand::replace_package_manager_run(&mut cmd_buf, content)?;
+            cmd_buf.extend_from_slice(arguments);
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
                 name: Box::from(raw_name),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
-                path: Box::from(path),
+                env: env.clone(),
             });
         }
 
@@ -799,7 +804,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 name: post_name.into_boxed_slice(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
-                path: Box::from(path),
+                env: env.clone(),
             });
         }
     } else {
@@ -819,12 +824,14 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             v.extend_from_slice(bun_path);
             v.extend_from_slice(b"\" ");
             v.extend_from_slice(raw_name);
+            v.extend_from_slice(arguments);
             v.push(0);
             v.into_boxed_slice()
         } else {
             // allocator.dupeZ
             let mut v = Vec::with_capacity(raw_name.len() + 1);
             v.extend_from_slice(raw_name);
+            v.extend_from_slice(arguments);
             v.push(0);
             v.into_boxed_slice()
         };
@@ -833,7 +840,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             name: Box::default(),
             command: command_z,
             cwd: Box::from(cwd),
-            path: Box::from(path),
+            env: env.clone(),
         });
     }
 
@@ -855,7 +862,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         Global::exit(1);
     }
 
-    // Collect script names from positionals + passthrough
+    // Collect script names from positionals
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
     // Cloned to owned so the &mut ctx borrow below doesn't conflict.
     let mut script_names: Vec<Box<[u8]>> = Vec::new();
@@ -869,9 +876,14 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             script_names.push(pos.clone());
         }
     }
-    for pt in &ctx.passthrough {
-        if !pt.is_empty() {
-            script_names.push(pt.clone());
+    // What follows `--` goes to each script, quoted as for `bun run a -- b`.
+    let mut arguments: Vec<u8> = Vec::new();
+    for part in &ctx.passthrough {
+        arguments.push(b' ');
+        if crate::shell::needs_escape_utf8_ascii_latin1(part) {
+            crate::shell::escape_8bit::<true, false>(part, &mut arguments).unwrap_or_oom();
+        } else {
+            arguments.extend_from_slice(part);
         }
     }
 
@@ -940,7 +952,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
             scripts: OwnedScriptsMap,
-            path: Box<[u8]>,
+            env: FilterArg::ScriptEnv,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
 
@@ -969,7 +981,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 name: pkg_name,
                 dirpath: package.dir.clone(),
                 scripts: owned_scripts,
-                path: pkg_path_env.into(),
+                env: FilterArg::ScriptEnv::new(&pkg_path_env, Some(&package.json)),
             });
         }
 
@@ -1001,8 +1013,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             matched_name,
                             Some(&pkg.scripts),
                             &pkg.dirpath,
-                            &pkg.path,
+                            &pkg.env,
                             Some(&pkg.name),
+                            &arguments,
                         )?;
                     }
                 } else {
@@ -1013,8 +1026,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             raw_name,
                             Some(&pkg.scripts),
                             &pkg.dirpath,
-                            &pkg.path,
+                            &pkg.env,
                             Some(&pkg.name),
+                            &arguments,
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
                         bun_core::pretty_errorln!(
@@ -1040,6 +1054,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let run_in_bun = ctx.debug.run_in_bun;
         let path_env =
             RunCommand::path_for_run(this_transpiler.env_mut(), b"", None, cwd, run_in_bun)?;
+        let env = FilterArg::ScriptEnv::new(&path_env, None);
 
         // Load package.json scripts
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {
@@ -1083,8 +1098,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             matched_name,
                             scripts_map,
                             cwd,
-                            &path_env,
+                            &env,
                             None,
+                            &arguments,
                         )?;
                     }
                 } else {
@@ -1101,8 +1117,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     raw_name,
                     scripts_map,
                     cwd,
-                    &path_env,
+                    &env,
                     None,
+                    &arguments,
                 )?;
             }
         }
@@ -1122,6 +1139,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     let use_colors = Output::enable_ansi_colors_stderr();
+    if Output::is_stdout_ansi_terminal() && Output::is_stderr_ansi_terminal() {
+        // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live.
+        FilterArg::force_color_in_scripts(unsafe { &mut *env_ptr });
+    }
 
     let mut state = State {
         handles: Box::default(),

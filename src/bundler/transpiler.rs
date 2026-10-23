@@ -619,6 +619,8 @@ impl<'a> Transpiler<'a> {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                        self.options.jsx.side_effects =
+                            self.options.transform_options.jsx_side_effects;
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
@@ -643,6 +645,14 @@ impl<'a> Transpiler<'a> {
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
         let env: &mut dot_env::Loader = self.env_mut();
+
+        // A later `Bun.build`, macro VM or HTML route comes here with default options.
+        if self.options.transform_options.disable_default_env_files
+            // A standalone executable replaces this one with the flag it was compiled with.
+            && self.options.env.disable_default_env_files
+        {
+            dot_env::disable_default_files();
+        }
 
         match self.options.env.behavior {
             DotEnvBehavior::prefix

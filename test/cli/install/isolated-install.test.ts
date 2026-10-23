@@ -5434,23 +5434,6 @@ describe.each(["isolated", "hoisted"] as const)("failed script of an optional de
     },
   );
 
-  // With SIGCHLD ignored, Linux reaps the script itself and bun cannot wait for it. Bun then
-  // treats a script that exited 0 as failed, through a second exit path.
-  test.concurrent.skipIf(!isLinux)("workspace: the folder is kept when bun can't wait for the script", async () => {
-    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files: workspaceFiles() });
-    const verb = linker === "hoisted" ? "deleting" : "skipping";
-
-    const { stderr, exitCode } = await installCounted(packageDir, {
-      argv0: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"'],
-      args: ["--filter", "y", "--verbose"],
-      pass: true,
-    });
-    expect(stderr).not.toContain("error:");
-    expect(stderr).toContain(`${verb} optional dependency 'x' due to failed 'postinstall' script`);
-    expect(await workspaceState(packageDir)).toEqual({ runs: ["x"], ...kept });
-    expect(exitCode).toBe(0);
-  });
-
   test.concurrent("file: folder: the copy is removed, also in a workspace's node_modules", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker },
@@ -6121,14 +6104,13 @@ describe.concurrent("bin links of a failed optional dependency (hoisted)", () =>
     expect(trusted.exitCode).toBe(0);
   });
 
-  // With SIGCHLD ignored, Linux reaps the script itself and bun cannot wait for it. Bun then
-  // treats a script that exited 0 as failed, through a second exit path.
-  test.concurrent.skipIf(!isLinux)("a script that bun cannot wait for", async () => {
+  // If SIGCHLD stayed ignored, Linux would reap the script itself, and bun would take a script that exited 0 for a failed one.
+  test.concurrent.skipIf(!isLinux)("a script that exits 0 while the parent process ignores SIGCHLD", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({
-          name: "optional-bin-cannot-wait",
+          name: "optional-bin-sigchld-ignored",
           optionalDependencies: { x: "file:./x" },
           trustedDependencies: ["x"],
         }),
@@ -6149,11 +6131,11 @@ describe.concurrent("bin links of a failed optional dependency (hoisted)", () =>
     });
 
     expect(stderr).not.toContain("error:");
-    expect(stderr).toContain("deleting optional dependency 'x' due to failed 'postinstall' script");
+    expect(stderr).not.toContain("failed 'postinstall' script");
     expect({
       bins: await linkedBins(join(nodeModules, ".bin")),
       installed: existsSync(join(nodeModules, "x")),
-    }).toEqual({ bins: [], installed: false });
+    }).toEqual({ bins: ["xbin"], installed: true });
     expect(exitCode).toBe(0);
   });
 

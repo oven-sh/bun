@@ -152,6 +152,19 @@ pub(crate) fn out_of_memory() {
     bun_core::out_of_memory();
 }
 
+/// Fails a real infallible allocation; `outOfMemory` covers the explicit `AllocError` path.
+pub(crate) fn alloc_error() {
+    crash_handler::suppress_core_dumps_if_necessary();
+    // Above any 64-bit address space (null even with overcommit), below `isize::MAX` (no capacity panic).
+    const SIZE: usize = 1 << 62;
+    // ASAN's allocator aborts on an oversized request instead of returning null.
+    if Environment::ENABLE_ASAN {
+        std::alloc::handle_alloc_error(core::alloc::Layout::from_size_align(SIZE, 1).unwrap());
+    }
+    let buf: Vec<u8> = Vec::with_capacity(SIZE);
+    core::hint::black_box(buf);
+}
+
 /// Calls `mi_new` or `mi_new_nothrow`, which back C++ `operator new` where mimalloc overrides it.
 /// Only `mi_new_nothrow` may return null.
 pub(crate) fn operator_new(nothrow: bool) -> Option<bool> {

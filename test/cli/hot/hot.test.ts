@@ -12,7 +12,18 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  waitForFileToExist,
+} from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -939,6 +950,46 @@ it.each([
     stderr: [],
   });
 });
+
+// A signal listener runs without keeping the event loop alive, so a signal only wakes the idle process up.
+it.skipIf(isWindows).each(["--hot", "--watch"])(
+  "%s emits beforeExit once per run of the script, not each time the idle process wakes up",
+  async flag => {
+    const source = `
+      console.log("start");
+      if (!globalThis.listening) {
+        globalThis.listening = true;
+        process.on("beforeExit", () => console.log("beforeExit"));
+        process.on("SIGUSR2", () => console.log("signal"));
+      }
+    `;
+    using dir = tempDir("hot-before-exit", { "main.js": source });
+    await using runner = spawn({
+      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const lines = forEachLine(runner.stdout);
+    const nextLine = async () => (await lines.next()).value;
+
+    expect(await nextLine()).toBe("start");
+    expect(await nextLine()).toBe("beforeExit");
+    for (let i = 0; i < 3; i++) {
+      runner.kill("SIGUSR2");
+      expect(await nextLine()).toBe("signal");
+    }
+
+    writeHotFileAtomicSync(join(String(dir), "main.js"), source + "// saved");
+    expect(await nextLine()).toBe("start");
+    // One save can reach the watcher as two events.
+    let line = await nextLine();
+    while (line === "start") line = await nextLine();
+    expect(line).toBe("beforeExit");
+  },
+);
 
 /** Returns a function that resolves to `true` once the stream's text includes `wanted`, or to the full text at EOF. */
 function follow(stream: ReadableStream<Uint8Array>) {

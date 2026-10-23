@@ -2663,6 +2663,22 @@ describe("process.exitCode", () => {
     );
   });
 
+  it.concurrent.each([
+    ["and nothing else", ""],
+    ["and process.exit() in the listener exits with 1", "process.exit();"],
+    ["and process.exitCode = 0 in the listener still exits with 1", "process.exitCode = 0;"],
+    ["and process.exitCode = 98 in the listener still exits with 1", "process.exitCode = 98;"],
+  ])("after an unhandled rejection an exit listener is told 1, %s", async (_, inListener) => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => { console.log("exit", code, process.exitCode); ${inListener} });
+      Promise.reject(new Error("oops"));
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
   it("exitsOnExitCodeSet", async () => {
     await runInlineFixture(
       `

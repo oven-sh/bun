@@ -1118,6 +1118,38 @@ describe("bundler", () => {
         `);
       },
     });
+
+    test.concurrent.each([
+      [{ jsx: "react-jsx" }, undefined],
+      [{ jsx: "react", jsxFactory: "h" }, undefined],
+      [{ jsx: "react-jsx" }, `logLevel = "error"`],
+    ])(
+      "--jsx-side-effects alone only drops the annotation: tsconfig %j, bunfig %j",
+      async (compilerOptions, bunfig) => {
+        using dir = tempDir("jsx-side-effects-alone", {
+          "a.jsx": "export const a = <div />;\n",
+          "tsconfig.json": JSON.stringify({ compilerOptions }),
+          ...(bunfig ? { "bunfig.toml": bunfig } : {}),
+        });
+        async function build(...flags: string[]) {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "a.jsx", ...flags],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "inherit",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect(exitCode).toBe(0);
+          return stdout;
+        }
+        for (const mode of [["--no-bundle"], ["--external", "*"]]) {
+          const annotated = await build(...mode);
+          expect(annotated).toContain("/* @__PURE__ */ ");
+          expect(await build(...mode, "--jsx-side-effects")).toBe(annotated.replaceAll("/* @__PURE__ */ ", ""));
+        }
+      },
+    );
   });
 
   // https://github.com/oven-sh/bun/issues/6858

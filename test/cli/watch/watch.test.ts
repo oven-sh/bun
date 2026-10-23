@@ -33,6 +33,35 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
   };
 }
 
+/** Collects what a child of `spawn({ terminal })` draws. */
+function terminalOutput() {
+  const decoder = new TextDecoder();
+  let output = "";
+  let closed = false;
+  let wake: (() => void) | undefined;
+  return {
+    options: {
+      cols: 120,
+      rows: 24,
+      data(_: unknown, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        wake?.();
+      },
+      exit() {
+        closed = true;
+        wake?.();
+      },
+    },
+    output: () => output,
+    async waitFor(needle: string) {
+      while (!output.includes(needle)) {
+        if (closed) throw new Error(`terminal closed, output so far: ${JSON.stringify(output)}`);
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+    },
+  };
+}
+
 for (const dir of ["dir", "©️"]) {
   it.todoIf(isBroken && isWindows)(
     `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
@@ -452,11 +481,13 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
   await watchee.exited;
 }, 30000);
 
-// With colors enabled, a reload also clears the terminal. The forced reload
+const clearScreen = "\x1b[2J\x1b[3J\x1b[H";
+
+// On a terminal, a reload also clears the screen. The forced reload
 // runs on the grace thread, which has its own thread-local Output state; the
 // clear used to write through that thread's never-initialized writers and
 // segfault instead of restarting.
-it("--watch forced restart clears the terminal when colors are enabled", async () => {
+it("--watch forced restart clears the terminal", async () => {
   using dir = tempDir("watch-busy-sigterm-clear-screen", {
     "busy.js": `
       process.on("SIGTERM", () => {});
@@ -467,42 +498,93 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
     `,
   });
 
-  const env: typeof bunEnv = { ...bunEnv, FORCE_COLOR: "1" };
-  delete env.NO_COLOR;
-  // stderr is piped, not inherited: the clear sequence below would otherwise
-  // wipe the terminal running the test suite.
+  const screen = terminalOutput();
   const proc = spawn({
     cmd: [bunExe(), "--watch", "busy.js"],
     cwd: String(dir),
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
+    env: { ...bunEnv, NO_COLOR: undefined },
+    terminal: screen.options,
   });
   watchee = proc;
-  const stderr = proc.stderr.text();
 
-  const { waitFor, release, output } = stdoutWaiter(proc);
-
-  await waitFor("iter first");
+  await screen.waitFor("iter first");
   await Bun.write(
     join(String(dir), "busy.js"),
     `process.on("SIGTERM", () => {});
      console.log("iter second");
      process.exit(0);`,
   );
+  await screen.waitFor("iter second");
+
+  proc.kill("SIGKILL");
+  await proc.exited;
+  proc.terminal!.close();
+
+  // A Windows pseudoconsole repaints its screen instead of passing the bytes on.
+  if (!isWindows) {
+    const output = screen.output();
+    const clearedAt = output.indexOf(clearScreen);
+    expect(clearedAt).toBeGreaterThan(-1);
+    expect(output.slice(0, clearedAt)).toContain("iter first");
+    expect(output.slice(clearedAt)).toContain("iter second");
+  }
+}, 30000);
+
+it("--watch with FORCE_COLOR=1 does not write the screen clear into a pipe", async () => {
+  using dir = tempDir("watch-no-clear-in-pipe", {
+    "app.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+
+  const proc = spawn({
+    cmd: [bunExe(), "--watch", "app.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+  const { waitFor, release, output } = stdoutWaiter(proc);
+
+  await waitFor("iter first");
+  await Bun.write(join(String(dir), "app.js"), `console.log("iter second"); setInterval(() => {}, 1000);`);
   await waitFor("iter second");
 
   release();
   proc.kill("SIGKILL");
   await proc.exited;
 
-  const clearScreen = "\x1b[2J\x1b[3J\x1b[H";
-  expect(output()).toContain(clearScreen);
-  const [beforeReload, afterReload] = output().split(clearScreen);
-  expect(beforeReload).toContain("iter first");
-  expect(afterReload).toContain("iter second");
-  expect(await stderr).toContain(clearScreen);
-}, 30000);
+  expect(output()).toBe("iter first\niter second\n");
+  expect(await stderr).not.toContain(clearScreen);
+});
+
+// `bun --watch server.ts | pino-pretty`: stderr is the terminal, and it is not cleared through it.
+it.skipIf(isWindows)("--watch piped into another program leaves the terminal as it is", async () => {
+  using dir = tempDir("watch-piped-on-terminal", {
+    "app.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+
+  const screen = terminalOutput();
+  const proc = spawn({
+    cmd: ["sh", "-c", `"${bunExe()}" --watch app.js | cat`],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined },
+    terminal: screen.options,
+  });
+  watchee = proc;
+
+  await screen.waitFor("iter first");
+  await Bun.write(join(String(dir), "app.js"), `console.log("iter second"); setInterval(() => {}, 1000);`);
+  await screen.waitFor("iter second");
+
+  // `sh` leads the process group of the terminal, which `bun` and `cat` are in.
+  process.kill(-proc.pid, "SIGKILL");
+  await proc.exited;
+  proc.terminal!.close();
+
+  expect(screen.output()).not.toContain("\x1b[2J");
+});
 
 // execve replaces the process without reaching on_exit(), so the compile
 // cache must be flushed explicitly on the reload path; otherwise

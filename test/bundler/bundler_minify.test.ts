@@ -1096,7 +1096,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
-  itBundled("minify/ProductionMode", {
+  const productionMode: BundlerTestInput = {
     files: {
       "/entry.jsx": `
         import {foo} from 'dev-trap';
@@ -1145,6 +1145,44 @@ describe("bundler", () => {
       // Check JSX uses production runtime
       expect(output).toContain("jsx-runtime");
     },
+  };
+  itBundled("minify/ProductionMode", productionMode);
+  for (const name of ["NODE_ENV", "BUN_ENV"]) {
+    itBundled(`minify/ProductionModeWinsOverExported_${name}`, {
+      ...productionMode,
+      env: { NODE_ENV: undefined, BUN_ENV: undefined, [name]: "development" },
+    });
+  }
+  itBundled("minify/ProductionModeReadsDotEnvProductionUnderExportedNodeEnv", {
+    files: {
+      "/entry.js": `capture(process.env.WHICH_FILE);`,
+      "/.env.production": `WHICH_FILE=production`,
+      "/.env.development": `WHICH_FILE=development`,
+    },
+    production: true,
+    dotenv: "inline",
+    env: { NODE_ENV: "development", BUN_ENV: undefined },
+    capture: ['"production"'],
+  });
+  itBundled("minify/ProductionModeDoesNotAddBunEnv", {
+    files: {
+      "/entry.js": `
+        import { mode } from "./macro.ts" with { type: "macro" };
+        capture(mode());
+      `,
+      "/macro.ts": "export function mode() { return `${Bun.env.NODE_ENV},${Bun.env.BUN_ENV}`; }",
+    },
+    production: true,
+    env: { NODE_ENV: undefined, BUN_ENV: undefined },
+    capture: ['"production,undefined"'],
+  });
+  itBundled("minify/ExportedNodeEnvIsKeptWithoutProductionMode", {
+    files: {
+      "/entry.js": `capture(process.env.NODE_ENV);`,
+    },
+    minifySyntax: true,
+    env: { NODE_ENV: "staging", BUN_ENV: undefined },
+    capture: ['"staging"'],
   });
   itBundled("minify/UnusedInCommaExpression", {
     files: {

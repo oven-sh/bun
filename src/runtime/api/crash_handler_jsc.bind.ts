@@ -18,6 +18,7 @@ export const crashHandler = b.namespace({
   panic: { length: 1 },
   rootError: { length: 1 },
   outOfMemory: { length: 1 },
+  allocError: { length: 1 },
   operatorNew: { args: { nothrow: b.bool.loose.default(false) }, returns: b.bool.optional, length: 1 },
   abort: { length: 1 },
   fastfail: { length: 1 },

@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
+use bun_collections::StringHashMap;
 use bun_core::Global;
 use bun_core::Output;
 use bun_core::strings;
@@ -186,7 +187,12 @@ pub(crate) fn select_packages(
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &negated, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
+    // Each "workspaces" entry is walked on its own, so two entries can yield the same path.
+    let mut seen_paths: StringHashMap<()> = StringHashMap::default();
     while let Some(package_json_path) = iter.next()? {
+        if seen_paths.get_or_put(&package_json_path)?.found_existing {
+            continue;
+        }
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
@@ -318,6 +324,71 @@ impl SelectedPackages {
         }
         Global::exit(1);
     }
+}
+
+/// The variables of one package's scripts, over the environment that all scripts of a run share.
+#[derive(Clone)]
+pub(crate) struct ScriptEnv(Vec<(Box<[u8]>, Box<[u8]>)>);
+
+impl ScriptEnv {
+    /// What `json` has no value for keeps that of the package that `bun` was started in.
+    pub(crate) fn new(path: &[u8], json: Option<&bun_resolver::PackageJSON>) -> Self {
+        let mut env = Self(Vec::new());
+        env.set(b"PATH", path);
+        let Some(json) = json else {
+            return env;
+        };
+        env.set(b"npm_package_json", json.source.path.text);
+        if !json.name.is_empty() {
+            env.set(b"npm_package_name", &json.name);
+        }
+        if !json.version.is_empty() {
+            env.set(b"npm_package_version", &json.version);
+        }
+        if let Some(config) = json.config.as_deref() {
+            for (key, value) in config.iter() {
+                env.set(&strings::concat(&[b"npm_package_config_", &key[..]]), value);
+            }
+        }
+        env
+    }
+
+    fn set(&mut self, key: &[u8], value: &[u8]) {
+        self.0.push((key.into(), value.into()));
+    }
+
+    /// The environment block of the script `name`. Empty: a command that is not in `package.json`.
+    pub(crate) fn create_envp(
+        &self,
+        shared: &bun_dotenv::Map,
+        name: &[u8],
+    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_alloc::AllocError> {
+        let mut map = shared.clone_with_allocator()?;
+        for (key, value) in &self.0 {
+            map.put(key, value)?;
+        }
+        if !name.is_empty() {
+            map.put(b"npm_lifecycle_event", name)?;
+        }
+        map.create_null_delimited_env_map()
+    }
+}
+
+/// For a run on a terminal: scripts write to pipes, where most programs leave colors out.
+pub(crate) fn force_color_in_scripts(env: &mut bun_dotenv::Loader) {
+    use bun_core::output::{ColorDepth, Source};
+    let decided: [&[u8]; 3] = [b"FORCE_COLOR", b"NO_COLOR", b"NODE_DISABLE_COLORS"];
+    if decided.iter().any(|key| env.map.get(key).is_some()) {
+        return;
+    }
+    let depth: &[u8] = match Source::color_depth() {
+        ColorDepth::C16m => b"3",
+        ColorDepth::C256 => b"2",
+        // Windows terminals show 16 million colors and set neither `TERM` nor `COLORTERM`.
+        ColorDepth::None if cfg!(windows) => b"3",
+        ColorDepth::C16 | ColorDepth::None => b"1",
+    };
+    let _ = env.map.put(b"FORCE_COLOR", depth);
 }
 
 // Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as

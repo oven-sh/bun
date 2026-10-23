@@ -133,17 +133,12 @@ pub(crate) fn arguments_before(command: &[u8]) -> Vec<&'static [u8]> {
     args
 }
 
-/// `bun --cwd <dir> lint`: the command, which comes after the flags of `bun` and their values.
+/// `bun --cwd <dir> lint`: the command or what to run, which comes after the flags of `bun` and their values.
 #[cold]
 #[inline(never)]
-pub(crate) fn command_after_flags() -> Option<&'static [u8]> {
+pub(crate) fn word_after_flags() -> Option<&'static [u8]> {
     let args: Vec<&'static [u8]> = bun_core::argv().into_iter().collect();
-    let is_command = |arg: &&[u8]| matches!(*arg, b"check" | b"lint" | b"fmt");
-    if !args.iter().any(is_command) {
-        return None;
-    }
-    let word = args.get(place_of_first_word(&args)?)?;
-    is_command(word).then_some(*word)
+    args.get(place_of_first_word(&args)?).copied()
 }
 
 /// Whether `arg` asks `bun <command>` about itself, so it isn't passed to the project's own `command`.
@@ -228,6 +223,15 @@ pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     fold(&with_slashes)
 }
 
+/// Whether `flag` is about scripts: those of several packages, whatever this one has, or none.
+pub(crate) fn is_about_scripts(flag: &[u8]) -> bool {
+    matches!(
+        flag,
+        b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
+    ) || flag.starts_with(b"--filter")
+        || short_with_value(flag) == Some(b'F')
+}
+
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
 pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
@@ -236,13 +240,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let mut before = before.iter().copied();
     let mut given = None;
     while let Some(arg) = before.next() {
-        // These are about scripts: those of several packages, whatever this one has, or none.
-        if matches!(
-            arg,
-            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
-        ) || arg.starts_with(b"--filter")
-            || short_with_value(arg) == Some(b'F')
-        {
+        if is_about_scripts(arg) {
             return Ok(Runs::Other);
         }
         let value = match arg.strip_prefix(b"--cwd") {

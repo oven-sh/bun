@@ -35,6 +35,13 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+/// [`slice_to_owned`] for a flag whose value can be a list: `--main-fields=module,main`.
+fn comma_lists_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
+    (input.iter().flat_map(|list| strings::tokenize(list, b",")))
+        .map(Box::<[u8]>::from)
+        .collect()
+}
+
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
@@ -127,7 +134,7 @@ const TRANSPILER_PARAMS_: &[ParamType] = &[
         "--feature <STR>...               Enable a feature flag for dead-code elimination, e.g. --feature=SUPER_SECRET"
     ),
     parse_param!(
-        "-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi"
+        "-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, yaml, json5, xml, text, md, css, html, wasm, napi, sqlite, file"
     ),
     parse_param!(
         "--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime"
@@ -442,7 +449,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
-            "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
+            "--asset <STR>...                 Embed a file or directory into the compiled executable under its basename, next to the entry point (requires --compile)"
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
@@ -488,7 +495,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
         ),
         parse_param!(
-            "--no-module-preload              With --splitting and --target browser: don't emit <link rel=modulepreload> for the chunks an entry or import() loads"
+            "--no-module-preload              With --splitting and --target browser: don't emit \\<link rel=modulepreload\\> for the chunks an entry or import() loads"
         ),
         parse_param!(
             "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load. Default: 0 (off); 16384 is a good value for browser builds"
@@ -616,7 +623,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
     ),
     parse_param!(
-        "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
+        "--reporter <STR>...              Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
     ),
     parse_param!(
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
@@ -971,6 +978,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;
 
     if !defines_tuple.keys.is_empty() {
+        ctx.cli_overrides.define = true;
         opts.define = Some(api::StringMap {
             keys: defines_tuple
                 .keys
@@ -1000,6 +1008,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     };
 
     if !loader_tuple.keys.is_empty() {
+        ctx.cli_overrides.loaders = true;
         opts.loaders = Some(api::LoaderMap {
             extensions: loader_tuple
                 .keys
@@ -1019,11 +1028,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ))
     });
 
-    opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
+    opts.main_fields = comma_lists_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
     // opts.inject = args.options(b"--inject");
     opts.env_files = slice_to_owned(args.options(b"--env-file"));
-    opts.extension_order = slice_to_owned(args.options(b"--extension-order"));
+    opts.extension_order = comma_lists_to_owned(args.options(b"--extension-order"));
 
     if args.flag(b"--no-env-file") {
         opts.disable_default_env_files = true;
@@ -1038,16 +1047,21 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.passthrough = slice_to_owned(args.remaining());
 
-    if matches!(
-        cmd,
-        CommandTag::AutoCommand
-            | CommandTag::RunCommand
-            | CommandTag::BuildCommand
-            | CommandTag::TestCommand
-    ) {
-        if !args.options(b"--conditions").is_empty() {
-            opts.conditions = slice_to_owned(args.options(b"--conditions"));
-        }
+    // `bun run --parallel a b -- --watch`: parsing stops at `a`, so `b` is a name too, and `--watch` is for the scripts.
+    if ctx.parallel || ctx.sequential {
+        let remaining = args.remaining();
+        let (names, arguments) = match remaining.iter().position(|arg| *arg == b"--") {
+            _ if args.remaining_follows_separator() => (&remaining[..0], remaining),
+            Some(separator) => (&remaining[..separator], &remaining[separator + 1..]),
+            None => (remaining, &remaining[..0]),
+        };
+        ctx.positionals.extend(slice_to_owned(names));
+        ctx.passthrough = slice_to_owned(arguments);
+    }
+
+    // Declared in both RUNTIME_PARAMS_ and BUILD_ONLY_PARAMS, so every table has it.
+    if !args.options(b"--conditions").is_empty() {
+        opts.conditions = slice_to_owned(args.options(b"--conditions"));
     }
 
     Global::set_ca_store_from_flags(|flag| args.flag(flag));
@@ -1214,6 +1228,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 Some(bun_options_types::offline_mode::OfflineMode::Latest);
         }
 
+        ctx.cli_overrides.auto_install = args.flag(b"--no-install")
+            || (args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand)
+            || args.option(b"--install").is_some();
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
         } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
@@ -1243,7 +1260,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.eval.script = script.into();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
-        ctx.runtime_options.smol = args.flag(b"--smol");
+        // Without the flag, `smol` from bunfig.toml is kept.
+        if args.flag(b"--smol") {
+            ctx.runtime_options.smol = true;
+        }
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
         // Decided here: on Windows the process that starts it again is set up right after this.
@@ -1281,6 +1301,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             };
             // Treat depth=0 as maxInt(u16) for infinite depth
             ctx.runtime_options.console_depth = Some(if depth == 0 { u16::MAX } else { depth });
+            ctx.cli_overrides.console_depth = true;
         }
 
         if let Some(order) = args.option(b"--dns-result-order") {
@@ -1522,7 +1543,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
     if cmd == CommandTag::BuildCommand {
-        parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
+        parse_build_command_options(cmd, &args, &mut opts, ctx);
     }
 
     if opts.entry_points.is_empty() {
@@ -1561,6 +1582,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let jsx_import_source = args.option(b"--jsx-import-source");
     let jsx_runtime = args.option(b"--jsx-runtime");
     let jsx_side_effects = args.flag(b"--jsx-side-effects");
+    opts.jsx_side_effects = jsx_side_effects;
+    ctx.cli_overrides.jsx_factory = jsx_factory.is_some();
+    ctx.cli_overrides.jsx_fragment = jsx_fragment.is_some();
+    ctx.cli_overrides.jsx_import_source = jsx_import_source.is_some();
+    ctx.cli_overrides.jsx_runtime = jsx_runtime.is_some();
 
     if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
         // "run.silent" in bunfig.toml
@@ -1592,6 +1618,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // "run.bun" in bunfig.toml
         if args.flag(b"--bun") {
             ctx.debug.run_in_bun = true;
+            ctx.cli_overrides.run_in_bun = true;
         }
     }
 
@@ -1684,6 +1711,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     if args.flag(b"--no-macros") {
         ctx.debug.macros = MacroOptions::Disable;
+        ctx.cli_overrides.macros = true;
     }
 
     opts.output_dir = output_dir.map(Box::<[u8]>::from);
@@ -1693,6 +1721,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
         if let Some(shell) = args.option(b"--shell") {
+            ctx.cli_overrides.shell = true;
             if shell == b"bun" {
                 ctx.debug.use_system_shell = false;
             } else if shell == b"system" {
@@ -1761,6 +1790,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if !args.options(b"--coverage-reporter").is_empty() {
+        ctx.cli_overrides.coverage_reporter = true;
         ctx.test_options.coverage.enabled = true;
         ctx.test_options.coverage.reporters = CoverageReporters {
             text: false,
@@ -1785,7 +1815,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
-    if let Some(reporter) = args.option(b"--reporter") {
+    if let Some((&reporter, earlier)) = args.options(b"--reporter").split_last() {
+        // Only the last one can fail the run.
+        for &reporter in earlier {
+            match reporter {
+                b"junit" if ctx.test_options.reporter_outfile.is_some() => {
+                    ctx.test_options.reporters.junit = true;
+                }
+                b"dots" | b"dot" => ctx.test_options.reporters.dots = true,
+                _ => {}
+            }
+        }
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
             if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {
@@ -1818,6 +1858,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(dir) = args.option(b"--coverage-dir") {
+        ctx.cli_overrides.coverage_dir = true;
         ctx.test_options.coverage.reports_directory = Box::<[u8]>::from(dir);
     }
 
@@ -1851,6 +1892,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(repeat_count) = args.option(b"--rerun-each") {
         if !repeat_count.is_empty() {
+            ctx.cli_overrides.rerun_each = true;
             ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1865,6 +1907,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(retry_count) = args.option(b"--retry") {
         if !retry_count.is_empty() {
+            ctx.cli_overrides.retry = true;
             ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1971,6 +2014,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
+    ctx.cli_overrides.no_isolate = no_isolate;
     ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
@@ -2038,7 +2082,6 @@ fn parse_build_command_options(
     args: &clap::Args<clap::Help>,
     opts: &mut api::TransformOptions,
     ctx: Context<'_>,
-    diag: &mut clap::Diagnostic,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
@@ -2196,7 +2239,13 @@ fn parse_build_command_options(
                     }
                 }
                 b"bun" => api::Target::Bun,
-                _ => cli::invalid_target(diag, target),
+                _ => {
+                    Output::err_generic(
+                        "Invalid value for --target: {}. Must be 'browser', 'bun', or 'node'.",
+                        (bun_core::fmt::quote(target),),
+                    );
+                    Global::exit(1);
+                }
             }));
 
             if opts.target.unwrap() == api::Target::Bun {
@@ -2205,12 +2254,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bytecode {
                     Output::err_generic(
                         "target must be 'bun' when bytecode is true. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                     Global::exit(1);
                 }
@@ -2218,12 +2262,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bake {
                     Output::err_generic(
                         "target must be 'bun' when using --app. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                 }
             }

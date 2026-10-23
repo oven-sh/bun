@@ -22,6 +22,7 @@ use bun_wyhash::hash;
 use crate::api::bun::process::Status;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
+use crate::cli::script_or_command::{arguments_before, is_about_scripts};
 
 // `sync::Options.argv` is `Vec<Box<[u8]>>` (owns its rows). Helper
 // to build it from borrowed slices.
@@ -506,19 +507,26 @@ impl UpgradeCommand {
 
     #[cold]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        let args = bun_core::argv();
-        if args.len() > 2 {
-            for arg in args.iter().skip(2) {
-                if !strings::contains(arg, b"--") {
-                    bun_core::pretty_error!(
-                        "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
-                    );
-                    for arg_err in args.iter().skip(2) {
-                        bun_core::pretty_error!(" {}", bstr::BStr::new(arg_err));
-                    }
-                    bun_core::pretty_errorln!("` instead.");
-                    Global::exit(1);
+        let argv = bun_core::argv().as_slice();
+        // All of `argv` if `upgrade` is the value of a flag, as in `bun --filter upgrade dev`.
+        let before = arguments_before(b"upgrade");
+        let is_another_request = |arg: &&[u8]| {
+            matches!(*arg, b"--" | b"--version" | b"--revision") || is_about_scripts(arg)
+        };
+        let is_asked_for = before.len() < argv.len() && !before.iter().any(is_another_request);
+        // Otherwise `upgrade` itself is one of `args`, which is refused.
+        let start = if is_asked_for { before.len() + 1 } else { 2 };
+        let args = argv.get(start..).unwrap_or_default();
+        for arg in args {
+            if !strings::contains(arg.as_bytes(), b"--") {
+                bun_core::pretty_error!(
+                    "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
+                );
+                for arg_err in args {
+                    bun_core::pretty_error!(" {}", bstr::BStr::new(arg_err.as_bytes()));
                 }
+                bun_core::pretty_errorln!("` instead.");
+                Global::exit(1);
             }
         }
 

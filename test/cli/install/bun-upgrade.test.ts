@@ -342,6 +342,74 @@ describe.concurrent(() => {
     expect(err).toEndWith(unpackFailure);
     expect(exitCode).toBe(1);
   });
+
+  it.each([
+    [["--version", "upgrade"]],
+    [["--revision", "upgrade"]],
+    [["--bun", "--version", "upgrade"]],
+    [["--bun", "--revision", "upgrade"]],
+    [["-p1+1", "upgrade"]],
+    [["-p=1+1", "upgrade"]],
+    [["-ip1+1", "upgrade"]],
+    [["-p", "upgrade"]],
+    [["-pe", "upgrade"]],
+    [["--cwd", "upgrade", "dev"]],
+    [["--cwd", "upgrade", "run", "dev"]],
+    [["--filter", "upgrade", "dev"]],
+    [["--env-file", "upgrade", "dev"]],
+    [["--title", "upgrade", "dev"]],
+    [["--conditions", "upgrade", "dev"]],
+    [["--elide-lines", "upgrade", "dev"]],
+    [["--", "--version", "upgrade", "--help"]],
+    [["--", "upgrade"]],
+    [["-", "upgrade"]],
+    [["--filter=*", "upgrade"]],
+    [["--workspaces", "upgrade"]],
+    [["--if-present", "upgrade"]],
+  ])("bun %j starts no upgrade", async args => {
+    // With `--stable`, an upgrade that goes ahead asks the local server.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using dir = tempDir("bun-upgrade-refused", { "upgrade/package.json": "{}" });
+    await using proc = spawn({
+      cmd: [standInExe, ...args, "--stable"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(dir) },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).toBe("");
+    expect(err).toBe(
+      "error: This command updates Bun itself, and does not take package names.\n" +
+        `note: Use \`bun update ${args.slice(1).join(" ")} --stable\` instead.\n`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    [["--bun"], {}],
+    [["--smol"], {}],
+    [[], { BUN_OPTIONS: "--smol" }],
+  ])("a flag before the command (%j, %j) is not a package name", async (flags, extraEnv) => {
+    // The archive is garbage, so the upgrade fails after the arguments are accepted.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using stagingRoot = tempDir("bun-upgrade-after-flag", {});
+    await using proc = spawn({
+      cmd: [standInExe, ...flags, "upgrade", "--stable"],
+      cwd: standInDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, ...extraEnv, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("does not take package names");
+    expectTargetsRelease(err, "9.9.9");
+    expect(exitCode).toBe(1);
+  });
 });
 
 it.concurrent(

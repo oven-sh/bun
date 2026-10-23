@@ -319,9 +319,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
     ) -> crate::Result<()> {
-        let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
-        let shell_bin =
-            Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
+        // `--shell=bun` must work on an image that has no system shell.
+        let shell_bin = if use_system_shell {
+            let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
+            Some(Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?)
+        } else {
+            None
+        };
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -344,14 +348,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
-                        bstr::BStr::new(name),
-                        bun_core::fmt::quote(&part[..]),
-                    );
-                    Output::flush();
-                }
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                    bstr::BStr::new(name),
+                    bun_core::fmt::quote(&part[..]),
+                );
                 Global::exit(1);
             }
             if needs_escape_utf8_ascii_latin1(part) {
@@ -368,7 +369,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Output::flush();
         }
 
-        if !use_system_shell {
+        let Some(shell_bin) = shell_bin else {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -389,13 +390,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) {
                 Ok(c) => c,
                 Err(err) => {
-                    if !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(err.name()),
-                        );
-                    }
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        bstr::BStr::new(name),
+                        bstr::BStr::new(err.name()),
+                    );
                     Global::exit(1);
                 }
             };
@@ -412,7 +411,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(code as u32);
             }
             return Ok(());
-        }
+        };
 
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
@@ -477,26 +476,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ..Default::default()
         }) {
             Err(err) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                        bstr::BStr::new(name),
-                        bstr::BStr::new(err.name()),
-                    );
-                }
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                    bstr::BStr::new(name),
+                    bstr::BStr::new(err.name()),
+                );
+                Global::exit(1);
             }
             Ok(Err(err)) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        bstr::BStr::new(name),
-                        err,
-                    );
-                }
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                    bstr::BStr::new(name),
+                    err,
+                );
+                Global::exit(1);
             }
             Ok(Ok(result)) => result,
         };
@@ -568,16 +561,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             SpawnStatus::Err(ref err) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        bstr::BStr::new(name),
-                        err,
-                    );
-                }
-
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                    bstr::BStr::new(name),
+                    err,
+                );
+                Global::exit(1);
             }
 
             _ => {}
@@ -1256,6 +1245,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
+            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` is exact.
@@ -1633,6 +1623,9 @@ impl Run<'_> {
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
+            // `tick_possibly_forever` also returns each second and on a signal. A reload can run entirely inside it.
+            let mut ran_out_of_work = true;
+            let mut generation = vm.hot_reload_counter;
             loop {
                 while vm.is_event_loop_alive() {
                     // After an unhandled error, only immediates keep the loop alive.
@@ -1640,8 +1633,13 @@ impl Run<'_> {
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
+                    ran_out_of_work = true;
                 }
-                vm.on_before_exit();
+                if ran_out_of_work || generation != vm.hot_reload_counter {
+                    vm.on_before_exit();
+                    ran_out_of_work = false;
+                    generation = vm.hot_reload_counter;
+                }
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
@@ -1711,6 +1709,10 @@ impl Run<'_> {
         if vm.unhandled_error_counter > 0 {
             vm.exit_handler.requested = true;
         }
+        // The `exit` listeners are told this code. It is stored again after them, so they cannot replace it.
+        if ANY_UNHANDLED.load(Ordering::Relaxed) {
+            vm.exit_handler.exit_code = 1;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1778,6 +1780,10 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     unsafe(link_section = ".text.unlikely")
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
+    // A tsconfig.json that did not parse is why a `paths` alias is not found.
+    if log_has_msgs(vm) {
+        dump_build_error(vm);
+    }
     vm.exit_handler.exit_code = 1;
     vm.exit_handler.requested = true;
     vm.on_exit();
@@ -2163,14 +2169,12 @@ impl RunCommand {
         )
     }
 
-    fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
-        if !silent {
-            pretty_errorln!(
-                "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
-                bstr::BStr::new(Self::basename_or_bun(executable)),
-                err.with_path(executable),
-            );
-        }
+    fn run_binary_generic_error(executable: &[u8], err: &sys::Error) -> ! {
+        pretty_errorln!(
+            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
+            bstr::BStr::new(Self::basename_or_bun(executable)),
+            err.with_path(executable),
+        );
         Global::exit(1);
     }
 
@@ -2231,39 +2235,37 @@ impl RunCommand {
                 // an error occurred before the process was spawned
                 #[allow(unused_labels)]
                 'print_error: {
-                    if !silent {
-                        #[cfg(unix)]
-                        {
-                            match sys::stat(executable_z) {
-                                Ok(stat) => {
-                                    if sys::S::ISDIR(stat.st_mode as _) {
-                                        pretty_errorln!(
-                                            "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
-                                            bstr::BStr::new(Self::basename_or_bun(executable)),
-                                        );
-                                        break 'print_error;
-                                    }
+                    #[cfg(unix)]
+                    {
+                        match sys::stat(executable_z) {
+                            Ok(stat) => {
+                                if sys::S::ISDIR(stat.st_mode as _) {
+                                    pretty_errorln!(
+                                        "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
+                                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                                    );
+                                    break 'print_error;
                                 }
-                                Err(err2) => match err2.get_errno() {
-                                    sys::E::ENOENT | sys::E::EPERM | sys::E::ENOTDIR => {
-                                        pretty_errorln!(
-                                            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to error:\n{}",
-                                            bstr::BStr::new(Self::basename_or_bun(executable)),
-                                            err2,
-                                        );
-                                        break 'print_error;
-                                    }
-                                    _ => {}
-                                },
                             }
+                            Err(err2) => match err2.get_errno() {
+                                sys::E::ENOENT | sys::E::EPERM | sys::E::ENOTDIR => {
+                                    pretty_errorln!(
+                                        "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to error:\n{}",
+                                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                                        err2,
+                                    );
+                                    break 'print_error;
+                                }
+                                _ => {}
+                            },
                         }
-
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to <r><red>{}<r>",
-                            bstr::BStr::new(Self::basename_or_bun(executable)),
-                            bstr::BStr::new(err.name()),
-                        );
                     }
+
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to <r><red>{}<r>",
+                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                        bstr::BStr::new(err.name()),
+                    );
                 }
                 Global::exit(1);
             }
@@ -2272,13 +2274,13 @@ impl RunCommand {
         match spawn_result {
             Err(err) => {
                 // an error occurred while spawning the process
-                Self::run_binary_generic_error(executable, silent, &err);
+                Self::run_binary_generic_error(executable, &err);
             }
             Ok(result) => {
                 match result.status {
                     // An error occurred after the process was spawned.
                     SpawnStatus::Err(err) => {
-                        Self::run_binary_generic_error(executable, silent, &err);
+                        Self::run_binary_generic_error(executable, &err);
                     }
 
                     SpawnStatus::Signaled(raw_signal) => {
@@ -2388,6 +2390,34 @@ impl RunCommand {
                 }
             }
         }
+    }
+
+    /// The file that the error `msg` is located in.
+    fn file_of_error(msg: &bun_ast::Msg) -> Option<&[u8]> {
+        let at = msg.data.location.as_ref()?;
+        (msg.kind == bun_ast::Kind::Err).then_some(&at.file[..])
+    }
+
+    /// The nearest package.json, in `dir` or above it, if it has a syntax error. `enclosing_package_json` skips such a file.
+    #[cold]
+    #[inline(never)]
+    fn nearest_broken_package_json(
+        log: &bun_ast::Log,
+        dir: bun_resolver::DirInfoRef,
+    ) -> Option<Box<[u8]>> {
+        let loaded = dir.enclosing_package_json;
+        let loaded_path_len = loaded.map_or(0, |it| it.source.path.text.len());
+        // The resolver has read `dir` and its parents only, so a longer path is that of a nearer file.
+        (log.msgs.iter().filter_map(Self::file_of_error))
+            .filter(|file| file.len() > loaded_path_len)
+            .filter(|file| paths::basename(file) == b"package.json")
+            // A file of nothing but whitespace counts as no file.
+            .filter(|file| {
+                sys::File::read_from(Fd::cwd(), file)
+                    .is_ok_and(|text| !strings::trim(&text, b" \t\r\n").is_empty())
+            })
+            .max_by_key(|file| file.len())
+            .map(Box::from)
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
@@ -2502,11 +2532,19 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
-            return Self::exec_stdin(ctx);
+            return Self::exec_stdin(ctx, bun_sys::File::stdin(), b"-");
         }
 
         // ── package.json script lookup ──────────────────────────────────────
-        if !skip_script_check {
+        // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+        // CLI startup), process-lifetime.
+        let log = unsafe { ctx.log() };
+        let broken_package_json = if !skip_script_check && log.has_errors() {
+            Self::nearest_broken_package_json(log, root_dir)
+        } else {
+            None
+        };
+        if !skip_script_check && broken_package_json.is_none() {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
@@ -2629,10 +2667,7 @@ impl RunCommand {
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
+                ctx.runtime_options.preserve_symlinks_main_enabled();
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             let resolved = match this_transpiler.resolver.resolve(
@@ -2673,7 +2708,9 @@ impl RunCommand {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
-                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    let keeps_link = ctx.runtime_options.preserve_symlinks_main && path.is_symlink;
+                    let text = if keeps_link { path.pretty } else { path.text };
+                    let text: Box<[u8]> = text.to_vec().into_boxed_slice();
                     return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
@@ -2747,7 +2784,7 @@ impl RunCommand {
             let top_level_dir = fs.top_level_dir();
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
-            if bin_dirs_only {
+            if bin_dirs_only || ctx.runtime_options.if_present {
                 if original_path.len() < path.len() {
                     path_for_which = &path[..path.len() - (original_path.len() + 1)];
                 } else {
@@ -2783,7 +2820,7 @@ impl RunCommand {
         }
 
         // ── failure ─────────────────────────────────────────────────────────
-        if ctx.runtime_options.if_present {
+        if ctx.runtime_options.if_present && broken_package_json.is_none() {
             return Ok(true);
         }
 
@@ -2847,7 +2884,18 @@ impl RunCommand {
             return Ok(true);
         }
 
-        if log_errors {
+        if log_errors || broken_package_json.is_some() {
+            if let Some(path) = &broken_package_json {
+                // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+                // CLI startup), process-lifetime.
+                let log = unsafe { ctx.log() };
+                log.msgs
+                    .retain(|msg| Self::file_of_error(msg) == Some(&path[..]));
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+            }
+
             if let Some((path, loader)) = resolved_to_unrunnable_file {
                 bun_core::pretty_error!(
                     "<r><red>error<r><d>:<r> <b>Cannot run \"{}\"<r>\n",
@@ -2989,16 +3037,20 @@ impl RunCommand {
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        let mode = match bun_sys::fstat(fd) {
+            Ok(st) => st.st_mode as bun_sys::Mode,
             Err(_) => {
                 let _ = bun_sys::close(fd);
                 return false;
             }
         };
-        if is_dir {
+        if bun_sys::S::ISDIR(mode) {
             let _ = bun_sys::close(fd);
             return false;
+        }
+        // A pipe (`bun <(echo ...)`, `bun /dev/stdin`) has no path to read it from a second time.
+        if bun_sys::S::ISFIFO(mode) {
+            return Self::exec_stdin(ctx, bun_sys::File::from_fd(fd), target).unwrap_or(false);
         }
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
@@ -3007,25 +3059,37 @@ impl RunCommand {
         });
 
         // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
-        let absolute_script_path: Box<[u8]> = {
-            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = bun_sys::close(fd);
-                    return false;
+        // symlinks). `--preserve-symlinks-main` keeps the path as given.
+        let keeps_link = ctx.runtime_options.preserve_symlinks_main;
+        let absolute_script_path: Option<Box<[u8]>> = if keeps_link {
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let mut joined_buf = bun_paths::path_buffer_pool::get();
+            match bun_core::getcwd(&mut cwd_buf) {
+                Ok(cwd) => {
+                    paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+                        cwd.as_bytes(),
+                        &mut joined_buf.0,
+                        &[&script_name_buf[..open_len]],
+                    )
+                    .map(Box::from)
                 }
-            };
-            resolved.to_vec().into_boxed_slice()
+                Err(_) => None,
+            }
+        } else {
+            bun_sys::get_fd_path(fd, &mut script_name_buf)
+                .ok()
+                .map(|resolved| Box::from(&*resolved))
         };
         let _ = bun_sys::close(fd);
+        let Some(absolute_script_path) = absolute_script_path else {
+            return false;
+        };
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
-    /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
-    /// and boot the VM with the synthetic `[stdin]` path.
-    fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
+    /// Runs the script read from `pipe` as `[stdin]`; `name` is the entry point as typed. `false`: `pipe` could not be read.
+    fn exec_stdin(ctx: &mut ContextData, pipe: bun_sys::File, name: &[u8]) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
@@ -3034,9 +3098,10 @@ impl RunCommand {
         // `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
         let mut list: Vec<u8> = Vec::new();
-        if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
+        if pipe.read_to_end_into(&mut list).is_err() {
             return Ok(false);
         }
+        drop(pipe);
         ctx.runtime_options.eval.script = list.into_boxed_slice();
 
         #[cfg(windows)]
@@ -3053,10 +3118,10 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
-        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
+        // Prepend `name` to `ctx.passthrough` so `process.argv[1]` matches
         // Node's `node -` semantics.
         let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
-        passthrough_list.push(b"-".to_vec().into_boxed_slice());
+        passthrough_list.push(name.to_vec().into_boxed_slice());
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
@@ -3067,7 +3132,7 @@ impl RunCommand {
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            Self::boot_failed_exit(ctx, b"-", &err);
+            Self::boot_failed_exit(ctx, paths::basename(name), &err);
         }
         Ok(true)
     }
@@ -3128,7 +3193,7 @@ impl RunCommand {
         // Node.js does not auto-load `.env` files; match that here so tools with
         // their own `.env.{mode}` resolution (Vite etc.) don't see pre-populated
         // values. Explicit `--env-file` is still honored. #6338
-        ctx.args.disable_default_env_files = true;
+        ctx.args.skip_default_env_files = true;
 
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
@@ -3163,6 +3228,14 @@ impl RunCommand {
                 return Self::exec_node_repl(ctx);
             }
             Self::exec_as_if_node_missing_script();
+        }
+
+        // `Arguments::parse` stopped at the `-`, so what follows it is already in `ctx.passthrough`.
+        if ctx.positionals[0].as_ref() == b"-" {
+            if Self::exec_stdin(ctx, bun_sys::File::stdin(), b"-")? {
+                return Ok(());
+            }
+            Global::exit(1);
         }
 
         // borrowck — `boot_and_handle_error` takes `&mut ctx`, so
@@ -4218,6 +4291,41 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
+    /// A child started from `bunx.exe`, with the flags of `bunx` as its `process.execArgv`, would run `bunx` again.
+    fn run_as_bun_exe(script_path: &[u8], passthrough: &[Box<[u8]>]) {
+        let Ok(self_exe) = core::self_exe_path() else {
+            return;
+        };
+        let self_exe = self_exe.as_bytes();
+        if !paths::basename(self_exe).eq_ignore_ascii_case(b"bunx.exe") {
+            return;
+        }
+        let bun_exe: Vec<u8> = [
+            &self_exe[..self_exe.len() - b"x.exe".len()],
+            b".exe".as_slice(),
+        ]
+        .concat();
+        if !sys::exists(&bun_exe) {
+            return;
+        }
+        let bun_exe = crate::node::process::EXEC_PATH_OVERRIDE
+            .get_or_init(|| core::ZBox::from_vec(bun_exe))
+            .as_zstr();
+
+        let to_zstr = <&'static ZStr as core::OptionsEnvArg>::from_slice;
+        let mut argv: Vec<&'static ZStr> = vec![bun_exe];
+        // What `BUN_OPTIONS` added comes first, and stays in `process.execArgv`.
+        argv.extend_from_slice(
+            (core::argv().as_slice())
+                .get(1..1 + core::bun_options_argc())
+                .unwrap_or_default(),
+        );
+        argv.push(to_zstr(script_path));
+        argv.extend(passthrough.iter().map(|arg| to_zstr(arg)));
+        // SAFETY: the CLI is single-threaded until the VM boots, so nothing reads `argv()` meanwhile.
+        unsafe { core::set_argv(core::intern_argv(argv)) };
+    }
+
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         // `try_launch` (still on the call stack) holds live `&mut [u16]`
@@ -4234,6 +4342,7 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
+        Self::run_as_bun_exe(utf8, &ctx.passthrough);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));

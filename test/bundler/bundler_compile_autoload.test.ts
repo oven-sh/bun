@@ -103,6 +103,35 @@ console.log("PRELOAD");
     },
   });
 
+  // The executable starts itself again in a subdirectory, where only the entry point prints.
+  itBundled("compile/AutoloadBunfigOnlyFromCwd", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        if (process.argv[2] === "in-subdirectory") {
+          console.log("ENTRY");
+        } else {
+          const child = Bun.spawnSync({ cmd: [process.execPath, "in-subdirectory"], cwd: "subdirectory" });
+          console.log(child.stdout.toString().trim());
+        }
+      `,
+    },
+    runtimeFiles: {
+      "/package.json": `{}`,
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+      "/subdirectory/empty.txt": ``,
+    },
+    run: {
+      stdout: "PRELOAD\nENTRY",
+      setCwd: true,
+    },
+  });
+
   // Test that bunfig.toml can be disabled with autoloadBunfig: false
   itBundled("compile/AutoloadBunfigDisabled", {
     compile: {

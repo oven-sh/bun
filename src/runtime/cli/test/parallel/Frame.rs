@@ -30,6 +30,8 @@ pub(crate) enum Kind {
     /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
     /// every worker's per file and writes the one report.
     CoverageFile,
+    /// (empty) — sent at exit: this worker could not write its snapshots, so the run fails
+    SnapshotWriteFailed,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,6 +47,7 @@ impl TryFrom<u8> for Kind {
             5 => Kind::Run,
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
+            8 => Kind::SnapshotWriteFailed,
             _ => return Err(()),
         })
     }

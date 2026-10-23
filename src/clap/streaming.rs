@@ -200,6 +200,10 @@ where
             }
             ArgKind::Short => self.chainging(Chaining { arg, index: 0 }),
             ArgKind::Positional => {
+                // The value of a flag in `BUN_OPTIONS` that was skipped.
+                if self.unknown_long_flags_are_errors && self.iter.last_is_from_bun_options() {
+                    return self.next();
+                }
                 if let Some(param) = self.positional_param() {
                     // If we find a positional with the value `--` then we
                     // interpret the rest of the arguments as positional

@@ -208,6 +208,9 @@ impl Pragma {
         // `runtime` selects classic vs automatic emission; `development`
         // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
         hasher.update(&[self.runtime as u8, self.development as u8]);
+        if self.side_effects {
+            hasher.update(b"side_effects");
+        }
     }
 
     pub fn import_source(&self) -> &[u8] {

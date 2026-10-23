@@ -843,6 +843,17 @@ pub fn is_stderr_tty() -> bool {
     stdio_tty_flag(2)
 }
 
+/// Whether stdout takes cursor and clear codes. `FORCE_COLOR` turns colors on for a pipe too.
+#[inline]
+pub fn is_stdout_ansi_terminal() -> bool {
+    is_stdout_tty() && enable_ansi_colors_stdout()
+}
+/// See [`is_stdout_ansi_terminal`].
+#[inline]
+pub fn is_stderr_ansi_terminal() -> bool {
+    is_stderr_tty() && enable_ansi_colors_stderr()
+}
+
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
         // Do not print github annotations for AI agents because that wastes the context window.
@@ -1005,8 +1016,8 @@ pub fn writer_buffered() -> &'static mut io::Writer {
 }
 
 pub fn reset_terminal() {
-    let stderr = ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed);
-    let stdout = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed);
+    let stderr = is_stderr_ansi_terminal();
+    let stdout = is_stdout_ansi_terminal();
     if !stderr && !stdout {
         return;
     }
@@ -1026,10 +1037,10 @@ pub fn reset_terminal_all() {
         return;
     }
     SOURCE.with_borrow_mut(|s| {
-        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
+        if is_stderr_ansi_terminal() {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
         }
-        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) {
+        if is_stdout_ansi_terminal() {
             let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
         }
     });
@@ -1934,9 +1945,6 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     }
                 }
             }
-            b'>' => {
-                i += 1;
-            }
             b'{' => {
                 while i < fmt.len() && fmt[i] != b'}' {
                     out.push(fmt[i]);
@@ -1954,6 +1962,10 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     i += 1;
                 }
                 let color_name = &fmt[start..i];
+                // Skip the tag's closing `>`. Any other `>` is text.
+                if i < fmt.len() {
+                    i += 1;
+                }
                 let color_str: &str = 'picker: {
                     if let Some(lit) = color_map::get(color_name) {
                         break 'picker lit;
@@ -2928,6 +2940,23 @@ mod pretty_fmt_tests {
     }
 
     #[test]
+    fn bare_closing_bracket_is_literal() {
+        // Only the `>` that closes a tag is markup.
+        assert_eq!(pretty_fmt!("-> {}", true), "-> {}");
+        assert_eq!(pretty_fmt!("-> {}", false), "-> {}");
+        assert_eq!(pretty_fmt!("<cyan>><r>", true), "\x1b[36m>\x1b[0m");
+        assert_eq!(pretty_fmt!("<cyan>><r>", false), ">");
+        assert_eq!(
+            pretty_fmt!("<cyan>echo x >> /etc/sysctl.conf<r>", false),
+            "echo x >> /etc/sysctl.conf"
+        );
+        assert_eq!(
+            pretty_fmt_runtime(b"<cyan>><r> a -> b", false),
+            b"> a -> b".as_slice()
+        );
+    }
+
+    #[test]
     fn format_specs_with_angle_brackets_pass_through() {
         // `{:<16}` / `{:>.2}` contain `<`/`>` *inside* a format spec — the
         // brace scanner must shield them from the tag parser.
@@ -3009,6 +3038,9 @@ mod pretty_fmt_tests {
         check!("<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>\n");
         check!("<r><d>[<b>{d:>.2}ms<r><d>]<r>");
         check!("<r><red>error<r><d>:<r> ");
+        check!("<r><cyan>><r>   ");
+        check!("-> {}");
+        check!("  <cyan>sudo echo x >> /etc/sysctl.conf<r>\n");
         check!(
             "  <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package\n"
         );

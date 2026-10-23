@@ -24,6 +24,8 @@ pub(crate) struct Scanner<'a> {
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub(crate) path_ignore_patterns: &'a [bun_glob::Prepared<&'a [u8]>],
+    /// `[test] filePatterns`, matched like `path_ignore_patterns`. Unless empty, replaces `TEST_NAME_SUFFIXES`.
+    pub(crate) file_patterns: &'a [bun_glob::Prepared<&'a [u8]>],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -81,6 +83,7 @@ impl<'a> Scanner<'a> {
             exclusion_names: &[],
             filter_names: &[],
             path_ignore_patterns: &[],
+            file_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
             fs: transpiler.fs,
@@ -240,7 +243,8 @@ impl<'a> Scanner<'a> {
         if extname.is_empty() || !self.options.loader(extname).is_javascript_like() {
             return false;
         }
-        if !NEEDS_TEST_SUFFIX {
+        // `next` matches `file_patterns` once it has the path.
+        if !NEEDS_TEST_SUFFIX || !self.file_patterns.is_empty() {
             return true;
         }
         let name_without_extension = &name[..name.len() - extname.len()];
@@ -399,6 +403,14 @@ impl<'a> Scanner<'a> {
                     return;
                 };
                 let path = &self.open_dir_buf[..path_len];
+
+                if !self.file_patterns.is_empty() {
+                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
+                    let results = self.file_patterns.iter().map(|it| it.r#match(rel_path));
+                    if !bun_glob::any_matches(results) {
+                        return;
+                    }
+                }
 
                 if !self.does_absolute_path_match_filter(path) {
                     let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);

@@ -3015,6 +3015,26 @@ describe("a package in node_modules", () => {
     });
   });
 
+  // `bun install` makes a dot directory a workspace only if the pattern spells out its `.`.
+  it.concurrent.each(["packages/*", "packages/[.(]x", "packages/[(.]x"])(
+    "is not looked for in a root whose workspaces pattern %j leaves out a dot directory",
+    async pattern => {
+      using box = sandbox(undefined, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "root", workspaces: [pattern] }),
+          "packages/.x/package.json": JSON.stringify({ name: "member" }),
+        },
+      });
+      addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+      expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", ".x") })).toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("Could not find an existing 'cli' binary to run."),
+        exitCode: 1,
+      });
+    },
+  );
+
   // Reading an empty package.json ends the process.
   it.concurrent("the other members of the workspace are not read", async () => {
     using box = sandbox(undefined, {

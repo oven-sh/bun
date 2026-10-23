@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 // MakeDay(year, month, date), which range-checks year + floor(month / 12) and never year or month
 // alone (https://tc39.es/ecma262/#sec-makeday). JSC used to return NaN as soon as |year| or
 // |month / 12| alone exceeded 275760, while Date.UTC and the Date constructor in the same engine
-// (and V8) returned the date. oven-sh/WebKit#616.
+// (and V8) returned the date. oven-sh/WebKit#616, oven-sh/bun#46342.
 
 const startOfYear275760 = 8639977881600000; // 275760 is the last year with representable time values.
 const minTimeValue = -8.64e15; // -271821-04-20T00:00:00Z
@@ -35,6 +35,30 @@ describe("Date setters range-check year + floor(month / 12), not each argument",
     expect(date.toISOString()).toBe("+275760-01-01T00:00:00.000Z");
     expect(date.setUTCMonth(9)).toBeNaN(); // October 275760 is past the last time value.
     expect(date.getTime()).toBeNaN();
+  });
+
+  test("a month offset that spans more than the whole Date range (#46342)", () => {
+    // 3472364 months is about 289363 years, more than the 547581 years the Date range spans in
+    // total. The result is inside the range, so only the result counts.
+    const utc = new Date(0);
+    utc.setUTCFullYear(-187631, 8, 27);
+    expect(utc.setUTCMonth(3472364)).toBe(Date.UTC(101732, 8, 27));
+    expect(utc.toISOString()).toBe("+101732-09-27T00:00:00.000Z");
+
+    const local = new Date(2000, 0, 1);
+    local.setFullYear(-187631, 8, 27);
+    expect(local.setMonth(3472364)).toBe(new Date(101732, 8, 27).getTime());
+
+    for (const [start, end] of [
+      [-187631, 99849],
+      [-270000, 10000],
+      [270000, -10000],
+    ]) {
+      const date = new Date(0);
+      date.setUTCFullYear(start, 8, 27);
+      expect(date.setUTCMonth((end - start) * 12 + 8)).toBe(Date.UTC(end, 8, 27));
+    }
+    expect(new Date(Date.UTC(2000, 0, 1)).setUTCFullYear(-270000, 6500000)).toBe(Date.UTC(271666, 8, 1));
   });
 
   test("local time setters give what the Date constructor gives", () => {

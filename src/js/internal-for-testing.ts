@@ -788,6 +788,13 @@ export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction
   1,
 );
 
+// The next script execution context of the process (a Worker's, a Bun.ModuleGraph's, a ShadowRealm's) draws `identifier`. Returns what it would have drawn.
+export const setNextScriptExecutionContextIdentifier: (identifier: number) => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_setNextScriptExecutionContextIdentifierForTesting",
+  1,
+);
+
 export const emitMemoryPressure: (level: "warning" | "critical") => void = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_emitMemoryPressure",

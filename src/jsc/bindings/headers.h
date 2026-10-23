@@ -385,8 +385,6 @@ extern "C" JSC::EncodedJSValue SYSV_ABI Reader__intptr__slowpath(JSC::JSGlobalOb
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC::JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
-
 #ifdef __cplusplus
 
 ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC::JSGlobalObject* arg1, BunString* arg2, BunString* arg3);

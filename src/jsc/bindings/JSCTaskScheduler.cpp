@@ -57,7 +57,7 @@ static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ti
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     auto& scheduler = clientData->deferredWorkTimer;
-    JSCTaskScheduler::PendingWork pending { Bun__VM__currentLoopKind(clientData->bunVM), 0 };
+    JSCTaskScheduler::PendingWork pending { Bun__VM__currentLoopKind(clientData->bunVM), {} };
     // Script asked for this work (WebAssembly.compile, Atomics.waitAsync): it is the asking
     // graph's, and is dropped with it. A FinalizationRegistry's cleanup is the collector's doing,
     // for a registry that may be anybody's: it always runs.
@@ -144,7 +144,7 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
 {
     Locker<Lock> holder { scheduler.m_lock };
     bool wasPending = false;
-    uint32_t graphContext = 0;
+    WebCore::ScriptExecutionContextIdentifier graphContext {};
     if (auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end()) {
         graphContext = it->value.graphContext;
         scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(it);
@@ -159,7 +159,7 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
 
     // The Bun.ModuleGraph whose script asked for the work was disposed (or collected) since: like its
     // other callbacks, this one is not called.
-    if (graphContext) {
+    if (graphContext != WebCore::ScriptExecutionContextIdentifier {}) {
         RefPtr context = WebCore::ScriptExecutionContext::getScriptExecutionContext(graphContext);
         if (!context || context->isStopped())
             wasPending = false;

@@ -116,7 +116,7 @@ pub struct Debugger {
     // `'static` is genuine: borrowed from process-lifetime env-var storage;
     // default `""`.
     pub from_environment_variable: &'static [u8],
-    pub script_execution_context_id: u32,
+    pub script_execution_context_id: crate::ContextId,
     pub next_debugger_id: u64,
     pub poll_ref: KeepAlive,
     pub wait_for_connection: Wait,
@@ -139,7 +139,7 @@ impl Default for Debugger {
         Self {
             path_or_port: None,
             from_environment_variable: b"",
-            script_execution_context_id: 0,
+            script_execution_context_id: crate::ContextId::NONE,
             next_debugger_id: 1,
             poll_ref: KeepAlive::default(),
             wait_for_connection: Wait::Off,
@@ -159,11 +159,11 @@ impl Default for Debugger {
 // (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]`
 // in-param C++ only reads. Remaining args are by-value scalars.
 unsafe extern "C" {
-    safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
-    safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> crate::ContextId;
+    safe fn Bun__ensureDebugger(ctx_id: crate::ContextId, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
-        ctx_id: u32,
+        ctx_id: crate::ContextId,
         url: &BunString,
         from_env: c_int,
         is_connect: bool,
@@ -178,7 +178,7 @@ static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 /// the debuggee's environment travels next to it and is used up by the VM setup.
 struct DebuggerThreadInit {
     debuggee: crate::VmHandle,
-    ctx_id: u32,
+    ctx_id: crate::ContextId,
     is_connect: bool,
     is_node_inspector: bool,
     from_env: &'static [u8],

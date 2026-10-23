@@ -69,7 +69,7 @@ pub struct WebWorker {
     /// a nested worker parked on a post to its worker parent would keep that
     /// parent from ever reaching its own wait).
     arm_test_gate: bool,
-    execution_context_id: u32,
+    execution_context_id: crate::ContextId,
     mini: bool,
     eval_mode: bool,
     /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
@@ -286,8 +286,8 @@ impl WebWorker {
         specifier_str: &BunString,
         error_message: &mut BunString,
         error_is_invalid_exec_argv: &mut bool,
-        _parent_context_id: u32,
-        this_context_id: u32,
+        _parent_context_id: crate::ContextId,
+        this_context_id: crate::ContextId,
         mini: bool,
         default_unref: bool,
         eval_mode: bool,
@@ -592,7 +592,7 @@ impl WebWorker {
     }
 
     #[inline]
-    pub(crate) fn execution_context_id(&self) -> u32 {
+    pub(crate) fn execution_context_id(&self) -> crate::ContextId {
         self.execution_context_id
     }
 

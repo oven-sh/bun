@@ -481,7 +481,7 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
     return ptr;
 }
 
-GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
+GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier scriptExecutionContextId)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &globalObjectMethodTable());
     ptr->finishCreation(vm);
@@ -495,7 +495,7 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, const
     return ptr;
 }
 
-GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable)
+GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, methodTable);
     ptr->finishCreation(vm);
@@ -521,9 +521,6 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" size_t Bun__reported_memory_size;
 
-// executionContextId: -1 for main thread
-// executionContextId: maxInt32 for macros
-// executionContextId: >-1 for workers
 extern "C" bool Bun__hasStandaloneModuleGraph();
 
 Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
@@ -533,8 +530,10 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
     return defaultGlobalObject();
 }
 
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, Zig::GlobalObjectKind kind, WebCore::ScriptExecutionContextIdentifier executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
+    ASSERT((kind == Zig::GlobalObjectKind::Worker) == !!worker_ptr);
+    ASSERT(kind != Zig::GlobalObjectKind::Main || executionContextId == ScriptExecutionContext::mainThreadIdentifier);
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
     if (!vmPtr) [[unlikely]] {
@@ -578,7 +577,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
-        if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {
+        if (kind != Zig::GlobalObjectKind::Main) [[unlikely]] {
             auto* structure = Zig::GlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {
                 return nullptr;
@@ -586,7 +585,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             return Zig::GlobalObject::create(
                 vm,
                 structure,
-                static_cast<ScriptExecutionContextIdentifier>(executionContextId),
+                executionContextId,
                 Bun__hasStandaloneModuleGraph() ? &Zig::StandaloneGlobalObject::globalObjectMethodTable() : &Zig::GlobalObject::globalObjectMethodTable());
         } else if (evalMode) {
             auto* structure = Zig::EvalGlobalObject::createStructure(vm);
@@ -647,7 +646,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     });
 
-    if (executionContextId > -1) {
+    if (kind == Zig::GlobalObjectKind::Worker) {
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
             auto& options = worker.options();
 

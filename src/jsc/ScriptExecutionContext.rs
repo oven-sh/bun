@@ -545,10 +545,10 @@ unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
 unsafe extern "C" fn Bun__ScriptExecutionContext__create(
     vm: *mut crate::VirtualMachineRef,
     dom_context: *mut core::ffi::c_void,
-    identifier: u32,
+    identifier: ContextId,
 ) -> *mut ScriptExecutionContext {
     // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context(dom_context, ContextId::from_raw(identifier)) }.as_ptr()
+    unsafe { (*vm).create_graph_context(dom_context, identifier) }.as_ptr()
 }
 
 /// # Safety

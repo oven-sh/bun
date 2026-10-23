@@ -1889,7 +1889,17 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
             context.report({ node, message: program + " " + svelteParseContext });
           },
         });
-        export default { rules: { title: { create }, optional: { create: optional } } };`,
+        const ask = () => services({ sourceCode: { parserServices: {} } });
+        // Asks the second time it runs on a file, and only then.
+        const runs = new Map();
+        const second = context => {
+          runs.set(context.filename, (runs.get(context.filename) ?? 0) + 1);
+          if (runs.get(context.filename) === 2) ask();
+          return {};
+        };
+        export default {
+          rules: { title: { create }, optional: { create: optional }, second: { create: second }, always: { create: ask } },
+        };`,
       "eslint.config.mjs": `
         import demo from "./plugin.mjs";
         export default [{
@@ -2080,6 +2090,67 @@ it(Math.random() > 0 ? label : load);
       },
       timeout,
     );
+
+    // Each of these is linted a fixed number of times, whatever its rules do.
+    describe.each([
+      ["in the config", (rules: string) => [rules, ""]],
+      // The first is the same as under ESLint 10.12.0 with @typescript-eslint/parser 8.72.0.
+      ["in a comment", (rules: string) => [`"no-var": "error"`, `/* eslint ${rules} */\n`]],
+    ] as const)("a rule that's turned on %s", (_, place) => {
+      const noTypes = "1 rule did not run because there is no type information for the files: ";
+      const notKnown = "1 rule did not run because rules that run in JavaScript cannot read this from a type: ";
+      test.concurrent.each([
+        ["gets types", facts, `"demo/title": "error"`, "a.ts", ["1024 1024 0 0"], ""],
+        ["gets none under espree", facts, `"demo/title": "error"`, "a.js", [], noTypes + "demo/title"],
+        [
+          "reads what isn't known",
+          "services => services.program.getTypeChecker()",
+          `"demo/title": "error"`,
+          "a.ts",
+          [],
+          notKnown + "demo/title (Program.getTypeChecker)",
+        ],
+        [
+          "asks on its second run",
+          facts,
+          `"demo/title": "error", "demo/second": "error"`,
+          "a.ts",
+          ["1024 1024 0 0"],
+          "",
+        ],
+        [
+          "asks on every run",
+          facts,
+          `"demo/title": "error", "demo/always": "error"`,
+          "a.ts",
+          ["1024 1024 0 0"],
+          noTypes + "demo/always",
+        ],
+      ])(
+        "and %s",
+        async (_, reads, rules, name, messages, refusal) => {
+          const [inConfig, comment] = place(rules);
+          const files = typed(reads, inConfig);
+          const config = files["eslint.config.mjs"]
+            .replace(`files: ["**/*.ts"]`, `files: ["**/*.ts", "**/*.js"]`)
+            .replace(`"demo/title": "error", `, comment ? "" : `"demo/title": "error", `);
+          const espree = config.replace(`parser: { meta: { name: "typescript-eslint/parser" } }, `, "");
+          const { raw, stderr, exitCode } = await lint(
+            {
+              ...files,
+              "eslint.config.mjs": name === "a.js" ? espree : config,
+              "tsconfig.json": `{ "compilerOptions": { "allowJs": true, "types": [] } }`,
+              [name]: `${comment}globalThis.it = () => {};\nit("a");\n`,
+            },
+            ["-f", "json", name],
+          );
+          expect(messagesOf(raw)).toEqual(messages);
+          expect(stderr).toContain(refusal);
+          expect(exitCode).toBe(refusal ? 2 : 1);
+        },
+        timeout,
+      );
+    });
 
     test.concurrent(
       "text from standard input has types too",

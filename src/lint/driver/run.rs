@@ -915,12 +915,10 @@ impl Run<'_> {
             false => {}
         }
         phases.linting = started.elapsed().as_secs_f64();
-        // Ends because a file only waits again if a rule has asked for types in the meantime.
-        loop {
-            let waiting = std::mem::take(&mut *waiting_for_types.lock());
-            if waiting.is_empty() {
-                break;
-            }
+        // Nothing below puts a file aside again: a file that has types doesn't wait for them, and the last resort has no
+        // list to add to.
+        let waiting = std::mem::take(&mut *waiting_for_types.lock());
+        if !waiting.is_empty() {
             let started = Instant::now();
             loader.advise_about_typescript();
             loader.number_type_flags();
@@ -930,42 +928,23 @@ impl Run<'_> {
                 Status::Matched(config) => Some((*target, config)),
                 _ => None,
             });
-            let lint_with_types = |waiting: &[(&Target, &Arc<ResolvedConfig>)]| {
-                let files = waiting.iter().map(|&(target, config)| Typed {
-                    path: &target.path,
-                    config,
-                    text: None,
-                });
-                let files: Vec<Typed> = files.collect();
-                let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
-                for (&(target, _), result) in waiting.iter().zip(linted) {
-                    // A file that's in no program is linted without the rule.
-                    match result.map_or_else(
-                        || context.lint_file(target, &on_circular_fixes, None),
-                        |it| Ok(Some(it)),
-                    ) {
-                        Ok(result) => results.lock().extend(result),
-                        Err(error) => _ = failure.lock().get_or_insert(error),
-                    }
-                }
-            };
-            // What a rule reads from the types may have become known since the file was put aside.
-            let (with_types, without): (Vec<_>, Vec<_>) = waiting.partition(|it| {
-                let mut rules = it.1.js_rules.iter().map(|it| &it.configured.rule);
-                rules.any(|it| context.js_plugins.can_use_types(it))
+            let waiting: Vec<(&Target, &Arc<ResolvedConfig>)> = waiting.collect();
+            let files = waiting.iter().map(|&(target, config)| Typed {
+                path: &target.path,
+                config,
+                text: None,
             });
-            lint_with_types(&with_types);
-            let is_heavy = |at: usize| {
-                without
-                    .get(at)
-                    .is_some_and(|it| needs(it.0) == Needs::Heavy)
-            };
-            (context.js_plugins).for_each(without.len(), &is_heavy, &|at| {
-                if let Some(it) = without.get(at) {
-                    lint(it.0);
-                }
-            });
-            (results.lock()).append(&mut context.invalid_tsconfigs.lock().results);
+            let files: Vec<Typed> = files.collect();
+            let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
+            for (&(target, _), result) in waiting.iter().zip(linted) {
+                // A file that's in no program is linted without the rule.
+                let result = result.map_or_else(
+                    || context.lint_file(target, &on_circular_fixes, None),
+                    |it| Ok(Some(it)),
+                )?;
+                results.get_mut().extend(result);
+            }
+            (results.get_mut()).append(&mut context.invalid_tsconfigs.lock().results);
             phases.checking += started.elapsed().as_secs_f64();
         }
         if let Some(error) = failure.get_mut().take() {

@@ -345,7 +345,7 @@ impl<'e> Host<'e> {
 
     /// True if `rule` [has asked for types](Host::has_asked_for_types) and hasn't read anything from them that isn't
     /// known. So it runs on a file that has types, and linting a file with types is worth it.
-    pub fn can_use_types(&self, rule: &Arc<Rule>) -> bool {
+    pub(crate) fn can_use_types(&self, rule: &Arc<Rule>) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
             && (self.state.lock().asked_for_types.iter())
                 .any(|it| Arc::ptr_eq(&it.rule, rule) && it.unknown.is_none())

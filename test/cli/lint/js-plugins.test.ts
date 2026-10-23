@@ -1934,9 +1934,27 @@ it(Math.random() > 0 ? label : load);
     // TypeScript. TypeScript 6 renumbered \`ts.TypeFlags\`.
     const flags = {
       "5.9.3": [128, 128, 4, 524288, 524288, 256, 524288, 524288, 4, 1152, 1, 32768, 524288, 1048592, 1048576],
-      "6.0.3": [1024, 1024, 32, 1048576, 1048576, 2048, 1048576, 1048576, 32, 33792, 1, 4, 1048576, 134217984, 134217728],
+      "6.0.3": [
+        1024, 1024, 32, 1048576, 1048576, 2048, 1048576, 1048576, 32, 33792, 1, 4, 1048576, 134217984, 134217728,
+      ],
     };
-    const signatures = ["0 0", "0 0", "0 0", "2 0", "0 1", "0 0", "1 0", "0 1", "0 0", "0 0", "0 0", "0 0", "0 0", "0 0", "0 0"];
+    const signatures = [
+      "0 0",
+      "0 0",
+      "0 0",
+      "2 0",
+      "0 1",
+      "0 0",
+      "1 0",
+      "0 1",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+      "0 0",
+    ];
 
     test.concurrent.each([
       ["5.9.3", ""],
@@ -2025,7 +2043,10 @@ it(Math.random() > 0 ? label : load);
     test.concurrent(
       "the other rules' fixes are applied once",
       async () => {
-        const files = { ...typed(facts, `"no-var": "error"`), "a.ts": `declare function it(title: unknown): void;\nvar a = 1;\nit(a);\n` };
+        const files = {
+          ...typed(facts, `"no-var": "error"`),
+          "a.ts": `declare function it(title: unknown): void;\nvar a = 1;\nit(a);\n`,
+        };
         const { raw, files: written, exitCode } = await lint(files, ["-f", "json", "--fix", "a.ts"], ["a.ts"]);
         expect(messagesOf(raw)).toEqual(["64 64 0 0"]);
         expect(written["a.ts"]).toBe(`declare function it(title: unknown): void;\nlet a = 1;\nit(a);\n`);
@@ -2036,7 +2057,10 @@ it(Math.random() > 0 ? label : load);
 
     test.concurrent.each([
       ["(services, node) => services.getTypeAtLocation(node).symbol", "Type.symbol"],
-      ["(services, node) => services.getTypeAtLocation(node).getCallSignatures()[0].getReturnType()", "Signature.getReturnType"],
+      [
+        "(services, node) => services.getTypeAtLocation(node).getCallSignatures()[0].getReturnType()",
+        "Signature.getReturnType",
+      ],
       ["(services, node) => services.getTypeAtLocation(node.parent.parent)", "getTypeAtLocation(ExpressionStatement)"],
       ["(services, node) => services.getSymbolAtLocation(node)", "getSymbolAtLocation(Identifier)"],
       ["(services, node) => services.program.getTypeChecker()", "Program.getTypeChecker"],

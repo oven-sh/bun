@@ -1,4 +1,4 @@
-all.tsx 1:1-172:1 Program: throws
+all.tsx 1:1-180:1 Program: throws
 all.tsx 1:1-1:58 ImportDeclaration: 1
 all.tsx 1:8-1:11 ImportDefaultSpecifier: 128
 all.tsx 1:8-1:11 Identifier in ImportDefaultSpecifier.local: 128
@@ -1575,6 +1575,96 @@ all.tsx 171:32-171:33 Identifier in VariableDeclarator.id: 131072
 all.tsx 171:37-171:39 ArrayExpression: 524288 Array
 all.tsx 171:41-171:43 ExpressionStatement: 1
 all.tsx 171:41-171:42 Identifier in ExpressionStatement.expression: 131072
+all.tsx 172:1-172:56 VariableDeclaration: 1
+all.tsx 172:7-172:55 VariableDeclarator: 1
+all.tsx 172:7-172:36 ObjectPattern: 524288 __object
+all.tsx 172:9-172:23 Property: 8
+all.tsx 172:9-172:10 Identifier in Property.key: 1
+all.tsx 172:12-172:23 Identifier in Property.value: 8
+all.tsx 172:25-172:34 RestElement: 524288 others
+all.tsx 172:28-172:34 Identifier in RestElement.argument: 524288 others
+all.tsx 172:39-172:55 ObjectExpression: 524288 __object
+all.tsx 172:41-172:45 Property: 8
+all.tsx 172:41-172:42 Identifier in Property.key: 8
+all.tsx 172:44-172:45 Literal in Property.value: 256
+all.tsx 172:47-172:53 Property: 4
+all.tsx 172:47-172:48 Identifier in Property.key: 4
+all.tsx 172:50-172:53 Literal in Property.value: 128
+all.tsx 173:1-173:8 ExpressionStatement: 1
+all.tsx 173:1-173:7 Identifier in ExpressionStatement.expression: 524288 others
+all.tsx 174:1-174:74 FunctionDeclaration: 524288 restOfParameter
+all.tsx 174:10-174:25 Identifier in FunctionDeclaration.id: 524288 restOfParameter
+all.tsx 174:26-174:56 ObjectPattern: 524288 __type
+all.tsx 174:28-174:29 Property: 256
+all.tsx 174:28-174:29 Identifier in Property.key: 256
+all.tsx 174:28-174:29 Identifier in Property.value: 256
+all.tsx 174:31-174:38 RestElement: 524288 more
+all.tsx 174:34-174:38 Identifier in RestElement.argument: 524288 more
+all.tsx 174:40-174:56 TSTypeAnnotation: 1
+all.tsx 174:42-174:56 TSTypeLiteral: 524288 __type
+all.tsx 174:44-174:49 TSPropertySignature: 256
+all.tsx 174:44-174:45 Identifier in TSPropertySignature.key: 256
+all.tsx 174:45-174:48 TSTypeAnnotation: 1
+all.tsx 174:47-174:48 TSLiteralType: 256
+all.tsx 174:47-174:48 Literal in TSLiteralType.literal: 1
+all.tsx 174:50-174:54 TSPropertySignature: 256
+all.tsx 174:50-174:51 Identifier in TSPropertySignature.key: 256
+all.tsx 174:51-174:54 TSTypeAnnotation: 1
+all.tsx 174:53-174:54 TSLiteralType: 256
+all.tsx 174:53-174:54 Literal in TSLiteralType.literal: 1
+all.tsx 174:58-174:74 BlockStatement: 1
+all.tsx 174:60-174:72 ReturnStatement: 1
+all.tsx 174:67-174:71 Identifier in ReturnStatement.argument: 524288 more
+all.tsx 175:1-175:57 ClassDeclaration: 524288 EmptyDefault
+all.tsx 175:7-175:19 Identifier in ClassDeclaration.id: 524288 EmptyDefault
+all.tsx 175:19-175:42 TSTypeParameterDeclaration: 1
+all.tsx 175:20-175:41 TSTypeParameter: 262144 T
+all.tsx 175:20-175:21 Identifier in TSTypeParameter.name: 262144 T
+all.tsx 175:30-175:36 TSObjectKeyword: 67108864
+all.tsx 175:39-175:41 TSTypeLiteral: 524288 __type
+all.tsx 175:43-175:57 ClassBody: 524288 EmptyDefault
+all.tsx 175:45-175:55 PropertyDefinition: 262144 T
+all.tsx 175:45-175:50 Identifier in PropertyDefinition.key: 262144 T
+all.tsx 175:51-175:54 TSTypeAnnotation: 1
+all.tsx 175:53-175:54 TSTypeReference: 262144 T
+all.tsx 175:53-175:54 Identifier in TSTypeReference.typeName: 262144 T
+all.tsx 176:1-176:38 VariableDeclaration: 1
+all.tsx 176:7-176:37 VariableDeclarator: 524288 __instantiationExpression
+all.tsx 176:7-176:19 Identifier in VariableDeclarator.id: 524288 __instantiationExpression
+all.tsx 176:22-176:37 TSInstantiationExpression: 524288 __instantiationExpression
+all.tsx 176:22-176:29 Identifier in TSInstantiationExpression.expression: 524288 generic
+all.tsx 176:29-176:37 TSTypeParameterInstantiation: 524288 __instantiationExpression
+all.tsx 176:30-176:36 TSStringKeyword: 4
+all.tsx 177:1-177:14 ExpressionStatement: 1
+all.tsx 177:1-177:13 Identifier in ExpressionStatement.expression: 524288 __instantiationExpression
+all.tsx 178:1-178:41 ExpressionStatement: 1
+all.tsx 178:1-178:40 ArrayExpression: 524288 Array
+all.tsx 178:2-178:17 MemberExpression: 8192 iterator
+all.tsx 178:2-178:8 Identifier in MemberExpression.object: 524288 SymbolConstructor
+all.tsx 178:9-178:17 Identifier in MemberExpression.property: 8192 iterator
+all.tsx 178:19-178:39 MemberExpression: 8192 asyncIterator
+all.tsx 178:19-178:25 Identifier in MemberExpression.object: 524288 SymbolConstructor
+all.tsx 178:26-178:39 Identifier in MemberExpression.property: 8192 asyncIterator
+all.tsx 179:1-179:76 VariableDeclaration: 1
+all.tsx 179:7-179:75 VariableDeclarator: 524288 __object
+all.tsx 179:7-179:21 Identifier in VariableDeclarator.id: 524288 __object
+all.tsx 179:24-179:75 ObjectExpression: 524288 __object
+all.tsx 179:26-179:47 Property: 8
+all.tsx 179:30-179:31 Identifier in Property.key: 8
+all.tsx 179:31-179:47 FunctionExpression: 8
+all.tsx 179:34-179:47 BlockStatement: 1
+all.tsx 179:36-179:45 ReturnStatement: 1
+all.tsx 179:43-179:44 Literal in ReturnStatement.argument: 256
+all.tsx 179:49-179:60 Property: 8
+all.tsx 179:53-179:54 Identifier in Property.key: 8
+all.tsx 179:54-179:60 FunctionExpression: 8
+all.tsx 179:55-179:56 Identifier in FunctionExpression.params: 8
+all.tsx 179:58-179:60 BlockStatement: 1
+all.tsx 179:62-179:73 Property: 1
+all.tsx 179:66-179:67 Identifier in Property.key: 1
+all.tsx 179:67-179:73 FunctionExpression: 1
+all.tsx 179:68-179:69 Identifier in FunctionExpression.params: 1
+all.tsx 179:71-179:73 BlockStatement: 1
 assertion.ts 1:1-3:1 Program: 1
 assertion.ts 1:1-1:41 VariableDeclaration: 1
 assertion.ts 1:15-1:40 VariableDeclarator: 1048576

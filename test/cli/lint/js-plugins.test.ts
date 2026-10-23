@@ -2093,27 +2093,30 @@ declare const either: Shape | Store;
         );
         const isRefused = (line: string) => line.endsWith(": refused");
         expect(said.map((line, i) => (isRefused(line) ? expected[i] : line))).toEqual(expected);
-        // In this order: the `x = 1` of `({ x = 1 } = y)`, the `A` and the `B` of `implements A.B.C`, the `import` of `import.meta`, the
-        // `a` of `<a:b />`, the `A.B` of `implements A.B.C`, the file, the `import()` of `typeof import()`, the `A.B` of the type
-        // `A.B.C`, the `symbol` of `unique symbol`, the `<T>` of `class A extends B<T>`, the `-1` of the type `-1`.
+        // In this order: the `x = 1` of `({ x = 1 } = y)`, the function of `({ set a(v) {} })`, the `A` and the `B` of
+        // `implements A.B.C`, the `import` of `import.meta`, the `a` of `<a:b />`, the `A.B` of `implements A.B.C`, the file, the
+        // `set a(v) {}` of `({ set a(v) {} })`, the `import()` of `typeof import()`, the `A.B` of the type `A.B.C`, the `symbol` of
+        // `unique symbol`, the `<T>` of `class A extends B<T>`, the `-1` of the type `-1`.
         const kinds = said
           .filter(isRefused)
           .map(it => it.slice(it.indexOf(" ", it.indexOf(" ") + 1) + 1, -": refused".length));
         expect([...new Set(kinds)].sort()).toEqual([
           "AssignmentPattern",
+          "FunctionExpression",
           "Identifier in MemberExpression.object",
           "Identifier in MemberExpression.property",
           "Identifier in MetaProperty.meta",
           "JSXIdentifier in JSXNamespacedName.namespace",
           "MemberExpression",
           "Program",
+          "Property",
           "TSImportType",
           "TSQualifiedName",
           "TSSymbolKeyword",
           "TSTypeParameterInstantiation",
           "UnaryExpression",
         ]);
-        expect(said.filter(isRefused).length).toBe(23);
+        expect(said.filter(isRefused).length).toBe(27);
         expect(stderr).not.toContain(" did not run because");
         expect(exitCode).toBe(1);
       },

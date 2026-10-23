@@ -1003,6 +1003,26 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         {
             return Some(self.symbol(symbol));
         }
+        // `emptyTypeLiteralSymbol`
+        if ty == TypeId::EMPTY_TYPE_LITERAL {
+            let name = known::type_literal;
+            return Some(self.named_symbol(Key::Undeclared(name), name));
+        }
+        if let TypeData::Synth(shape) = self.c.data(ty) {
+            // `getInstantiationExpressionType`
+            if shape.instantiation_expression.is_some() {
+                let name = self.c.atoms().intern(b"__instantiationExpression");
+                return Some(self.named_symbol(Key::Undeclared(name), name));
+            }
+            // `getRestType`: the symbol of the `...rest` that declares it.
+            if shape.symbol.is_none()
+                && let Some((file, start, ExprId::NONE)) = shape.symbol_declared_at
+                && file == self.file
+            {
+                let node = self.name_at(start);
+                return self.symbol_at_location(NodeRef { file, node });
+            }
+        }
         if let TypeData::UniqueSymbol { symbol, name } = *self.c.data(ty) {
             return match symbol {
                 UniqueSymbolDeclaration::Variable(symbol) => Some(self.symbol(symbol)),
@@ -1012,17 +1032,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 // `Symbol.iterator`: the property of the global `SymbolConstructor`.
                 UniqueSymbolDeclaration::SymbolConstructor => {
-                    let atoms = self.c.atoms();
-                    let property_name = atoms
-                        .bytes(name)
-                        .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
-                    let (property_name, constructor) = (
-                        atoms.lookup(property_name)?,
-                        atoms.lookup(b"SymbolConstructor")?,
-                    );
-                    let constructor = self.c.global_type_symbol(constructor)?;
+                    let constructor = self.c.global_type_symbol(known::SymbolConstructor)?;
                     let constructor = self.c.declared_type(constructor);
-                    let (prop, mapper) = self.c.get_property_of_type(constructor, property_name)?;
+                    let (prop, mapper) = self.c.get_property_of_type(constructor, name)?;
                     Some(self.symbol_of_prop(prop, mapper))
                 }
             };

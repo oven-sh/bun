@@ -182,5 +182,13 @@ const enum Const { Y }
 abstract class Sig { abstract get g(): number; abstract set g(v: number); static accessor s = 1; [key: string]: unknown; }
 function* plain() { const got: string = yield 1; return got; }
 async () => { for await (const x of []) x; };
+const { a: pickedAgain, ...others } = { a: 1, c: "c" };
+others;
+function restOfParameter({ x, ...more }: { x: 1; y: 2 }) { return more; }
+class EmptyDefault<T extends object = {}> { value!: T; }
+const instantiated = generic<string>;
+instantiated;
+[Symbol.iterator, Symbol.asyncIterator];
+const untypedSetters = { get g() { return 1; }, set g(v) {}, set h(v) {} };
 `,
 };

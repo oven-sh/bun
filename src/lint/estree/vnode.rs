@@ -220,6 +220,7 @@ impl<'a> VNode<'a> {
         match (self.base, self.part) {
             (Node::File(_), _) | (Node::Class(_), Part::TypeArgs) => Unknown,
             (_, Part::Meta | Part::Operand) => Unknown,
+            (_, Part::Main) if self.is_untyped_setter_of_literal() => Unknown,
             (_, Part::Main) => match self.node_type() {
                 NodeType::ExportDefaultDeclaration => Error,
                 // The target of an assignment, which TypeScript has as an assignment.
@@ -284,6 +285,19 @@ impl<'a> VNode<'a> {
             ) => of_base(),
             _ => Unknown,
         }
+    }
+
+    /// True for the `set a(v) {}` of an object literal and for its function. TypeScript gives both the type of `get a()`.
+    fn is_untyped_setter_of_literal(self) -> bool {
+        let func = match self.base {
+            Node::Prop(prop) => prop.func(),
+            base => base.as_func(),
+        };
+        func.is_some_and(|it| {
+            it.kind() == FnKind::Setter
+                && matches!(it.owner(), Node::Expr(_))
+                && it.params().iter().all(|it| it.ty().is_none())
+        })
     }
 
     pub(crate) fn program(file: &'a File<'a>) -> VNode<'a> {

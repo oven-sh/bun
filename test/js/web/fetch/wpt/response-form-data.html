@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <script src="/resources/testharness.js"></script>
+    <script src="/resources/testharnessreport.js"></script>
+  </head>
+  <body>
+    <script>
+const validCases = [
+    {
+        name: "onePartWithEpilogue",
+        boundary: "boundary",
+        value: "--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22username%22%0D%0A%0D%0Afoo%0D%0A--boundary--%0D%0A",
+        expected: [["username", "foo"]]
+    },
+    {
+        name: "onePartWithTransportPadding",
+        boundary: "boundary",
+        value: "--boundary%20%09%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22username%22%0D%0A%0D%0Afoo%0D%0A--boundary--%0D%0A",
+        expected: [["username", "foo"]]
+    },
+    {
+        name: "onePartWithoutEpilogue",
+        boundary: "boundary",
+        value: "--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22username%22%0D%0A%0D%0Afoo%0D%0A--boundary--",
+        expected: [["username", "foo"]]
+    },
+    {
+        name: "twoPartsWithEpilogue",
+        boundary: "boundary",
+        value: "--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22username%22%0D%0A%0D%0Afoo%0D%0A--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22account%22%0D%0A%0D%0Agoo%0D%0A--boundary--%0D%0A",
+        expected: [["username", "foo"], ["account", "goo"]]
+    },
+    {
+        name: "twoPartsWithoutEpilogue",
+        boundary: "boundary",
+        value: "--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22username%22%0D%0A%0D%0Afoo%0D%0A--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22account%22%0D%0A%0D%0Agoo%0D%0A--boundary--",
+        expected: [["username", "foo"], ["account", "goo"]]
+    },
+    {
+        name: "twoPartsWithTransportPadding",
+        boundary: "boundary",
+        value: "--boundary%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22username%22%0D%0A%0D%0Afoo%0D%0A--boundary%09%20%0D%0AContent-Disposition%3A%20form-data%3B%20name%3D%22account%22%0D%0A%0D%0Agoo%0D%0A--boundary--",
+        expected: [["username", "foo"], ["account", "goo"]]
+    }
+];
+
+validCases.forEach(testData => {
+    promise_test(async t => {
+        const response = new Response(decodeURIComponent(testData.value), { "headers": [["Content-Type", "multipart/form-data; boundary=" + testData.boundary]] });
+        const formData = await response.formData();
+        const actual = Array.from(formData.entries());
+        assert_equals(actual.length, testData.expected.length, "Number of form data entries should match");
+        for (let i = 0; i < testData.expected.length; i++)
+            assert_array_equals(actual[i], testData.expected[i], `Entry ${i} should match`);
+    }, "Validate form data - " + testData.name);
+});
+
+const invalidCases = [
+    {
+        name: "empty",
+        boundary: "boundary",
+        value: "--boundary--boundary--%0D%0A"
+    },
+    {
+        name: "cr1",
+        boundary: "boundary",
+        value: "--boundary%0A--boundary--%0D%0A"
+    },
+    {
+        name: "cr2",
+        boundary: "boundary",
+        value: "--boundary%0D--boundary--%0D%0A"
+    },
+    {
+        name: "cr3",
+        boundary: "boundary",
+        value: "--boundary%0D%0A%0D%0A%0D%0A--boundary--%0D%0A"
+    },
+    {
+        name: "cr_",
+        boundary: "boundary",
+        value: "--boundary%0A_--boundary--%0D%0A"
+    },
+    {
+        name: "dashes",
+        boundary: "boundary",
+        value: "--boundary-%20---boundary--%0D%0A"
+    },
+    {
+        name: "boundary",
+        boundary: "boundary--",
+        value: "--boundary--%0D%0A"
+    },
+];
+
+invalidCases.forEach(testData => {
+    promise_test(async t => {
+        const response = new Response(decodeURIComponent(testData.value), { "headers": [["Content-Type", "multipart/form-data; boundary=" + testData.boundary]] });
+        await promise_rejects_js(t, TypeError, response.formData());
+    }, "Validate buggy form data - " + testData.name);
+});
+
+promise_test(async t => {
+    const response1 = new Response(new FormData);
+    const response1Body = await response1.text();
+    assert_true(response1Body.startsWith("--"), "start");
+    let boundary = response1Body.substring(2).trim();
+    assert_true(boundary.endsWith("--"), "end");
+    boundary = boundary.slice(0, -2);
+    const response2 = new Response(response1Body, { "headers": [["Content-Type", "multipart/form-data; boundary=" + boundary]] });
+    const formData = await response2.formData();
+    assert_array_equals(Array.from(formData.entries()), []);
+}, "Empty form data");
+    </script>
+  </body>
+</html>

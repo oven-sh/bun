@@ -3443,6 +3443,16 @@ pub(crate) mod __gated_printer {
                             true,
                         );
                     }
+                    E::Special::ImportMetaRequire => {
+                        self.print_expr(
+                            Expr {
+                                data: ExprData::ERequireCallTarget,
+                                loc: expr.loc,
+                            },
+                            level,
+                            in_flags,
+                        );
+                    }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
                     self.print_commonjs_export_identifier(*id, expr.loc, false);

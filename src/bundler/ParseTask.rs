@@ -1110,7 +1110,7 @@ pub mod parse_worker {
 
                 // This injects the following code:
                 //
-                // import.meta.require(unique_key).db
+                // import.meta.require(unique_key, { type: "sqlite" }).db
                 //
                 let import_path = Expr::init(
                     E::String {
@@ -1120,16 +1120,24 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
-                let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
-                let require_property = Expr::init(
-                    E::Dot {
-                        target: import_meta,
-                        name_loc: Loc::EMPTY,
-                        name: b"require".into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
+                // `import.meta` is a SyntaxError inside the cjs `@bun-cjs` wrapper.
+                let require_target = if opts.output_format == js_parser::options::Format::Cjs {
+                    Expr {
+                        data: ast::ExprData::ERequireCallTarget,
+                        loc: Loc { start: 0 },
+                    }
+                } else {
+                    let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
+                    Expr::init(
+                        E::Dot {
+                            target: import_meta,
+                            name_loc: Loc::EMPTY,
+                            name: b"require".into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    )
+                };
                 let require_args = bump.alloc_slice_fill_default::<Expr>(2);
                 require_args[0] = import_path;
                 let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
@@ -1161,7 +1169,7 @@ pub mod parse_worker {
                 );
                 let require_call = Expr::init(
                     E::Call {
-                        target: require_property,
+                        target: require_target,
                         // SAFETY: bump-owned slice; never grown via this Vec.
                         args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                         ..Default::default()
@@ -2689,6 +2697,17 @@ pub mod parse_worker {
         } else if target == options::Target::Node {
             opts.lower_import_meta_main_for_node_js = true;
         }
+
+        // In CommonJS output a file for Bun or node has `require`. In an ES module only a build for node has a `__require` to take its place: `createRequire(import.meta.url)`. The dev server has `hmr.require` on both sides. A file for the browser can end in a module script, which has none.
+        opts.lower_import_meta_require = match output_format {
+            options::Format::InternalBakeDev => true,
+            options::Format::Iife => false,
+            options::Format::Cjs => target.is_server_side(),
+            options::Format::Esm => {
+                target.is_server_side()
+                    && worker_ctx.transpiler().options.target == options::Target::Node
+            }
+        };
 
         opts.tree_shaking = if task.source_index.is_runtime() {
             true

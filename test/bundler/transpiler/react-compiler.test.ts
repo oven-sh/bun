@@ -465,6 +465,41 @@ describe("bundler", () => {
     },
   });
 
+  // In a build for node `import.meta.require` is a node that the printer spells as `__require`. The compiler keeps it, and it is not the `module.exports` node.
+  itBundled("react-compiler/ImportMetaRequireKeepsItsNode", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export { Joined } from "./joined.cjs";
+        export function Comp({ name }) {
+          const load = import.meta.require;
+          return <div>{typeof load}{name}</div>;
+        }
+      `,
+      "/joined.cjs": /* jsx */ `
+        function Joined({ flag }) {
+          let value;
+          if (flag) value = import.meta.require;
+          else value = module.exports;
+          return <div>{typeof value}</div>;
+        }
+        module.exports = { Joined };
+      `,
+    },
+    loader: { ".cjs": "jsx" },
+    reactCompiler: true,
+    reactCompilerOutputMode: "client",
+    target: "node",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toContain("typeof __require");
+      expect(out).toContain("value = __require;");
+      expect(out).toContain("value = module.exports;");
+      expect(out).not.toContain("import.meta.require");
+    },
+  });
+
   itBundled("react-compiler/BranchBooleanFeatureFlagPreservesDCE", {
     files: {
       "/entry.jsx": /* jsx */ `

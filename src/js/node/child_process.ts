@@ -71,7 +71,8 @@ interface SpawnSyncResult {
 const kFromNode = Symbol("kFromNode");
 // Set on a stream that is passed as stdio to a spawn: the child reads it now.
 const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
-const setImmediateGlobal = globalThis.setImmediate;
+// Fake timers replace the global, and 'exit' must still fire.
+const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -1502,8 +1503,9 @@ class ChildProcess extends EventEmitter {
           }
 
           const onExit = (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err);
+          const stdio = this.#stdioObject;
           // After the other I/O of this poll, as libuv orders it: an extra pipe (index >= 3) then has what the child wrote.
-          if (this.#hasExtraPipe()) setImmediateGlobal(onExit, exitCode, signalCode, err);
+          if (hasExtraPipe(stdio, false)) setImmediate(exitAfterPoll, stdio, onExit, exitCode, signalCode, err);
           else process.nextTick(onExit, exitCode, signalCode, err);
         },
         lazy: true,
@@ -1684,16 +1686,6 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #hasExtraPipe() {
-    const stdio = this.#stdioObject;
-    if (stdio) {
-      for (let i = 3; i < stdio.length; i++) {
-        if (stdio[i]) return true;
-      }
-    }
-    return false;
-  }
-
   ref() {
     if (this.#handle) this.#handle.ref();
   }
@@ -1776,6 +1768,22 @@ class ChildProcess extends EventEmitter {
 // Node's flushStdio, for one stream. It runs on the tick after 'exit', so an 'exit' listener can still start to read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L297-L332
 function flushStdioPipe(pipe) {
   if (pipe.readable && !pipe[kIsUsedAsStdio]) pipe.resume();
+}
+
+function hasExtraPipe(stdio, readableOnly: boolean) {
+  if (stdio) {
+    for (let i = 3; i < stdio.length; i++) {
+      const pipe = stdio[i];
+      if (pipe && (!readableOnly || pipe.readable)) return true;
+    }
+  }
+  return false;
+}
+
+// Without a pidfd a thread reports the exit, ahead of the poll that reads the pipes: a pipe that has not ended gets one more turn of the loop.
+function exitAfterPoll(stdio, onExit, exitCode, signalCode, err) {
+  if (hasExtraPipe(stdio, true)) setImmediate(onExit, exitCode, signalCode, err);
+  else onExit(exitCode, signalCode, err);
 }
 
 const nodeToBunLookup = {

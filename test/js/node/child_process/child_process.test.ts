@@ -1329,10 +1329,10 @@ done
 // script runs as a process of its own: inside the test runner the exit
 // notification and the pipe reads arrive in a different order.
 describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
-  async function run(script: string) {
+  async function run(script: string, env = bunEnv) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1498,6 +1498,64 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
       });
     `);
     expect(result).toEqual({ stdout: '{"resumed":false}\n', stderr: "", exitCode: 0 });
+  });
+
+  // Two children: one with a pipe that nobody reads, one with a 'data' listener
+  // on it. The line is printed when the process exits, so a lost event is a
+  // wrong line and not a timeout.
+  const bothReaders = (beforeLoad: string, afterLoad: string) => /* js */ `
+    let calls = 0;
+    const fake = () => void calls++;
+    ${beforeLoad}
+    const { spawn } = require("node:child_process");
+    ${afterLoad}
+    const [file, args] =
+      process.platform === "win32"
+        ? [process.execPath, ["-e", "require('fs').writeSync(3, 'result')"]]
+        : ["/bin/sh", ["-c", "printf result >&3"]];
+    const watch = reads => {
+      const child = spawn(file, args, { stdio: ["ignore", "ignore", "inherit", "pipe"] });
+      const seen = [];
+      if (reads) child.stdio[3].on("data", chunk => seen.push("data " + chunk));
+      child.on("exit", code => seen.push("exit " + code));
+      child.on("close", code => seen.push("close " + code, "pipe closed " + child.stdio[3].destroyed));
+      return seen;
+    };
+    const unread = watch(false);
+    const read = watch(true);
+    process.on("exit", () => console.log(JSON.stringify({ unread, read, calls })));
+  `;
+  const bothReadersResult = {
+    stdout:
+      JSON.stringify({
+        unread: ["exit 0", "close 0", "pipe closed true"],
+        read: ["data result", "exit 0", "close 0", "pipe closed true"],
+        calls: 0,
+      }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  };
+
+  // A fake clock replaces the timer globals (mock.timers of node:test, sinon),
+  // and a program can delete them. 'exit' and 'close' are the runtime's own
+  // work and do not pass through them. Each row: what the program does before
+  // node:child_process is first loaded, and what it does after that. Serial,
+  // so that this block does not start more processes at once than it did.
+  describe.serial("the timer globals", () => {
+    it.each([
+      ["setImmediate replaced before the first load", "globalThis.setImmediate = fake;", ""],
+      ["setImmediate replaced after the load", "", "globalThis.setImmediate = fake;"],
+      ["setImmediate and clearTimeout deleted", "delete globalThis.setImmediate; delete globalThis.clearTimeout;", ""],
+    ])("'exit' and 'close' come with %s", async (_, beforeLoad, afterLoad) => {
+      expect(await run(bothReaders(beforeLoad, afterLoad))).toEqual(bothReadersResult);
+    });
+
+    // Without a pidfd (gVisor, seccomp, Linux before 5.3) a thread waits for
+    // the child and reports its exit ahead of the poll that reads the pipe.
+    it.skipIf(!isLinux)("'exit' comes after the bytes of the pipe when a waiter thread reports it", async () => {
+      const env = { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" };
+      expect(await run(bothReaders("", ""), env)).toEqual(bothReadersResult);
+    });
   });
 });
 

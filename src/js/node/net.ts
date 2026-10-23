@@ -24,6 +24,8 @@ const Duplex = require("internal/streams/duplex");
 const { isUint8Array } = require("node:util/types");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
+// Fake timers replace the global, and 'close' must still fire.
+const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
 let dns: typeof import("./dns").default;
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
@@ -2500,7 +2502,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   }
 
   // What closes with this socket clears its own.
-  clearTimeout(this[kTimeout]);
+  const timeout = this[kTimeout];
+  if (timeout) clearTimeout(timeout);
   const released = unadoptedTransport(this);
   if (released !== undefined && !this.resetAndClosing && this[kSessionAccepted] === true) releaseTransport(released);
 

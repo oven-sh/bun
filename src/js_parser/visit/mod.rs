@@ -257,7 +257,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if arg.ts_decorators.len_u32() > 0 {
                 // They run outside of the method, like those of the method.
                 let function_args = self.current_scope;
-                self.current_scope = function_args.parent.expect("infallible: in a class body");
+                self.current_scope = function_args
+                    .parent
+                    .expect("infallible: not the module scope");
                 let forbid_arguments = core::mem::take(&mut self.vis_scope().forbid_arguments);
                 self.visit_ts_decorators(&mut arg.ts_decorators);
                 self.vis_scope().forbid_arguments = forbid_arguments;
@@ -268,6 +270,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
+                if let (ExprData::EClass(class), BData::BIdentifier(id)) =
+                    (&default.data, arg.binding.data)
+                    && class.class_name.is_none()
+                {
+                    self.decorator_class_name = Some(self.load_name_from_ref(id.get().r#ref));
+                }
                 self.visit_expr(default);
             }
         }
@@ -350,13 +358,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Propagate name from binding to anonymous decorated class expressions
                 let prev_decorator_class_name = self.decorator_class_name;
                 if was_anonymous_named_expr {
-                    if let ExprData::EClass(e_class) = &val.data {
-                        if e_class.should_lower_standard_decorators {
-                            if let BData::BIdentifier(id) = decl.binding.data {
-                                let id = id.get();
-                                self.decorator_class_name = Some(self.load_name_from_ref(id.r#ref));
-                            }
-                        }
+                    if let (ExprData::EClass(_), BData::BIdentifier(id)) =
+                        (&val.data, decl.binding.data)
+                    {
+                        self.decorator_class_name = Some(self.load_name_from_ref(id.get().r#ref));
                     }
                 }
                 if self.react_compiler.is_some()
@@ -868,14 +873,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let was_anonymous_named_expr = default_value.is_anonymous_named();
                         let prev_decorator_class_name2 = self.decorator_class_name;
                         if was_anonymous_named_expr {
-                            if let ExprData::EClass(e_class) = &default_value.data {
-                                if e_class.should_lower_standard_decorators {
-                                    if let BData::BIdentifier(id) = item.binding.data {
-                                        let id = id.get();
-                                        self.decorator_class_name =
-                                            Some(self.load_name_from_ref(id.r#ref));
-                                    }
-                                }
+                            if let (ExprData::EClass(_), BData::BIdentifier(id)) =
+                                (&default_value.data, item.binding.data)
+                            {
+                                self.decorator_class_name =
+                                    Some(self.load_name_from_ref(id.get().r#ref));
                             }
                         }
                         self.visit_expr(item.default_value.as_mut().unwrap());
@@ -907,14 +909,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let was_anonymous_named_expr = default_value.is_anonymous_named();
                         let prev_decorator_class_name3 = self.decorator_class_name;
                         if was_anonymous_named_expr {
-                            if let ExprData::EClass(e_class) = &default_value.data {
-                                if e_class.should_lower_standard_decorators {
-                                    if let BData::BIdentifier(id) = property.value.data {
-                                        let id = id.get();
-                                        self.decorator_class_name =
-                                            Some(self.load_name_from_ref(id.r#ref));
-                                    }
-                                }
+                            if let (ExprData::EClass(_), BData::BIdentifier(id)) =
+                                (&default_value.data, property.value.data)
+                            {
+                                self.decorator_class_name =
+                                    Some(self.load_name_from_ref(id.get().r#ref));
                             }
                         }
                         self.visit_expr(property.default_value.as_mut().unwrap());
@@ -1009,7 +1008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class: &mut G::Class,
         default_name_ref: Ref,
         is_expr: bool,
-    ) -> Ref {
+    ) -> Option<Expr> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -1041,7 +1040,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // With lowered class decorators the body reads the class through
         // `inner_class_ref`, which the lowering sets to what the decorators
         // return (the spec initializes the inner binding with that class).
-        let mut shadow_ref = if let Some(name) = class.class_name {
+        let shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
@@ -1090,6 +1089,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.visit_expr(extends);
         }
 
+        let mut before_class = None;
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
@@ -1229,7 +1229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                self.lower_class_fields(class, is_expr);
+                before_class = self.lower_class_fields(class);
             }
 
             // manual restore for the block-level `defer`
@@ -1237,12 +1237,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.enclosing_class_keyword = old_enclosing_class_keyword;
         }
 
-        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate == 0 {
-            // If there was originally no class name but something inside needed one
-            // (e.g. there was a static property initializer that referenced "this"),
-            // store our generated name so the class expression ends up with a name.
-            shadow_ref = Ref::NONE;
-        } else if class.class_name.is_none() {
+        // Something inside needed a name, e.g. a static property initializer that referenced "this".
+        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate > 0
+            && class.class_name.is_none()
+        {
             class.class_name = Some(LocRef {
                 ref_: shadow_ref,
                 loc: name_scope_loc,
@@ -1264,7 +1262,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.decorators_use_private_name = self.decorators_use_private_name;
         self.decorators_use_private_name = outer_decorators_use_private_name;
 
-        shadow_ref
+        before_class
     }
 
     // Try separating the list for appending, so that it's not a pointer.

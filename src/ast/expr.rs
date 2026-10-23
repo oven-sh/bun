@@ -1509,14 +1509,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_binary_mut(&mut self) -> Option<&mut E::Binary> {
-        if let Data::EBinary(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_class(&self) -> Option<StoreRef<E::Class>> {
         if let Data::EClass(v) = *self {
             Some(v)
@@ -1560,14 +1552,6 @@ impl Data {
     pub fn e_dot(&self) -> Option<StoreRef<E::Dot>> {
         if let Data::EDot(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_dot_mut(&mut self) -> Option<&mut E::Dot> {
-        if let Data::EDot(v) = self {
-            Some(&mut **v)
         } else {
             None
         }

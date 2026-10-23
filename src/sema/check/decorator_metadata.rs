@@ -1,7 +1,4 @@
-//! What a compiler asks the checker to emit the `design:*` values of `emitDecoratorMetadata`.
-//!
-//! Mirrors `GetTypeReferenceSerializationKind` in TypeScript 7.0.2's emitresolver.go, and the test that
-//! `markEntityNameOrEntityExpressionAsReference` in checker.go makes before `markAliasSymbolAsReferenced`.
+//! For `emitDecoratorMetadata`: `GetTypeReferenceSerializationKind`, and whether a type reference keeps its import.
 
 use super::symbols::AliasTarget;
 use super::*;

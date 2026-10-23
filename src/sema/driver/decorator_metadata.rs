@@ -1,7 +1,4 @@
-//! Answers the transpiler's questions about the types in decorated signatures, for `emitDecoratorMetadata`.
-//!
-//! The transpiler sees one file at a time, so the program is that file alone, with the options of TypeScript's
-//! `transpileModule`: no libraries, and no import resolves.
+//! Checks the types in decorated signatures for the transpiler, which has one file: no libraries, no import resolves.
 
 use bun_ast::Loc;
 use bun_ast::ts::{CheckedTypeReference, TypeReferenceKind};
@@ -73,8 +70,7 @@ impl Host for OneFile<'_> {
     }
 }
 
-/// Declared in `bun_js_parser`, which this crate's dependencies would otherwise have to wait for.
-/// Returns the type references in the signatures of decorated classes, sorted by position.
+/// The type references in the signatures of decorated classes, sorted by position. For `bun_js_parser`.
 #[unsafe(no_mangle)]
 pub fn __bun_check_decorator_metadata(
     text: &[u8],
@@ -115,15 +111,15 @@ pub fn __bun_check_decorator_metadata(
                 TypeReferenceKind::TypeWithConstructSignatureAndValue
             }
             Kind::VoidNullableOrNeverType => TypeReferenceKind::VoidNullableOrNever,
-            Kind::NumberLikeType => TypeReferenceKind::NumberLike,
-            Kind::BigIntLikeType => TypeReferenceKind::BigIntLike,
-            Kind::StringLikeType => TypeReferenceKind::StringLike,
-            Kind::BooleanType => TypeReferenceKind::Boolean,
-            Kind::ArrayLikeType => TypeReferenceKind::ArrayLike,
-            Kind::ESSymbolType => TypeReferenceKind::ESSymbol,
-            Kind::Promise => TypeReferenceKind::Promise,
-            Kind::TypeWithCallSignature => TypeReferenceKind::TypeWithCallSignature,
-            Kind::ObjectType => TypeReferenceKind::Object,
+            Kind::NumberLikeType => TypeReferenceKind::Global(b"Number"),
+            Kind::BigIntLikeType => TypeReferenceKind::Global(b"BigInt"),
+            Kind::StringLikeType => TypeReferenceKind::Global(b"String"),
+            Kind::BooleanType => TypeReferenceKind::Global(b"Boolean"),
+            Kind::ArrayLikeType => TypeReferenceKind::Global(b"Array"),
+            Kind::ESSymbolType => TypeReferenceKind::Global(b"Symbol"),
+            Kind::Promise => TypeReferenceKind::Global(b"Promise"),
+            Kind::TypeWithCallSignature => TypeReferenceKind::Global(b"Function"),
+            Kind::ObjectType => TypeReferenceKind::Global(b"Object"),
         },
         keeps_import: it.marks_alias_as_referenced,
     });

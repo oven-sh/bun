@@ -1,11 +1,12 @@
-//! What TypeScript adds to classes: parameter properties, `useDefineForClassFields: false` and
-//! `experimentalDecorators`. The output runs like that of the TypeScript compiler for `target: "esnext"`.
+//! Parameter properties, `useDefineForClassFields: false` and `experimentalDecorators`, as TypeScript compiles them.
 
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt as _;
 
 use crate::lower::decorator_metadata::{AccessorPair, accessor_pair};
-use crate::lower::lower_decorators::insert_after_super;
+use crate::lower::lower_decorators::{
+    has_super_statement, insert_after_super, is_constant_key, is_constructor,
+};
 use crate::p::P;
 use crate::parser::{Ref, TempRef};
 use bun_ast::g::PropertyKind;
@@ -14,19 +15,18 @@ use bun_ast::{self as js_ast, E, Expr, ExprNodeList, Flags, G, S, Stmt, StoreRef
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
 /// Block scoped, so that a class evaluated in a loop gets its own. Its constructor and methods read them later.
-const CLASS_TEMPS: js_ast::s::Kind = js_ast::s::Kind::KLet;
+const CLASS_TEMP_KIND: js_ast::s::Kind = js_ast::s::Kind::KLet;
 
 /// The function of `constructor() {}`, if `prop` is that.
 fn constructor_function(prop: &G::Property) -> Option<StoreRef<E::Function>> {
-    let is_constructor = prop.kind == PropertyKind::Normal
-        && prop.flags.contains(Flags::Property::IsMethod)
-        && !prop.flags.contains(Flags::Property::IsComputed)
-        && !prop.flags.contains(Flags::Property::IsStatic)
-        && matches!(prop.key, Some(key) if matches!(key.data, js_ast::ExprData::EString(name) if name.eql_comptime(b"constructor")));
-    if !is_constructor {
-        return None;
-    }
-    prop.value.and_then(|value| value.data.e_function())
+    let value = prop.value.filter(|_| is_constructor(prop))?;
+    value.data.e_function()
+}
+
+/// True if the class evaluates the key of `prop`. `lower_class` removes a field that is there for its decorators.
+fn has_evaluated_key(prop: &G::Property) -> bool {
+    prop.flags.contains(Flags::Property::IsComputed)
+        && !matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
 }
 
 /// True if `experimentalDecorators` assigns to the name of `class` what its decorators return.
@@ -42,14 +42,6 @@ pub(crate) fn has_experimental_class_decorators(class: &G::Class) -> bool {
         || (class.properties.iter())
             .filter_map(constructor_function)
             .any(has_decorated_parameter)
-}
-
-/// True if evaluating `key` again gives the same property key and does nothing else.
-fn is_constant_key(key: &Expr) -> bool {
-    matches!(
-        key.data,
-        js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
-    )
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -77,13 +69,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Turns parameter properties into fields. With `useDefineForClassFields: false`, also turns `x = 1` into
-    /// `this.x = 1`, in the constructor or in a static block where the field was, and removes `x;`.
-    ///
-    /// Runs in the scope of the class body, once the class is visited. A field with decorators stays, without its
-    /// initializer, for `lower_class` to remove. `lower_class` or `declare_class_expr_temps` declares what this adds
-    /// to `temp_refs_to_declare`.
-    pub(crate) fn lower_class_fields(&mut self, class: &mut G::Class, is_expr: bool) {
+    /// With `useDefineForClassFields: false`, `x = 1` becomes `this.x = 1`. Returns what to evaluate before the class.
+    pub(crate) fn lower_class_fields(&mut self, class: &mut G::Class) -> Option<Expr> {
         // Standard decorator lowering wraps field initializers where they are.
         let use_define =
             self.options.use_define_for_class_fields || class.should_lower_standard_decorators;
@@ -101,8 +88,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !args.iter().any(is_parameter_property)
             && (use_define || !class.properties.iter().any(is_field))
         {
-            return;
+            return None;
         }
+        // Without a `super()` statement to follow, the constructor has no place for them.
+        let keeps_instance_fields = class.extends.is_some()
+            && constructor.is_some_and(|it| !has_super_statement(it.func.body.stmts.slice()));
 
         let loc = class.body_loc;
         let mut properties = BumpVec::<G::Property>::with_capacity_in(
@@ -146,10 +136,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // The keys of the fields that are gone, to evaluate where the next key is. A constructor runs later than
-        // that and more than once, so it reads its keys from variables.
+        // The keys of the fields that are gone. The constructor runs later and more than once, so it reads variables.
         let mut keys = BumpVec::<Expr>::new_in(self.arena);
-        let first_member = properties.len();
 
         for slot in class.properties.slice_mut().iter_mut() {
             let mut prop = core::mem::take(slot);
@@ -159,8 +147,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 prop.key.map(|key| key.data),
                 Some(js_ast::ExprData::EPrivateIdentifier(_))
             );
-            if use_define || !is_field(&prop) || (is_private && is_static) {
-                if let Some(key) = prop.key.filter(|_| is_computed && !keys.is_empty()) {
+            let stays = if is_static {
+                is_private
+            } else {
+                keeps_instance_fields
+            };
+            if use_define || !is_field(&prop) || stays {
+                if let Some(key) = prop
+                    .key
+                    .filter(|_| has_evaluated_key(&prop) && !keys.is_empty())
+                {
                     keys.push(key);
                     prop.key = Some(Expr::join_all_with_comma(&keys));
                     keys.clear();
@@ -170,7 +166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let key = prop.key.expect("infallible: a field has a key");
-            let is_decorated = !is_expr && prop.ts_decorators.len_u32() > 0;
+            let is_decorated = !is_private && prop.ts_decorators.len_u32() > 0;
             let initializer = prop.initializer.take();
             let mut key_ref = None;
             if is_computed && !is_constant_key(&key) {
@@ -194,16 +190,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     in_constructor.push(assign);
                 }
             }
+            if is_decorated {
+                prop.kind = PropertyKind::Declare;
+                prop.key = Some(key_ref.map_or(key, |temp| self.use_ref(temp, key.loc)));
+            }
             // "#x;" declares the name.
             if is_private || is_decorated {
-                prop.key = Some(key_ref.map_or(key, |temp| self.use_ref(temp, key.loc)));
                 properties.push(prop);
             }
         }
 
-        // No key is left to evaluate them with. Static blocks run after every key, in order.
+        // `this` and `await` in a key are those around the class, so only what the class evaluates there can host it.
+        let mut before_class = None;
         if !keys.is_empty() {
-            properties.insert(first_member, self.make_static_block(&keys, loc));
+            let last_key = (properties.iter_mut().rev())
+                .find(|prop| has_evaluated_key(prop))
+                .and_then(|prop| prop.key.as_mut());
+            if let Some(host) = last_key.or(class.extends.as_mut()) {
+                let temp = self.declared_temp(b"_a");
+                keys.insert(0, self.assign_to(temp, *host, host.loc));
+                keys.push(self.use_ref(temp, host.loc));
+                *host = Expr::join_all_with_comma(&keys);
+            } else {
+                before_class = Some(Expr::join_all_with_comma(&keys));
+            }
         }
 
         if !in_constructor.is_empty() {
@@ -219,33 +229,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         class.properties = bun_ast::StoreSlice::from_bump(properties);
+        before_class
     }
 
-    /// Declares the temporaries of the class expression `expr`: those past `temps_before`, which is how many there
-    /// were before the visit pass got to it. Returns what to replace it with.
-    pub(crate) fn declare_class_expr_temps(&mut self, expr: Expr, temps_before: usize) -> Expr {
-        if self.temp_refs_to_declare.len() == temps_before {
-            return expr;
+    /// What replaces the class expression `expr`, for which `lower_class_fields` returned `before_class`.
+    pub(crate) fn lower_class_expr(
+        &mut self,
+        expr: Expr,
+        before_class: Option<Expr>,
+        name_from_context: Option<&'a [u8]>,
+    ) -> Expr {
+        let needs_own_bindings =
+            !self.temp_refs_to_declare.is_empty() && self.is_param_default_or_field_initializer();
+        let mut class = expr.data.e_class().expect("infallible: a class expression");
+        // Only the class expression itself would get the name of what it is assigned to.
+        if let Some(name) = name_from_context
+            && class.class_name.is_none()
+            && (before_class.is_some() || needs_own_bindings)
+        {
+            let this = self.new_expr(E::This {}, expr.loc);
+            let name = self.new_expr(E::EString::init(name), expr.loc);
+            let set_name = self.call_rt(expr.loc, b"__name", &[this, name]);
+            let mut properties =
+                BumpVec::<G::Property>::with_capacity_in(class.properties.len() + 1, self.arena);
+            properties.push(self.make_static_block(&[set_name], expr.loc));
+            properties.extend(class.properties.slice_mut().iter_mut().map(core::mem::take));
+            class.properties = bun_ast::StoreSlice::from_bump(properties);
         }
-        if self.is_param_default_or_field_initializer() {
+        let value = before_class.map_or(expr, |keys| Expr::join_with_comma(keys, expr));
+
+        if needs_own_bindings {
             let mut temps = BumpVec::<Ref>::new_in(self.arena);
-            temps.extend(
-                self.temp_refs_to_declare
-                    .drain(temps_before..)
-                    .map(|it| it.r#ref),
-            );
-            return self.with_own_bindings(expr, &temps);
+            temps.extend(self.temp_refs_to_declare.drain(..).map(|it| it.r#ref));
+            return self.with_own_bindings(value, &temps);
         }
-        let temps = self.drain_capture_temp_decls(temps_before, CLASS_TEMPS, expr.loc);
+        let temps = self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, expr.loc);
         if let Some(stmts) = self.nearest_stmt_list_mut() {
             stmts.extend(temps);
         }
-        expr
+        value
     }
 
-    /// Applies the decorators of a class statement. Returns the statements to replace it with, which declare its
-    /// temporaries: those past `temps_before`, which is how many there were before the visit pass got to it.
-    pub(crate) fn lower_class(&mut self, stmt: Stmt, temps_before: usize) -> &'a mut [Stmt] {
+    /// What replaces the class statement `stmt`, for which `lower_class_fields` returned `before_class`.
+    pub(crate) fn lower_class(&mut self, stmt: Stmt, before_class: Option<Expr>) -> &'a mut [Stmt] {
         let mut s_class: StoreRef<S::Class> = stmt.data.s_class().unwrap();
         let mut stmts = BumpVec::<Stmt>::new_in(self.arena);
 
@@ -253,13 +279,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lower_standard_decorators_stmt(stmt, &mut stmts);
             return stmts.into_bump_slice_mut();
         }
+        stmts.extend(before_class.map(|keys| self.expr_stmt(keys, stmt.loc)));
         if !s_class.class.has_decorators {
-            stmts.extend(self.drain_capture_temp_decls(temps_before, CLASS_TEMPS, stmt.loc));
             stmts.push(stmt);
+            if let Some(temps) = self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, stmt.loc) {
+                stmts.insert(0, temps);
+            }
             return stmts.into_bump_slice_mut();
         }
 
-        let use_define = self.options.use_define_for_class_fields;
         let emit_metadata = self.options.features.emit_decorator_metadata;
         let class_name = s_class.class.class_name.unwrap();
         let body_loc = s_class.class.body_loc;
@@ -297,17 +325,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(func) = function {
-                if is_accessor && emit_metadata {
-                    if !decorators.is_empty() {
-                        self.keep_imports_of_accessor(prop.kind, accessors);
-                    }
-                    if (func.func.args.iter()).any(|arg| arg.ts_decorators.len_u32() > 0) {
-                        self.keep_imports_of_signature(&func.func);
-                    }
+                if is_accessor
+                    && emit_metadata
+                    && (func.func.args.iter()).any(|arg| arg.ts_decorators.len_u32() > 0)
+                {
+                    self.keep_imports_of_signature(&func.func);
                 }
 
-                // The decorators of a setter's parameter belong to the first accessor of the pair that has
-                // decorators. In TypeScript no other one can have them.
+                // TypeScript allows decorators on one accessor of a pair, which also gets those of the setter's parameter.
                 let parameters_of = if !is_accessor {
                     Some(func)
                 } else if accessors.is_first_with_decorators {
@@ -319,11 +344,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for (i, arg) in args.iter().enumerate() {
                     for arg_decorator in arg.ts_decorators.slice() {
                         let index = self.new_expr(E::Number::new(i as f64), arg_decorator.loc);
-                        let args = self.arena.alloc_slice_copy(&[index, *arg_decorator]);
-                        let call = self.call_runtime(
+                        let call = self.call_rt(
                             arg_decorator.loc,
                             b"__legacyDecorateParamTS",
-                            ExprNodeList::from_arena_slice(args),
+                            &[index, *arg_decorator],
                         );
                         if is_constructor {
                             s_class.class.ts_decorators.push(call);
@@ -334,15 +358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // `lower_class_fields` left the field for its decorators.
-            let is_removed = matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
-                || (!use_define
-                    && prop.kind == PropertyKind::Normal
-                    && !is_method
-                    && !matches!(
-                        prop.key.map(|key| key.data),
-                        Some(js_ast::ExprData::EPrivateIdentifier(_))
-                    ));
+            let is_removed = matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract);
 
             if !decorators.is_empty() {
                 let mut key = prop.key.expect("infallible: prop has key");
@@ -379,7 +395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if emit_metadata {
                     match function {
                         Some(_) if is_accessor => {
-                            self.push_accessor_metadata(loc, accessors, &mut decorators);
+                            self.push_accessor_metadata(loc, prop.kind, accessors, &mut decorators);
                         }
                         Some(method) => {
                             self.push_method_metadata(loc, &method.func, &mut decorators);
@@ -398,13 +414,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
-                let args = self
-                    .arena
-                    .alloc_slice_copy(&[array, target, key, descriptor]);
-                let call = self.call_runtime(
+                let call = self.call_rt(
                     loc,
                     b"__legacyDecorateClassTS",
-                    ExprNodeList::from_arena_slice(args),
+                    &[array, target, key, descriptor],
                 );
                 if is_static {
                     static_decorators.push(call);
@@ -444,9 +457,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if s_class.class.ts_decorators.len_u32() > 0 {
             let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
-            if emit_metadata {
-                let constructor = constructor.as_ref().map(|it| &it.func);
-                self.push_class_metadata(stmt.loc, constructor, &mut array);
+            if let Some(constructor) = constructor.filter(|_| emit_metadata) {
+                self.push_class_metadata(stmt.loc, &constructor.func, &mut array);
             }
             let array = self.new_expr(
                 E::Array {
@@ -456,12 +468,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmt.loc,
             );
             let class = self.use_ref(class_name.ref_, class_name.loc);
-            let args = self.arena.alloc_slice_copy(&[array, class]);
-            let mut decorated = self.call_runtime(
-                stmt.loc,
-                b"__legacyDecorateClassTS",
-                ExprNodeList::from_arena_slice(args),
-            );
+            let mut decorated = self.call_rt(stmt.loc, b"__legacyDecorateClassTS", &[array, class]);
             if inner_class_ref.is_symbol() {
                 decorated = self.assign_to(inner_class_ref, decorated, stmt.loc);
             }
@@ -469,7 +476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.push(self.expr_stmt(rebind, stmt.loc));
         }
 
-        if let Some(temps) = self.drain_capture_temp_decls(temps_before, CLASS_TEMPS, stmt.loc) {
+        if let Some(temps) = self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, stmt.loc) {
             stmts.insert(0, temps);
         }
         stmts.into_bump_slice_mut()

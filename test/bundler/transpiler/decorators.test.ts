@@ -963,20 +963,40 @@ test("lowering many decorated instance fields into a large constructor body stay
   expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);
 
-test.concurrent("options of a tsconfig.json that extends another", async () => {
+test.concurrent.each([
+  {
+    base: { target: "es2022", useDefineForClassFields: true },
+    middle: { experimentalDecorators: true },
+    last: { useDefineForClassFields: false },
+    stdout: "Object\nlegacy\n[]\n",
+  },
+  {
+    base: { target: "es2021", strict: false, experimentalDecorators: true },
+    middle: {},
+    last: {},
+    stdout: "String\nlegacy\n[]\n",
+  },
+  {
+    base: { target: "es2021", strictNullChecks: false, experimentalDecorators: true },
+    middle: { target: "es2022", strict: true },
+    last: { target: "not a target" },
+    stdout: 'String\nlegacy\n[ "x" ]\n',
+  },
+])("options of a tsconfig.json that extends another, %#", async ({ base, middle, last, stdout }) => {
   using dir = tempDir("decorators-extends", {
-    "base.json": `{ "compilerOptions": { "target": "es2022", "useDefineForClassFields": true } }`,
-    "middle.json": `{ "extends": "./base.json", "compilerOptions": { "experimentalDecorators": true } }`,
-    "tsconfig.json": `{ "extends": "./middle.json", "compilerOptions": { "useDefineForClassFields": false } }`,
+    "base.json": JSON.stringify({ compilerOptions: { emitDecoratorMetadata: true, ...base } }),
+    "middle.json": JSON.stringify({ extends: "./base.json", compilerOptions: middle }),
+    "tsconfig.json": JSON.stringify({ extends: "./middle.json", compilerOptions: last }),
     "index.ts": `
-      const d = (...args: any[]) => console.log(args.length, typeof args[1]);
-      class A { @d m() {} x?: number; }
+      (Reflect as any).metadata = (key: string, value: any) => () => console.log(value.name);
+      const d = (...args: any[]) => console.log(typeof args[1] === "string" ? "legacy" : "standard");
+      class A { @d x?: string | null; }
       console.log(Object.keys(new A()));
     `,
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "index.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3 string\n[]\n", stderr: "", exitCode: 0 });
+  const [out, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: out, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
 });
 
 test.concurrent.skipIf(!canCompareWithTypeScript).each([false, true])(

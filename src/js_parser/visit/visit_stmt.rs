@@ -464,14 +464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Propagate `"default"` as the class name for anonymous decorated
                 // class expressions so standard-decorator lowering sees it.
                 let prev_decorator_class_name = p.decorator_class_name;
-                if was_anonymous_named_expr
-                    && matches!(expr.data, js_ast::ExprData::EClass(_))
-                    && expr
-                        .data
-                        .e_class()
-                        .expect("infallible: variant checked")
-                        .should_lower_standard_decorators
-                {
+                if was_anonymous_named_expr && matches!(expr.data, js_ast::ExprData::EClass(_)) {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
                 if p.react_compiler.is_some()
@@ -854,8 +847,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let temps_before = p.temp_refs_to_declare.len();
-                        let _ =
+                        let before_class =
                             p.visit_class(s2_loc, &mut class.class, data.default_name.ref_, false);
 
                         if p.is_control_flow_dead {
@@ -912,7 +904,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
                         // (variable declarations) before the class statement.
-                        let class_stmts = p.lower_class(s2_copy, temps_before);
+                        let class_stmts = p.lower_class(s2_copy, before_class);
 
                         // Find the s_class statement in the returned list
                         let mut class_stmt_idx: usize = 0;
@@ -1148,8 +1140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.in_deleted_export = true;
         }
 
-        let temps_before = p.temp_refs_to_declare.len();
-        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
+        let before_class = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
         p.in_deleted_export = original_in_deleted;
 
         // Remove the export flag inside a namespace
@@ -1159,7 +1150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Lower class field syntax for browsers that don't support it
-        let lowered = p.lower_class(*stmt, temps_before);
+        let lowered = p.lower_class(*stmt, before_class);
 
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it

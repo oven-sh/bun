@@ -1,5 +1,6 @@
 // Runs `<root>/<n>/main.<extension>` for each `n` in the arguments and prints what each logged, as JSON.
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const [root, extension, ...numbers] = process.argv.slice(2);
 
@@ -35,7 +36,7 @@ const all = [];
 for (const n of numbers) {
   lines = [];
   try {
-    await import(join(root, n, `main.${extension}`));
+    await import(pathToFileURL(join(root, n, `main.${extension}`)).href);
   } catch (error) {
     // The message depends on the engine.
     lines.push(`throws ${error?.name}`);

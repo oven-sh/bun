@@ -1,5 +1,4 @@
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
 
 use crate::js_lexer;
 use crate::js_lexer::T;
@@ -186,7 +185,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Await and yield are not allowed in function arguments
         // `FnOrArrowDataParse` is `Clone`, so save/restore is a clone.
-        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+        let mut old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse.allow_await = if opts.allow_await == AwaitOrYield::AllowExpr {
             AwaitOrYield::ForbidAll
@@ -229,15 +228,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.allow_ts_decorators && p.lexer.token == T::TAt {
                 // They run outside of the method, like those of the method.
                 let function_args = p.current_scope;
-                p.current_scope = function_args.parent.expect("infallible: in a class body");
-                let fn_or_arrow_data =
-                    core::mem::replace(&mut p.fn_or_arrow_data_parse, old_fn_or_arrow_data.clone());
+                p.current_scope = function_args
+                    .parent
+                    .expect("infallible: not the module scope");
+                core::mem::swap(&mut p.fn_or_arrow_data_parse, &mut old_fn_or_arrow_data);
                 ts_decorators = p.parse_type_script_decorators()?;
-                p.fn_or_arrow_data_parse = fn_or_arrow_data;
+                core::mem::swap(&mut p.fn_or_arrow_data_parse, &mut old_fn_or_arrow_data);
                 p.current_scope = function_args;
-                if ts_decorators.len_u32() > 0 {
-                    arg_has_decorators = true;
-                }
+                arg_has_decorators = true;
             }
 
             if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TDotDotDot {
@@ -290,8 +288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "function foo(a: any) {}"
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
-                    // A decorator on a later parameter, or on the other accessor of a pair,
-                    // describes this parameter too.
+                    // A decorator on a later parameter or on the other accessor describes this one too.
                     if p.options.features.emit_decorator_metadata && opts.allow_ts_decorators {
                         ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
                     } else {

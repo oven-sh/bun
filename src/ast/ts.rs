@@ -148,10 +148,7 @@ impl Data {
 
 // ── TypeScript::Metadata ───────────────────────────────────────────────────
 
-/// The type annotation of a class member, of a parameter or of a return value, for
-/// `emitDecoratorMetadata`. It keeps the shapes that TypeScript's `serializeTypeNode`,
-/// `getEntityNameForDecoratorMetadata` and `GetRestParameterElementType` tell apart. Every other
-/// type is `MObject`.
+/// A type annotation, as far as `emitDecoratorMetadata` tells types apart. Every other type is `MObject`.
 #[derive(Clone, Copy, Default)]
 pub enum Metadata {
     /// There is no annotation.
@@ -219,24 +216,16 @@ impl Metadata {
     }
 }
 
-/// TypeScript's `TypeReferenceSerializationKind`: what its type checker says about a type reference in a
-/// decorated signature.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// What `serializeTypeReferenceNode` emits for each group of TypeScript's `TypeReferenceSerializationKind`.
+#[derive(Clone, Copy)]
 pub enum TypeReferenceKind {
     /// The name may or may not be a value when the code runs.
     Unknown,
     /// The name is a class, or a variable that can be constructed.
     TypeWithConstructSignatureAndValue,
     VoidNullableOrNever,
-    NumberLike,
-    BigIntLike,
-    StringLike,
-    Boolean,
-    ArrayLike,
-    ESSymbol,
-    Promise,
-    TypeWithCallSignature,
-    Object,
+    /// `Number` for `NumberLikeType`
+    Global(&'static [u8]),
 }
 
 /// The type checker's answer for one type reference.

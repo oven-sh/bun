@@ -2937,7 +2937,13 @@ declare module "bun" {
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
+      /** `false` by default if `target` is older than ES2022 */
       useDefineForClassFields?: boolean;
+      target?: string;
+      experimentalDecorators?: boolean;
+      emitDecoratorMetadata?: boolean;
+      strict?: boolean;
+      strictNullChecks?: boolean;
       importsNotUsedAsValues?: "remove" | "preserve" | "error";
       /** moduleSuffixes is not supported yet */
       moduleSuffixes?: any;

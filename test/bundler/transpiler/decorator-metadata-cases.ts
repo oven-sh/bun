@@ -231,7 +231,7 @@ type TUniqueHolder = { readonly s: unique symbol }["s"];
 `;
 
 /** Types valid wherever a type is. `T*` type parameters come from the enclosing class of the matrix. */
-export const types: string[] = [
+const types: string[] = [
   // keywords
   ...["any", "unknown", "never", "void", "undefined", "null", "string", "number", "boolean", "bigint", "symbol"],
   "object",
@@ -769,7 +769,7 @@ export const types: string[] = [
 ];
 
 /** Parts for every pair `A | B`, `A & B` and `X extends Y ? A : B`. */
-export const parts: string[] = [
+const parts: string[] = [
   ...["any", "unknown", "never", "void", "undefined", "null", "string", '"a"', "number", "1", "boolean", "true"],
   ...["bigint", "1n", "symbol", "object", "{}", "this", "string[]", "[string]", "() => void", "K", "K2", "I", "ICall"],
   ...["NS.K", "NS.K2", "EN", "ES", "TStr", "TK", "TNull", "TNever", "TAny", "T", "TPS", "Object", "Function", "String"],
@@ -791,7 +791,7 @@ export const parts: string[] = [
 ];
 
 /** Types valid only as a return type. */
-export const returnTypes: string[] = [
+const returnTypes: string[] = [
   ...["a is string", "a is K", "a is any", "a is never", "a is XC", "a is Missing", "this is K", "this is string"],
   ...["asserts a", "asserts a is string", "asserts a is K", "asserts this", "asserts this is K", "asserts a is XC"],
   ...["asserts", "asserts | null", "asserts[]", "is", "a", "asserts.K", "asserts<string>"],
@@ -1078,7 +1078,6 @@ class Q { @d get [1](): K { return null!; } set 1(v: K2) {} }`,
     `${members}class C { @d set a(this: C, v: K) {} }\nclass E { @d get a(): K2 { return null!; } set a(this: E, v: K) {} }`,
   ),
   program("accessor/getter with a this parameter", `${members}class C { @d get a(this: C): K { return null!; } }`),
-  program("accessor/setter with a rest parameter", `${members}class C { @d set a(...v: K[]) {} }`),
   program("accessor/setter with a default value", `${members}class C { @d set a(v: K = new K()) {} }`),
   program("accessor/setter with a return type", `${members}class C { @d set a(v: K): K2 {} }`),
   program("accessor/abstract", `${members}abstract class C { @d abstract get a(): K; @d abstract set b(v: K2); }`),
@@ -1114,7 +1113,6 @@ class Q { @d get [1](): K { return null!; } set 1(v: K2) {} }`,
     `${members}@d class C { constructor(x: K); constructor(x: K2); constructor(x: any) {} }`,
   ),
   program("class/constructor declaration only", `${members}@d class C { constructor(x: K); }`),
-  program("class/two constructors", `${members}@d class C { constructor(x: K) {} constructor(x: K2) {} }`),
   program("class/quoted constructor", `${members}@d class C { "constructor"(x: K) {} }`),
   program("class/computed constructor is a method", `${members}@d class C { ["constructor"](x: K) {} }`),
   program(

@@ -10,8 +10,8 @@ function lowering(name: string, main: string, others?: Record<string, string>): 
   }));
 }
 
-/** `expected` is for each value of `useDefineForClassFields` that TypeScript gets wrong. */
-function wrongInTypeScript([define, assign]: Case[], expected: { define?: string[]; assign?: string[] }): Case[] {
+/** What the cases of `lowering` have to log, for each value of `useDefineForClassFields` that TypeScript gets wrong. */
+function expecting([define, assign]: Case[], expected: { define?: string[]; assign?: string[] }): Case[] {
   return [
     { ...define, expected: expected.define },
     { ...assign, expected: expected.assign },
@@ -238,7 +238,7 @@ show(Object.keys(new A()));`,
 const a = new A();
 show(a.f.name, a.g.name, a.h.name, a.k.name, A.s.name, A.t.name);`,
   ),
-  ...wrongInTypeScript(
+  ...expecting(
     lowering(
       "constructor parameter named like a variable of an initializer",
       `const v = "outer";
@@ -247,7 +247,7 @@ show(new A("parameter").x);`,
     ),
     { assign: [`"parameter"`, `"outer"`] },
   ),
-  ...wrongInTypeScript(
+  ...expecting(
     lowering(
       "variable of the constructor named like a variable of an initializer",
       `const v = "outer";
@@ -304,16 +304,18 @@ show(new A().all);`,
 show(Object.entries(new A()).join(";"));`,
   ),
   ...lowering(
-    "field named constructor or prototype in quotes",
-    `class A { @d static "name" = "n"; @d "__proto__" = 1; @d static "length" = 5; }
-show(A.name, A.length, Object.keys(new A()));`,
+    "fields in quotes named like built-in properties",
+    `try { class A { @d static "name" = "n"; } show(A.name); } catch (e: any) { log(e.name); }
+try { class A { @d static "length" = 5; } show(A.length); } catch (e: any) { log(e.name); }
+class B { @d "__proto__" = 1; }
+show(Object.keys(new B()), Object.getPrototypeOf(new B()) === B.prototype);`,
   ),
   ...lowering(
     "declare fields",
     `class A { @d declare a: number; declare c: number; @d f?: number; @d static declare s: number; }
 show(Object.keys(new A()), "s" in A);`,
   ),
-  ...wrongInTypeScript(
+  ...expecting(
     lowering(
       "abstract fields",
       `const seen = (target: any, key: string) => void show(key);
@@ -374,8 +376,8 @@ class A { @seen static a = 1; @seen static b?: number; @seen c = 2; @seen m() {}
   ),
   ...lowering(
     "static fields named like those of a function",
-    `class A { @d static name = "n"; static length = 2; }
-show(A.name, A.length, Object.getOwnPropertyDescriptor(A, "name")?.writable);`,
+    `try { class A { @d static name = "n"; } show(A.name, Object.getOwnPropertyDescriptor(A, "name")?.writable); } catch (e: any) { log(e.name); }
+try { class A { static length = 2; } show(A.length); } catch (e: any) { log(e.name); }`,
   ),
   ...lowering(
     "class without a name",
@@ -486,7 +488,7 @@ show(new Foo().who(), new Foo().other({ tag: "parameter" }));`,
 const foo = new Foo();
 show(foo.a(), foo.c());`,
   ),
-  ...wrongInTypeScript(
+  ...expecting(
     lowering(
       "shorthand use of the name",
       `${replace}@replace class Foo { static tag = "old"; b() { return { Foo }.Foo.tag; } }
@@ -572,12 +574,73 @@ class A { @seen get [name]() { return 1; } set [name](v: number) {} }
 show(Object.getOwnPropertyNames(A.prototype));`,
   ),
   ...lowering(
-    "keys that use this, await and the class",
+    "keys that use this",
     `${keys}const outer = { name: "outerThis" };
 function f(this: any) { class A { @seen [this.name] = 1; @seen [this.name + "M"]() {} static [this.name] = 2; } return [Object.keys(new A()), Object.keys(A)]; }
 show(f.call(outer));
-class B { @seen [await Promise.resolve("awaited")] = 1; [await Promise.resolve("too")] = 2; }
-show(Object.keys(new B()));`,
+function g(this: any) { class A { [this.name] = 1; } const B = class { [this.name] = 2; static [this.name] = 3; }; return [Object.keys(new A()), Object.keys(new B()), Object.keys(B)]; }
+show(g.call(outer));
+class Outer { #p = "private"; name = "field"; A = class { [this.name] = 1; [this.#p] = 2; }; }
+show(Object.keys(new (new Outer().A)()));`,
+  ),
+  ...lowering(
+    "keys that use super",
+    `class Base { get y() { return "baseY"; } static get y() { return "staticY"; } }
+class Outer extends Base { m() { return class { [super.y] = 1; }; } static s() { class A { [super.y] = 1; static [super.y] = 2; } return A; } }
+show(Object.keys(new (new Outer().m())()), Object.keys(new (Outer.s())()), Object.keys(Outer.s()));`,
+  ),
+  ...expecting(
+    lowering(
+      "keys that use await",
+      `${keys}class A { @seen [await Promise.resolve("awaited")] = 1; [await Promise.resolve("too")] = 2; }
+show(Object.keys(new A()));
+const B = class { [await Promise.resolve("expression")] = 1; };
+show(Object.keys(new B()), B.name);`,
+    ),
+    {
+      assign: [
+        `A.prototype["awaited"] design:type = Object`,
+        `"decorated" "instance" "awaited"`,
+        `["awaited", "too"]`,
+        `["expression"] "B"`,
+      ],
+    },
+  ),
+  ...expecting(
+    lowering(
+      "keys that use yield, arguments and new.target",
+      `function* g() { class A { [yield "y"] = 1; } return Object.keys(new A()); }
+const it = g();
+show(it.next().value, it.next("sent").value);
+function h(x: string) { return [class { [arguments[0]] = 1; }, class A { static [arguments[0]] = 2; }]; }
+show(h("arg").map(C => [Object.keys(new C()), Object.keys(C)]));
+function F(this: any) { this.C = class { [String(new.target === F)] = 1; }; }
+show(Object.keys(new (new (F as any)().C)()));`,
+    ),
+    { assign: [`"y" ["sent"]`, `[[["arg"], []], [[], ["arg"]]]`, `["true"]`] },
+  ),
+  ...lowering(
+    "keys of fields after the last key of a method",
+    `${keys}class A extends (log("extends"), Object) { [k("m")]() {} [k("a")] = 1; static [k("b")] = 2; [k("c")]?: number; static { log("block"); } }
+show(Object.keys(new A()), Object.keys(A));
+class B extends (log("extends"), Object) { [k("a")] = 1; static [k("b")] = 2; static { log("block"); } }
+show(Object.keys(new B()), Object.keys(B));`,
+  ),
+  ...lowering(
+    "a declare field with a key, after a field with a key",
+    `${keys}class A { [k("a")] = 1; @seen declare [k("b")]: any; static s = show(Object.keys(new A())); }`,
+  ),
+  ...lowering(
+    "names of class expressions",
+    `${keys}const A = class { [k()] = 1; };
+let B; B = class { [k()] = 1; };
+const f = (C = class { [k()] = 1; }) => C.name;
+function g({ D = class { [k()] = 1; } } = {}, [E = class { [k()] = 1; }] = []) { return [D.name, E.name]; }
+const o = { F: class { [k()] = 1; } };
+let G: any; ({ G = class { [k()] = 1; } } = {} as any);
+class H { I = class { [k()] = 1; }; static J = class { [k()] = 1; }; }
+const K = class { static own = this.name; [k()] = 1; };
+show(A.name, B.name, f(), g(), o.F.name, G.name, new H().I.name, H.J.name, K.own, (class { [k()] = 1; }).name);`,
   ),
   ...lowering(
     "class expressions",
@@ -599,7 +662,7 @@ show(Object.keys(new x()), Object.keys(new y()), Object.keys(x), Object.keys(y))
     "classes in a loop",
     `${keys}for (let i = 0; i < 2; i++) { class A { @seen [k()] = i; static [k()] = i; } show(Object.keys(new A()), Object.keys(A)); }`,
   ),
-  ...wrongInTypeScript(
+  ...expecting(
     lowering(
       "classes in a loop, used after it",
       `${keys}const all: any[] = [];
@@ -714,6 +777,25 @@ show(Object.entries(new A(1)).join(";"));`,
     `class Base { constructor() { log("base"); } }
 class A extends Base { @d a = (log("a"), 1); constructor(public x: number) { try { super(); log("in try"); } finally { log("finally"); } log("after"); } }
 show(Object.keys(new A(1)));`,
+  ),
+  ...expecting(
+    lowering(
+      "super() is not a statement",
+      `class Base { constructor(public v?: any) {} }
+class A extends Base { a = 1; @d b = 2; static s = 3; constructor(c: boolean) { if (c) super(1); else super(2); } }
+show(Object.entries(new A(true)).join(";"), A.s);
+class B extends Base { a = 1; constructor() { const self: any = super(); log("after"); } }
+show(Object.keys(new B()));`,
+    ),
+    {
+      assign: [
+        `A.prototype["b"] design:type = Object`,
+        `A.prototype["b"] @d`,
+        `"v,1;a,1;b,2" 3`,
+        "after",
+        `["v", "a"]`,
+      ],
+    },
   ),
   ...lowering(
     "the constructor returns an object",

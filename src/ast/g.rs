@@ -63,9 +63,7 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
-    /// What the body reads the class name as when class decorators are
-    /// lowered: the lowering assigns the decorated class to it.
-    /// `Ref::NONE` otherwise.
+    /// What the body names the class by if lowered class decorators reassign the class. `Ref::NONE` otherwise.
     pub inner_class_ref: Ref,
     /// A decorator of a member or of a parameter has a private name in it.
     pub decorators_use_private_name: bool,
@@ -213,7 +211,7 @@ impl Property {
             ts_decorators: bun_alloc::AstAlloc::vec_from_slice(self.ts_decorators.slice()),
             key: self.key,
             value: self.value,
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         }
     }
 
@@ -250,7 +248,7 @@ impl Property {
                 Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }
@@ -341,7 +339,7 @@ impl Fn {
             },
             arguments_ref: self.arguments_ref,
             flags: self.flags,
-            return_ts_metadata: self.return_ts_metadata.clone(),
+            return_ts_metadata: self.return_ts_metadata,
         })
     }
 }
@@ -386,7 +384,7 @@ impl Arg {
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }

@@ -548,7 +548,7 @@ describe("decorator metadata", () => {
   });
 });
 
-// Bun compiles one file at a time, so it has to emit what `ts.transpileModule` does: the file is the whole program.
+// Bun compiles one file at a time, so TypeScript gets each file as a whole program.
 describe.concurrent.each([true, false])("same metadata as TypeScript, strictNullChecks: %p", strictNullChecks => {
   test.skipIf(!canCompareWithTypeScript)(
     "every case",

@@ -1197,7 +1197,7 @@ bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 
 
 pub(crate) type StringBoolMap = StringHashMap<bool>;
 
-/// What declares a name in `P::type_names`.
+/// What declares a name in `P::type_name_declarations`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypeNameDeclaration {
     /// One `import type`, and nothing else.

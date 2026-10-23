@@ -1608,12 +1608,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Propagate name for anonymous decorated class expressions
                         if was_anonymous_named_expr
                             && matches!(e2.right.data, Data::EClass(..))
-                            && e2
-                                .right
-                                .data
-                                .e_class()
-                                .expect("infallible: variant checked")
-                                .should_lower_standard_decorators
                             && matches!(e2.left.data.tag(), Tag::EIdentifier)
                         {
                             p.decorator_class_name = Some(
@@ -1752,11 +1746,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && value
                         .data
                         .e_class()
-                        .unwrap()
-                        .should_lower_standard_decorators
-                    && value
-                        .data
-                        .e_class()
                         .expect("infallible: variant checked")
                         .class_name
                         .is_none()
@@ -1786,13 +1775,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let was_anonymous_named_expr = property.initializer.unwrap().is_anonymous_named();
                 if was_anonymous_named_expr
                     && matches!(property.initializer.unwrap().data, Data::EClass(..))
-                    && property
-                        .initializer
-                        .unwrap()
-                        .data
-                        .e_class()
-                        .unwrap()
-                        .should_lower_standard_decorators
                 {
                     if let Some(val) = property.value {
                         if matches!(val.data.tag(), Tag::EIdentifier) {
@@ -2817,8 +2799,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        let temps_before = p.temp_refs_to_declare.len();
-        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
+        let before_class = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
@@ -2861,7 +2842,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if TYPESCRIPT {
-            *e = p.declare_class_expr_temps(expr, temps_before);
+            *e = p.lower_class_expr(expr, before_class, decorator_name_from_context);
         }
     }
 }

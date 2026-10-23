@@ -231,7 +231,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: prop_flags,
             key: Some(*key),
             value: Some(value),
-            ts_metadata: TsMetadata::MFunction,
             ..Default::default()
         }))
     }

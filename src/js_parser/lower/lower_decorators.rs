@@ -73,7 +73,7 @@ struct DecoratedInitializer {
     extra: Expr,
 }
 
-fn is_constructor(prop: &Property) -> bool {
+pub(crate) fn is_constructor(prop: &Property) -> bool {
     prop.flags.contains(Flags::Property::IsMethod)
         && !prop.flags.contains(Flags::Property::IsStatic)
         && !prop.flags.contains(Flags::Property::IsComputed)
@@ -84,7 +84,7 @@ fn is_constructor(prop: &Property) -> bool {
 }
 
 /// A key whose evaluation cannot be observed, so it can be repeated.
-fn is_constant_key(key: &Expr) -> bool {
+pub(crate) fn is_constant_key(key: &Expr) -> bool {
     matches!(
         key.data,
         js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
@@ -138,9 +138,15 @@ fn insert_after_super_in<'a>(
     false
 }
 
-/// Puts `inserted` in `constructor` right after its `super()` statement
-/// returns, which is after the last instance field. As in TypeScript, the
-/// statement is a top-level one or in a `try` block that is.
+/// True if `insert_after_super` finds the `super()` statement of `body`.
+pub(crate) fn has_super_statement(body: &[Stmt]) -> bool {
+    body.iter().any(|stmt| match stmt.data {
+        js_ast::StmtData::STry(s_try) => has_super_statement(s_try.body.slice()),
+        _ => stmt.is_super_call(),
+    })
+}
+
+/// Puts `inserted` after the `super()` statement of `constructor`: a top-level one, or in a `try` block that is.
 pub(crate) fn insert_after_super<'a>(
     constructor: &mut G::Fn,
     inserted: &[Stmt],
@@ -171,7 +177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Allocate args + callRuntime in one call.
-    fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
+    pub(crate) fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
         let list = ExprNodeList::from_arena_slice(a);
@@ -613,11 +619,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, kind, body_loc) else {
             return stmts;
         };
-        let old_stmts = stmts.slice();
-        let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, self.arena);
-        new_stmts.push(decl_stmt);
-        new_stmts.extend_from_slice(old_stmts);
-        js_ast::StmtNodeList::from_bump(new_stmts)
+        let mut stmts = stmts;
+        insert_stmts(&mut stmts, 0, &[decl_stmt], self.arena);
+        stmts
     }
 
     /// The declaration in the head of `for (const { a = this.#x } of ...)`. An
@@ -835,9 +839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.with_own_bindings(value, &[class.inner_class_ref])
     }
 
-    /// `((a, b) => value)()` gives each evaluation of `value` its own
-    /// `bindings`. For a parameter default or a field initializer: neither
-    /// allows `await` or `yield`, which an arrow would break.
+    /// `((a, b) => value)()`: own `bindings` per evaluation. Only for where `await` and `yield` are not allowed.
     pub(crate) fn with_own_bindings(&mut self, value: Expr, bindings: &[Ref]) -> Expr {
         let mut args = BumpVec::<G::Arg>::with_capacity_in(bindings.len(), self.arena);
         for &r#ref in bindings {

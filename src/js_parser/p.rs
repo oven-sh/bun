@@ -431,10 +431,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_exported_inside_namespace: RefRefMap,
     pub(crate) local_type_names: StringBoolMap,
 
-    /// With `emitDecoratorMetadata`: what declares each name that means a type or a namespace
-    /// somewhere in the file, other than a class and an import of a value. See
-    /// `type_reference_kind`.
-    pub(crate) type_names: StringHashMap<TypeNameDeclaration>,
+    /// With `emitDecoratorMetadata`: what declares each type or namespace name. For `check_type_reference`.
+    pub(crate) type_name_declarations: StringHashMap<TypeNameDeclaration>,
     /// The type checker's answers for this file, once one was needed. Sorted by position.
     pub(crate) checked_type_references: Option<Vec<js_ast::ts::CheckedTypeReference>>,
 
@@ -2023,8 +2021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let symbol = ref_.inner_index();
         let scope = self.current_scope;
         if scope.visit_span[0] == u32::MAX {
-            // The parse pass (TypeScript decorator metadata resolves type
-            // names then): no scope numbering yet.
+            // No visit pass numbers the scopes of a TOML file, where a date names `Temporal`.
             self.span_uses.push((None, symbol));
         } else if scope.kind == js_ast::scope::Kind::ClassBody {
             // A field initializer is visited in the class body scope but may
@@ -2138,16 +2135,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.symbols[root.inner_index() as usize].set_has_been_assigned_to(true);
     }
 
-    /// See `type_names`.
+    /// See `type_name_declarations`.
     pub(crate) fn declare_type_name(&mut self, name: &'a [u8], declaration: TypeNameDeclaration) {
         if !self.options.features.emit_decorator_metadata {
             return;
         }
-        let declaration = match self.type_names.get(name) {
+        let declaration = match self.type_name_declarations.get(name) {
             Some(_) => TypeNameDeclaration::Other,
             None => declaration,
         };
-        self.type_names.put(name, declaration).expect("oom");
+        bun_core::handle_oom(self.type_name_declarations.put(name, declaration));
     }
 
     /// See `Symbol::import_used_as_value`.
@@ -8151,8 +8148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // leave the first part in there for namespace export when bundling
             let begin = parts_end;
-            // Potentially remove some statements, then filter out parts to remove any
-            // with no statements
+            // Potentially remove some statements, then filter out parts with no statements
             for idx in begin..parts.len() {
                 let mut part = core::mem::take(&mut parts[idx]);
                 self.import_records_for_current_part.clear();
@@ -8172,9 +8168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
-                    // If this file contains a direct call to "eval()", all parts that
-                    // declare top-level symbols must be kept since the eval'd code may
-                    // reference those symbols.
+                    // The code of a direct "eval()" may reference any top-level symbol.
                     part.can_be_removed_if_unused = false;
                 }
                 part.declared_symbols
@@ -8187,9 +8181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             parts.truncate(parts_end);
 
-            // We need to iterate multiple times if an import-equals statement was
-            // removed and there are more import-equals statements that may be removed.
-            // Only that check can run twice on a statement.
+            // A removed import-equals statement may have been the last use of another. Only this check can run twice.
             while kept_import_equals && removed_import_equals {
                 kept_import_equals = false;
                 removed_import_equals = false;
@@ -8950,7 +8942,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),
-            type_names: StringHashMap::default(),
+            type_name_declarations: StringHashMap::default(),
             checked_type_references: None,
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),

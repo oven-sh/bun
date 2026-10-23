@@ -137,7 +137,7 @@ bitflags::bitflags! {
         const NO_STRICT_NULL_CHECKS = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
-        /// tsconfig `"useDefineForClassFields": false` was set explicitly.
+        /// tsconfig's effective `"useDefineForClassFields"` is `false`.
         const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }
@@ -216,7 +216,7 @@ impl ResultFlags {
     pub(crate) fn set_strict_null_checks(&mut self, v: bool) {
         self.set(Self::NO_STRICT_NULL_CHECKS, !v)
     }
-    /// Effective `useDefineForClassFields`; `false` only when tsconfig set it to `false`.
+    /// Effective `useDefineForClassFields`.
     #[inline]
     pub fn use_define_for_class_fields(self) -> bool {
         !self.contains(Self::SET_SEMANTICS_FOR_CLASS_FIELDS)

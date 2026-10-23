@@ -15,7 +15,7 @@ export type Case = {
   types?: string[];
   /** On top of those of the test. */
   compilerOptions?: Record<string, unknown>;
-  /** What it has to log, if what TypeScript compiles it to logs something else. */
+  /** What it has to log. Only if what TypeScript compiles it to logs something else. */
   expected?: string[];
 };
 
@@ -110,8 +110,8 @@ export async function differencesFromTypeScript(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    expect(stderr).toBe("");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return (JSON.parse(stdout) as string[][]).map((lines, i) => [numbers[i], lines] as const);
   }
   async function runBundled(group: string, numbers: number[]) {
@@ -125,7 +125,8 @@ export async function differencesFromTypeScript(
       stdout: "ignore",
       stderr: "pipe",
     });
-    expect(await proc.stderr.text()).toBe("");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return await run(bunExe(), bundled, "js", numbers);
   }
   const workers = Math.min(8, availableParallelism());
@@ -144,9 +145,16 @@ export async function differencesFromTypeScript(
   const received = new Map((await Promise.all(runs.flatMap(it => it.bun))).flat());
 
   const differences: Difference[] = [];
-  cases.forEach(({ name, types, expected: fixed }, n) => {
+  cases.forEach(({ name, files, types, expected: fixed }, n) => {
     const withType = (line: string) => line.replace(/\["m(\d+)"\]/, (_, index) => ` ${types?.[index]}:`);
     const [typescript, bun] = [fixed ?? expected.get(n)!, received.get(n)!];
+    if (fixed?.join("\n") === expected.get(n)!.join("\n")) {
+      differences.push({ name: `${name}: needs no \`expected\``, typescript: fixed, bun });
+    }
+    // With nothing to import, the file itself does not parse, and two such files compare nothing.
+    if (Object.keys(files).length === 1 && typescript.join() === "throws SyntaxError") {
+      differences.push({ name: `${name}: needs \`expected\``, typescript, bun });
+    }
     if (typescript.join("\n") === bun.join("\n")) return;
     differences.push({
       name,

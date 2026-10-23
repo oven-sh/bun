@@ -1,7 +1,4 @@
-//! The `design:type`, `design:paramtypes` and `design:returntype` values of `emitDecoratorMetadata`.
-//!
-//! Mirrors metadata.go and typeserializer.go in TypeScript 7's `tstransforms`, and
-//! `markDecoratorAliasReferenced` in its checker.go. The output is what `ts.transpileModule` emits.
+//! `emitDecoratorMetadata`, from TypeScript 7: metadata.go, typeserializer.go, `markDecoratorAliasReferenced`.
 
 use bun_collections::VecExt as _;
 
@@ -16,8 +13,7 @@ use bun_ast::{self as js_ast, E, Expr, ExprNodeList, Flags, G, Loc, StoreRef, St
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
 unsafe extern "Rust" {
-    /// Defined in `bun_sema_driver`. Not a dependency, or each change to the type checker would rebuild this crate
-    /// and every crate that uses it.
+    /// In `bun_sema_driver`. As a dependency, each change to the type checker would rebuild this crate and its users.
     safe fn __bun_check_decorator_metadata(
         text: &[u8],
         is_tsx: bool,
@@ -48,6 +44,12 @@ enum Serialized {
 }
 
 const OBJECT: Serialized = Serialized::Global(b"Object");
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Constituents {
+    Union,
+    Intersection,
+}
 
 fn same_names(a: StoreSlice<TypeReferenceName>, b: StoreSlice<TypeReferenceName>) -> bool {
     let texts =
@@ -148,17 +150,13 @@ fn parameter_types(func: &G::Fn) -> impl Iterator<Item = Metadata> {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// `getOldTypeMetadata` of a class, and what `markDecoratorAliasReferenced` does for the class and for the
-    /// parameters of `constructor`, which is `GetFirstConstructorWithBody`.
+    /// `getOldTypeMetadata` and `markDecoratorAliasReferenced` of a class. `constructor` is the one with a body.
     pub(crate) fn push_class_metadata(
         &mut self,
         loc: Loc,
-        constructor: Option<&G::Fn>,
+        constructor: &G::Fn,
         decorators: &mut Vec<Expr>,
     ) {
-        let Some(constructor) = constructor else {
-            return;
-        };
         for ty in parameter_types(constructor) {
             self.keep_import_of_type(ty);
         }
@@ -198,13 +196,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         decorators.push(self.metadata_decorator(loc, b"design:returntype", returns));
     }
 
-    /// For the accessor of `pair` that is decorated.
+    /// For the accessor of `pair` that is decorated, a `kind`.
     pub(crate) fn push_accessor_metadata(
         &mut self,
         loc: Loc,
+        kind: PropertyKind,
         pair: AccessorPair,
         decorators: &mut BumpVec<'a, Expr>,
     ) {
+        self.keep_imports_of_accessor(kind, pair);
         // `getAccessorTypeNode`
         let ty = match (pair.setter, pair.getter) {
             (Some(setter), _) => setter_type(&setter.func),
@@ -218,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// What `markDecoratorAliasReferenced` does for an accessor that has decorators.
-    pub(crate) fn keep_imports_of_accessor(&mut self, kind: PropertyKind, pair: AccessorPair) {
+    fn keep_imports_of_accessor(&mut self, kind: PropertyKind, pair: AccessorPair) {
         let getter = pair.getter.map(|it| it.func.return_ts_metadata);
         let setter = pair.setter.map(|it| setter_type(&it.func));
         let (own, other) = match kind {
@@ -302,7 +302,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         use js_ast::symbol::Kind;
         // A name that only one declaration can mean has an answer that needs no types.
-        let checked = match (self.type_names.get(first.text.slice()), value) {
+        let checked = match (self.type_name_declarations.get(first.text.slice()), value) {
             (None, None | Some(Kind::Unbound)) => answer(TypeReferenceKind::Unknown, false),
             (None, Some(Kind::Import)) => answer(TypeReferenceKind::Unknown, true),
             (None, Some(Kind::Class)) if names.len() == 1 => {
@@ -310,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             (None, Some(Kind::Class)) => answer(TypeReferenceKind::Unknown, false),
             (Some(TypeNameDeclaration::TypeOnlyImport), None | Some(Kind::Unbound)) => {
-                answer(TypeReferenceKind::Object, false)
+                answer(TypeReferenceKind::Global(b"Object"), false)
             }
             _ => {
                 let strict_null_checks = self.options.features.strict_null_checks;
@@ -363,17 +363,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Metadata::MNumber => Serialized::Global(b"Number"),
             Metadata::MBigint => Serialized::Global(b"BigInt"),
             Metadata::MSymbol => Serialized::Global(b"Symbol"),
-            Metadata::MReference(reference) => {
-                self.serialize_type_reference(&reference, in_conditional_type)
-            }
-            Metadata::MIntersection(types) => {
-                self.serialize_union_or_intersection(types, true, in_conditional_type)
-            }
-            Metadata::MUnion(types) => {
-                self.serialize_union_or_intersection(types, false, in_conditional_type)
-            }
+            // `serializeTypeReferenceNode`
+            Metadata::MReference(reference) => match self.check_type_reference(&reference).0.kind {
+                TypeReferenceKind::Unknown if in_conditional_type => OBJECT,
+                TypeReferenceKind::Unknown => Serialized::NameIfFunction(reference.name),
+                TypeReferenceKind::TypeWithConstructSignatureAndValue => {
+                    Serialized::Name(reference.name)
+                }
+                TypeReferenceKind::VoidNullableOrNever => Serialized::Undefined,
+                TypeReferenceKind::Global(name) => Serialized::Global(name),
+            },
+            Metadata::MIntersection(types) => self.serialize_union_or_intersection(
+                types,
+                Constituents::Intersection,
+                in_conditional_type,
+            ),
+            Metadata::MUnion(types) => self.serialize_union_or_intersection(
+                types,
+                Constituents::Union,
+                in_conditional_type,
+            ),
             Metadata::MConditional(branches) => {
-                self.serialize_union_or_intersection(branches, false, true)
+                self.serialize_union_or_intersection(branches, Constituents::Union, true)
             }
             Metadata::MParenthesized(inner) | Metadata::MReadonly(inner) => {
                 self.serialize_type_node(*inner, in_conditional_type)
@@ -385,9 +396,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn serialize_union_or_intersection(
         &mut self,
         types: StoreSlice<Metadata>,
-        is_intersection: bool,
+        constituents: Constituents,
         in_conditional_type: bool,
     ) -> Serialized {
+        let is_intersection = constituents == Constituents::Intersection;
         let mut serialized: Option<Serialized> = None;
         for ty in types.slice() {
             let ty = ty.skip_parentheses();
@@ -416,31 +428,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         serialized.unwrap_or(Serialized::Undefined)
     }
 
-    /// `serializeTypeReferenceNode`
-    fn serialize_type_reference(
-        &mut self,
-        reference: &TypeReference,
-        in_conditional_type: bool,
-    ) -> Serialized {
-        match self.check_type_reference(reference).0.kind {
-            TypeReferenceKind::Unknown if in_conditional_type => OBJECT,
-            TypeReferenceKind::Unknown => Serialized::NameIfFunction(reference.name),
-            TypeReferenceKind::TypeWithConstructSignatureAndValue => {
-                Serialized::Name(reference.name)
-            }
-            TypeReferenceKind::VoidNullableOrNever => Serialized::Undefined,
-            TypeReferenceKind::BigIntLike => Serialized::Global(b"BigInt"),
-            TypeReferenceKind::Boolean => Serialized::Global(b"Boolean"),
-            TypeReferenceKind::NumberLike => Serialized::Global(b"Number"),
-            TypeReferenceKind::StringLike => Serialized::Global(b"String"),
-            TypeReferenceKind::ArrayLike => Serialized::Global(b"Array"),
-            TypeReferenceKind::ESSymbol => Serialized::Global(b"Symbol"),
-            TypeReferenceKind::TypeWithCallSignature => Serialized::Global(b"Function"),
-            TypeReferenceKind::Promise => Serialized::Global(b"Promise"),
-            TypeReferenceKind::Object => OBJECT,
-        }
-    }
-
     fn serialized_to_expr(&mut self, serialized: Serialized) -> Expr {
         let names = match serialized {
             Serialized::Undefined => return self.new_expr(E::Undefined {}, Loc::EMPTY),
@@ -452,16 +439,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Serialized::NameIfFunction(names) => names.slice(),
         };
         let first = names[0].text.slice();
-        // TypeScript evaluates `typeof A !== "undefined" && A` into a temporary. For an identifier, reading it twice
-        // is the same.
+        // TypeScript has a temporary for `typeof A !== "undefined" && A`. Reading an identifier twice is the same.
         let (tested, value) = if names.len() == 1 {
             (
                 self.entity_name_to_expr(first, &[]),
                 self.entity_name_to_expr(first, &[]),
             )
         } else {
-            // `serializeEntityNameAsExpressionFallback`:
-            // `typeof A !== "undefined" && (_a = A.B) !== void 0 && _a.C`
+            // `serializeEntityNameAsExpressionFallback`: `typeof A !== "undefined" && (_a = A.B) !== void 0 && _a.C`
             let root = self.entity_name_to_expr(first, &[]);
             let mut test = self.type_of_is(root, js_ast::OpCode::BinStrictNe, b"undefined");
             let mut value = self.entity_name_to_expr(first, &names[1..2]);
@@ -469,7 +454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let temp = self.declared_temp(b"_a");
                 let is_defined = E::Binary {
                     op: js_ast::OpCode::BinStrictNe,
-                    left: self.assign_to_temp(temp, value),
+                    left: self.assign_to(temp, value, Loc::EMPTY),
                     right: self.new_expr(E::Undefined {}, Loc::EMPTY),
                 };
                 let right = self.new_expr(is_defined, Loc::EMPTY);
@@ -481,7 +466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     Loc::EMPTY,
                 );
-                let target = self.use_temp(temp);
+                let target = self.use_ref(temp, Loc::EMPTY);
                 value = self.new_expr(
                     E::Dot {
                         target,
@@ -502,8 +487,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
             let temp = self.declared_temp(b"_a");
             (
-                self.assign_to_temp(temp, checked_value),
-                self.use_temp(temp),
+                self.assign_to(temp, checked_value, Loc::EMPTY),
+                self.use_ref(temp, Loc::EMPTY),
             )
         };
         let test = self.type_of_is(tested, js_ast::OpCode::BinStrictEq, b"function");
@@ -513,23 +498,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 test,
                 yes: value,
                 no,
-            },
-            Loc::EMPTY,
-        )
-    }
-
-    fn use_temp(&mut self, temp: Ref) -> Expr {
-        self.record_usage(temp);
-        self.new_expr(E::Identifier::init(temp), Loc::EMPTY)
-    }
-
-    fn assign_to_temp(&mut self, temp: Ref, value: Expr) -> Expr {
-        let left = self.use_temp(temp);
-        self.new_expr(
-            E::Binary {
-                op: js_ast::OpCode::BinAssign,
-                left,
-                right: value,
             },
             Loc::EMPTY,
         )
@@ -603,7 +571,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `__legacyMetadataTS(key, value)`
     fn metadata_decorator(&mut self, loc: Loc, key: &'static [u8], value: Expr) -> Expr {
         let key = self.new_expr(E::EString::from_static(key), Loc::EMPTY);
-        let args = ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(&[key, value]));
-        self.call_runtime(loc, b"__legacyMetadataTS", args)
+        self.call_rt(loc, b"__legacyMetadataTS", &[key, value])
     }
 }

@@ -85,10 +85,6 @@ impl<'a, T> BabyVec<'a, T> {
         self.ptr.as_ptr()
     }
     #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-    #[inline]
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` (struct invariant).
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }

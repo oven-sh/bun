@@ -162,7 +162,7 @@ pub struct TSConfigJSON {
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: Option<bool>,
-    /// `target` is ES2022 or later.
+    /// Whether `target` is ES2022 or later. `None` for one that TypeScript doesn't have.
     pub(crate) target_has_class_fields: Option<bool>,
     pub(crate) strict: Option<bool>,
     pub(crate) strict_null_checks: Option<bool>,
@@ -219,14 +219,14 @@ impl TSConfigJSON {
         boxed
     }
 
-    /// Effective `useDefineForClassFields`. As in TypeScript 6, `target` is the latest standard unless it's set.
+    /// Effective `useDefineForClassFields`. Since TypeScript 6, `target` is the latest standard unless it's set.
     pub fn use_define_for_class_fields(&self) -> bool {
         self.use_define_for_class_fields
             .or(self.target_has_class_fields)
             .unwrap_or(true)
     }
 
-    /// Effective `strictNullChecks`. As in TypeScript 6, `strict` is on unless it's set to `false`.
+    /// Effective `strictNullChecks`. Since TypeScript 6, `strict` is on unless it's set to `false`.
     pub fn strict_null_checks(&self) -> bool {
         self.strict_null_checks.or(self.strict).unwrap_or(true)
     }
@@ -478,19 +478,12 @@ impl TSConfigJSON {
                 .and_then(|it| it.as_str())
                 .and_then(strings::ascii_lowercase_buf::<6>)
             {
-                result.target_has_class_fields = Some(!matches!(
-                    &target[..len],
-                    b"es3"
-                        | b"es5"
-                        | b"es6"
-                        | b"es2015"
-                        | b"es2016"
-                        | b"es2017"
-                        | b"es2018"
-                        | b"es2019"
-                        | b"es2020"
-                        | b"es2021"
-                ));
+                result.target_has_class_fields = match &target[..len] {
+                    b"es3" | b"es5" | b"es6" | b"es2015" | b"es2016" | b"es2017" | b"es2018"
+                    | b"es2019" | b"es2020" | b"es2021" => Some(false),
+                    b"esnext" | [b'e', b's', b'2', b'0', b'2'..=b'9', b'0'..=b'9'] => Some(true),
+                    _ => None,
+                };
             }
 
             // Parse "strict"

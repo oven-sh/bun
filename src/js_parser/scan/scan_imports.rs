@@ -24,44 +24,50 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
     js_ast::StoreStr::new(s)
 }
 
+/// `a` and `b` of an `import a = b.c` that isn't exported.
+fn ts_import_equals(st: &S::Local) -> Option<(Ref, Ref)> {
+    if !st.origin.is_ts_import_equals() || st.is_export || st.decls.len_u32() == 0 {
+        return None;
+    }
+    let decl = &st.decls.slice()[0];
+    let js_ast::b::B::BIdentifier(alias) = decl.binding.data else {
+        return None;
+    };
+
+    // Skip to the underlying reference
+    let mut value: Option<Expr> = decl.value;
+    while let Some(js_ast::ExprData::EDot(dot)) = value.map(|it| it.data) {
+        value = Some(dot.target);
+    }
+
+    // Is this an identifier reference and not a require() call?
+    match value.map(|it| it.data) {
+        Some(js_ast::ExprData::EIdentifier(id)) => Some((alias.r#ref, id.ref_)),
+        Some(js_ast::ExprData::EImportIdentifier(id)) => Some((alias.r#ref, id.ref_)),
+        _ => None,
+    }
+}
+
 impl<'a> ImportScanner<'a> {
-    /// True if `st` is an `import a = b.c` that nothing uses. Then `b` has one use fewer.
-    fn is_unused_ts_import_equals<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    /// True if the caller is to remove `st`, an `import a = b.c` that nothing uses. Then `b` has one use fewer.
+    fn remove_if_unused_ts_import_equals<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         &mut self,
         p: &mut P<'_, TYPESCRIPT, SCAN_ONLY>,
         st: &S::Local,
     ) -> bool {
-        if !st.origin.is_ts_import_equals() || st.is_export || st.decls.len_u32() == 0 {
+        let Some((alias, target)) = ts_import_equals(st) else {
+            return false;
+        };
+        if p.symbols[alias.inner_index() as usize].use_count_estimate > 0 {
+            self.kept_import_equals = true;
             return false;
         }
-        let decl = &st.decls.slice()[0];
-
-        // Skip to the underlying reference
-        let mut value: Option<Expr> = decl.value;
-        while let Some(js_ast::ExprData::EDot(dot)) = value.map(|it| it.data) {
-            value = Some(dot.target);
-        }
-
-        // Is this an identifier reference and not a require() call?
-        let value_ref = match value.map(|it| it.data) {
-            Some(js_ast::ExprData::EIdentifier(id)) => id.ref_,
-            Some(js_ast::ExprData::EImportIdentifier(id)) => id.ref_,
-            _ => return false,
-        };
-        // Is this import statement unused?
-        if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data
-            && p.symbols[b_id.r#ref.inner_index() as usize].use_count_estimate == 0
-        {
-            p.ignore_usage(value_ref);
-            self.removed_import_equals = true;
-            return true;
-        }
-        self.kept_import_equals = true;
-        false
+        p.ignore_usage(target);
+        self.removed_import_equals = true;
+        true
     }
 
-    /// The part of `scan` to repeat after it removed an `import a = b.c`, which may have been the last use of an
-    /// `import b = d.e`.
+    /// The part of `scan` to repeat after it removed an `import a = b.c`: that may have been the last use of `b`.
     pub(crate) fn scan_for_unused_ts_import_equals<
         const TYPESCRIPT: bool,
         const SCAN_ONLY: bool,
@@ -74,7 +80,7 @@ impl<'a> ImportScanner<'a> {
         for i in 0..stmts.len() {
             let stmt = stmts[i];
             if let js_ast::StmtData::SLocal(st) = stmt.data
-                && scanner.is_unused_ts_import_equals(p, &st)
+                && scanner.remove_if_unused_ts_import_equals(p, &st)
             {
                 continue;
             }
@@ -719,7 +725,7 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if scanner.is_unused_ts_import_equals(p, &st) {
+                    if scanner.remove_if_unused_ts_import_equals(p, &st) {
                         continue;
                     }
                 }

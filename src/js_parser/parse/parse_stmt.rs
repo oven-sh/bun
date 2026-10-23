@@ -1048,8 +1048,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
-                // "export default @decorator class Foo {}" is a declaration, the only kind of
-                // class that TypeScript's experimental decorators apply to.
+                // A declaration, the only kind of class that TypeScript's experimental decorators apply to.
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
                     || (p.lexer.token == T::TAt && !p.options.features.standard_decorators)

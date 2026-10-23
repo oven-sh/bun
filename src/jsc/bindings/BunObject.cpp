@@ -743,9 +743,10 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return {};
     }
 
-    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
+    std::set<EncodedJSValue> objVisited;
+    std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    bool match = Bun__deepEquals<false, false, false, false, /* isPartial */ true>(globalObject, object, subset, gcBuffer, stack, scope, true);
+    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }

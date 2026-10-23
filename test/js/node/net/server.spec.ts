@@ -104,9 +104,7 @@ describe("net.Server.prototype", () => {
 
   it("has EventEmitter methods", () => {
     expect((net.Server.prototype as any).__proto__).toBe(EventEmitter.prototype);
-    // toMatchObject compares functions by identity, and Server.prototype.constructor is Server
-    const { constructor: _, ...inherited } = EventEmitter.prototype;
-    expect(net.Server.prototype).toMatchObject(inherited);
+    expect(net.Server.prototype).toMatchObject(EventEmitter.prototype);
   });
 }); // </net.Server.prototype>
 

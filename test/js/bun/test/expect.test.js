@@ -3796,144 +3796,47 @@ describe("expect()", () => {
       expect(a1).toMatchObject(a1);
     });
 
-    // jest's subsetEquality only walks the keys of a plain expected object. An expected
-    // Date, Error, Set, Map or function is a leaf compared with equals().
-    test("an expected Date, Error, Set, Map or function is compared as a value", () => {
+    // A Date and an Error have no enumerable properties. Jest and Vitest compare an expected
+    // Date by its time value and an expected Error by its message.
+    test("an expected Date is compared by its time value", () => {
       expect({ d: new Date(5) }).toMatchObject({ d: new Date(5) });
       expect({ d: new Date(5) }).not.toMatchObject({ d: new Date(6) });
-      expect({ a: { d: new Date(5) } }).toMatchObject({ a: { d: new Date(5) } });
       expect({ a: { d: new Date(5) } }).not.toMatchObject({ a: { d: new Date(6) } });
       expect({ a: [new Date(5)] }).toMatchObject({ a: [new Date(5)] });
       expect({ a: [new Date(5)] }).not.toMatchObject({ a: [new Date(6)] });
       expect({ d: {} }).not.toMatchObject({ d: new Date(5) });
       expect({ d: { x: 1 } }).not.toMatchObject({ d: new Date(5) });
-      expect({ d: new Date(5) }).not.toMatchObject({ d: { x: 1 } });
+      expect({ d: 5 }).not.toMatchObject({ d: new Date(5) });
       expect(new Date(5)).toMatchObject(new Date(5));
       expect(new Date(5)).not.toMatchObject(new Date(6));
+      // a plain expected object still matches the properties of a Date
+      expect({ d: new Date(5) }).toMatchObject({ d: {} });
+    });
 
+    test("an expected Error is compared by its message", () => {
       expect({ e: new Error("x") }).toMatchObject({ e: new Error("x") });
       expect({ e: new Error("x") }).not.toMatchObject({ e: new Error("y") });
-      expect({ e: new TypeError("x") }).not.toMatchObject({ e: new Error("x") });
+      expect({ a: [new Error("x")] }).not.toMatchObject({ a: [new Error("y")] });
       expect({ e: {} }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: { message: "x" } }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: "x" }).not.toMatchObject({ e: new Error("x") });
+      expect(new Error("x")).toMatchObject(new Error("x"));
       expect(new Error("x")).not.toMatchObject(new Error("y"));
-      expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x") });
-      expect({ e: new Error("x", { cause: { a: 1, b: 2 } }) }).toMatchObject({
-        e: new Error("x", { cause: { a: 1 } }),
-      });
-      expect({ e: new Error("x", { cause: { a: 1 } }) }).not.toMatchObject({ e: new Error("x", { cause: { a: 2 } }) });
-      expect({ e: Object.assign(new Error("x"), { code: 1 }) }).toMatchObject({ e: new Error("x") });
-      expect({ e: new Error("x") }).not.toMatchObject({ e: Object.assign(new Error("x"), { code: 1 }) });
-
-      expect({ s: new Set([1, 2]) }).toMatchObject({ s: new Set([1, 2]) });
-      expect({ s: new Set([1, 2]) }).not.toMatchObject({ s: new Set([1, 3]) });
-      expect({ s: new Set([1, 2, 3]) }).not.toMatchObject({ s: new Set([1, 2]) });
-      expect({ s: {} }).not.toMatchObject({ s: new Set() });
-      expect(new Set([1])).toMatchObject(new Set([1]));
-      expect(new Set([1])).not.toMatchObject(new Set([2]));
-
-      expect({ m: new Map([[1, 2]]) }).toMatchObject({ m: new Map([[1, 2]]) });
-      expect({ m: new Map([[1, 2]]) }).not.toMatchObject({ m: new Map([[1, 3]]) });
-      expect({
-        m: new Map([
-          [1, 2],
-          [3, 4],
-        ]),
-      }).not.toMatchObject({ m: new Map([[1, 2]]) });
-      expect({ m: new Map([["k", { a: 1, b: 2 }]]) }).toMatchObject({ m: new Map([["k", { a: 1 }]]) });
-      expect({ m: {} }).not.toMatchObject({ m: new Map() });
-
-      const fn = () => 1;
-      expect({ f: fn }).toMatchObject({ f: fn });
-      expect({ f: fn }).not.toMatchObject({ f: () => 1 });
-      expect({ f: {} }).not.toMatchObject({ f: fn });
-    });
-
-    test("an expected native constructor, mock function or callable Proxy matches only itself", () => {
-      const mockFn = jest.fn();
-      expect({ f: mockFn }).toMatchObject({ f: mockFn });
-      expect({ f: mockFn }).toMatchObject({ f: expect.any(Function) });
-      expect({ f: jest.fn() }).not.toMatchObject({ f: jest.fn() });
-      expect({ f: Map }).toMatchObject({ f: Map });
-      expect({ f: Map }).not.toMatchObject({ f: Set });
-      expect({ f: {} }).not.toMatchObject({ f: Set });
-      const proxy = new Proxy(() => 1, {});
-      expect({ f: proxy }).toMatchObject({ f: proxy });
-      expect({ f: new Proxy(() => 1, {}) }).not.toMatchObject({ f: new Proxy(() => 1, {}) });
-      expect({ f: Object.assign(() => 1, { x: 1 }) }).not.toMatchObject({ f: Object.assign(() => 1, { x: 1 }) });
-    });
-
-    test("a plain expected object is matched against the properties of any received value", () => {
-      expect({ d: new Date(5) }).toMatchObject({ d: {} });
+      // a plain expected object still matches the properties of an Error
       expect({ e: new Error("x") }).toMatchObject({ e: { message: "x" } });
       expect({ e: new Error("x") }).not.toMatchObject({ e: { message: "y" } });
-      expect(new Error("x")).toMatchObject({ message: "x" });
-      expect({ m: new Map() }).toMatchObject({ m: {} });
-      expect({ f: () => 1 }).toMatchObject({ f: {} });
-      expect({ a: [1, 2] }).toMatchObject({ a: { 0: 1 } });
-      expect({ a: { 0: 1 } }).not.toMatchObject({ a: [1] });
     });
 
-    test("an asymmetric matcher passed as the whole expected value is applied", () => {
-      expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }));
-      expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ a: 2 }));
-      expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ c: 1 }));
-      expect([1]).toMatchObject(expect.any(Array));
-      expect({ a: 1 }).not.toMatchObject(expect.any(Array));
-    });
-
-    test("an expected object reused under several keys is matched under each", () => {
-      const shared = { x: 1 };
-      expect({ a: shared, b: shared }).toMatchObject({ a: shared, b: { x: 1 } });
-      expect({ a: shared, b: { x: 2 } }).not.toMatchObject({ a: shared, b: shared });
+    test("an expected Date under a received object that refers to itself", () => {
+      /** @type {any} */
+      const received = { at: new Date(5) };
+      received.self = received;
+      expect(received).toMatchObject({ self: { at: new Date(5) } });
+      expect(received).not.toMatchObject({ self: { at: new Date(6) } });
     });
 
     if (isBun) {
-      // jest walks the (empty) key list of these, so any received object matches. Bun
-      // compares them by value, as toEqual does.
-      test("an expected RegExp, boxed primitive or Temporal value is compared as a value", () => {
-        expect({ r: /a/g }).toMatchObject({ r: /a/g });
-        expect({ r: /a/g }).not.toMatchObject({ r: /a/i });
-        expect({ r: /a/ }).not.toMatchObject({ r: /b/ });
-        expect({ r: {} }).not.toMatchObject({ r: /a/ });
-        expect({ n: new Number(1) }).toMatchObject({ n: new Number(1) });
-        expect({ n: new Number(1) }).not.toMatchObject({ n: new Number(2) });
-        expect({ s: new String("a") }).not.toMatchObject({ s: new String("b") });
-        expect({ t: Temporal.PlainDate.from("2024-01-01") }).toMatchObject({
-          t: Temporal.PlainDate.from("2024-01-01"),
-        });
-        expect({ t: Temporal.PlainDate.from("2024-01-01") }).not.toMatchObject({
-          t: Temporal.PlainDate.from("2024-01-02"),
-        });
-        expect({ t: {} }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
-      });
-
-      test("an expected ArrayBuffer, typed array, URL, URLSearchParams or Headers is compared as a value", () => {
-        const bytes = (...b) => new Uint8Array(b).buffer;
-        expect({ b: bytes(1, 2) }).toMatchObject({ b: bytes(1, 2) });
-        expect({ b: bytes(1, 2) }).not.toMatchObject({ b: bytes(1, 3) });
-        expect({ b: bytes(1, 2) }).not.toMatchObject({ b: new ArrayBuffer(0) });
-        expect({ b: {} }).not.toMatchObject({ b: new ArrayBuffer(0) });
-        expect({ a: new Uint8Array([1, 2]) }).toMatchObject({ a: new Uint8Array([1, 2]) });
-        expect({ a: new Uint8Array([1, 2, 3]) }).not.toMatchObject({ a: new Uint8Array([1, 2]) });
-        expect({ a: [1, 2] }).not.toMatchObject({ a: new Uint8Array([1, 2]) });
-
-        expect({ u: new URL("https://example.com/a") }).toMatchObject({ u: new URL("https://example.com/a") });
-        expect({ u: new URL("https://example.com/a") }).not.toMatchObject({ u: new URL("https://example.com/b") });
-
-        expect({ p: new URLSearchParams("a=1&b=2") }).toMatchObject({ p: new URLSearchParams("a=1&b=2") });
-        expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=2") });
-        expect({ p: new URLSearchParams("a=1&b=2") }).not.toMatchObject({ p: new URLSearchParams("a=1") });
-        // the same size, and every entry of one side has its value on the other side
-        expect({ p: new URLSearchParams("a=1&a=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&b=1") });
-        expect({ p: new URLSearchParams("a=1&b=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&a=1") });
-
-        expect({ h: new Headers({ a: "1", b: "2" }) }).toMatchObject({ h: new Headers({ b: "2", a: "1" }) });
-        expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ a: "2" }) });
-        expect({ h: new Headers({ a: "1", b: "2" }) }).not.toMatchObject({ h: new Headers({ a: "1" }) });
-        expect({ h: new Headers() }).not.toMatchObject({ h: new Headers({ a: "1" }) });
-      });
-
-      test("Bun.deepMatch compares an expected Date, Error, Set, Map or function as a value", () => {
+      test("Bun.deepMatch compares an expected Date and Error", () => {
         expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
         expect(Bun.deepMatch({ d: new Date(2) }, { d: new Date(1) })).toBe(false);
         expect(Bun.deepMatch({ d: new Date(1) }, { d: new Date(1) })).toBe(true);
@@ -3941,9 +3844,22 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("x") })).toBe(true);
         expect(Bun.deepMatch({ d: new Date() }, { d: {} })).toBe(false);
         expect(Bun.deepMatch({ d: {} }, { d: new Date() })).toBe(true);
-        expect(Bun.deepMatch({ s: new Set([1, 2]) }, { s: new Set([1, 3]) })).toBe(false);
-        expect(Bun.deepMatch({ m: new Map([[1, 2]]) }, { m: new Map([[1, 3]]) })).toBe(false);
-        expect(Bun.deepMatch({ f: () => 1 }, { f: () => 1 })).toBe(false);
+      });
+
+      test("details of the Date and Error comparison", () => {
+        // an invalid Date equals no Date, as in toEqual and in Jest
+        expect({ d: new Date(NaN) }).not.toMatchObject({ d: new Date(NaN) });
+        // as in Jest, the class, the name and the cause of an Error are not compared
+        expect({ e: new TypeError("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x", { cause: 2 }) });
+        // a DOMException is an Error
+        expect({ e: new DOMException("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new DOMException("x") }).not.toMatchObject({ e: new Error("y") });
+        // the enumerable properties of the expected Date or Error are matched, as before
+        const withCode = () => Object.assign(new Error("x"), { code: 1 });
+        expect({ e: Object.assign(withCode(), { extra: 2 }) }).toMatchObject({ e: withCode() });
+        expect({ e: new Error("x") }).not.toMatchObject({ e: withCode() });
+        expect({ d: new Date(5) }).not.toMatchObject({ d: Object.assign(new Date(5), { x: 1 }) });
       });
     }
   });

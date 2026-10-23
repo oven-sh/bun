@@ -2920,11 +2920,8 @@ declare module "bun" {
    * Returns true if all properties in the subset exist in the
    * other and have equal values.
    *
-   * A plain object or array in the subset is matched property by property.
-   * Any other object in the subset (a `Date`, `Error`, `Map`, `Set`, `RegExp`,
-   * `ArrayBuffer`, typed array or boxed primitive) must be a value of the same
-   * type that `Bun.deepEquals` considers equal. A function in the subset
-   * matches only the same function.
+   * A `Date` in the subset matches a `Date` with the same time value.
+   * An `Error` in the subset matches an `Error` with the same message.
    *
    * This also powers expect().toMatchObject in `bun:test`
    */

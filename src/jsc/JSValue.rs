@@ -2745,11 +2745,20 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison. A matched asymmetric
-    /// matcher in `subset` is copied onto `self` for the failure diff.
-    pub fn jest_deep_match(self, subset: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+    /// snapshot-property-matcher subset comparison.
+    pub fn jest_deep_match(
+        self,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        replace_props_with_asymmetric_matchers: bool,
+    ) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(self, subset, global)
+            JSC__JSValue__jestDeepMatch(
+                self,
+                subset,
+                global,
+                replace_props_with_asymmetric_matchers,
+            )
         })
     }
 
@@ -2861,6 +2870,7 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
+        replace_props: bool,
     ) -> bool;
     safe fn JSC__JSValue__asBigIntCompare(
         this: JSValue,

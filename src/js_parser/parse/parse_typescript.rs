@@ -80,8 +80,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // @(Expression) — parenthesized, any expression allowed
         if p.lexer.token == T::TOpenParen {
             p.lexer.next()?;
+
+            // `( Expression[+In] )`: esbuild's parseDecorator inherits a "for" initializer's flag.
+            let old_allow_in = p.allow_in;
+            p.allow_in = true;
+
             let expr = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
+
+            p.allow_in = old_allow_in;
             return Ok(expr);
         }
 

@@ -727,11 +727,19 @@ impl BunTest {
 
     /// Snapshot names of the tests and beforeAll/afterAll hooks that did not run to a pass. `None` when a describe callback threw: tests are missing.
     pub(crate) fn unfinished_test_names(&self) -> Option<StringSet> {
-        fn collect(
-            scope: &DescribeScope,
-            passed: &[*const ExecutionEntry],
-            names: &mut StringSet,
-        ) -> Option<()> {
+        let mut passed: Vec<*const ExecutionEntry> = self
+            .execution
+            .sequences
+            .iter()
+            .filter(|sequence| sequence.result == Execution::Result::Pass)
+            .filter_map(|sequence| sequence.test_entry.or(sequence.first_entry))
+            .map(|entry| entry.as_ptr().cast_const())
+            .collect();
+        passed.sort_unstable();
+        let mut names = StringSet::new();
+        // An explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
+        let mut open: Vec<&DescribeScope> = vec![&*self.collection.root_scope];
+        while let Some(scope) = open.pop() {
             if scope.failed {
                 return None;
             }
@@ -747,25 +755,11 @@ impl BunTest {
                     bun_core::handle_oom(names.insert(&name));
                 }
             }
-            for entry in &scope.entries {
-                if let TestScheduleEntry::Describe(describe) = entry {
-                    collect(describe, passed, names)?;
-                }
-            }
-            Some(())
+            open.extend(scope.entries.iter().filter_map(|entry| match entry {
+                TestScheduleEntry::Describe(describe) => Some(&**describe),
+                TestScheduleEntry::TestCallback(_) => None,
+            }));
         }
-
-        let mut passed: Vec<*const ExecutionEntry> = self
-            .execution
-            .sequences
-            .iter()
-            .filter(|sequence| sequence.result == Execution::Result::Pass)
-            .filter_map(|sequence| sequence.test_entry.or(sequence.first_entry))
-            .map(|entry| entry.as_ptr().cast_const())
-            .collect();
-        passed.sort_unstable();
-        let mut names = StringSet::new();
-        collect(&self.collection.root_scope, &passed, &mut names)?;
         Some(names)
     }
 

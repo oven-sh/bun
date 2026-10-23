@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
@@ -390,6 +390,39 @@ describe.concurrent("--update-snapshots", () => {
       snapshot,
     );
     expect(exitCode).toBe(1);
+  });
+
+  test("lists the tests of a deeply nested describe() without native recursion", async () => {
+    // describe() callbacks run from a queue, so the JS stack limit doesn't stop the nesting.
+    const depth = 10000;
+    using dir = tempDir("update-snapshots-deep", {
+      "a.test.ts": `import { describe, expect, test } from "bun:test";
+        let depth = ${depth};
+        (function nest() {
+          if (depth-- > 0) return describe("d", nest);
+          test("leaf", () => { expect("new").toMatchSnapshot(); });
+        })();
+        test.skip("skipped", () => { expect("s").toMatchSnapshot(); });`,
+      "__snapshots__/a.test.ts.snap": snap({ "skipped 1": `"s"`, "gone 1": `"g"` }),
+    });
+    const cmd = [bunExe(), "test", "--update-snapshots"];
+    await using proc = Bun.spawn({
+      // Linux sizes the main thread's stack from `ulimit -s`.
+      cmd: isLinux ? ["sh", "-c", `ulimit -s 1024 && exec "$@"`, "sh", ...cmd] : cmd,
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("\n 1 pass");
+    expect({
+      snapshot: fs.readFileSync(join(String(dir), "__snapshots__", "a.test.ts.snap"), "utf8"),
+      exitCode,
+    }).toEqual({
+      snapshot: snap({ "skipped 1": `"s"`, [`${"d ".repeat(depth)}leaf 1`]: `"new"` }),
+      exitCode: 0,
+    });
   });
 
   test("applies the results of each test file to its own .snap file", async () => {

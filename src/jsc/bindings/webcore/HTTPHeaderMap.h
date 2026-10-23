@@ -188,27 +188,12 @@ public:
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
     const_iterator end() const { return const_iterator(*this, m_commonHeaders.end(), m_uncommonHeaders.end(), m_setCookieHeaders.end()); }
 
+    // Names compare in any order. Set-Cookie values are an ordered list: getSetCookie() and iteration show the order.
     friend bool operator==(const HTTPHeaderMap& a, const HTTPHeaderMap& b)
     {
-        if (a.m_commonHeaders.size() != b.m_commonHeaders.size() || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size() || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size())
-            return false;
-
-        for (auto& commonHeader : a.m_commonHeaders) {
-            if (b.get(commonHeader.key) != commonHeader.value)
-                return false;
-        }
-
-        for (auto& uncommonHeader : a.m_setCookieHeaders) {
-            if (b.m_setCookieHeaders.find(uncommonHeader) == notFound)
-                return false;
-        }
-
-        for (auto& uncommonHeader : a.m_uncommonHeaders) {
-            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value)
-                return false;
-        }
-
-        return true;
+        return a.m_setCookieHeaders == b.m_setCookieHeaders
+            && sameEntries(a.m_commonHeaders, b.m_commonHeaders, [](HTTPHeaderName name, HTTPHeaderName other) { return name == other; })
+            && sameEntries(a.m_uncommonHeaders, b.m_uncommonHeaders, [](const String& name, const String& other) { return equalIgnoringASCIICase(name, other); });
     }
 
     friend bool operator!=(const HTTPHeaderMap& a, const HTTPHeaderMap& b)
@@ -222,6 +207,21 @@ public:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
 private:
+    // A list holds each name once, so equal sizes and every name of `a` found in `b` mean the same names.
+    template<typename Entries, typename SameName>
+    static bool sameEntries(const Entries& a, const Entries& b, const SameName& sameName)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); i++) {
+            // Two maps filled in the same order hold a name at the same index.
+            size_t index = sameName(a[i].key, b[i].key) ? i : b.findIf([&](auto& entry) { return sameName(a[i].key, entry.key); });
+            if (index == notFound || a[i].value != b[index].value)
+                return false;
+        }
+        return true;
+    }
+
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;

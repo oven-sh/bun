@@ -1387,6 +1387,22 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
+// Headers and URLSearchParams keep their entries in a native list that no property shows.
+// True for two Headers or two URLSearchParams whose lists differ. An equal pair can still
+// differ in the properties a caller added to the wrapper.
+static bool wrapperEntriesDiffer(JSCell* c1, JSCell* c2)
+{
+    if (auto* params1 = dynamicDowncast<JSURLSearchParams>(c1)) {
+        auto* params2 = dynamicDowncast<JSURLSearchParams>(c2);
+        return params2 && !params1->wrapped().entriesEqual(params2->wrapped());
+    }
+    if (auto* headers1 = dynamicDowncast<JSFetchHeaders>(c1)) {
+        auto* headers2 = dynamicDowncast<JSFetchHeaders>(c2);
+        return headers2 && headers1->wrapped().internalHeaders() != headers2->wrapped().internalHeaders();
+    }
+    return false;
+}
+
 struct DeepEqualsMode {
     bool isStrict;
     bool enableAsymmetricMatchers;
@@ -1838,26 +1854,14 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // TODO: FormData.
             // It's complicated because it involves Blob.
 
+            if (wrapperEntriesDiffer(c1, c2)) {
+                return false;
+            }
+
             {
                 auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
                 auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
                 if (urlSearchParams1 && urlSearchParams2) {
-                    auto& wrapped1 = urlSearchParams1->wrapped();
-                    const auto& wrapped2 = urlSearchParams2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
-                        return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (!maybeValue || maybeValue != value) {
-                            return false;
-                        }
-                    }
-
                     goto compareAsNormalValue;
                 } else {
                     if (mode.isStrict) {
@@ -1877,26 +1881,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto headers1 = dynamicDowncast<JSFetchHeaders>(c1);
                 auto headers2 = dynamicDowncast<JSFetchHeaders>(c2);
                 if (headers1 && headers2) {
-                    auto& wrapped1 = headers1->wrapped();
-                    const auto& wrapped2 = headers2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
-                        return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (maybeValue.hasException()) {
-                            return false;
-                        }
-
-                        if (maybeValue.returnValue() != value) {
-                            return false;
-                        }
-                    }
-
                     goto compareAsNormalValue;
                 } else {
                     if (mode.isStrict) {

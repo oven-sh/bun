@@ -108,6 +108,13 @@ function argumentsObject(...values: unknown[]) {
   )(...values);
 }
 
+function headersWithTwoSetCookies() {
+  const headers = new Headers({ "content-type": "text/plain" });
+  headers.append("set-cookie", "k=1");
+  headers.append("set-cookie", "j=2");
+  return headers;
+}
+
 const cases: Case[] = [
   // Loose mode compares primitives with ==, strict mode with Object.is.
   { name: "0 and -0", a: () => 0, b: () => -0, strict: false, loose: true, looseBug: "reports not equal" },
@@ -942,6 +949,28 @@ const cases: Case[] = [
     name: "two equal arguments objects",
     a: () => argumentsObject(1),
     b: () => argumentsObject(1),
+    strict: true,
+    loose: true,
+  },
+  // Node.js does not compare the entries of URLSearchParams and Headers. Bun does, and equal entries stay equal.
+  {
+    name: "two URLSearchParams with a repeated name",
+    a: () => new URLSearchParams("a=1&a=2"),
+    b: () => new URLSearchParams("a=1&a=2"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two URLSearchParams with distinct names in another order",
+    a: () => new URLSearchParams("a=1&b=2"),
+    b: () => new URLSearchParams("b=2&a=1"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two Headers with the same set-cookie values",
+    a: headersWithTwoSetCookies,
+    b: headersWithTwoSetCookies,
     strict: true,
     loose: true,
   },

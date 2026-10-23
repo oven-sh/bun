@@ -48,6 +48,7 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
     : EventListener(JSEventListenerType)
     , m_isAttribute(isAttribute)
     , m_wasCreatedFromMarkup(createdFromMarkup == CreatedFromMarkup::Yes)
+    , m_isNodeStyle(false)
     , m_isInitialized(false)
     , m_wrapper(wrapper)
     , m_isolatedWorld(&isolatedWorld)
@@ -60,6 +61,38 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
     auto* clientData = WebCore::clientData(isolatedWorld.vm());
     if (clientData->isWorkerVM())
         clientData->addClient(*this);
+}
+
+NodeStyleEventValue::NodeStyleEventValue(VM& vm, const Event& event, JSValue value)
+    : m_clientData(*WebCore::clientData(vm))
+    , m_event(event)
+    , m_value(value)
+    , m_outer(std::exchange(m_clientData.nodeStyleEventValue, this))
+{
+}
+
+NodeStyleEventValue::~NodeStyleEventValue()
+{
+    ASSERT(m_clientData.nodeStyleEventValue == this);
+    m_clientData.nodeStyleEventValue = m_outer;
+    JSC::ensureStillAliveHere(m_eventWrapper);
+}
+
+void NodeStyleEventValue::dispatch(VM& vm, EventTarget& target, Event& event, JSValue value)
+{
+    NodeStyleEventValue supplied(vm, event, value);
+    target.dispatchEvent(event);
+}
+
+JSValue NodeStyleEventValue::find(VM& vm, const Event& event)
+{
+    for (auto* supplied = WebCore::clientData(vm)->nodeStyleEventValue; supplied; supplied = supplied->m_outer) {
+        if (&supplied->m_event == &event) {
+            supplied->m_eventWrapper = event.wrapper();
+            return supplied->m_value;
+        }
+    }
+    return {};
 }
 
 JSEventListener::~JSEventListener()
@@ -207,8 +240,14 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     Ref<JSEventListener> protectedThis(*this);
     Bun::ModuleGraphContextScope moduleGraphContext(scriptExecutionContext);
 
+    JSValue argument;
+    if (m_isNodeStyle) [[unlikely]]
+        argument = NodeStyleEventValue::find(vm, event);
+    if (!argument)
+        argument = toJS(lexicalGlobalObject, globalObject, &event);
+
     MarkedArgumentBuffer args;
-    args.append(toJS(lexicalGlobalObject, globalObject, &event));
+    args.append(argument);
     ASSERT(!args.hasOverflowed());
 
     // JSExecState::instrumentFunction(&scriptExecutionContext, callData);

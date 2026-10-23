@@ -33,6 +33,7 @@
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "EventNames.h"
+#include "JSEventListener.h"
 #include "MessageEvent.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
@@ -350,7 +351,8 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
     bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
-        globalObject.globalEventScope->dispatchEvent(event);
+        // The on() listeners of a web Worker's parentPort stand-in get the message, or undefined for 'messageerror'.
+        NodeStyleEventValue::dispatch(globalObject.vm(), globalObject.globalEventScope.get(), event, static_cast<MessageEvent&>(event).cachedData().getValue());
     });
     if (more) {
         // Budget spent with messages left: continue after the loop has polled,

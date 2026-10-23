@@ -4544,6 +4544,39 @@ describe.concurrent("ESLint 8 config files", () => {
     expect(problems).toEqual(["a.js:1:5 inner/no-x", "a.js:2:5 inner/no-x"]);
   });
 
+  test("a plugin that asks the installed ESLint's Linter for its rules gets them", async () => {
+    const eslint = {
+      "node_modules/eslint/package.json": `{ "name": "eslint", "version": "8.57.1", "main": "lib/api.js" }`,
+      "node_modules/eslint/lib/api.js": `module.exports = { Linter: require("./linter/linter.js").Linter };`,
+      "node_modules/eslint/lib/linter/linter.js": `class Linter {
+          verify() {}
+          getRules() { return new Map([["no-x", { ${noX} }.rules["no-x"]]]); }
+        }
+        module.exports = { Linter };`,
+    };
+    // This is what eslint-plugin-vue 8 does.
+    const { problems } = await lint({
+      ...eslint,
+      ".eslintrc.json": rc({ plugins: ["wraps"], rules: { "wraps/no-x": "error" } }),
+      "node_modules/eslint-plugin-wraps/index.js": `const rules = new (require("eslint").Linter)().getRules();
+        module.exports = { rules: { "no-x": rules.get("no-x") } };`,
+      "a.js": code,
+    });
+    expect(problems).toEqual(["a.js:1:5 wraps/no-x", "a.js:2:5 wraps/no-x"]);
+    // This is what eslint-plugin-html does. ESLint isn't loaded when it looks.
+    const html = await lint({
+      ...eslint,
+      ".eslintrc.json": rc({ plugins: ["html"], rules: { "no-debugger": "error" } }),
+      "node_modules/eslint-plugin-html/index.js": `const isLinter = it => /[\\\\/]lib[\\\\/]linter[\\\\/]linter\\.js$/.test(it);
+        const found = Object.keys(require.cache).filter(isLinter);
+        if (found.length === 0) throw new Error("eslint-plugin-html error: It seems that eslint is not loaded.");
+        for (const it of found) require.cache[it].exports.Linter.prototype.verify = () => [];
+        module.exports = {};`,
+      "a.js": "debugger;\n",
+    });
+    expect(html.stderr).not.toContain("It seems that eslint is not loaded");
+  });
+
   test("a package that isn't installed is never requested from a registry", async () => {
     const requested: string[] = [];
     using server = Bun.serve({

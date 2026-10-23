@@ -798,12 +798,12 @@ fn spawn_maybe_sync(
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the live `m_ctx` pointer borrowed
+                        // `from_js` returns the live `Terminal` pointer borrowed
                         // from the JS wrapper; it stays valid for as long as
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.
-                        // SAFETY: `terminal` is the wrapper's live `m_ctx` heap pointer
+                        // SAFETY: `terminal` is the wrapper's live heap pointer
                         // (write provenance from its original allocation).
                         let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
                         if term.is_closed() {
@@ -1569,11 +1569,8 @@ fn spawn_maybe_sync(
     }
 
     let out = if !is_sync {
-        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
-        // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
-        // the by-value `JsClass::to_js` (which would re-box).
-        SubprocessT::to_js_from_ptr(subprocess_ptr, cx.global())
+        // The JS wrapper adopts the ref `subprocess_ptr` was allocated with.
+        SubprocessT::to_js_nonnull(subprocess_nn, cx.global())
     } else {
         JSValue::ZERO
     };
@@ -1935,8 +1932,8 @@ fn spawn_maybe_sync(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, cx.global());
-    let exit_code = SubprocessT::get_exit_code(subprocess, cx.global());
+    let signal_code = subprocess.signal_code_to_js(cx.global());
+    let exit_code = subprocess.exit_code_to_js();
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())

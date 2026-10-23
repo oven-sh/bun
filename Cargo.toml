@@ -281,7 +281,7 @@ clone_on_copy = "deny"
 useless_conversion = "deny"
 # vec_box / boxed_local: legit patterns are `#[expect]`-suppressed at the site
 # with a one-line "why the box is load-bearing" comment (intrusive-list address
-# stability, JsClass finalizer thunk contract). Anything new must justify itself.
+# stability, a task's reclaim point). Anything new must justify itself.
 vec_box = "deny"
 boxed_local = "deny"
 arc_with_non_send_sync = "deny"

@@ -24048,6 +24048,15 @@ describe.concurrent("--check", () => {
         loader: ".x:html",
         errors: ["main.ts(1,14) TS2322"],
       },
+      "an extension in upper case": {
+        files: {
+          "upper.d.ts": pattern("*.HTML"),
+          "INDEX.HTML": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./INDEX.HTML";`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
       "a file without an extension under `--loader :html`": {
         files: {
           "page": page("./main.ts"),

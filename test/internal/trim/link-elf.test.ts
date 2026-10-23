@@ -15,7 +15,6 @@ import {
   addressInMap,
   archiver,
   canLink,
-  isX64,
   canLinkRustBitcode,
   canUseGuardHeader,
   compileFeatureCodeOnce,
@@ -30,6 +29,7 @@ import {
   guardedArguments,
   guardsBoth,
   inspectAndRun,
+  isX64,
   linkByHand,
   linked,
   linkSkipReason,
@@ -94,7 +94,11 @@ else {
     const reason = guardHeaderSkipReason ?? "the engine's header does not compile here";
     skipNotice(testFile, `${reason}: the cases with the engine's header do not run`);
   }
-  if (!isX64) skipNotice(testFile, "only on x86-64 does the switch of the toy get a jump table in a section of its own: the case with a section without a symbol does not run");
+  if (!isX64)
+    skipNotice(
+      testFile,
+      "only on x86-64 does the switch of the toy get a jump table in a section of its own: the case with a section without a symbol does not run",
+    );
   if (rustc === null) skipNotice(testFile, "rustc is not on PATH: the cases in Rust do not run");
   else if (!canLinkRustBitcode) {
     skipNotice(testFile, "ld.lld may be older than rustc's LLVM: the case with Rust bitcode does not run");

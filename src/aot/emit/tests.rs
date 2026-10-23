@@ -11,12 +11,11 @@ use crate::compile::testing::TemporaryDirectory;
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
     Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult, Field, Function,
-    FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase,
-    Layout, LayoutKind, LimitId, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
-    ModuleRequestKind, ProgramList, RequiredName, RuntimeFunctionEntry,
-    SCHEMA_HASH, StaticField, SyntheticExport, TemplatePart, TemplatePlaceholder,
-    TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive, ValidationMember,
-    ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
+    FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout, LayoutKind, LimitId,
+    MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind, ProgramList,
+    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TemplatePart,
+    TemplatePlaceholder, TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive,
+    ValidationMember, ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{

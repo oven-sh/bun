@@ -138,19 +138,16 @@ test("an int32 of a typed text is Bun's", () => {
     expect([path, /\btype int32 = (.*);/.exec(text)![1]]).toEqual([path, 'import("bun").int32']);
 });
 
-test.each(["19.3.0", "19.3.1"])(
-  "react-dom %s constructs a request without a cast through unknown",
-  version => {
-    const lay = join(home, "react-dom", version, "lay");
-    const texts = filesUnder(lay);
-    expect(texts.length).toBe(2);
-    for (const path of texts) {
-      const text = readFileSync(join(lay, path), "utf8");
-      expect(text).toContain("new (RequestInstance as FZ.RequestConstructor)(");
-      expect(text).not.toContain(" as unknown as ");
-    }
-  },
-);
+test.each(["19.3.0", "19.3.1"])("react-dom %s constructs a request without a cast through unknown", version => {
+  const lay = join(home, "react-dom", version, "lay");
+  const texts = filesUnder(lay);
+  expect(texts.length).toBe(2);
+  for (const path of texts) {
+    const text = readFileSync(join(lay, path), "utf8");
+    expect(text).toContain("new (RequestInstance as FZ.RequestConstructor)(");
+    expect(text).not.toContain(" as unknown as ");
+  }
+});
 
 test.skipIf(!existsSync(join(home, "..", "..", ".gitattributes")))(
   "neither git nor the formatter changes a byte of them",

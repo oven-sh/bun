@@ -80,10 +80,19 @@ function whatIsCompressedIn(bytes: Buffer): Uint8Array[] {
 function whatIsMappedOf(file: Buffer): Buffer[] {
   const isElf64 = file.length >= 64 && file.readUInt32BE(0) === 0x7f454c46 && file[4] === 2 && file[5] === 1;
   if (!isElf64) return [file];
-  const [headers, headerSize, count] = [Number(file.readBigUInt64LE(0x20)), file.readUInt16LE(0x36), file.readUInt16LE(0x38)];
+  const [headers, headerSize, count] = [
+    Number(file.readBigUInt64LE(0x20)),
+    file.readUInt16LE(0x36),
+    file.readUInt16LE(0x38),
+  ];
   return Array.from({ length: count }, (_, index) => headers + index * headerSize)
     .filter(at => file.readUInt32LE(at) === 1)
-    .map(at => file.subarray(Number(file.readBigUInt64LE(at + 8)), Number(file.readBigUInt64LE(at + 8) + file.readBigUInt64LE(at + 32))));
+    .map(at =>
+      file.subarray(
+        Number(file.readBigUInt64LE(at + 8)),
+        Number(file.readBigUInt64LE(at + 8) + file.readBigUInt64LE(at + 32)),
+      ),
+    );
 }
 
 const heldByWhatStays = ["exhaustive-deps", "rules-of-hooks", "use-memo", "Substitutions for pattern "];

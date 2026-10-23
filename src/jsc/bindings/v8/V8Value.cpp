@@ -174,8 +174,7 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // Node 26.12.1 returns 0 when this yields a negative int32 ("-1"), a V8 bug fixed in
-    // https://github.com/v8/v8/commit/42bc03b82e4792fc618e1ba41c7e8646184eaa6c.
+    // Node 26.12.1 returns 0 for "-1" here, a V8 bug: https://github.com/v8/v8/commit/42bc03b82e4792fc618e1ba41c7e8646184eaa6c
     uint32_t result = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, Nothing<uint32_t>());
 

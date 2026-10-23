@@ -1033,8 +1033,9 @@ impl Checker<'_, '_> {
                         Some(2345),
                         Some(&mut diagnostics),
                     );
-                if !is_elaborated {
-                    self.check_type_assignable_to_and_optionally_elaborate(
+                // The comparison that reports errors can succeed where the one above failed. See `relate_variances`.
+                if !is_elaborated
+                    && self.check_type_assignable_to_and_optionally_elaborate(
                         actual,
                         expected,
                         Some(error_node),
@@ -1042,7 +1043,9 @@ impl Checker<'_, '_> {
                         true,
                         Some(2345),
                         Some(&mut diagnostics),
-                    );
+                    )
+                {
+                    continue;
                 }
                 self.reported.extend(diagnostics);
                 let error_span = self.span_of_parenthesized_expr(file, node);

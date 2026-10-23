@@ -8756,6 +8756,38 @@ export const u: [number] | [number, string] = [1, 2];
       expect(exitCode).toBe(1);
     });
 
+    // The constraints of the two type parameters aren't related by the variances of `Extract`, so `n` is rejected. Where
+    // TypeScript reports that, it compares the two conditional types structurally, which succeeds.
+    test("continues with the next argument if the comparison that reports the error succeeds", async () => {
+      using dir = project({
+        "a.ts": `interface Model<M extends Record<string, unknown> = Record<string, unknown>> { mutations: M }
+type Mutations<T> = T extends Model<infer M> ? M : never;
+export function f<T extends Model, N extends Extract<keyof Mutations<T>, string>>(n: N) {
+  function two<Name extends Extract<keyof T["mutations"], string>>(name: Name, other: number): Name { return name; }
+  return [two(n, "a"), two(n, "b")];
+}
+export function g<T extends Model, N extends Extract<keyof Mutations<T>, string>>(n: N) {
+  function rest<Name extends Extract<keyof T["mutations"], string>>(name: Name, ...others: number[]): Name { return name; }
+  return [rest(n, 1, "a"), rest(n, "b")];
+}
+export function h<T extends Model, N extends Extract<keyof Mutations<T>, string>>(n: N) {
+  function three<Name extends Extract<keyof T["mutations"], string>>(name: Name, again: Name, other: number): Name { return name; }
+  return [three(n, n, "a"), three(n, n, "b")];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,18): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(5,31): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(9,22): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(9,36): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(13,23): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(13,41): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("checks the callee again after the quick type of a call, and after the test for a recursive call", async () => {
       using dir = project({
         "a.ts": `declare function fail(): never;

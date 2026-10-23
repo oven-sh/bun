@@ -3817,7 +3817,9 @@ describe("expect()", () => {
       expect({ e: {} }).not.toMatchObject({ e: new Error("x") });
       expect(new Error("x")).not.toMatchObject(new Error("y"));
       expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x") });
-      expect({ e: new Error("x", { cause: { a: 1, b: 2 } }) }).toMatchObject({ e: new Error("x", { cause: { a: 1 } }) });
+      expect({ e: new Error("x", { cause: { a: 1, b: 2 } }) }).toMatchObject({
+        e: new Error("x", { cause: { a: 1 } }),
+      });
       expect({ e: new Error("x", { cause: { a: 1 } }) }).not.toMatchObject({ e: new Error("x", { cause: { a: 2 } }) });
       expect({ e: Object.assign(new Error("x"), { code: 1 }) }).toMatchObject({ e: new Error("x") });
       expect({ e: new Error("x") }).not.toMatchObject({ e: Object.assign(new Error("x"), { code: 1 }) });
@@ -3831,7 +3833,12 @@ describe("expect()", () => {
 
       expect({ m: new Map([[1, 2]]) }).toMatchObject({ m: new Map([[1, 2]]) });
       expect({ m: new Map([[1, 2]]) }).not.toMatchObject({ m: new Map([[1, 3]]) });
-      expect({ m: new Map([[1, 2], [3, 4]]) }).not.toMatchObject({ m: new Map([[1, 2]]) });
+      expect({
+        m: new Map([
+          [1, 2],
+          [3, 4],
+        ]),
+      }).not.toMatchObject({ m: new Map([[1, 2]]) });
       expect({ m: new Map([["k", { a: 1, b: 2 }]]) }).toMatchObject({ m: new Map([["k", { a: 1 }]]) });
       expect({ m: {} }).not.toMatchObject({ m: new Map() });
 
@@ -3891,8 +3898,12 @@ describe("expect()", () => {
         expect({ n: new Number(1) }).toMatchObject({ n: new Number(1) });
         expect({ n: new Number(1) }).not.toMatchObject({ n: new Number(2) });
         expect({ s: new String("a") }).not.toMatchObject({ s: new String("b") });
-        expect({ t: Temporal.PlainDate.from("2024-01-01") }).toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
-        expect({ t: Temporal.PlainDate.from("2024-01-01") }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-02") });
+        expect({ t: Temporal.PlainDate.from("2024-01-01") }).toMatchObject({
+          t: Temporal.PlainDate.from("2024-01-01"),
+        });
+        expect({ t: Temporal.PlainDate.from("2024-01-01") }).not.toMatchObject({
+          t: Temporal.PlainDate.from("2024-01-02"),
+        });
         expect({ t: {} }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
       });
 

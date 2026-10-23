@@ -268,12 +268,4 @@ extern "C" void Bun__noOrphans_onFork() { Bun::NoOrphansTracker::get().scan(); }
 extern "C" void Bun__noOrphans_onExit(pid_t pid) { Bun::NoOrphansTracker::get().onExit(pid); }
 extern "C" void Bun__noOrphans_killTracked() { Bun::NoOrphansTracker::get().killTracked(); }
 
-#else // !OS(DARWIN)
-
-extern "C" void Bun__noOrphans_begin(int, int) {}
-extern "C" void Bun__noOrphans_releaseKq() {}
-extern "C" void Bun__noOrphans_onFork() {}
-extern "C" void Bun__noOrphans_onExit(int) {}
-extern "C" void Bun__noOrphans_killTracked() {}
-
-#endif
+#endif // OS(DARWIN)

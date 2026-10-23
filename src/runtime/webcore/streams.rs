@@ -419,13 +419,38 @@ impl WritablePending {
 }
 
 impl WritablePending {
+    /// Keeps the first `err` for [`Self::take_unclaimed`] while no promise is parked.
+    pub(crate) fn keep_unclaimed(&mut self, err: SysError) {
+        if self.state != PendingState::Pending && !matches!(self.result, Writable::Err(_)) {
+            self.result = Writable::Err(err);
+        }
+    }
+
+    /// The failure [`keep_unclaimed`](Self::keep_unclaimed) stored, handed out once.
+    pub(crate) fn take_unclaimed(&mut self) -> Option<SysError> {
+        if self.state == PendingState::Pending {
+            return None;
+        }
+        match core::mem::replace(&mut self.result, Writable::Done) {
+            Writable::Err(err) => Some(err),
+            other => {
+                self.result = other;
+                None
+            }
+        }
+    }
+
     /// Settle the parked write (see [`Pending::run`] for what happens to an
     /// exception the settle leaves).
     pub(crate) fn run(&mut self) {
         if self.state != PendingState::Pending {
             return;
         }
-        self.state = PendingState::Used;
+        self.state = if matches!(self.result, Writable::Err(_)) {
+            PendingState::Rejected
+        } else {
+            PendingState::Used
+        };
         // `consumed` belongs to the operation being settled here; the next one
         // starts from zero.
         self.consumed = 0;
@@ -617,6 +642,8 @@ pub(crate) enum PendingState {
     None,
     Pending,
     Used,
+    /// A parked write was settled with its failure.
+    Rejected,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

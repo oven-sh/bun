@@ -760,7 +760,15 @@ writeStreamPrototype._writev = function (data, cb) {
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err);
+    let end;
+    try {
+      end = sink.end(err);
+    } catch {
+      // destroy() is a teardown: Node emits no 'error' for `write(chunk); destroy()`.
+      this.fd = null;
+      cb(err);
+      return;
+    }
     if ($isPromise(end)) {
       end.then(() => cb(err), cb);
       return;

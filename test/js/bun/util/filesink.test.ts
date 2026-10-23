@@ -1369,6 +1369,352 @@ it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not u
   });
 });
 
+// A write under the buffer size is buffered and reported as written. The bytes go out
+// later, from the sink's flush at the end of the tick or from the writable poll, and that
+// write has no caller to tell when it fails.
+//  - On a file the unsent bytes stay buffered and the sink stays usable: the next flush(),
+//    end() or close() redoes the write and throws, or the bytes land once the file takes
+//    them again.
+//  - On a pipe or a socket the reader is gone (it hung up, the child exited): the sink is
+//    finished, and the error is kept and thrown once by the next flush(), end(), close() or
+//    start(). write() keeps answering `true`, as on an ended sink.
+describe.skipIf(!isPosix)("FileSink: a buffered write that fails after write() returned", () => {
+  const line = "one log line\n";
+  const EPIPE = expect.objectContaining({ code: "EPIPE" });
+  // The sink flushes what it buffered before the event loop runs its next task.
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  describe.skipIf(!isLinux)("on a device with no space left", () => {
+    it("end() throws it", async () => {
+      const sink = Bun.file("/dev/full").writer();
+      expect(sink.write(line)).toBe(line.length);
+      await turn();
+      expect(() => sink.end()).toThrow(expect.objectContaining({ code: "ENOSPC" }));
+    });
+
+    it("flush() throws it, and a later write is still taken", async () => {
+      const sink = Bun.file("/dev/full").writer();
+      expect(sink.write(line)).toBe(line.length);
+      await turn();
+      expect(() => sink.flush()).toThrow(expect.objectContaining({ code: "ENOSPC" }));
+      expect(sink.write(line)).toBe(line.length);
+      expect(() => sink.end()).toThrow(expect.objectContaining({ code: "ENOSPC" }));
+    });
+
+    it("close() throws it", async () => {
+      const sink = Bun.file("/dev/full").writer();
+      expect(sink.write(line)).toBe(line.length);
+      await turn();
+      expect(() => sink.close()).toThrow(expect.objectContaining({ code: "ENOSPC" }));
+    });
+  });
+
+  // The size limit (RLIMIT_FSIZE) lets a test take the room away and give it back: the child
+  // appends to a file that is at its limit, and a truncate makes room again.
+  describe.skipIf(!isLinux)("on a file that cannot grow", () => {
+    const limit = 4096;
+
+    async function run(body: string) {
+      using dir = tempDir("filesink-efbig", {});
+      const script = `
+        const fs = require("node:fs");
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        const code = fn => { try { return fn(); } catch (e) { return e.code; } };
+        const path = ${JSON.stringify(join(String(dir), "app.log"))};
+        const text = () => fs.readFileSync(path, "utf8");
+        const fd = fs.openSync(path, "a");
+        fs.writeSync(fd, Buffer.alloc(${limit}, "#"));
+        const sink = Bun.file(fd).writer();
+        ${body}
+      `;
+      await using proc = Bun.spawn({
+        // `ulimit -f` counts 512-byte blocks.
+        cmd: ["sh", "-c", `ulimit -f ${limit / 512} && exec "$@"`, "sh", bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const printed = (value: unknown) => ({ stdout: JSON.stringify(value) + "\n", stderr: "", exitCode: 0 });
+
+    it.concurrent("end() throws it", async () => {
+      const result = await run(`
+        const wrote = sink.write(${JSON.stringify(line)});
+        await turn();
+        const end = code(() => sink.end());
+        console.log(JSON.stringify({ wrote, end, size: fs.statSync(path).size }));
+      `);
+      expect(result).toEqual(printed({ wrote: line.length, end: "EFBIG", size: limit }));
+    });
+
+    it.concurrent("flush() throws it, and the sink stays usable", async () => {
+      const result = await run(`
+        const wrote = sink.write(${JSON.stringify(line)});
+        await turn();
+        const flush = code(() => sink.flush());
+        fs.ftruncateSync(fd, 0);
+        const again = sink.write("after\\n");
+        await turn();
+        console.log(JSON.stringify({ wrote, flush, again, end: typeof (await sink.end()), text: text() }));
+      `);
+      expect(result).toEqual(printed({ wrote: line.length, flush: "EFBIG", again: 6, end: "number", text: "after\n" }));
+    });
+
+    it.concurrent("the bytes land once the file has room again", async () => {
+      const result = await run(`
+        const wrote = [sink.write("line 1\\n")];
+        await turn();
+        fs.ftruncateSync(fd, 0);
+        for (const n of [2, 3]) {
+          wrote.push(sink.write("line " + n + "\\n"));
+          await turn();
+        }
+        console.log(JSON.stringify({ wrote, end: typeof (await sink.end()), text: text() }));
+      `);
+      expect(result).toEqual(printed({ wrote: [7, 7, 7], end: "number", text: "line 1\nline 2\nline 3\n" }));
+    });
+
+    // start() re-points the writer and keeps its buffer: bytes buffered in the same tick go
+    // to the new target, and so do bytes an earlier flush could not write.
+    it.concurrent("start() on another file takes the unsent bytes along", async () => {
+      const result = await run(`
+        const wrote = sink.write(${JSON.stringify(line)});
+        await turn();
+        const other = path + ".2";
+        sink.start({ fd: fs.openSync(other, "a") });
+        console.log(JSON.stringify({ wrote, end: typeof (await sink.end()), other: fs.readFileSync(other, "utf8") }));
+      `);
+      expect(result).toEqual(printed({ wrote: line.length, end: "number", other: line }));
+    });
+
+    // The loop the docs show: write() is not awaited, end() is.
+    it.concurrent("writes that nobody awaits are reported by end(), not as unhandled rejections", async () => {
+      const result = await run(`
+        let unhandled = 0;
+        process.on("unhandledRejection", () => unhandled++);
+        for (const chunk of ["a\\n", "b\\n", "c\\n"]) {
+          sink.write(chunk);
+          await turn();
+        }
+        let end;
+        try {
+          end = typeof (await sink.end());
+        } catch (e) {
+          end = e.code;
+        }
+        await turn();
+        console.log(JSON.stringify({ end, unhandled }));
+      `);
+      expect(result).toEqual(printed({ end: "EFBIG", unhandled: 0 }));
+    });
+
+    // 100 bytes of room: write(2) takes 100 bytes and then fails, so this write() rejects.
+    // Its caller is told, and nothing the sink writes later repeats a byte of it.
+    it.concurrent("a write cut short by the limit rejects, and no byte of it is written again", async () => {
+      const result = await run(`
+        fs.ftruncateSync(fd, ${limit - 100});
+        const stream = Buffer.from(Array.from({ length: ${limit} }, (_, i) => 97 + (i % 26)));
+        const small = sink.write(stream.subarray(0, 50));
+        let big;
+        try {
+          big = await sink.write(stream.subarray(50));
+        } catch (e) {
+          big = e.code;
+        }
+        const landed = fs.readFileSync(path).subarray(${limit - 100}).equals(stream.subarray(0, 100));
+        fs.ftruncateSync(fd, 0);
+        const after = sink.write("after\\n");
+        console.log(JSON.stringify({ small, big, landed, after, end: typeof (await sink.end()), text: text() }));
+      `);
+      expect(result).toEqual(
+        printed({ small: 50, big: "EFBIG", landed: true, after: 6, end: "number", text: "after\n" }),
+      );
+    });
+  });
+
+  describe("when the fd is gone", () => {
+    function fillSocket(fd: number) {
+      // The fd is non-blocking: write until the kernel refuses more.
+      const filler = Buffer.alloc(64 * 1024, 0x61);
+      try {
+        while (true) fs.writeSync(fd, filler);
+      } catch (e: any) {
+        if (e.code !== "EAGAIN") throw e;
+      }
+    }
+
+    // The line sits in the sink's buffer behind a full socket, then the peer hangs up.
+    async function socketWhosePeerHungUp() {
+      const [readFd, writeFd] = createSocketPair();
+      fillSocket(writeFd);
+      const sink = Bun.file(writeFd).writer();
+      expect(sink.write(line)).toBe(line.length);
+      // The flush at the end of the tick finds the socket full and leaves the line to the poll.
+      await turn();
+      fs.closeSync(readFd);
+      return { sink, [Symbol.dispose]: () => fs.closeSync(writeFd) };
+    }
+
+    async function fifoWhoseReaderIsGone() {
+      const dir = tempDir("filesink-fifo", {});
+      const path = join(String(dir), "fifo");
+      mkfifo(path);
+      // A reader lets the writer open. Once it is closed, a write finds no reader.
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const sink = Bun.file(path).writer();
+      fs.closeSync(reader);
+      expect(sink.write(line)).toBe(line.length);
+      return { sink, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    }
+
+    // The flush at the end of the tick, or the writable poll on a later loop turn, finds the
+    // reader gone. From then on the sink is ended: write() answers `true`.
+    async function hungUp<T extends { sink: Bun.FileSink }>(door: T) {
+      const deadline = Date.now() + 5_000;
+      while (door.sink.write("x") !== true) {
+        if (Date.now() > deadline) throw new Error("the sink never saw the hang-up");
+        await turn();
+      }
+      return door;
+    }
+
+    describe.each([
+      ["a socket whose peer hung up", socketWhosePeerHungUp],
+      ["a fifo whose reader is gone", fifoWhoseReaderIsGone],
+    ] as const)("%s", (_, open) => {
+      it("end() throws it once, and a write() before it does not take it", async () => {
+        using door = await hungUp(await open());
+        expect(door.sink.write("more")).toBe(true);
+        expect(() => door.sink.end()).toThrow(EPIPE);
+        expect(door.sink.end()).toBeNumber();
+      });
+
+      it("flush() throws it once", async () => {
+        using door = await hungUp(await open());
+        expect(() => door.sink.flush()).toThrow(EPIPE);
+        expect(door.sink.flush()).toBeUndefined();
+        expect(door.sink.end()).toBeNumber();
+      });
+
+      it("close() throws it", async () => {
+        using door = await hungUp(await open());
+        expect(() => door.sink.close()).toThrow(EPIPE);
+      });
+
+      it("start() throws it once", async () => {
+        using door = await hungUp(await open());
+        expect(() => door.sink.start({})).toThrow(EPIPE);
+        expect(() => door.sink.start({})).not.toThrow();
+        expect(door.sink.end()).toBeNumber();
+      });
+    });
+
+    // `bun app.js | head -1` with a logger that awaits nothing: two of its lines reach the
+    // buffer size, and the second write() must not be the one that redoes the failed write.
+    it("a write() that nobody awaits does not reject after the reader of stdout is gone", async () => {
+      using dir = tempDir("filesink-stdout-fifo", {});
+      const path = join(String(dir), "fifo");
+      mkfifo(path);
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const stdout = fs.openSync(path, "w");
+      fs.closeSync(reader);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            let unhandled = 0;
+            process.on("unhandledRejection", () => unhandled++);
+            const sink = Bun.stdout.writer();
+            const logLine = Buffer.alloc(3000, "x").toString();
+            const wrote = [];
+            for (let i = 0; i < 8; i++) {
+              const result = sink.write(logLine);
+              wrote.push(result instanceof Promise ? "promise" : result);
+              await new Promise(resolve => setImmediate(resolve));
+            }
+            console.error(JSON.stringify({ wrote, unhandled }));
+          `,
+        ],
+        env: bunEnv,
+        stdout,
+        stderr: "pipe",
+      });
+      fs.closeSync(stdout);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({
+        stderr: JSON.stringify({ wrote: [3000, true, true, true, true, true, true, true], unhandled: 0 }) + "\n",
+        exitCode: 0,
+      });
+    });
+
+    // `proc.stdin` of a "pipe" stdin is a non-blocking socket: the test fills it, so the line
+    // is still in the sink's buffer when the child dies.
+    it("proc.stdin.end() throws it when the child exits with bytes still buffered", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "setInterval(() => {}, 1 << 30)"],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const sink = proc.stdin;
+      fillSocket((sink as any)._getFd());
+      expect(sink.write(line)).toBe(line.length);
+      await turn();
+      proc.kill();
+      await proc.exited;
+      expect(() => sink.end()).toThrow(EPIPE);
+      expect(sink.end()).toBeNumber();
+    });
+
+    it("proc.stdin.end() does not throw when the child took every byte before it exited", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.stdin.once('data', () => process.exit(0))"],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(proc.stdin.write(line)).toBe(line.length);
+      await proc.exited;
+      expect(proc.stdin.end()).toBeNumber();
+    });
+
+    // A sink dropped with the error still kept, or with unsent bytes still buffered, is freed
+    // with its wrapper.
+    it("does not leak the native FileSink when nothing asks for the error", async () => {
+      async function once() {
+        using door = await hungUp(await socketWhosePeerHungUp());
+        const target = join(String(dir), "read-only.txt");
+        const unsent = Bun.file(target).writer();
+        // Re-point the writer at a read-only fd: the flush at the end of the tick fails and keeps the line.
+        const readOnly = fs.openSync(target, "r");
+        try {
+          unsent.start({ fd: readOnly } as any);
+        } finally {
+          fs.closeSync(readOnly);
+        }
+        expect(unsent.write(line)).toBe(line.length);
+        await turn();
+      }
+
+      using dir = tempDir("filesink-unclaimed", { "read-only.txt": "" });
+      const baseline = fileSinkInternals.liveCount();
+      for (let i = 0; i < 8; i++) await once();
+      for (let i = 0; i < 50; i++) {
+        Bun.gc(true);
+        if (fileSinkInternals.liveCount() <= baseline) break;
+        await turn();
+      }
+      // One straggler whose wrapper is not finalized yet is acceptable.
+      expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+    });
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

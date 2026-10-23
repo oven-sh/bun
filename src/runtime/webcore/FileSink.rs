@@ -310,17 +310,22 @@ impl FileSink {
                 }
             }
 
+            // `close()` drops what the writer still holds, and `on_close` releases the pipe.
+            let unsent_and_untold =
+                (*this).writer.get().has_pending_data() && (*this).failure_has_no_recipient();
             // SAFETY(JsCell): `IOWriter::close` does not call into JS directly; the
             // `on_close` re-entry it triggers goes via the stored `*mut FileSink`
             // backref, not through this `JsCell` borrow.
             (*this).writer.with_mut(|w| w.close());
 
-            (*this).pending.with_mut(|p| {
-                p.result = streams::Writable::Err(sys::Error::from_code(
-                    sys::Errno::EPIPE,
-                    sys::Tag::write,
-                ));
-            });
+            let epipe = sys::Error::from_code(sys::Errno::EPIPE, sys::Tag::write);
+            if (*this).pending.get().state == streams::PendingState::Pending {
+                (*this)
+                    .pending
+                    .with_mut(|p| p.result = streams::Writable::Err(epipe));
+            } else if unsent_and_untold {
+                (*this).keep_unclaimed_error(epipe);
+            }
             FileSink::run_pending(this);
 
             // `writer.close()` → `onClose` already released this above; kept for
@@ -474,8 +479,28 @@ impl FileSink {
                 }
 
                 FileSink::run_pending(this);
+            } else if (*this).failure_has_no_recipient() {
+                (*this).keep_unclaimed_error(err);
             }
         }
+    }
+
+    /// No promise is parked or was just rejected, and no stream is piped in.
+    fn failure_has_no_recipient(&self) -> bool {
+        matches!(
+            self.pending.get().state,
+            streams::PendingState::None | streams::PendingState::Used
+        ) && self.pipe.get().cell().is_none()
+    }
+
+    /// Ends the sink and keeps `err`: the next flush()/end()/close()/start() throws it, once.
+    fn keep_unclaimed_error(&self, err: sys::Error) {
+        self.done.set(true);
+        self.pending.with_mut(|p| p.keep_unclaimed(err));
+    }
+
+    fn take_unclaimed_error(&self) -> Option<sys::Error> {
+        self.pending.with_mut(|p| p.take_unclaimed())
     }
 
     /// Serves both POSIX `on_ready` and the Windows `on_writable` slot.
@@ -872,6 +897,11 @@ impl FileSink {
         stream_start: &streams::Start,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> sys::Result<()> {
+        if self.done.get() {
+            if let Some(err) = self.take_unclaimed_error() {
+                return sys::Result::Err(err);
+            }
+        }
         match stream_start {
             streams::Start::Err(err) => {
                 return sys::Result::Err(err.clone());
@@ -942,11 +972,32 @@ impl FileSink {
 
             let amount_buffered = (*this).writer.get().outgoing.size();
 
+            // This drain has no caller to tell.
+            let untold = (*this).failure_has_no_recipient();
+            // Only an fd with no poll (a regular file) can take the bytes later.
+            #[cfg(unix)]
+            let keep_unsent = untold && (*this).writer.get().get_poll().is_none();
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
-            match (*this).writer.with_mut(|w| w.flush()) {
+            #[cfg(unix)]
+            let rc = (*this).writer.with_mut(|w| {
+                if keep_unsent {
+                    w.flush_deferred()
+                } else {
+                    w.flush()
+                }
+            });
+            #[cfg(windows)]
+            let rc = (*this).writer.with_mut(|w| w.flush());
+            match rc {
                 WriteResult::Err(err) => {
                     (*this).update_ref(false);
+                    // The bytes are kept for the next flush()/end()/close() or threshold write().
+                    #[cfg(unix)]
+                    if keep_unsent {
+                        (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                        return false;
+                    }
                     // `flush()` returns a write error without routing through the
                     // writer's `_on_error`, so the pending slot still holds the
                     // `Owned(consumed)` result `to_result` seeded and
@@ -959,6 +1010,8 @@ impl FileSink {
                         (*this)
                             .pending
                             .with_mut(|p| p.result = streams::Writable::Err(err));
+                    } else if untold {
+                        (*this).keep_unclaimed_error(err);
                     }
                     (*this).writer.with_mut(|w| w.end());
                     (*this).run_pending_later();
@@ -1011,6 +1064,9 @@ impl FileSink {
         }
 
         if self.done.get() {
+            if let Some(err) = self.take_unclaimed_error() {
+                return sys::Result::Err(err);
+            }
             return sys::Result::Ok(JSValue::UNDEFINED);
         }
 
@@ -1034,6 +1090,8 @@ impl FileSink {
                 written as u64 // @truncate
             }
             WriteResult::Err(err) => {
+                // This caller is told: drop the copy `on_error` kept during the call.
+                self.take_unclaimed_error();
                 return sys::Result::Err(err);
             }
         };
@@ -1329,6 +1387,9 @@ impl FileSink {
                     return sys::Result::Ok(strong.value());
                 }
             }
+            if let Some(err) = self.take_unclaimed_error() {
+                return sys::Result::Err(err);
+            }
             return sys::Result::Ok(JSValue::js_number(self.written.get() as f64));
         }
 
@@ -1386,6 +1447,7 @@ impl FileSink {
                     return sys::Result::Ok(unsafe { (*promise_result).to_js() });
                 }
                 self.writer.with_mut(|w| w.end());
+                self.take_unclaimed_error();
                 sys::Result::Err(err)
             }
             WriteResult::Pending(pending_written) => {
@@ -1486,6 +1548,20 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         let _ = this.end(None);
         sys::Result::Ok(())
     }
+    unsafe fn close_from_js(this: *mut Self) -> sys::Result<()> {
+        // SAFETY: caller contract; `end` does not free the sink.
+        let this = unsafe { &*this };
+        if this.done.get() {
+            if let Some(err) = this.take_unclaimed_error() {
+                return sys::Result::Err(err);
+            }
+        }
+        let result = this.end(None);
+        if result.is_err() {
+            this.take_unclaimed_error();
+        }
+        result
+    }
     fn source(&mut self) -> Option<&mut streams::SourceHandle> {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
         Some(unsafe { self.source.get_mut() })
@@ -1559,6 +1635,7 @@ impl FileSink {
                     self.run_pending_later();
                     return streams::Writable::Pending(self.pending.as_ptr());
                 }
+                self.take_unclaimed_error();
                 streams::Writable::Err(err)
             }
             WriteResult::Pending(_) => {

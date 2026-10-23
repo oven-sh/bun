@@ -3516,6 +3516,11 @@ declare module "bun" {
      * from the file that `tsconfig` names. The check also uses the `conditions`
      * and the `loader` of the build.
      *
+     * If an `onLoad` plugin loads a TypeScript or JavaScript file, the check
+     * reads the text of that file from `files`, or else from disk, not what the
+     * plugin returns. If the file is in neither place, the check reads what the
+     * plugin returns.
+     *
      * @default false
      *
      * @example

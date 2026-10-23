@@ -2537,7 +2537,7 @@ pub mod bv2_impl {
         }
 
         /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
-        /// each file is in the graph.
+        /// each file is in the graph or in `file_map`.
         fn type_check(&self) -> Result<(), Error> {
             let Some(type_check) = self.transpiler.options.type_check else {
                 return Ok(());
@@ -2583,14 +2583,47 @@ pub mod bv2_impl {
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let mut sources = (sources.iter().zip(loaders).zip(flags))
-                .filter(|((source, loader), flags)| {
-                    loader.is_javascript_like_or_json()
-                        && source.path.is_file()
-                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
-                            && bun_sys::exists(source.path.text))
-                })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+            let file_map = self.file_map;
+            let by_name = &self.transpiler.options.loaders;
+            let checked_source = move |index: usize| {
+                let (source, loader) = (&sources[index], loaders[index]);
+                let (path, is_of_plugin) = (&source.path, is_loaded_by_plugin(index));
+                if !path.is_file() {
+                    return None;
+                }
+                // `files` has what is written, if the name says TypeScript or JavaScript.
+                if is_of_plugin
+                    && let Some(text) = file_map.and_then(|files| files.get(path.text))
+                    && let Some(loader) = path.loader(by_name).filter(|it| it.is_javascript_like())
+                {
+                    return Some((path.text, text, loader));
+                }
+                let is_given = loader.is_javascript_like_or_json()
+                    && !(is_of_plugin && bun_sys::exists(path.text));
+                is_given.then(|| (path.text, source.contents(), loader))
+            };
+            // The graph has no code for a file that only types use, or that is a text import.
+            let graphs = &self.graph.build_graphs;
+            let entries = file_map.into_iter().flat_map(|files| files.map.iter());
+            let not_loaded = entries.filter_map(move |(key, text)| {
+                let (key, text): (&[u8], &[u8]) = (key, text);
+                let loader = Fs::Path::init(key).loader(by_name)?;
+                let mut rows = graphs.values().filter_map(|graph| graph.get(key));
+                // A relative import reaches a key by a join: no `.`, `..` or empty part is in that.
+                let mut parts = strings::split(key, b"/").skip(1);
+                let is_joined = bun_paths::is_absolute_loose(key)
+                    && parts.all(|part| !matches!(part, b"" | b"." | b".."));
+                // In `node_modules` the checker follows links, so it may look for another path.
+                let is_in_package = strings::contains(key, b"/node_modules/");
+                // A file on disk can be in the bundle under another name, or run as a macro.
+                let is_given = loader.is_javascript_like()
+                    && is_joined
+                    && !is_in_package
+                    && !rows.any(|index| checked_source(index as usize).is_some())
+                    && !bun_sys::exists(key);
+                is_given.then_some((key, text, loader))
+            });
+            let mut sources = not_loaded.chain((0..sources.len()).filter_map(checked_source));
             let checked = options::TypeChecked {
                 cwd: self.transpiler.fs().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),

@@ -112,6 +112,8 @@ unsafe extern "C" {
     /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
     fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
+    /// JS thread, once `complete` has returned: the env may release what its refs pin.
+    fn NapiEnv__asyncWorkSettled(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -2050,12 +2052,18 @@ impl napi_async_work {
         // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
 
+        let env = self.env.get();
+        // The global's env list keeps the env alive past `complete`, which may free `self`.
+        scopeguard::defer! {
+            // SAFETY: as above.
+            unsafe { NapiEnv__asyncWorkSettled(env) };
+        }
+
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
             return Ok(());
         };
 
-        let env = self.env.get();
         // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
         let env_ref = unsafe { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
@@ -2327,7 +2335,8 @@ extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.as_mut_ptr(), work.env.get()));
+    // SAFETY: the work holds a ref on its env.
+    debug_assert!(core::ptr::eq(env.to_js(), unsafe { &*work.env.get() }.to_js()));
     napi_async_work::destroy(work_);
     env.ok()
 }
@@ -2340,7 +2349,8 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.as_mut_ptr(), work.env.get()));
+    // SAFETY: the work holds a ref on its env.
+    debug_assert!(core::ptr::eq(env.to_js(), unsafe { &*work.env.get() }.to_js()));
     if !work.schedule() {
         return env.cannot_run_js();
     }
@@ -2355,7 +2365,8 @@ extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.as_mut_ptr(), work.env.get()));
+    // SAFETY: the work holds a ref on its env.
+    debug_assert!(core::ptr::eq(env.to_js(), unsafe { &*work.env.get() }.to_js()));
     if work.cancel() {
         return env.ok();
     }

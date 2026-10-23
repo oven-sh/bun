@@ -3396,6 +3396,11 @@ extern "C" void NapiEnv__asyncWorkLeftThreadPool(napi_env env)
     env->asyncWorkLeftThreadPool();
 }
 
+extern "C" void NapiEnv__asyncWorkSettled(napi_env env)
+{
+    env->asyncWorkSettled();
+}
+
 extern "C" void NapiEnv__runFinalizers(void* env)
 {
     static_cast<napi_env>(env)->runFinalizers();

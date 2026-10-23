@@ -291,9 +291,15 @@ public:
     }
 
     // JS thread, when async work goes to the thread pool.
-    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
+    void asyncWorkEnteredThreadPool()
+    {
+        m_asyncWorkOnThreadPool++;
+        m_asyncWorkInFlight++;
+    }
     // Pool thread, once execute() has returned or the work was cancelled.
     void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
+    // JS thread, once the work's complete() has returned.
+    void asyncWorkSettled() { m_asyncWorkInFlight--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -375,7 +381,7 @@ public:
     }
     void unlinkRef(uint32_t slot);
 
-    // Drop every strong root into the swapped-out realm. Waits for the next swap while async work is on the pool.
+    // Drop every strong root into the swapped-out realm. Waits for the next swap while async work is in flight.
     void releaseRealmRoots();
 
     /// Will abort the process if a duplicate entry would be added.
@@ -688,6 +694,8 @@ private:
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
     std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
+    // Scheduled and not yet completed on the JS thread. Its execute() and complete() use what the env's refs pin.
+    unsigned m_asyncWorkInFlight = 0;
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined
@@ -866,10 +874,13 @@ public:
     {
     }
 
-    // A released ref reads through its weak handle: the value while GC has not collected it, then empty.
+    // Empty once released (Node: an empty persistent handle).
     JSC::JSValue value() const
     {
-        if (m_released || (refCount == 0 && !m_isEternal)) {
+        if (m_released) {
+            return JSC::JSValue();
+        }
+        if (refCount == 0 && !m_isEternal) {
             return weakValueRef.get();
         }
 
@@ -901,10 +912,11 @@ public:
         }
     }
 
-    // Node's Reference with a reset persistent handle: ref() and unref() report 0 and never root again.
+    // Node's Reference with a reset persistent handle: empty, and ref() and unref() report 0 and never root again.
+    // A registered symbol or a primitive (no weak handle) cannot point into a realm and keeps its value.
     void releaseRealm()
     {
-        if (m_released || m_isEternal || refCount == 0) {
+        if (m_released || m_isEternal || weakValueRef.isClear()) {
             return;
         }
         m_released = true;

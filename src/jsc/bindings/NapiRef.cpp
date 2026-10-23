@@ -71,7 +71,7 @@ void NapiEnv::unlinkRef(uint32_t slot)
 void NapiEnv::releaseRealmRoots()
 {
     m_pendingException.clear();
-    if (m_asyncWorkOnThreadPool.load()) {
+    if (m_asyncWorkInFlight) {
         return;
     }
     for (Zig::NapiRef* ref : m_refs) {

@@ -56,6 +56,22 @@ const AsyncContextFrame = {
       $putInternalField($asyncContext, 0, prev);
     }
   },
+  /** `run()`, except that a frame inside another Bun.ModuleGraph than the active one is not installed. */
+  runInSameGraph(frame, fn, thisArg?, a?, b?, c?, d?) {
+    const prev = $getInternalField($asyncContext, 0);
+    if (frame === prev || moduleGraphOfFrame(frame) !== moduleGraphOfFrame(prev)) return fn.$call(thisArg, a, b, c, d);
+    $putInternalField($asyncContext, 0, frame);
+    try {
+      return fn.$call(thisArg, a, b, c, d);
+    } finally {
+      $putInternalField($asyncContext, 0, prev);
+    }
+  },
+  /** Whether runInSameGraph() leaves `frame` out: it is inside another Bun.ModuleGraph than the active frame. */
+  isInAnotherGraph(frame) {
+    const current = $getInternalField($asyncContext, 0);
+    return frame !== current && moduleGraphOfFrame(frame) !== moduleGraphOfFrame(current);
+  },
 };
 
 export default AsyncContextFrame;

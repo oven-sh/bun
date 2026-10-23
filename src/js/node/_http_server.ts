@@ -2,6 +2,7 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
 const { isIP } = require("internal/net/isIP");
+const AsyncContextFrame = require("internal/async_context_frame");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -1681,7 +1682,7 @@ function getNodeHTTPServerSocket() {
     // Node's connectionListener sets socket._paused when it stops reading a
     // connection whose pipelined responses have buffered past the high water mark.
     _paused = false;
-    #pendingCallback = null;
+    #pendingCallback: ((err?: Error | null) => void) | null = null;
     #pendingAbortMessage;
     #closeHandled = false;
     #peer;
@@ -1905,7 +1906,7 @@ function getNodeHTTPServerSocket() {
       const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
       const writeFailure = errored ?? $ERR_STREAM_DESTROYED("write");
       if (message) {
-        failPendingWriteCallbacks(message, writeFailure);
+        runWhereWriteWaited(message, failPendingWriteCallbacks, writeFailure);
       }
       // An ended response that was still draining finishes first, like Node.js's failed last write: its request is not aborted.
       const wasDraining = message != null && message[kPendingFinish] !== undefined;
@@ -2231,7 +2232,12 @@ function getNodeHTTPServerSocket() {
           if (!flushed && handle.ondrain) {
             // Streaming mode (CONNECT tunnels): wait for the native drain
             // callback before completing the write.
-            this.#pendingCallback = _callback;
+            this.#pendingCallback = AsyncContextFrame.runInSameGraph.bind(
+              undefined,
+              $getInternalField($asyncContext, 0),
+              _callback,
+              undefined,
+            );
             return false;
           }
         }
@@ -3655,6 +3661,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // Native calls back once the body is out; a dying connection finishes from emit("close").
     this[kPendingFinish] = callback ?? null;
     handle.onwritable = flushPendingFinish.bind(this);
+    const waiting = this[kWaitingWrite];
+    if (waiting !== undefined && waiting.sameTick) waiting.frame = $getInternalField($asyncContext, 0);
   } else {
     queueResponseFinished(this, callback);
   }
@@ -3685,7 +3693,7 @@ function flushPendingFinish(this: any) {
   const callback = this[kPendingFinish];
   if (callback === undefined) return;
   this[kPendingFinish] = undefined;
-  queueResponseFinished(this, callback);
+  runWhereWriteWaited(this, queueResponseFinished, callback);
 }
 
 // For internal/http1_server_fallback. Like Node.js's onFinish it emits 'finish' in place: a tick later, a closing socket's 'close' listeners would run first.
@@ -3693,6 +3701,10 @@ function finishDrainedResponse(res) {
   const callback = res[kPendingFinish];
   if (callback === undefined) return;
   res[kPendingFinish] = undefined;
+  runWhereWriteWaited(res, finishDrainedResponseNow, callback);
+}
+
+function finishDrainedResponseNow(res, callback) {
   res._callPendingCallbacks();
   emitResponseFinished(res, callback);
 }
@@ -3807,6 +3819,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   }
 
   if (result < 0 && hasBody) {
+    noteWaitingWrite(this);
     if (callback) {
       // The write was buffered due to backpressure.
       // We need to defer the callback until the write actually goes through.
@@ -3820,6 +3833,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
     handle.flushHeaders();
     if (hasBody && handle.bufferedAmount > 0) {
+      noteWaitingWrite(this);
       this[kPendingCallbacks].push(callback);
       handle.onwritable = allowWritesToContinue.bind(this);
       return false;
@@ -4188,9 +4202,33 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   }
 }
 
+// The async context of the first write that waited, or of an end() in its tick: what waits behind it runs there.
+const kWaitingWrite = Symbol("kWaitingWrite");
+function noteWaitingWrite(res) {
+  if (res[kWaitingWrite] !== undefined) return;
+  const waiting = (res[kWaitingWrite] = { frame: $getInternalField($asyncContext, 0), sameTick: true });
+  process.nextTick(endWaitingWriteTick, waiting);
+}
+function endWaitingWriteTick(waiting) {
+  waiting.sameTick = false;
+}
+function runWhereWriteWaited(res, fn, arg?) {
+  const waiting = res[kWaitingWrite];
+  if (waiting === undefined) return fn(res, arg);
+  return AsyncContextFrame.runInSameGraph(waiting.frame, fn, undefined, res, arg);
+}
+
 function allowWritesToContinue() {
-  this._callPendingCallbacks();
-  this.emit("drain");
+  const waiting = this[kWaitingWrite];
+  if (waiting === undefined) return emitDrainAfterCallbacks(this);
+  // The socket took what waited: the next write that waits starts over.
+  this[kWaitingWrite] = undefined;
+  AsyncContextFrame.runInSameGraph(waiting.frame, emitDrainAfterCallbacks, undefined, this);
+}
+
+function emitDrainAfterCallbacks(res) {
+  res._callPendingCallbacks();
+  res.emit("drain");
 }
 
 function failPendingWriteCallbacks(res, error) {
@@ -4332,6 +4370,7 @@ http1ServerPipeline.lastPipelinedResponse = lastPipelinedResponse;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
+http1ServerPipeline.runWhereWriteWaited = runWhereWriteWaited;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 export default {

@@ -828,61 +828,47 @@ describe.concurrent("Readable.fromWeb over a native stream that a consumer alrea
     readable.destroy();
   });
 
-  // A call that fails, or a signal that is already aborted, comes after the claim: the web
-  // stream stays locked, as in Node, so nothing else can release the handle. fromWeb cancels
-  // it: the pipe closes and the child's write fails. The child writes more than a pipe holds,
-  // so the result does not depend on when the pipe closes.
-  const throwingSignal = () => ({
-    get aborted() {
-      throw new Error("boom");
-    },
-    addEventListener() {},
-    removeEventListener() {},
-  });
-  it.each([
-    ["an invalid highWaterMark", () => ({ highWaterMark: -1 }), "ERR_INVALID_ARG_VALUE"],
-    ["a signal getter that throws", () => ({ signal: throwingSignal() }), "boom"],
-    ["a signal that is already aborted", () => ({ signal: AbortSignal.abort() }), "ABORT_ERR"],
-  ])("%s cancels the claimed handle", async (_, options, expected) => {
+  // fromWeb reads the signal after the claim. If a getter of the signal throws, or the signal is
+  // already aborted, the web stream stays locked, as in Node, so nothing else can release the
+  // handle. fromWeb destroys the Readable, which cancels it: the pipe closes and the child's
+  // write fails. The child writes more than a pipe holds, so the result does not depend on when
+  // the pipe closes. Its exit code is 1 if the write to stdout failed with EPIPE, plus 2 for stderr.
+  it("a signal getter that throws, or a signal that is already aborted, cancels the claimed handle", async () => {
     const child = `
       const fs = require("fs");
-      process.stdin.once("data", () => {
-        let result = "written";
+      function isClosed(fd) {
         try {
-          for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(1, rest));
+          for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(fd, rest));
         } catch (error) {
-          result = "failed:" + error.code;
+          return error.code === "EPIPE";
         }
-        fs.writeSync(2, result);
-        process.exit(0);
-      });
+        return false;
+      }
+      process.exit((isClosed(1) ? 1 : 0) + (isClosed(2) ? 2 : 0));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", child],
       env: bunEnv,
-      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
-    const web = proc.stdout;
-    // The failure is thrown, or it is the 'error' event of the Readable that the aborted signal destroyed.
-    const { promise: failure, resolve } = Promise.withResolvers();
-    try {
-      Readable.fromWeb(web, options()).on("error", resolve);
-    } catch (error) {
-      resolve(error);
-    }
-    const error = await failure;
-    expect(error.code ?? error.message).toBe(expected);
-    expect(web.locked).toBe(true);
-    proc.stdin.write("go");
-    await proc.stdin.end();
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stderr: "failed:EPIPE",
-      exitCode: 0,
-      signalCode: null,
-    });
+    const { stdout, stderr } = proc;
+    const signal = {
+      get aborted() {
+        throw new Error("boom");
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    expect(() => Readable.fromWeb(stdout, { signal })).toThrow("boom");
+    const { promise: errored, resolve } = Promise.withResolvers();
+    Readable.fromWeb(stderr, { signal: AbortSignal.abort() }).on("error", resolve);
+    expect((await errored).code).toBe("ABORT_ERR");
+    expect({
+      locked: [stdout.locked, stderr.locked],
+      exitCode: await proc.exited,
+      signalCode: proc.signalCode,
+    }).toEqual({ locked: [true, true], exitCode: 3, signalCode: null });
   });
 
   // fromWeb adds the signal after the Readable exists. Inside the constructor, an aborted signal

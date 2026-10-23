@@ -34,6 +34,15 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
+function tryTransferToNativeReadable(stream, options) {
+  const ptr = stream.$bunNativePtr;
+  if (!ptr || ptr === -1) {
+    return undefined;
+  }
+  // Only a filter so far: the claim inside decides, and fails once a consumer has started the handle.
+  return require("internal/streams/native-readable").tryConstructNativeReadable(stream, options);
+}
+
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
@@ -587,7 +596,7 @@ function newStreamReadableFromReadableStream(
 
   const readableOptions = { highWaterMark, encoding, objectMode };
   const readable =
-    require("internal/streams/native-readable").tryConstructNativeReadable(readableStream, readableOptions) ||
+    tryTransferToNativeReadable(readableStream, readableOptions) ||
     new ReadableFromWeb(readableOptions, readableStream);
   if (signal) {
     try {

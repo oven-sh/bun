@@ -69,28 +69,22 @@ let debugId = 0;
 // node:child_process stdio: the stream comes straight from Bun.spawn, nothing has started it.
 function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  const stream = new Readable(options) as NativeReadable;
   const bunNativePtr = transferToNativeReadable(readableStream);
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
   $assert(bunNativePtr !== undefined || (readableStream as any).$bunNativePtr === undefined, "Native handle in use");
-  return fromNativeHandle(bunNativePtr, options);
+  return attachNativeHandle(stream, bunNativePtr, options);
 }
 
-// Readable.fromWeb: undefined unless the stream still had an unstarted handle to give.
+// Readable.fromWeb: undefined when a consumer already started the handle, so the web stream's queue can hold chunks.
 function tryConstructNativeReadable(readableStream: ReadableStream, options): NativeReadable | undefined {
+  const stream = new Readable(options) as NativeReadable;
   const bunNativePtr = transferToNativeReadable(readableStream);
   if (bunNativePtr === undefined) return undefined;
-  return fromNativeHandle(bunNativePtr, options);
+  return attachNativeHandle(stream, bunNativePtr, options);
 }
 
-function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeReadable {
-  let stream: NativeReadable;
-  try {
-    stream = new Readable(options) as NativeReadable;
-  } catch (error) {
-    // The web stream is spent, so nothing else can release the handle.
-    bunNativePtr?.cancel(error);
-    throw error;
-  }
+function attachNativeHandle(stream: NativeReadable, bunNativePtr: NativePtr | undefined, options): NativeReadable {
   stream._read = read;
   stream._destroy = destroy;
 

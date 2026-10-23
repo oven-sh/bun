@@ -918,6 +918,116 @@ describe("Bun.Image", () => {
     });
   });
 
+  // On its way to the scan, libjpeg steps over more than plain segments, with no error. The
+  // orientation reader has to take the same steps. If it does not, it misses the Exif segment,
+  // or it takes one that is not in the header.
+  describe("EXIF orientation reader steps where the decoder steps", () => {
+    // A 4×2 JPEG split after its APP0 segment, and an APP1 segment with Exif Orientation=6.
+    async function source() {
+      const jpg = Buffer.from(
+        await new Bun.Image(makePng(4, 2, (x, y) => [x * 60, y * 200, 128, 255])).jpeg({ quality: 90 }).bytes(),
+      );
+      expect([jpg[2], jpg[3]]).toEqual([0xff, 0xe0]);
+      const app0End = 4 + jpg.readUInt16BE(4);
+      // A big-endian TIFF: IFD0 at offset 8 has one entry, tag 0x0112 (SHORT, count 1) = 6.
+      const tiff = "MM\0*\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0";
+      const exif = Buffer.from("Exif\0\0" + tiff, "latin1");
+      const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0, exif.length + 2]), exif]);
+      return { head: jpg.subarray(0, app0End), tail: jpg.subarray(app0End), app1 };
+    }
+
+    test.each([
+      // TEM has no length field: read_markers() goes straight on to the next marker.
+      ["a TEM marker", [0xff, 0x01]],
+      // A length counts its own two bytes. libjpeg takes a smaller one for an empty segment.
+      ["an APP15 segment of length 0", [0xff, 0xef, 0, 0]],
+      ["a comment segment of length 1", [0xff, 0xfe, 0, 1]],
+    ])("Orientation=6 survives %s before the APP1 segment", async (_name, extra) => {
+      const { head, tail, app1 } = await source();
+      const withExif = Buffer.concat([head, app1, tail]);
+      const withExtra = Buffer.concat([head, Buffer.from(extra), app1, tail]);
+
+      expect(await new Bun.Image(withExtra).metadata()).toEqual({ width: 2, height: 4, format: "jpeg" });
+      const rotated = await new Bun.Image(withExtra).png().bytes();
+      expect(Buffer.compare(rotated, await new Bun.Image(withExif).png().bytes())).toBe(0);
+      expect(await new Bun.Image(withExtra, { autoOrient: false }).metadata()).toEqual({
+        width: 4,
+        height: 2,
+        format: "jpeg",
+      });
+    });
+
+    // A reader that takes TEM for a segment reads the marker after it as the length (0xFFxx) and
+    // lands that far ahead, past the end of this image. An Exif segment there is not the picture's.
+    test("an Exif segment after the end of the image is not reached through a TEM marker", async () => {
+      const { head, tail, app1 } = await source();
+      const withTem = Buffer.concat([head, Buffer.from([0xff, 0x01]), tail]);
+      expect(tail[0]).toBe(0xff);
+      const landing = head.length + 2 + tail.readUInt16BE(0);
+      const withTrailer = Buffer.concat([withTem, Buffer.alloc(landing - withTem.length), app1]);
+
+      expect(await new Bun.Image(withTrailer).metadata()).toEqual({ width: 4, height: 2, format: "jpeg" });
+      const upright = await new Bun.Image(withTrailer).png().bytes();
+      expect(Buffer.compare(upright, await new Bun.Image(Buffer.concat([head, tail])).png().bytes())).toBe(0);
+    });
+
+    // The decoder says where it reads a marker: a second SOI is fatal there, and is payload
+    // anywhere else. So a copy of the file with FF D8 at the offset of the Exif segment is
+    // rejected only if the decoder reached that segment. With autoOrient off, only the decoder
+    // reads the header.
+    test("the picture is turned exactly where the decoder reaches the Exif segment", async () => {
+      const { head, tail, app1 } = await source();
+      const accepts = async (jpg: Buffer) =>
+        (await new Bun.Image(jpg, { autoOrient: false }).metadata().catch(() => null)) !== null;
+      const rows: [name: string, jpg: Buffer, exifAt: number][] = [];
+      const before = (extra: number[]) =>
+        rows.push([
+          Buffer.from(extra).toString("hex"),
+          Buffer.concat([head, Buffer.from(extra), app1, tail]),
+          head.length + extra.length,
+        ]);
+      // Every marker byte: alone, with a length of 0, 1 or 2, and with a length that covers the
+      // whole Exif segment. APPn, COM and DNL take the covered segment as their payload.
+      const covering = 2 + app1.length;
+      for (let marker = 0; marker < 256; marker++)
+        for (const length of [[], [0, 0], [0, 1], [0, 2], [0, covering]]) before([0xff, marker, ...length]);
+      // A comment of every length between. It takes the first bytes of the Exif segment.
+      for (let length = 3; length < covering; length++) before([0xff, 0xfe, 0, length]);
+      // An odd run of fill bytes.
+      before([0xff, 0xff, 0xff]);
+      // APP0 with its length zeroed and its payload left in place.
+      const cutApp0 = Buffer.from(head);
+      cutApp0.writeUInt16BE(0, 4);
+      rows.push(["cut APP0", Buffer.concat([cutApp0, app1, tail]), head.length]);
+      // The Exif segment at each later segment boundary, up to the scan.
+      const jpg = Buffer.concat([head, tail]);
+      let at = head.length;
+      while (jpg[at + 1] !== 0xda) {
+        at += 2 + jpg.readUInt16BE(at + 2);
+        rows.push([`at ${at}`, Buffer.concat([jpg.subarray(0, at), app1, jpg.subarray(at)]), at]);
+      }
+
+      const reached: string[] = [];
+      const notReached: string[] = [];
+      const wrong: string[] = [];
+      for (const [name, file, exifAt] of rows) {
+        if (!(await accepts(file))) continue;
+        const secondSoi = Buffer.from(file);
+        secondSoi[exifAt + 1] = 0xd8;
+        const isReached = !(await accepts(secondSoi));
+        (isReached ? reached : notReached).push(name);
+        const { width, height } = await new Bun.Image(file).metadata();
+        if ((width === 2 && height === 4) !== isReached) wrong.push(name);
+      }
+      expect(wrong).toEqual([]);
+      const covered = covering.toString(16).padStart(4, "0");
+      expect(reached).toEqual(
+        expect.arrayContaining(["ff01", "ffe00000", "fffe0001", "ffdc0000", "fffe0002", "ffffff", "cut APP0"]),
+      );
+      expect(notReached).toEqual(expect.arrayContaining([`ffe0${covered}`, `ffdc${covered}`, "fffe0003"]));
+    });
+  });
+
   test("rejects on unrecognised input", async () => {
     await expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])).metadata()).rejects.toThrow(
       /unrecognised|decode/i,

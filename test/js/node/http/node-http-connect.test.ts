@@ -7,8 +7,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
-import type { Duplex } from "node:stream";
-import { Writable } from "node:stream";
+import { Duplex, Writable } from "node:stream";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
 function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
@@ -291,11 +290,17 @@ describe("HTTP server CONNECT", () => {
         return server;
       }
 
-      function connect(server: http.Server) {
+      function connect(server: http.Server, options: { allowHalfOpen?: boolean; servername?: string } = {}) {
         const { port } = server.address() as AddressInfo;
         const socket = secure
-          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
-          : net.connect(port, "127.0.0.1");
+          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...options })
+          : net.connect({ port, host: "127.0.0.1", ...options });
+        sockets.push(socket);
+        return socket;
+      }
+
+      // A socket that the test made itself. It goes with the other sockets of the test.
+      function track<T extends net.Socket>(socket: T) {
         sockets.push(socket);
         return socket;
       }
@@ -339,6 +344,7 @@ describe("HTTP server CONNECT", () => {
       return {
         listen,
         connect,
+        track,
         barrier,
         untilReadsStop,
         openTunnel,
@@ -409,6 +415,120 @@ describe("HTTP server CONNECT", () => {
       await unlessClosed(tunnel, receivedAll);
       expect({ intact: Buffer.concat(chunks).equals(payload), drains }).toEqual({ intact: true, drains: 0 });
     });
+
+    // The listener of a CONNECT request, or of an Upgrade request without a body, gets the connection as a
+    // net.Socket. Like any net.Socket it closes after its own 'end' and 'finish', so the bytes that its reader
+    // has not taken outlive the connection. node-http-connect.node.mts has the http rows, which Node.js runs too.
+    // Over TLS the session goes with the connection, and the socket still answers for its peer. Node.js v26.3.0
+    // gives the same results, except that its socket has no remoteAddress when the connection has closed.
+    if (secure) {
+      describe("the connection closes before the reader has taken every byte", () => {
+        // A TLS client that is half-open, so that it still sends after the server's close_notify. Resolves when the
+        // listener has answered, and when its close_notify has arrived if it ends the socket. The function that it
+        // resolves with sends the payload, then the close_notify of the client.
+        async function halfOpenPeer(t: ReturnType<typeof setup>, server: http.Server, serverEndsFirst: boolean) {
+          const client = t.connect(server, { allowHalfOpen: true, servername: "localhost" });
+          client.on("data", () => {});
+          const ready = once(client, serverEndsFirst ? "end" : "data");
+          client.write(handshake);
+          await unlessClosed(client, ready);
+          return async (sent: Buffer) => void client.end(sent);
+        }
+
+        // A TLS client that writes its records to `wire`, and the TCP socket `raw` sends them. After the handshake
+        // the client gets nothing more from the server: the close_notify of the listener would end its session,
+        // and it has a payload to send. Resolves when the FIN of the listener has arrived. The function that it
+        // resolves with sends the payload, then a FIN that no close_notify precedes.
+        async function peerOverWire(t: ReturnType<typeof setup>, server: http.Server) {
+          const { port } = server.address() as AddressInfo;
+          const raw = t.track(net.connect({ port, host: "127.0.0.1", allowHalfOpen: true }));
+          const wire = new Duplex({
+            read() {},
+            write(chunk, encoding, callback) {
+              raw.write(chunk, callback);
+            },
+          });
+          const toClient = (chunk: Buffer) => void wire.push(chunk);
+          raw.on("data", toClient);
+          raw.on("error", () => {});
+          const client = t.track(tls.connect({ socket: wire, rejectUnauthorized: false, servername: "localhost" }));
+          client.on("error", () => {});
+          await once(client, "secureConnect");
+          raw.off("data", toClient).resume();
+          const serverEnded = once(raw, "end");
+          client.write(handshake);
+          await serverEnded;
+          return async (sent: Buffer) => {
+            await new Promise(resolve => client.write(sent, resolve));
+            raw.end();
+          };
+        }
+
+        test.each([
+          ["the listener ends the socket, then the peer sends and ends", true, true],
+          ["the peer sends and ends, then the server ends the socket", false, true],
+          // A FIN with no close_notify ends the stream of a TLSSocket of Node.js v26.3.0 too.
+          ["the listener ends the socket, then the peer sends and leaves with no close_notify", true, false],
+        ] as const)("%s", async (order, serverEndsFirst, closeNotify) => {
+          const t = setup();
+          const events: string[] = [];
+          const { promise: tunnelPromise, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
+          const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+          await using server = await t.listen(socket => {
+            socket.on("end", () => events.push("end"));
+            socket.on("error", error => events.push(String(error)));
+            socket.on("close", () => {
+              events.push("close");
+              onClosed();
+            });
+            socket.write(accept);
+            if (serverEndsFirst) socket.end();
+            onTunnel(socket);
+          });
+          using _ = t.destroySockets();
+          const leave = await (closeNotify ? halfOpenPeer(t, server, serverEndsFirst) : peerOverWire(t, server));
+          const tunnel: net.Socket & { servername?: string | false | null } = await tunnelPromise;
+
+          // Half of the high water mark: the socket reads all of it with nobody reading the socket.
+          const sent = payload.subarray(0, tunnel.readableHighWaterMark / 2);
+          const writtenBeforeFin = tunnel.bytesWritten;
+          await leave(sent);
+          await t.barrier(server);
+          if (!serverEndsFirst) {
+            tunnel.end();
+            await t.barrier(server);
+          }
+
+          // Both sides have sent their FIN, so the connection is gone. The socket stays for its reader, and it
+          // still answers for its peer.
+          const atClose = {
+            destroyed: tunnel.destroyed,
+            events: [...events],
+            belowMark: tunnel.readableLength < tunnel.readableHighWaterMark,
+            servername: tunnel.servername,
+            remoteAddress: tunnel.remoteAddress,
+            bytesWritten: tunnel.bytesWritten,
+          };
+          // The reader is a 'data' listener that comes now.
+          const chunks: Buffer[] = [];
+          tunnel.on("data", (chunk: Buffer) => chunks.push(chunk));
+          await closed;
+          expect({ writtenBeforeFin, atClose, intact: Buffer.concat(chunks).equals(sent), events }).toEqual({
+            writtenBeforeFin: accept.length,
+            atClose: {
+              destroyed: false,
+              events: [],
+              belowMark: true,
+              servername: "localhost",
+              remoteAddress: "127.0.0.1",
+              bytesWritten: accept.length,
+            },
+            intact: true,
+            events: ["end", "close"],
+          });
+        });
+      });
+    }
 
     // An open Upgrade tunnel runs the same code as a CONNECT tunnel. The tests below move 8 to 24 MiB
     // each, on one thread, so they run for CONNECT only.
@@ -535,8 +655,6 @@ describe("HTTP server CONNECT", () => {
       expect(tunnel.readableLength).toBe(buffered);
     });
 
-    // The reader takes each chunk at once here. A reader that falls behind still loses what it has
-    // not taken when the connection closes.
     test("end() behind a full buffer leaves the reads stopped, and the rest, 'end' and 'close' still arrive", async () => {
       const t = setup();
       const { promise: tunnelPromise, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
@@ -1922,6 +2040,536 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   } finally {
     client.destroy();
   }
+});
+
+// The socket of a 'connect' listener, or of an 'upgrade' listener whose request has no body, is the connection as a
+// net.Socket. When the connection closes after the peer's FIN and the reader has not taken every byte, the socket
+// waits for its reader. node-http-connect.node.mts has the tests that Node.js v26.3.0 passes too. The tests here
+// are for what Bun does in its own way, and for what only Bun can observe. Each says what Node.js does.
+describe("a tunnel socket whose connection has closed", () => {
+  const exchanges = {
+    connect: {
+      request: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+      reply: "HTTP/1.1 200 Connection Established\r\n\r\n",
+    },
+    upgrade: {
+      request: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+      reply: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+    },
+  };
+  // An application data record of 32 bytes that are not ciphertext.
+  const recordThatDoesNotDecrypt = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 7)]);
+
+  type TunnelOptions = {
+    // The listener ends the socket behind its reply.
+    ends: boolean;
+    // Listens on an AF_UNIX socket.
+    path?: string;
+    secure?: boolean;
+    // false: the socket keeps the listeners that it was handed off with, and none of them is for 'error'.
+    errorListener?: boolean;
+    // Replaces the request of the exchange.
+    request?: string;
+    // Runs in the listener.
+    onTunnel?: (socket: net.Socket) => void;
+  };
+
+  // The client is half-open: it can send after the server's FIN. Over TLS it writes its records to a Duplex, and
+  // `raw` sends them. So a test can reset the connection under the session, or put a record of its own behind them.
+  async function openTunnel(event: "connect" | "upgrade", options: TunnelOptions) {
+    const events: string[] = [];
+    const { promise: handedOff, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    const listener = (req: http.IncomingMessage, res: http.ServerResponse) => void res.end("ok");
+    const server = options.secure
+      ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, listener)
+      : http.createServer(listener);
+    server.on(event, (req, socket) => {
+      socket.on("end", () => events.push("end"));
+      if (options.errorListener !== false) {
+        socket.on("error", (error: NodeJS.ErrnoException) => events.push(String(error.code)));
+      }
+      socket.on("close", () => {
+        events.push("close");
+        onClosed();
+      });
+      options.onTunnel?.(socket as net.Socket);
+      socket.write(exchanges[event].reply);
+      if (options.ends) socket.end();
+      onTunnel(socket as net.Socket);
+    });
+    await once(options.path ? server.listen(options.path) : server.listen(0, "127.0.0.1"), "listening");
+    const connect = (more: net.SocketConstructorOpts = {}) =>
+      options.path
+        ? net.connect({ path: options.path, ...more })
+        : net.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", ...more });
+
+    const raw = connect({ allowHalfOpen: true });
+    raw.on("error", () => {});
+    let client = raw;
+    if (options.secure) {
+      const wire = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          raw.write(chunk, callback);
+        },
+      });
+      raw.on("data", chunk => wire.push(chunk));
+      raw.on("end", () => wire.push(null));
+      client = tls.connect({ socket: wire, rejectUnauthorized: false });
+      client.on("error", () => {});
+      await once(client, "secureConnect");
+    }
+    client.on("data", () => {});
+    const ready = once(client, options.ends ? "end" : "data");
+    client.write(options.request ?? exchanges[event].request);
+    await ready;
+    const tunnel = await handedOff;
+    return {
+      server,
+      tunnel,
+      client,
+      raw,
+      events,
+      closed,
+      // Half of the high water mark: the socket reads all of it with nobody reading the socket.
+      payload: Buffer.alloc(tunnel.readableHighWaterMark / 2, "x"),
+      connections: () => new Promise<number>(resolve => server.getConnections((error, count) => resolve(count))),
+      // One exchange on a connection of its own: the server has read what the client sent before it.
+      async barrier() {
+        const socket = options.secure
+          ? tls.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false })
+          : connect();
+        socket.resume();
+        socket.end("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+        await once(socket, "close");
+      },
+      async [Symbol.asyncDispose]() {
+        raw.destroy();
+        client.destroy();
+        tunnel.destroy();
+        server.close();
+      },
+    };
+  }
+
+  // A connection that closes with no FIN of the peer, and not from this side: the peer resets it, or its TLS session
+  // fails. That is not the end of the peer's stream, so the socket never waits for a reader. It closes with the
+  // connection, after an 'end' if its reader has taken every byte, and with no 'error'. Node.js emits no 'end'. It
+  // emits 'error': ECONNRESET and then 'close' for a reset, and ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC for the
+  // record. With no 'error' listener, the reset of a plain socket is an uncaught exception there.
+  describe.each([
+    ["http", "a reset of the peer"],
+    ["https", "a reset of the peer"],
+    ["https", "a record that does not decrypt"],
+  ] as const)("%s: %s closes the socket with the connection", (protocol, cause) => {
+    for (const event of ["connect", "upgrade"] as const) {
+      for (const errorListener of [true, false]) {
+        for (const reads of [true, false]) {
+          const listener = errorListener ? "an 'error' listener" : "no 'error' listener";
+          const outcome = reads
+            ? "a reader that keeps up gets 'end', then 'close'"
+            : "bytes that nobody has read go with the socket";
+          test(`'${event}' with ${listener}: ${outcome}`, async () => {
+            let received = 0;
+            const read = (socket: net.Socket) => void socket.on("data", chunk => (received += chunk.length));
+            await using t = await openTunnel(event, {
+              ends: false,
+              secure: protocol === "https",
+              errorListener,
+              onTunnel: reads ? read : undefined,
+            });
+            await new Promise(resolve => t.client.write(t.payload, resolve));
+            await t.barrier();
+
+            if (cause === "a reset of the peer") t.raw.resetAndDestroy();
+            else await new Promise(resolve => t.raw.write(recordThatDoesNotDecrypt, resolve));
+            await t.barrier();
+            const atClose = {
+              destroyed: t.tunnel.destroyed,
+              events: [...t.events],
+              connections: await t.connections(),
+            };
+
+            // A reader that comes now gets nothing.
+            if (!reads) {
+              read(t.tunnel);
+              await t.barrier();
+            }
+            expect({ atClose, received }).toEqual({
+              atClose: { destroyed: true, events: reads ? ["end", "close"] : ["close"], connections: 0 },
+              received: reads ? t.payload.length : 0,
+            });
+          });
+        }
+      }
+    }
+  });
+
+  // A relay moves the bytes with two pipe() calls, and the 'end' of the tunnel socket is what ends its upstream leg.
+  // In Node.js the reset is an 'error' on the tunnel socket. The WebSocket pass of http-proxy listens for it and ends
+  // the upstream leg there. A relay with no listener stops the process with an uncaught exception.
+  test.each([
+    ["connect", "two pipe() calls", false],
+    ["upgrade", "two pipe() calls", false],
+    ["upgrade", "two pipe() calls and the 'error' listener of http-proxy", true],
+  ] as const)(
+    "'%s': a relay of %s ends its upstream leg when the client resets",
+    async (event, shape, likeHttpProxy) => {
+      const upstreamEvents: string[] = [];
+      const { promise: upstreamClosed, resolve: onUpstreamClosed } = Promise.withResolvers<void>();
+      // Echoes, so that the client knows when its bytes have been through the relay.
+      await using upstreamServer = net.createServer(connection => {
+        connection.on("end", () => upstreamEvents.push("end"));
+        connection.on("close", () => {
+          upstreamEvents.push("close");
+          onUpstreamClosed();
+        });
+        connection.pipe(connection);
+      });
+      await once(upstreamServer.listen(0, "127.0.0.1"), "listening");
+      await using server = http.createServer();
+      server.on(event, (req, socket) => {
+        const upstream = net.connect((upstreamServer.address() as AddressInfo).port, "127.0.0.1", () => {
+          socket.write(exchanges[event].reply);
+          upstream.pipe(socket);
+          socket.pipe(upstream);
+        });
+        upstream.on("error", () => {});
+        if (likeHttpProxy) socket.on("error", () => upstream.end());
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      try {
+        client.on("error", () => {});
+        const { promise: echoed, resolve: onEchoed } = Promise.withResolvers<void>();
+        let received = "";
+        client.on("data", chunk => {
+          received += chunk;
+          if (received === exchanges[event].reply) client.write("ping");
+          if (received.endsWith("ping")) onEchoed();
+        });
+        client.write(exchanges[event].request);
+        await echoed;
+        client.resetAndDestroy();
+        await upstreamClosed;
+        expect(upstreamEvents).toEqual(["end", "close"]);
+      } finally {
+        client.destroy();
+      }
+    },
+  );
+
+  // The socket of an Upgrade request with a body behaves like Node's UpgradeStream, which never waits: the close of
+  // the connection destroys it. A reset ends it like the socket of a request with no body. Node.js emits 'error'
+  // with ECONNRESET on its UpgradeStream, and no 'end'.
+  test("'upgrade' with a request body: a reset of the peer closes the socket, after 'end' for a reader that keeps up", async () => {
+    let received = "";
+    await using t = await openTunnel("upgrade", {
+      ends: false,
+      request: exchanges.upgrade.request.replace("\r\n\r\n", "\r\nContent-Length: 4\r\n\r\n"),
+      onTunnel: socket => void socket.on("data", chunk => (received += chunk)),
+    });
+    // The 101 has arrived. The body follows it, and bytes for the socket follow the body.
+    t.client.write("bodytunneled");
+    await t.barrier();
+    t.client.resetAndDestroy();
+    await t.barrier();
+    expect({ destroyed: t.tunnel.destroyed, events: t.events, received }).toEqual({
+      destroyed: true,
+      events: ["end", "close"],
+      received: "tunneled",
+    });
+  });
+
+  // A hangup: the connection closes after the peer's FIN, and the listener has not ended the socket. The peer of an
+  // AF_UNIX socket closes both ways at once, which epoll and kqueue report as a hangup. Those two rows are for that
+  // report, so Windows does not run them. A TCP peer does the same on every platform with its FIN and then a reset.
+  describe.each([
+    ["AF_UNIX, the peer closes and the server has not ended the socket", true],
+    ["TCP, the peer ends and then resets, and the server has not ended the socket", false],
+  ] as const)("%s", (transport, unix) => {
+    // The peer leaves behind its payload. Resolves when the connection has closed on the server.
+    async function hangUp(t: Awaited<ReturnType<typeof openTunnel>>) {
+      if (unix) {
+        t.client.end(t.payload, () => t.client.destroy());
+        await once(t.client, "close");
+      } else {
+        t.client.end(t.payload);
+        await t.barrier();
+        t.client.resetAndDestroy();
+      }
+      await t.barrier();
+    }
+
+    // Node.js v26.3.0 gives the same result.
+    test.skipIf(unix && isWindows)("a late reader gets every byte, then 'end'", async () => {
+      using dir = unix ? tempDir("connect-unix-unread", {}) : undefined;
+      await using t = await openTunnel("connect", { ends: false, path: dir && join(String(dir), "tunnel.sock") });
+      await hangUp(t);
+
+      const atClose = { destroyed: t.tunnel.destroyed, events: [...t.events] };
+      let received = 0;
+      t.tunnel.on("data", chunk => (received += chunk.length));
+      t.tunnel.on("end", () => t.tunnel.end());
+      await t.closed;
+      expect({ atClose, received, events: t.events }).toEqual({
+        atClose: { destroyed: false, events: [] },
+        received: t.payload.length,
+        events: ["end", "close"],
+      });
+    });
+
+    // Node.js fails the write with EPIPE and emits 'error'. Bun fails it like a write that waits for a drain when
+    // the connection closes, with no 'error'. Windows does not run this: it does not report the reset that follows a
+    // FIN, so the connection is still open there when the write comes.
+    test.skipIf(isWindows)("a write fails, and the unread bytes go with the socket", async () => {
+      using dir = unix ? tempDir("connect-unix-write", {}) : undefined;
+      await using t = await openTunnel("connect", { ends: false, path: dir && join(String(dir), "tunnel.sock") });
+      await hangUp(t);
+
+      const atClose = { destroyed: t.tunnel.destroyed, events: [...t.events] };
+      const { promise: written, resolve: onWritten } = Promise.withResolvers<Error | null | undefined>();
+      t.tunnel.write("x", onWritten);
+      const error = (await written) as NodeJS.ErrnoException | undefined;
+      await t.closed;
+      expect({ atClose, write: error?.code, events: t.events }).toEqual({
+        atClose: { destroyed: false, events: [] },
+        write: "ERR_STREAM_DESTROYED",
+        events: ["close"],
+      });
+    });
+  });
+
+  // The peer's FIN has arrived, nobody has read the payload, and then the connection closes. Two sockets do not wait
+  // for their reader then.
+  describe("a socket does not wait for its reader", () => {
+    // Its owner asked for the close. Node.js v26.3.0 gives the same result.
+    test("when destroySoon() closes the connection", async () => {
+      await using t = await openTunnel("connect", { ends: false });
+      t.client.end(t.payload);
+      await t.barrier();
+      const halfOpen = { destroyed: t.tunnel.destroyed, buffered: t.tunnel.readableLength };
+
+      // It sends the FIN of this side, so both sides have sent theirs.
+      t.tunnel.destroySoon();
+      await t.barrier();
+      const atClose = { destroyed: t.tunnel.destroyed, events: [...t.events], connections: await t.connections() };
+
+      // A reader that comes now gets nothing.
+      let received = 0;
+      t.tunnel.on("data", chunk => (received += chunk.length));
+      await t.barrier();
+      expect({ halfOpen, atClose, received }).toEqual({
+        halfOpen: { destroyed: false, buffered: t.payload.length },
+        atClose: { destroyed: true, events: ["close"], connections: 0 },
+        received: 0,
+      });
+    });
+
+    // The write has failed, and its callback has to hear that. Node.js fails the writes with EPIPE and emits 'error'.
+    // Windows does not run this: Winsock takes megabytes whole, so no write is sure to wait there.
+    test.skipIf(isWindows)("when a write waits for a drain", async () => {
+      await using t = await openTunnel("connect", { ends: false });
+      const failed: (string | undefined)[] = [];
+      const onWritten = (error?: NodeJS.ErrnoException | null) => void (error && failed.push(error.code));
+      // The client does not read. This is more than a loopback socket takes, so most of it waits for a drain.
+      t.client.pause();
+      t.tunnel.write(Buffer.alloc(16 * 1024 * 1024, "w"), onWritten);
+      t.tunnel.write("behind", onWritten);
+
+      t.client.end(t.payload);
+      await t.barrier();
+      const halfOpen = {
+        destroyed: t.tunnel.destroyed,
+        buffered: t.tunnel.readableLength,
+        unsent: t.tunnel.writableLength > 0,
+        failed: [...failed],
+      };
+
+      // A hangup: the reset closes the connection behind the FIN.
+      t.client.resetAndDestroy();
+      await t.barrier();
+      expect({
+        halfOpen,
+        atClose: { destroyed: t.tunnel.destroyed, events: t.events, connections: await t.connections() },
+        failed,
+      }).toEqual({
+        halfOpen: { destroyed: false, buffered: t.payload.length, unsent: true, failed: [] },
+        atClose: { destroyed: true, events: ["close"], connections: 0 },
+        // The write that waited, and the write behind it.
+        failed: ["ERR_STREAM_DESTROYED", "ERR_STREAM_DESTROYED"],
+      });
+    });
+  });
+
+  // The server counts connections, and this one has closed: the socket that waits has no file descriptor. So the
+  // server does not count it, and server.close() does not wait for it. Node.js keeps the handle of such a socket,
+  // counts it until it closes, and holds server.close() for it.
+  test.each(["connect", "upgrade"] as const)(
+    "'%s': a socket that waits is not a connection of its server",
+    async event => {
+      await using t = await openTunnel(event, { ends: true });
+      t.client.end(t.payload);
+      await t.barrier();
+
+      let drops = 0;
+      t.server.on("drop", () => drops++);
+      t.server.maxConnections = 1;
+      // One exchange on a new connection. Resolves with what the client received.
+      const { promise: response, resolve: onResponse } = Promise.withResolvers<string>();
+      const next = net.connect((t.server.address() as AddressInfo).port, "127.0.0.1");
+      let received = "";
+      next.on("error", () => {});
+      next.on("data", chunk => (received += chunk));
+      next.on("close", () => onResponse(received));
+      next.end("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+      const waiting = {
+        served: (await response).slice(-2),
+        drops,
+        connections: await t.connections(),
+        destroyed: t.tunnel.destroyed,
+        events: [...t.events],
+      };
+
+      await new Promise<void>(resolve => t.server.close(() => resolve()));
+      const afterServerClose = { destroyed: t.tunnel.destroyed, events: [...t.events] };
+      let read = 0;
+      t.tunnel.on("data", chunk => (read += chunk.length));
+      await t.closed;
+      expect({ waiting, afterServerClose, read, events: t.events }).toEqual({
+        waiting: { served: "ok", drops: 0, connections: 0, destroyed: false, events: [] },
+        afterServerClose: { destroyed: false, events: [] },
+        read: t.payload.length,
+        events: ["end", "close"],
+      });
+    },
+  );
+
+  // Nothing of the server keeps a socket that waits: one that its listener dropped is collected. Node.js keeps the
+  // socket, and its file descriptor.
+  test("a socket that waits and that its owner dropped is collected", async () => {
+    const count = 20;
+    const refs: WeakRef<object>[] = [];
+    let highWaterMark = 0;
+    const server = http.createServer((req, res) => void res.end("ok"));
+    server.on("connect", (req, socket) => {
+      refs.push(new WeakRef(socket));
+      highWaterMark = socket.readableHighWaterMark;
+      socket.write(exchanges.connect.reply);
+      socket.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const connections = () => new Promise<number>(resolve => server.getConnections((error, n) => resolve(n)));
+    const clients: net.Socket[] = [];
+    const closed: Promise<unknown>[] = [];
+    try {
+      for (let i = 0; i < count; i++) {
+        const client = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+        clients.push(client);
+        closed.push(once(client, "close"));
+        client.on("error", () => {});
+        // Every second connection has had a request before its CONNECT, and the keep-alive timer of that request
+        // is still armed. A timer keeps its socket.
+        if (i % 2) {
+          client.write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+          await once(client, "data");
+        }
+        client.resume();
+        // The server's FIN. The client answers with bytes that nobody reads, and its own FIN.
+        client.on("end", () => client.end(Buffer.alloc(highWaterMark / 2, "x")));
+        client.write(exchanges.connect.request);
+      }
+      await Promise.all(closed);
+      await untilTheServerHasRead(() => net.connect(port, "127.0.0.1"));
+      const waiting = await connections();
+
+      // deref() keeps its target for the rest of the turn that calls it, so each collection has a turn of its own.
+      // A server that kept its sockets would keep all of them, so most of them have to go.
+      const deadline = Date.now() + 2000;
+      let alive = refs.length;
+      do {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        alive = refs.filter(ref => ref.deref() !== undefined).length;
+      } while (alive >= 5 && Date.now() < deadline);
+      expect({ sockets: refs.length, waiting, collected: alive < 5 }).toEqual({
+        sockets: count,
+        waiting: 0,
+        collected: true,
+      });
+    } finally {
+      for (const client of clients) client.destroy();
+      server.close();
+    }
+  });
+
+  // Nobody reads the sockets, so they do not close. Their connections have closed, so the servers close, and the
+  // process does not stay for them: the child exits. In Node.js v26.3.0 the servers do not close.
+  test("a socket that its listener ended and never reads holds neither server.close() nor the process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("node:http");
+         const net = require("node:net");
+         const exchanges = ${JSON.stringify(exchanges)};
+         const results = {};
+         for (const event of ["connect", "upgrade"]) {
+           for (const when of ["before", "after"]) {
+             const events = (results[event + ", server.close() " + when + " the peer's FIN"] = []);
+             let highWaterMark;
+             const server = http.createServer((req, res) => res.end("ok"));
+             const close = () => server.close(() => events.push("server close"));
+             server.on(event, (req, socket) => {
+               highWaterMark = socket.readableHighWaterMark;
+               socket.on("end", () => events.push("socket end"));
+               socket.on("close", () => events.push("socket close"));
+               socket.write(exchanges[event].reply);
+               socket.end();
+               if (when === "before") close();
+             });
+             server.listen(0, "127.0.0.1", () => {
+               const { port } = server.address();
+               const client = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+               client.resume();
+               client.write(exchanges[event].request);
+               // The server's FIN. The client answers with bytes that nobody reads, and its own FIN.
+               client.on("end", () => client.end(Buffer.alloc(highWaterMark / 2, "x")));
+               if (when === "before") return;
+               client.on("close", () => {
+                 // One exchange on a connection of its own: the server has read the client's FIN when it is over.
+                 const barrier = net.connect(port, "127.0.0.1");
+                 barrier.resume();
+                 barrier.end("GET /barrier HTTP/1.1\\r\\nHost: example.com\\r\\nConnection: close\\r\\n\\r\\n");
+                 barrier.on("close", () => {
+                   server.getConnections((error, count) => {
+                     events.push("connections " + count);
+                     close();
+                   });
+                 });
+               });
+             });
+           }
+         }
+         process.on("exit", () => console.log(JSON.stringify(results)));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // No 'end' and no 'close' of a socket.
+    const results = {
+      "connect, server.close() before the peer's FIN": ["server close"],
+      "connect, server.close() after the peer's FIN": ["connections 0", "server close"],
+      "upgrade, server.close() before the peer's FIN": ["server close"],
+      "upgrade, server.close() after the peer's FIN": ["connections 0", "server close"],
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(results) + "\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // A listener with nothing to send ends its side in the listener. It still reads: an http.Server

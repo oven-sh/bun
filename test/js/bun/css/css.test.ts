@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -187,6 +187,262 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+  });
+  describe("calc product", () => {
+    // A number token on a math function that stays in the output prints as it is written. Six
+    // digits of a quotient are another value: for `calc(min(5px,1em)/1.66667)` Chrome computes
+    // a border of 2px, and for `calc(min(5px,1em) * .6)` one of 3px.
+    const product_test = (source: string, expected: string) =>
+      test(source, () => {
+        expect(minify_test_with_options(source, "")).toEqual(expected);
+        expect(minify_test_with_options(expected, "")).toEqual(expected);
+      });
+    const F = "min(5px,1em)";
+    for (const [source, expected] of [
+      // One number that is not the inverse of a number of 6 digits.
+      [`${F} * .6`, `.6*${F}`],
+      [`${F} * .75`, `.75*${F}`],
+      [`${F} * 0.333333`, `.333333*${F}`],
+      [`${F} / .3`, `${F}/.3`],
+      [`${F} / .6`, `${F}/.6`],
+      [`${F} * -.6`, `-.6*${F}`],
+      [`${F} * -3e-7`, `-3e-7*${F}`],
+      // A multiplier and a divisor, in each order.
+      [`${F} * 6 / 7`, `6*${F}/7`],
+      [`${F} / 7 * 6`, `6*${F}/7`],
+      [`6 * ${F} / 7`, `6*${F}/7`],
+      [`6 / 7 * ${F}`, `6*${F}/7`],
+      [`${F} * 7 / 3`, `7*${F}/3`],
+      [`${F} * -6 / 7`, `-6*${F}/7`],
+      [`${F} * 6 / -7`, `-6*${F}/7`],
+      [`.6 * ${F}`, `.6*${F}`],
+      // More numbers make one multiplier and one divisor, in lowest terms.
+      [`${F} * 6 / 14`, `3*${F}/7`],
+      [`${F} * 2 / 3 * 5`, `${F}/.3`],
+      [`${F} * 2 / 3 * 7`, `14*${F}/3`],
+      [`${F} * .7 * 1.3`, `.91*${F}`],
+      [`${F} / 2 / 3.5`, `${F}/7`],
+      [`2 * (${F} * .3)`, `.6*${F}`],
+      [`calc(${F} * 6) / 7`, `6*${F}/7`],
+      [`${F} * 3 / 3`, F],
+      [`${F} / 41 * 41`, F],
+      [`${F} * 3 / 7 * 7 / 3`, F],
+      // One exact number prints as before: a number below 1 is a division by its inverse.
+      [`${F} * .5`, `${F}/2`],
+      [`${F} * .25`, `${F}/4`],
+      [`${F} * .1`, `${F}/10`],
+      [`${F} * .8`, `${F}/1.25`],
+      [`${F} * 1e-7`, `${F}/10000000`],
+      [`${F} / 3`, `${F}/3`],
+      [`${F} / -3`, `${F}/-3`],
+      [`${F} * -1 / 3`, `${F}/-3`],
+      [`${F} / 2 / 3`, `${F}/6`],
+      [`${F} * 2 / 3`, `${F}/1.5`],
+      [`${F} / 3 * 2`, `${F}/1.5`],
+      [`${F} * 5 / 6`, `${F}/1.2`],
+      [`${F} * .6 / .9`, `${F}/1.5`],
+      [`${F} * 1.5`, `1.5*${F}`],
+      [`${F} * 2 * 3`, `6*${F}`],
+      [`${F} / .5`, `2*${F}`],
+      [`${F} * -1`, `-1*${F}`],
+      // A computed number, and a literal of more than 6 digits, fold into one number as before.
+      [`${F} * (6 / 7)`, `${F}/1.16667`],
+      [`(6 / 7) * ${F}`, `${F}/1.16667`],
+      [`${F} * (1 / 3)`, `${F}/3`],
+      [`${F} * pi`, `3.14159*${F}`],
+      [`${F} * 0.33333333`, `${F}/3`],
+      [`${F} * 1.234 * 5.678`, `7.00665*${F}`],
+      // In a sum.
+      [`100% - ${F} * .6`, `100% + -.6*${F}`],
+      [`10px - ${F} * 6 / 7`, `10px + -6*${F}/7`],
+      // A number on a sum goes into its terms when every value stays exact.
+      [`(${F} + 10%) * .6`, `.6*${F} + 6%`],
+      [`(${F} + 1px) / 2`, `${F}/2 + .5px`],
+      [`(${F} + 7px) / 7`, `${F}/7 + 1px`],
+      [`(${F} + 7px) * 3 / 7`, `3*${F}/7 + 3px`],
+      [`(${F} + 1px) / 7 * 7`, `${F} + 1px`],
+      // If not, it stays on the whole sum.
+      [`(${F} + 1px) * 3 / 7`, `(3*${F} + 3px)/7`],
+      [`(100vw - ${F}) / 3`, `(100vw + -1*${F})/3`],
+      [`1px - (${F} + 1px) / 3`, `1px + (${F} + 1px)/-3`],
+      [`(${F} + 3.33333px) * .5`, `(${F} + 3.33333px)/2`],
+      [`(${F} + 1.23456px) * .66`, `.66*(${F} + 1.23456px)`],
+      [`(${F} + 1px) * (6 / 7)`, `${F}/1.16667 + .857143px`],
+    ]) {
+      product_test(`a { width: calc(${source}) }`, `a{width:calc(${expected})}`);
+    }
+    product_test(`.a { border-width: calc(min(5px,1em) * .6) }`, `.a{border-width:calc(.6*min(5px,1em))}`);
+    product_test(`.b { border-width: calc(min(70px,10em) * 6 / 7) }`, `.b{border-width:calc(6*min(70px,10em)/7)}`);
+    product_test(`a { width: min(1000px, max(1px,1em) * 6 / 7) }`, `a{width:min(1000px,6*max(1px,1em)/7)}`);
+    product_test(`a { width: clamp(1px, ${F} * .6, 9px) }`, `a{width:clamp(1px,.6*${F},9px)}`);
+    // Two spellings of one product are one value.
+    product_test(`a { margin: calc(${F} * 6 / 14) calc(${F} / 7 * 3) }`, `a{margin:calc(3*${F}/7)}`);
+    product_test(`a { margin: calc(${F} * .5) calc(${F} / 2) }`, `a{margin:calc(${F}/2)}`);
+    product_test(
+      `a { background: conic-gradient(red calc(min(1deg,1%) * .6), blue) }`,
+      `a{background:conic-gradient(red calc(.6*min(1deg,1%)),#00f)}`,
+    );
+    product_test(`@media (width > calc(${F} * .6)) { a { color: red } }`, `@media (width>calc(.6*${F})){a{color:red}}`);
+    product_test(
+      `@media (min-width: calc(${F} * 6 / 7)) { a { color: red } }`,
+      `@media (width>=calc(6*${F}/7)){a{color:red}}`,
+    );
+    product_test(
+      `@container (width > calc(${F} * .6)) { a { color: red } }`,
+      `@container (width>calc(.6*${F})){a{color:red}}`,
+    );
+    product_test(
+      `@property --x { syntax: "<length>"; inherits: false; initial-value: calc(min(5px,1vw) * 6 / 7) }`,
+      `@property --x{syntax:"<length>";inherits:false;initial-value:calc(6*min(5px,1vw)/7)}`,
+    );
+    cssTest(
+      `.foo { width: calc((min(5px, 1em) + 1px) * 3 / 7 - min(5px, 1em) * .6) }`,
+      `.foo { width: calc((3 * min(5px, 1em) + 3px) / 7 + -.6 * min(5px, 1em)); }`,
+    );
+
+    // The exact value of a math expression: the fraction that multiplies each unit and each
+    // function that stays. Two spellings of one value give the same string.
+    const OPEN = /\s*\(/y;
+    const CLOSE = /\s*\)/y;
+    const COMMA = /\s*,/y;
+    const NUMBER = /\s*(?=[+-]?\.?\d)([+-]?)(\d*)\.?(\d*)(?:e([+-]?\d+))?(%|[a-z]+)?/iy;
+    const FUNCTION = /\s*([a-z-]+)\(/iy;
+    const TIMES_OR_OVER = /\s*([*/])/y;
+    const PLUS_OR_MINUS = /\s+([+-])\s+/y;
+    function exactValue(text: string): string {
+      type Fraction = [bigint, bigint];
+      type Terms = Map<string, Fraction>;
+      const fraction = (n: bigint, d: bigint): Fraction => {
+        let [a, b] = [n < 0n ? -n : n, d < 0n ? -d : d];
+        while (b) [a, b] = [b, a % b];
+        return d < 0n ? [-n / a, -d / a] : [n / a, d / a];
+      };
+      const times = (terms: Terms, [n, d]: Fraction): Terms =>
+        new Map([...terms].map(([key, [tn, td]]) => [key, fraction(tn * n, td * d)]));
+      const plus = (left: Terms, right: Terms): Terms => {
+        const sum = new Map(left);
+        for (const [key, [n, d]] of right) {
+          const [sn, sd] = sum.get(key) ?? [0n, 1n];
+          sum.set(key, fraction(sn * d + n * sd, sd * d));
+        }
+        return sum;
+      };
+      const print = (terms: Terms) =>
+        [...terms]
+          .filter(([, [n]]) => n !== 0n)
+          .map(([key, [n, d]]) => `${n}/${d}${key}`)
+          .sort()
+          .join(" + ");
+      let at = 0;
+      const take = (pattern: RegExp) => {
+        pattern.lastIndex = at;
+        const match = pattern.exec(text);
+        if (match) at += match[0].length;
+        return match;
+      };
+      const unexpected = () => new Error(`unexpected "${text.slice(at)}" in "${text}"`);
+      const value = (): Terms => {
+        if (take(OPEN)) {
+          const inner = sum();
+          if (!take(CLOSE)) throw unexpected();
+          return inner;
+        }
+        const number = take(NUMBER);
+        if (number) {
+          const [, sign, whole, part, exponent = "0", unit = ""] = number;
+          const shift = BigInt(exponent) - BigInt(part.length);
+          const digits = BigInt(sign + whole + part);
+          return new Map([[unit, shift < 0n ? fraction(digits, 10n ** -shift) : [digits * 10n ** shift, 1n]]]);
+        }
+        const name = take(FUNCTION);
+        if (!name) throw unexpected();
+        const args = [sum()];
+        while (take(COMMA)) args.push(sum());
+        if (!take(CLOSE)) throw unexpected();
+        return name[1] === "calc" ? args[0] : new Map([[`*${name[1]}(${args.map(print).join(",")})`, [1n, 1n]]]);
+      };
+      const product = (): Terms => {
+        let left = value();
+        for (let operator: RegExpExecArray | null; (operator = take(TIMES_OR_OVER));) {
+          const right = value();
+          // One side of `*` is a number, and so is a divisor.
+          const [number, other] = right.size === 1 && right.has("") ? [right, left] : [left, right];
+          const [n, d] = number.get("")!;
+          left = times(other, operator[1] === "*" ? [n, d] : fraction(d, n));
+        }
+        return left;
+      };
+      function sum(): Terms {
+        let left = product();
+        for (let operator: RegExpExecArray | null; (operator = take(PLUS_OR_MINUS));) {
+          left = plus(left, times(product(), [operator[1] === "+" ? 1n : -1n, 1n]));
+        }
+        return left;
+      }
+      const terms = sum();
+      if (text.slice(at).trim() !== "") throw unexpected();
+      return print(terms);
+    }
+
+    test("a product of number tokens keeps the value that is written", () => {
+      const numbers = [3, 7, ".6", "1.5", "-2"];
+      const products: string[] = [];
+      for (const n of numbers) {
+        products.push(`${F} * ${n}`, `${F} / ${n}`, `${n} * ${F}`);
+        for (const d of numbers) {
+          products.push(`${F} * ${n} / ${d}`, `${F} / ${d} * ${n}`, `${n} * ${F} / ${d}`, `${n} / ${d} * ${F}`);
+          const three = [`${F} * ${n} / ${d} / 7`, `${F} * ${n} * .6 / ${d}`, `${F} / ${d} * ${n} / .6`];
+          products.push(three[products.length % three.length]);
+        }
+      }
+      for (let hundredths = 7; hundredths < 100; hundredths += 8) products.push(`${F} * ${hundredths / 100}`);
+      for (let divisor = 3; divisor <= 32; divisor += 4) products.push(`${F} / ${divisor}`, `${F} * 5 / ${divisor}`);
+      // Alone, subtracted, as a function argument, and on a sum that keeps the function.
+      const shapes = [
+        (product: string) => `calc(${product})`,
+        (product: string) => `calc(100% - ${product})`,
+        (product: string) => `min(1000px, ${product.replace(F, "max(1px,1em)")})`,
+        (product: string) => `calc(${product.replace(F, `(${F} + 7px)`)})`,
+        (product: string) => `calc(${product.replace(F, `(10% - ${F})`)})`,
+      ];
+      const sources = products.map((product, i) => shapes[i % shapes.length](product));
+
+      const minified = minify_test_with_options(sources.map((source, i) => `.r${i}{width:${source}}`).join("\n"), "");
+      expect(minify_test_with_options(minified, "") === minified).toBe(true);
+      // Rules with one value are merged into one rule.
+      const printed: string[] = [];
+      for (const [, selectors, value] of minified.matchAll(/([^{}]+)\{width:([^}]*)\}/g)) {
+        for (const selector of selectors.split(",")) printed[Number(selector.slice(2))] = value;
+      }
+      const changed = sources.flatMap((source, i) =>
+        printed[i] !== undefined && exactValue(printed[i]) === exactValue(source) ? [] : [`${source} -> ${printed[i]}`],
+      );
+      expect({ changed: changed.length, first: changed.slice(0, 8) }).toEqual({ changed: 0, first: [] });
+    });
+
+    test("bun build keeps the value of a product", async () => {
+      using dir = tempDir("css-calc-product", {
+        "a.css": `.a { border-width: calc(min(5px,1em) * .6) }\n.b { border-width: calc(min(70px,10em) * 6 / 7) }\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.css", "--minify", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(await Bun.file(join(String(dir), "out", "a.css")).text()).toBe(
+        ".a{border-width:calc(.6*min(5px,1em))}.b{border-width:calc(6*min(70px,10em)/7)}\n",
+      );
+      expect(exitCode).toBe(0);
+
+      const build = await Bun.build({ entrypoints: [join(String(dir), "a.css")] });
+      const text = await build.outputs[0].text();
+      expect(text.slice(text.indexOf("\n") + 1)).toBe(
+        ".a {\n  border-width: calc(.6 * min(5px, 1em));\n}\n\n.b {\n  border-width: calc(6 * min(70px, 10em) / 7);\n}\n",
+      );
+    });
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.

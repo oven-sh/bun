@@ -104,9 +104,14 @@ pub enum Calc<V> {
         left: Box<Calc<V>>,
         right: Box<Calc<V>>,
     },
-    /// A product of a number and another calc expression.
+    /// A calc expression times `number` and over `divisor`. Only `Calc::scale` builds it.
+    ///
+    /// Both numbers print as they are. A divisor that was written stays a divisor, because
+    /// six digits of a quotient such as 6/7 are another value. The expression is a math
+    /// function, or a sum with a value that cannot take the numbers exactly.
     Product {
         number: CSSNumber,
+        divisor: CSSNumber,
         expression: Box<Calc<V>>,
     },
     /// A math function, such as `calc()`, `min()`, or `max()`.
@@ -170,13 +175,15 @@ impl<V: PartialEq + Clone> PartialEq for Calc<V> {
             (
                 Calc::Product {
                     number: an,
+                    divisor: ad,
                     expression: ae,
                 },
                 Calc::Product {
                     number: bn,
+                    divisor: bd,
                     expression: be,
                 },
-            ) => an == bn && **ae == **be,
+            ) => an == bn && ad == bd && **ae == **be,
             (Calc::Function(a), Calc::Function(b)) => **a == **b,
             _ => false,
         }
@@ -198,8 +205,13 @@ impl<V> Calc<V> {
                 left: Box::new(left.deep_clone()),
                 right: Box::new(right.deep_clone()),
             },
-            Calc::Product { number, expression } => Calc::Product {
+            Calc::Product {
+                number,
+                divisor,
+                expression,
+            } => Calc::Product {
                 number: *number,
+                divisor: *divisor,
                 expression: Box::new(expression.deep_clone()),
             },
             Calc::Function(function) => Calc::Function(Box::new(function.deep_clone())),
@@ -567,43 +579,87 @@ impl<V: CalcValue> Calc<V> {
         input: &mut css::Parser,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        let mut node = Self::parse_value(input, parse_ident)?;
-        loop {
-            let start = input.state();
-            let tok = match input.next() {
-                Ok(vv) => vv,
-                Err(_) => {
-                    input.reset(&start);
-                    break;
-                }
-            };
+        let node = Self::parse_value(input, parse_ident)?;
+        let start = input.state();
+        match input.next() {
+            Ok(css::Token::Delim(c)) if *c == b'*' as u32 || *c == b'/' as u32 => {
+                let operator = *c;
+                Self::parse_product_operators(node, operator, start.position, input, parse_ident)
+            }
+            _ => {
+                input.reset(&start);
+                Ok(node)
+            }
+        }
+    }
 
-            if matches!(tok, css::Token::Delim(c) if *c == b'*' as u32) {
+    /// The rest of a product, from the operand of its first `*` or `/`.
+    #[inline(never)]
+    fn parse_product_operators(
+        mut node: Self,
+        mut operator: u32,
+        leading_end: usize,
+        input: &mut css::Parser,
+        parse_ident: ParseIdent<'_, V>,
+    ) -> CssResult<Self> {
+        // A leading numeral keeps one written divisor apart until it meets a math function:
+        // `6 / 7 * min(..)`.
+        let mut leading = match node {
+            Calc::Number(number) if ends_with_numeral(input.slice_to(leading_end)) => {
+                Some((number, 1.0))
+            }
+            _ => None,
+        };
+        loop {
+            let rhs = Self::parse_value(input, parse_ident)?;
+            let written = ends_with_numeral(input.slice_to(input.position()));
+            if operator == b'*' as u32 {
                 // At least one of the operands must be a number.
-                let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(n) = rhs {
-                    node = node.mul_f32(n);
+                    leading = None;
+                    node = node.scale(if written {
+                        Scale::Times(n)
+                    } else {
+                        Scale::By(n)
+                    });
                 } else if let Calc::Number(val) = node {
-                    node = rhs;
-                    node = node.mul_f32(val);
+                    node = match leading.take() {
+                        Some((number, divisor)) if rhs.keeps_function() => {
+                            rhs.scale(Scale::Times(number)).scale(Scale::Over(divisor))
+                        }
+                        _ => rhs.mul_f32(val),
+                    };
                 } else {
                     return Err(input.new_unexpected_token_error(css::Token::Delim(b'*' as u32)));
                 }
-            } else if matches!(tok, css::Token::Delim(c) if *c == b'/' as u32) {
-                let rhs = Self::parse_value(input, parse_ident)?;
-                if let Calc::Number(val) = rhs {
-                    if val != 0.0 {
-                        node = node.mul_f32(1.0 / val);
-                        continue;
-                    }
-                }
-                return Err(input.new_custom_error(css::ParserError::invalid_value));
             } else {
-                input.reset(&start);
-                break;
+                match rhs {
+                    Calc::Number(val) if val != 0.0 => {
+                        leading = match leading {
+                            Some((number, divisor)) if written && divisor == 1.0 => {
+                                Some((number, val))
+                            }
+                            _ => None,
+                        };
+                        node = node.scale(if written {
+                            Scale::Over(val)
+                        } else {
+                            Scale::By(1.0 / val)
+                        });
+                    }
+                    _ => return Err(input.new_custom_error(css::ParserError::invalid_value)),
+                }
             }
+
+            let start = input.state();
+            operator = match input.next() {
+                Ok(css::Token::Delim(c)) if *c == b'*' as u32 || *c == b'/' as u32 => *c,
+                _ => {
+                    input.reset(&start);
+                    return Ok(node);
+                }
+            };
         }
-        Ok(node)
     }
 
     #[inline(never)]
@@ -925,18 +981,25 @@ impl<V: CalcValue> Calc<V> {
                 }
                 Ok(())
             }
-            Calc::Product { number, expression } => {
-                let num = *number;
-                let calc = expression;
-                if num.abs() < 1.0 {
-                    let div = 1.0 / num;
-                    calc.to_css(dest)?;
-                    dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css(div, dest)?;
-                } else {
-                    CSSNumberFns::to_css(num, dest)?;
+            Calc::Product {
+                number,
+                divisor,
+                expression,
+            } => {
+                if *number != 1.0 {
+                    product_number_to_css(*number, dest)?;
                     dest.delim(b'*', true)?;
-                    calc.to_css(dest)?;
+                }
+                if matches!(**expression, Calc::Sum { .. }) {
+                    dest.write_char(b'(')?;
+                    expression.to_css(dest)?;
+                    dest.write_char(b')')?;
+                } else {
+                    expression.to_css(dest)?;
+                }
+                if *divisor != 1.0 {
+                    dest.delim(b'/', true)?;
+                    product_number_to_css(*divisor, dest)?;
                 }
                 Ok(())
             }
@@ -968,30 +1031,157 @@ impl<V: CalcValue> Calc<V> {
             // PERF: why not reuse the allocation here?
             Calc::Value(v) => Calc::Value(Box::new(Self::mul_value_f32(*v, other))),
             Calc::Number(n) => Calc::Number(n * other),
+            expression => expression.scale(Scale::By(other)),
+        }
+    }
+
+    /// Multiplies or divides by a number. A math function that stays in the output keeps a
+    /// numeral as it is written.
+    fn scale(self, scale: Scale) -> Self {
+        let factor = scale.factor();
+        if factor == 1.0 {
+            return self;
+        }
+
+        match self {
             // PERF: why not reuse the allocation here?
-            Calc::Sum { left, right } => Calc::Sum {
-                left: Box::new(left.mul_f32(other)),
-                right: Box::new(right.mul_f32(other)),
-            },
-            Calc::Product { number, expression } => {
-                let num = number * other;
-                if num == 1.0 {
-                    return *expression;
+            Calc::Value(v) => Calc::Value(Box::new(Self::mul_value_f32(*v, factor))),
+            Calc::Number(n) => Calc::Number(n * factor),
+            Calc::Sum { .. } => {
+                if matches!(scale, Scale::By(_)) || !self.keeps_function() {
+                    self.scale_terms(scale)
+                } else {
+                    Self::scale_kept_sum(self, 1.0, 1.0, scale)
                 }
-                Calc::Product {
-                    number: num,
-                    expression,
+            }
+            Calc::Product {
+                number,
+                divisor,
+                expression,
+            } => {
+                let negates = matches!(scale, Scale::By(by) if by == -1.0);
+                if matches!(*expression, Calc::Sum { .. }) && !negates {
+                    return Self::scale_kept_sum(*expression, number, divisor, scale);
                 }
+                let (number, divisor) = product_numbers(number, divisor, scale);
+                Self::product(number, divisor, expression)
             }
             Calc::Function(f) => match *f {
                 // PERF: why not reuse the allocation here?
                 MathFunction::Calc(c) => {
-                    Calc::Function(Box::new(MathFunction::Calc(c.mul_f32(other))))
+                    Calc::Function(Box::new(MathFunction::Calc(c.scale(scale))))
                 }
-                other_fn => Calc::Product {
-                    number: other,
-                    expression: Box::new(Calc::Function(Box::new(other_fn))),
-                },
+                other_fn => {
+                    let (number, divisor) = product_numbers(1.0, 1.0, scale);
+                    Self::product(
+                        number,
+                        divisor,
+                        Box::new(Calc::Function(Box::new(other_fn))),
+                    )
+                }
+            },
+        }
+    }
+
+    fn product(number: f32, divisor: f32, expression: Box<Self>) -> Self {
+        if number == 1.0 && divisor == 1.0 {
+            return *expression;
+        }
+        Calc::Product {
+            number,
+            divisor,
+            expression,
+        }
+    }
+
+    // PERF: why not reuse the allocation here?
+    fn scale_terms(self, scale: Scale) -> Self {
+        if scale.factor() == 1.0 {
+            return self;
+        }
+        match self {
+            Calc::Sum { left, right } => Calc::Sum {
+                left: Box::new(left.scale(scale)),
+                right: Box::new(right.scale(scale)),
+            },
+            term => term.scale(scale),
+        }
+    }
+
+    /// Scales a sum that keeps a math function and is already times `number` and over
+    /// `divisor`.
+    ///
+    /// A value of the sum takes one folded number. So numerals go into the terms only when
+    /// they leave a numeral in every value. If not, they stay on the whole sum:
+    /// `(3*min(..) + 3px)/7`.
+    fn scale_kept_sum(sum: Self, number: f32, divisor: f32, scale: Scale) -> Self {
+        let exact = exact_ratio(number, divisor, scale)
+            .and_then(|(times, over)| Some((times, over, times.to_f32()?, over.to_f32()?)));
+        let Some((times, over, number, divisor)) = exact else {
+            // One folded number scales every term, as before.
+            return sum
+                .scale_terms(Scale::By(number))
+                .scale_terms(Scale::By(1.0 / divisor))
+                .scale_terms(Scale::By(scale.factor()));
+        };
+
+        if divisor == 1.0 && number.abs() == 1.0 {
+            return sum.scale_terms(Scale::By(number));
+        }
+        if sum.scales_exactly(times, over) {
+            return sum
+                .scale_terms(Scale::Times(number))
+                .scale_terms(Scale::Over(divisor));
+        }
+        if number == -1.0 {
+            return Calc::Product {
+                number: 1.0,
+                divisor: -divisor,
+                expression: Box::new(sum),
+            };
+        }
+        if number != 1.0 && sum.scales_exactly(times, Numeral::ONE) {
+            return Calc::Product {
+                number: 1.0,
+                divisor,
+                expression: Box::new(sum.scale_terms(Scale::Times(number))),
+            };
+        }
+        let (number, divisor) = numerals_to_numbers(times, over).unwrap_or((number, divisor));
+        Calc::Product {
+            number,
+            divisor,
+            expression: Box::new(sum),
+        }
+    }
+
+    /// Whether every value of this expression is a numeral after `* times / over`.
+    fn scales_exactly(&self, times: Numeral, over: Numeral) -> bool {
+        match self {
+            Calc::Value(v) => v
+                .try_op_to(&**v, (), |(), number, _| number)
+                .is_some_and(|number| scales_to_numeral(number, times, over)),
+            Calc::Number(number) => scales_to_numeral(*number, times, over),
+            Calc::Sum { left, right } => {
+                left.scales_exactly(times, over) && right.scales_exactly(times, over)
+            }
+            Calc::Product { .. } => true,
+            Calc::Function(f) => match &**f {
+                MathFunction::Calc(calc) => calc.scales_exactly(times, over),
+                _ => true,
+            },
+        }
+    }
+
+    /// Whether a math function stays in the output of this expression.
+    fn keeps_function(&self) -> bool {
+        match self {
+            Calc::Value(_) | Calc::Number(_) => false,
+            Calc::Sum { left, right } => left.keeps_function() || right.keeps_function(),
+            Calc::Product { .. } => true,
+            Calc::Function(f) => match &**f {
+                MathFunction::Calc(calc) => calc.keeps_function(),
+                _ => true,
             },
         }
     }
@@ -1066,6 +1256,274 @@ impl<V: CalcValue> Calc<V> {
 #[inline]
 fn try_parse_atan2_args<Value: CalcValue>(input: &mut css::Parser) -> CssResult<Angle> {
     input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, &|_| None))
+}
+
+/// Whether `input` ends with a number token of at most 6 digits, which the printer writes in
+/// full. A longer literal, a constant and a nested calculation give a computed number.
+///
+/// Where a math function takes a number, the token is the longest run of sign, digit, `.`
+/// and `e` bytes before its end. A nested calculation ends with `)` and a constant with a
+/// letter.
+fn ends_with_numeral(input: &[u8]) -> bool {
+    if !input.last().is_some_and(u8::is_ascii_digit) {
+        return false;
+    }
+    let start = input
+        .iter()
+        .rposition(|byte| !matches!(byte, b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-'))
+        .map_or(0, |before| before + 1);
+    // Digits from the first to the last that is not zero, up to the exponent.
+    let mut digits = 0u32;
+    let mut zeros = 0u32;
+    for byte in &input[start..] {
+        match byte {
+            b'0' => zeros += 1,
+            b'1'..=b'9' => {
+                digits = if digits == 0 { 1 } else { digits + zeros + 1 };
+                zeros = 0;
+            }
+            b'e' | b'E' => break,
+            _ => {}
+        }
+    }
+    digits <= 6
+}
+
+/// A number that multiplies or divides a calc expression.
+#[derive(Copy, Clone)]
+enum Scale {
+    /// A computed number. It folds into one number.
+    By(f32),
+    /// A numeral that multiplies.
+    Times(f32),
+    /// A numeral that divides.
+    Over(f32),
+}
+
+impl Scale {
+    /// The one number that a value with a unit is multiplied by.
+    fn factor(self) -> f32 {
+        match self {
+            Scale::By(number) | Scale::Times(number) => number,
+            Scale::Over(number) => 1.0 / number,
+        }
+    }
+}
+
+/// A number that the printer writes in full: `digits * 10^exponent`, with at most 6 digits.
+/// Products and quotients of numerals are exact.
+#[derive(Copy, Clone, PartialEq)]
+struct Numeral {
+    digits: i64,
+    exponent: i32,
+}
+
+impl Numeral {
+    const ONE: Numeral = Numeral {
+        digits: 1,
+        exponent: 0,
+    };
+    const MOST_DIGITS: i64 = 999_999;
+
+    fn new(mut digits: i128, mut exponent: i32) -> Option<Numeral> {
+        if digits == 0 {
+            exponent = 0;
+        } else {
+            while digits % 10 == 0 {
+                digits /= 10;
+                exponent += 1;
+            }
+        }
+        let digits = i64::try_from(digits).ok()?;
+        (digits.abs() <= Self::MOST_DIGITS).then_some(Numeral { digits, exponent })
+    }
+
+    /// `None` for a number with more digits than the printer writes, such as the result of a
+    /// division.
+    fn of(number: f32) -> Option<Numeral> {
+        Self::printed(number, true)
+    }
+
+    /// The digits that the printer writes for `number`. With `in_full`, `None` when they are
+    /// not all of it.
+    fn printed(number: f32, in_full: bool) -> Option<Numeral> {
+        if number.fract() == 0.0 && number.abs() <= Self::MOST_DIGITS as f32 {
+            return Self::new(number as i128, 0);
+        }
+
+        let mut buf = [0u8; 129];
+        let (text, _) = css::dtoa_short(&mut buf, number, 6);
+        if in_full && bun_core::fmt::parse_f64(text)? as f32 != number {
+            return None;
+        }
+
+        let mut digits: i128 = 0;
+        let mut exponent: i32 = 0;
+        let mut in_fraction = false;
+        let mut rest = text.strip_prefix(b"-").unwrap_or(text);
+        while let [byte @ (b'0'..=b'9' | b'.'), tail @ ..] = rest {
+            rest = tail;
+            if *byte == b'.' {
+                in_fraction = true;
+            } else if in_fraction || digits < i128::from(Self::MOST_DIGITS) {
+                digits = digits * 10 + i128::from(byte - b'0');
+                exponent -= i32::from(in_fraction);
+            } else {
+                // The printer fills a long integer with zeros after its 6 digits.
+                exponent += 1;
+            }
+        }
+        if let [b'e', tail @ ..] = rest {
+            let (negative, tail) = match tail {
+                [b'-', tail @ ..] => (true, tail),
+                [b'+', tail @ ..] => (false, tail),
+                tail => (false, tail),
+            };
+            let written = tail
+                .iter()
+                .fold(0i32, |sum, byte| sum * 10 + i32::from(byte - b'0'));
+            exponent += if negative { -written } else { written };
+        }
+        Self::new(if number < 0.0 { -digits } else { digits }, exponent)
+    }
+
+    /// `None` when no f32 prints as this numeral.
+    fn to_f32(self) -> Option<f32> {
+        let power = 10f64.powi(self.exponent.abs());
+        let number = if self.exponent < 0 {
+            self.digits as f64 / power
+        } else {
+            self.digits as f64 * power
+        } as f32;
+        (Self::of(number) == Some(self)).then_some(number)
+    }
+
+    fn times(self, other: Numeral) -> Option<Numeral> {
+        self.scaled(other, Self::ONE)
+    }
+
+    fn over(self, other: Numeral) -> Option<Numeral> {
+        self.scaled(Self::ONE, other)
+    }
+
+    /// `self * times / over`, when that is a numeral too.
+    fn scaled(self, times: Numeral, over: Numeral) -> Option<Numeral> {
+        let divisor = i128::from(over.digits);
+        if divisor == 0 {
+            return None;
+        }
+        let mut digits = i128::from(self.digits) * i128::from(times.digits);
+        let mut exponent = self.exponent + times.exponent - over.exponent;
+        // A quotient of 6 digits and a divisor of 6 digits make a dividend of 12 digits.
+        for _ in 0..12 {
+            if digits % divisor == 0 {
+                break;
+            }
+            digits *= 10;
+            exponent -= 1;
+        }
+        if digits % divisor != 0 {
+            return None;
+        }
+        Self::new(digits / divisor, exponent)
+    }
+
+    fn is_below(self, other: Numeral) -> bool {
+        let magnitude =
+            |numeral: Numeral| numeral.digits.abs() as f64 * 10f64.powi(numeral.exponent);
+        magnitude(self) < magnitude(other)
+    }
+}
+
+/// Whether the printed digits of `number` are a numeral after `* times / over`. A value holds
+/// what is left of the rounding of its earlier products, and it prints without that.
+fn scales_to_numeral(number: f32, times: Numeral, over: Numeral) -> bool {
+    Numeral::printed(number, false).is_some_and(|numeral| numeral.scaled(times, over).is_some())
+}
+
+/// `number / divisor` after one more numeral, as two whole numbers in lowest terms with the
+/// divisor above zero. `None` when a part is not a numeral: then the numbers fold into one,
+/// as before.
+fn exact_ratio(number: f32, divisor: f32, scale: Scale) -> Option<(Numeral, Numeral)> {
+    let (by, times) = match scale {
+        Scale::By(_) => return None,
+        Scale::Times(by) => (Numeral::of(by)?, true),
+        Scale::Over(by) => (Numeral::of(by)?, false),
+    };
+    let (mut number, mut divisor) = (Numeral::of(number)?, Numeral::of(divisor)?);
+    if times {
+        number = number.times(by)?;
+    } else {
+        divisor = divisor.times(by)?;
+    }
+
+    let (mut above, mut below) = (i128::from(number.digits), i128::from(divisor.digits));
+    let shift = number.exponent - divisor.exponent;
+    let power = 10i128.checked_pow(shift.unsigned_abs())?;
+    if shift < 0 {
+        below = below.checked_mul(power)?;
+    } else {
+        above = above.checked_mul(power)?;
+    }
+    let mut common = (above, below);
+    while common.1 != 0 {
+        common = (common.1, common.0 % common.1);
+    }
+    let common = common.0.abs() * below.signum();
+    Some((
+        Numeral::new(above / common, 0)?,
+        Numeral::new(below / common, 0)?,
+    ))
+}
+
+/// The number and the divisor that print `number / divisor`.
+///
+/// They are one number when the quotient, or its inverse, is a numeral: `* .5` is `/2` and
+/// `/ .5` is `2*`, as before. If not, both stay: `* 6 / 7`.
+fn numerals_to_numbers(number: Numeral, divisor: Numeral) -> Option<(f32, f32)> {
+    let quotient = || Some((number.over(divisor)?.to_f32()?, 1.0));
+    let inverse = || Some((1.0, divisor.over(number)?.to_f32()?));
+    let one_number = if number.is_below(divisor) {
+        inverse().or_else(quotient)
+    } else {
+        quotient().or_else(inverse)
+    };
+    one_number.or_else(|| Some((number.to_f32()?, divisor.to_f32()?)))
+}
+
+/// One folded number as lightningcss prints it: a number below 1 is a division by its inverse.
+fn folded_numbers(number: f32) -> (f32, f32) {
+    let inverse = 1.0 / number;
+    if number.abs() < 1.0 && inverse.is_finite() {
+        (1.0, inverse)
+    } else {
+        (number, 1.0)
+    }
+}
+
+/// The number and the divisor of a product after it is scaled.
+#[inline(never)]
+fn product_numbers(number: f32, divisor: f32, scale: Scale) -> (f32, f32) {
+    if matches!(scale, Scale::By(by) if by == -1.0) {
+        return if number == 1.0 && divisor != 1.0 {
+            (1.0, -divisor)
+        } else {
+            (-number, divisor)
+        };
+    }
+
+    exact_ratio(number, divisor, scale)
+        .and_then(|(number, divisor)| numerals_to_numbers(number, divisor))
+        .unwrap_or_else(|| folded_numbers(number * (1.0 / divisor) * scale.factor()))
+}
+
+/// `CSSNumberFns::to_css` writes the minus of a negative number in exponent form twice.
+fn product_number_to_css(number: f32, dest: &mut Printer) -> Result<(), PrintErr> {
+    if number < 0.0 {
+        dest.write_char(b'-')?;
+        return CSSNumberFns::to_css(-number, dest);
+    }
+    CSSNumberFns::to_css(number, dest)
 }
 
 #[derive(Copy, Clone)]
@@ -1747,3 +2205,12 @@ macro_rules! dim_pct_protocol {
 }
 dim_pct_protocol!(LengthValue);
 dim_pct_protocol!(Angle, parse_to_css: forward,);
+
+// `Calc::Product` keeps its divisor in the padding that followed its number.
+const _: () = assert!(size_of::<Calc<CSSNumber>>() == 24);
+const _: () = assert!(size_of::<Calc<Angle>>() == 24);
+const _: () = assert!(size_of::<Calc<Percentage>>() == 24);
+const _: () = assert!(size_of::<Calc<Time>>() == 24);
+const _: () = assert!(size_of::<Calc<Length>>() == 24);
+const _: () = assert!(size_of::<Calc<DimensionPercentage<LengthValue>>>() == 24);
+const _: () = assert!(size_of::<Calc<DimensionPercentage<Angle>>>() == 24);

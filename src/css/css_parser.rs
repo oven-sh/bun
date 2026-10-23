@@ -3189,6 +3189,11 @@ impl<'a> Parser<'a> {
         self.input.tokenizer.slice_from(start_position)
     }
 
+    /// Return a slice of the CSS input, from its start to the given position.
+    pub(crate) fn slice_to(&self, end_position: usize) -> &[u8] {
+        &self.input.tokenizer.src[..end_position]
+    }
+
     /// Implementation of `Vec<T>::parse`
     pub(crate) fn parse_list<T>(
         &mut self,

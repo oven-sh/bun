@@ -502,6 +502,8 @@ pub(super) struct Declaring {
     symbol: Sym,
     /// `t` of the calling `resolveObjectTypeMembers`.
     resolving: Option<TypeId>,
+    /// See `Checker::stands_in_for_base_type`.
+    stands_in: bool,
 }
 
 /// Selects whether a class or interface shape includes the members of its base types
@@ -1356,12 +1358,32 @@ impl<'p, 's> Checker<'p, 's> {
     /// assigns its members again. Then `ty`, and no other reference, ends up without the declared
     /// index infos.
     #[inline]
-    fn gets_no_declared_index_infos(&self, target: Sym, ty: TypeId) -> bool {
+    fn gets_no_declared_index_infos(&mut self, target: Sym, ty: TypeId) -> bool {
+        if self.declared_index_infos_in_progress.is_empty() {
+            return false;
+        }
+        let stands_in = self.stands_in_for_base_type(ty);
         let mut callers = (self.declared_index_infos_in_progress.iter())
             .filter_map(|it| it.3)
             .filter(|it| it.symbol == target)
             .peekable();
-        callers.peek().is_some() && callers.all(|it| it.resolving != Some(ty))
+        callers.peek().is_some()
+            && callers.all(|it| it.resolving != Some(ty) || it.stands_in && !stands_in)
+    }
+
+    /// True if `ty` is requested as a base type with the `this` type of the class that inherits, for a reference to that
+    /// class with another `this` argument: the references share a shape. `instantiatedBaseType` of
+    /// `resolveObjectTypeMembers` has that argument, so it's another type than `ty`.
+    fn stands_in_for_base_type(&mut self, ty: TypeId) -> bool {
+        let Some(heir) = self.inheriting.last().map(|it| it.resolving) else {
+            return false;
+        };
+        let TypeData::Ref { target, .. } = *self.data(heir) else {
+            return false;
+        };
+        let this = Some(self.intern(TypeData::ThisParam(target)));
+        self.type_arguments(ty).last().copied() == this
+            && self.type_arguments(heir).last().copied() != this
     }
 
     /// True if `resolveObjectTypeMembers` of `ty`, a reference to `target`, finds `earlySymbols` in
@@ -1401,7 +1423,10 @@ impl<'p, 's> Checker<'p, 's> {
         let is_open = !built.is_some_and(|(built, _)| built.store_handle.is_some());
         let ended = self.end_scope_as(scope, is_open);
         let (built, mapper) = built?;
-        if let (Some(shape), Ok(stored)) = (built.store_handle, ended) {
+        if let (Some(shape), Ok(stored)) = (built.store_handle, ended)
+            // What a request in the meantime has got for good: see `stands_in_for_base_type`.
+            && self.p.members.get(&self.task, &ty).is_none()
+        {
             let entry = CachedMembers { shape, mapper };
             self.p.members.insert(&self.task, ty, entry, stored);
             self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
@@ -3000,6 +3025,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declaring = Declaring {
             symbol: sym,
             resolving,
+            stands_in: resolving.is_some_and(|ty| self.stands_in_for_base_type(ty)),
         };
         b.declaring = Some(declaring);
         let binding = self.binding_of_side(sym, false, binding);

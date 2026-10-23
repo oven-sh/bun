@@ -17381,6 +17381,218 @@ o2.own; o2.direct; o2.o1; o2.o2;
       expect(exitCode).toBe(1);
     });
 
+    test("a class and its base type with the class's this type get the same index signatures while those are resolved", async () => {
+      using dir = project({
+        "assign.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { const base: Container = this; const self: Parts = this; return this.n(); }
+  n() { return 1; }
+  k(x: symbol) { return [this[x], super[x]]; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "base_first.ts": `declare const sym: symbol;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "declared_first.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "generic.ts": `declare const sym: symbol;
+export const first = (null! as Parts<2>).n;
+function helper() { return (null! as Parts<2>).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts<U> extends Container<U> {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container<2>, q: Parts<2>, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "own_getter.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+  get [sym]() { return 2; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "statics.ts": `declare const sym: symbol;
+export const first = Parts.n;
+function helper() { return Parts.m(); }
+export class Container {
+  static get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  static m() { return this.n(); }
+  static n() { return 1; }
+}
+declare const s: symbol;
+export const p2: 0 = Container[s];
+export const p3: 0 = Parts[s];
+`,
+        "string_key.ts": `declare const key: string;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [key]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: string;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "super_call.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return (null! as Parts).m(); }
+export class Container<T = 1> {
+  t!: T;
+  b() { return 1; }
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return super.b(); }
+  n() { return 1; }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "this_first.ts": `declare const sym: symbol;
+function helper() { return (null! as Parts).m(); }
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "two_heirs.ts": `declare const sym: symbol;
+export const first = (null! as Parts).n;
+function helper() { return [(null! as Parts).m(), (null! as Other).m()]; }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+export class Other extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+declare const o: Other;
+export const p4: 0 = o[s];
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+        "two_levels.ts": `declare const sym: symbol;
+export const first = (null! as Sub).n;
+function helper() { return (null! as Sub).m(); }
+export class Container<T = 1> {
+  t!: T;
+  get [sym]() { return helper(); }
+}
+export class Parts extends Container {
+  m() { return this.n(); }
+  n() { return 1; }
+}
+export class Sub extends Parts {
+  o() { return this.m(); }
+}
+declare const r: Sub;
+export const p4: 0 = r[s];
+declare const c: Container, q: Parts, s: symbol;
+export const p2: 0 = c[s];
+export const p3: 0 = q[s];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "assign.ts(11,26): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'Parts'.
+        assign.ts(11,35): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'Container<1>'.
+        assign.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        assign.ts(15,14): error TS2322: Type 'number' is not assignable to type '0'.
+        base_first.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        base_first.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        declared_first.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        declared_first.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        generic.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        generic.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        own_getter.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        own_getter.ts(15,14): error TS2322: Type 'number' is not assignable to type '0'.
+        statics.ts(2,22): error TS2449: Class 'Parts' used before its declaration.
+        statics.ts(7,28): error TS2507: Type 'typeof Container' is not a constructor function type.
+        statics.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        statics.ts(13,22): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'typeof Parts'.
+        super_call.ts(14,14): error TS2322: Type 'number' is not assignable to type '0'.
+        super_call.ts(15,14): error TS2322: Type 'number' is not assignable to type '0'.
+        this_first.ts(3,28): error TS2449: Class 'Container' used before its declaration.
+        this_first.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        this_first.ts(13,14): error TS2322: Type 'number' is not assignable to type '0'.
+        two_heirs.ts(17,22): error TS7053: Element implicitly has an 'any' type because expression of type 'symbol' can't be used to index type 'Other'.
+        two_heirs.ts(19,14): error TS2322: Type 'number[]' is not assignable to type '0'.
+        two_heirs.ts(20,14): error TS2322: Type 'number[]' is not assignable to type '0'.
+        two_levels.ts(16,14): error TS2322: Type 'number' is not assignable to type '0'.
+        two_levels.ts(18,14): error TS2322: Type 'number' is not assignable to type '0'.
+        two_levels.ts(19,14): error TS2322: Type 'number' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

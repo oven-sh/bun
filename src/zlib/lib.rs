@@ -925,16 +925,24 @@ impl Drop for DeflateEncoder {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InflateState {
+    Uninitialized,
+    Inflating,
+    /// gzip only: a member's trailer was consumed and the byte after it has not arrived.
+    MemberEnd,
+    /// The content is over. Later input is reported consumed and ignored.
+    End,
+    Error,
+}
+
 /// RAII inflate (decompression) stream. `inflateEnd` on drop.
 pub struct InflateDecoder {
     strm: Box<zStream_struct>,
-    pub(crate) state: State,
+    state: InflateState,
     /// Decompression-bomb guard for [`decompress`](Self::decompress).
     pub(crate) max_output_size: usize,
-    /// RFC 1952 §2.2: a gzip file is a sequence of members. When true (set
-    /// for gzip-only `window_bits`), [`decompress`](Self::decompress) resets
-    /// on `Z_STREAM_END` and continues if input remains, so concatenated
-    /// members are all decoded instead of silently dropped after the first.
+    /// gzip only (RFC 1952 §2.2): a member that directly follows a member is decoded too.
     multi_member: bool,
 }
 
@@ -942,7 +950,7 @@ impl InflateDecoder {
     pub fn new(window_bits: c_int) -> Result<Self, ZlibError> {
         let mut this = Self {
             strm: Box::new(new_zstream()),
-            state: State::Uninitialized,
+            state: InflateState::Uninitialized,
             max_output_size: usize::MAX,
             // `MAX_WBITS | 16` selects gzip-only decode (zlib manual).
             multi_member: (16..32).contains(&window_bits),
@@ -972,14 +980,32 @@ impl InflateDecoder {
         // SAFETY: strm was initialized via inflateInit2_.
         let rc = unsafe { inflateReset(&raw mut *self.strm) };
         if rc == ReturnCode::Ok {
-            self.state = State::Uninitialized;
+            self.state = InflateState::Uninitialized;
         }
         rc
     }
 
     #[inline]
     pub fn is_inflating(&self) -> bool {
-        matches!(self.state, State::Inflating)
+        matches!(self.state, InflateState::Inflating)
+    }
+
+    /// 0x1f is ID1 (RFC 1952 §2.3.1). Any other byte after a member is tolerated junk: no error.
+    fn resume_after_member(&mut self, next: Option<&u8>) -> Result<bool, ZlibError> {
+        match next {
+            None => Ok(false),
+            Some(0x1f) => {
+                if self.reset() != ReturnCode::Ok {
+                    self.state = InflateState::Error;
+                    return Err(ZlibError::ZlibError);
+                }
+                Ok(true)
+            }
+            Some(_) => {
+                self.state = InflateState::End;
+                Ok(false)
+            }
+        }
     }
 
     /// One `inflate()` call writing into `out`'s spare capacity. Same
@@ -1017,22 +1043,14 @@ impl InflateDecoder {
         is_done: bool,
     ) -> Result<usize, ZlibError> {
         let input_len = input.len();
-        if matches!(self.state, State::Error) {
-            return Ok(input_len);
-        }
-        if matches!(self.state, State::End) {
-            // A prior call completed a gzip member at the chunk boundary.
-            // Only resume when the next byte is the gzip magic ID1 (RFC 1952
-            // §2.3.1); any other trailing bytes are tolerated as garbage so
-            // stray CRLF/footer junk does not turn into a decode error.
-            if self.multi_member && input.first() == Some(&0x1f) {
-                if self.reset() != ReturnCode::Ok {
-                    self.state = State::Error;
-                    return Err(ZlibError::ZlibError);
+        match self.state {
+            InflateState::Uninitialized | InflateState::Inflating => {}
+            InflateState::MemberEnd => {
+                if !self.resume_after_member(input.first())? {
+                    return Ok(input_len);
                 }
-            } else {
-                return Ok(input_len);
             }
+            InflateState::End | InflateState::Error => return Ok(input_len),
         }
         loop {
             if out.len() >= max_output {
@@ -1040,7 +1058,7 @@ impl InflateDecoder {
             }
             let remaining = self.max_output_size.saturating_sub(out.len());
             if remaining == 0 {
-                self.state = State::Error;
+                self.state = InflateState::Error;
                 return Err(ZlibError::ZlibError);
             }
             let budget = max_output - out.len();
@@ -1055,40 +1073,36 @@ impl InflateDecoder {
                 inflate,
             );
             input = &input[consumed..];
-            self.state = State::Inflating;
+            self.state = InflateState::Inflating;
             if out.len() > self.max_output_size {
-                self.state = State::Error;
+                self.state = InflateState::Error;
                 return Err(ZlibError::ZlibError);
             }
             match rc {
                 ReturnCode::StreamEnd => {
-                    self.state = State::End;
-                    // Continue only when the next byte is the gzip magic ID1
-                    // (0x1f). Anything else is trailing garbage/padding and
-                    // ends the stream, keeping prior tolerance for origins
-                    // that append stray bytes after a valid member.
-                    if self.multi_member && input.first() == Some(&0x1f) {
-                        if self.reset() != ReturnCode::Ok {
-                            self.state = State::Error;
-                            return Err(ZlibError::ZlibError);
-                        }
+                    if !self.multi_member {
+                        self.state = InflateState::End;
+                        return Ok(input_len);
+                    }
+                    self.state = InflateState::MemberEnd;
+                    if self.resume_after_member(input.first())? {
                         continue;
                     }
                     return Ok(input_len);
                 }
                 ReturnCode::MemError => {
-                    self.state = State::Error;
+                    self.state = InflateState::Error;
                     return Err(ZlibError::OutOfMemory);
                 }
                 ReturnCode::BufError => {
                     if input.is_empty() && self.strm.avail_in == 0 {
                         if is_done {
-                            self.state = State::Error;
+                            self.state = InflateState::Error;
                             return Err(ZlibError::ZlibError);
                         }
                         return Err(ZlibError::ShortRead);
                     }
-                    self.state = State::Error;
+                    self.state = InflateState::Error;
                     return Err(ZlibError::ZlibError);
                 }
                 ReturnCode::Ok => {
@@ -1099,7 +1113,7 @@ impl InflateDecoder {
                 | ReturnCode::NeedDict
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
-                    self.state = State::Error;
+                    self.state = InflateState::Error;
                     return Err(ZlibError::ZlibError);
                 }
             }

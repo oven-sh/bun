@@ -1086,6 +1086,43 @@ a {
 `);
     },
   });
+  // The image of a `list-style` is an asset of the bundle, in both spellings.
+  itBundled("css/ListStyleImage", {
+    outfile: "/out.css",
+    files: {
+      "/entry.css": /* css */ `
+        ul {
+          list-style: url(./example.png) inside;
+        }
+        ol {
+          list-style: square image-set("./example.png" 1x);
+        }
+      `,
+      "/example.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+ul {
+  list-style: inside url("data:image/png;base64,iVBORw0KGgo=");
+}
+
+ol {
+  list-style: image-set("data:image/png;base64,iVBORw0KGgo=" 1x) square;
+}
+`);
+    },
+  });
+  itBundled("css/ListStyleImageMissing", {
+    files: {
+      "/src/entry.css": /* css */ `
+        ol { list-style: square image-set("./missing.png" 1x); }
+      `,
+    },
+    bundleErrors: {
+      "/src/entry.css": ['Could not resolve: "./missing.png"'],
+    },
+  });
 
   // We don't support dataurl rn
   //   itBundled("css/DataURLImportURLInCSS", {

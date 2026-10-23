@@ -876,6 +876,8 @@ A CSS module is a CSS file (with the `.module.css` extension) where all class na
 
 Bun's bundler transforms locally scoped class names into unique identifiers.
 
+The names of `@counter-style` rules are scoped to the file too. In `list-style` and `list-style-type`, a name that is not a predefined counter style (such as `decimal` or `lower-roman`) refers to an `@counter-style` rule and gets the same unique identifier.
+
 ### Getting started
 
 Create a CSS file with the `.module.css` extension:

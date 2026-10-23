@@ -116,6 +116,7 @@ pub mod box_shadow;
 pub mod display;
 pub mod flex;
 pub mod font;
+pub mod list;
 pub mod margin_padding;
 pub mod masking;
 pub mod outline;
@@ -256,6 +257,9 @@ mod generic_registrations {
         font::FontStyle,
         font::FontWeight,
         font::LineHeight,
+        // list
+        list::ListStyle,
+        list::ListStyleType,
         // masking
         masking::Mask,
         masking::MaskBorder,

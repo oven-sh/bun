@@ -28,6 +28,7 @@ use super::css_modules;
 use super::display;
 use super::flex;
 use super::font;
+use super::list;
 use super::margin_padding;
 use super::masking;
 use super::outline;
@@ -262,6 +263,8 @@ pub enum PropertyIdTag {
     TextEmphasisColor,
     TextShadow,
     Direction,
+    ListStyleType,
+    ListStyle,
     Composes,
     MaskImage,
     MaskMode,
@@ -577,6 +580,8 @@ impl PropertyIdTag {
             PropertyIdTag::TextEmphasisColor => b"text-emphasis-color",
             PropertyIdTag::TextShadow => b"text-shadow",
             PropertyIdTag::Direction => b"direction",
+            PropertyIdTag::ListStyleType => b"list-style-type",
+            PropertyIdTag::ListStyle => b"list-style",
             PropertyIdTag::Composes => b"composes",
             PropertyIdTag::MaskImage => b"mask-image",
             PropertyIdTag::MaskMode => b"mask-mode",
@@ -845,6 +850,8 @@ pub enum PropertyId {
     TextEmphasisColor(VendorPrefix),
     TextShadow,
     Direction,
+    ListStyleType,
+    ListStyle,
     Composes,
     MaskImage(VendorPrefix),
     MaskMode,
@@ -1130,6 +1137,8 @@ impl PropertyId {
             PropertyId::TextEmphasisColor(..) => PropertyIdTag::TextEmphasisColor,
             PropertyId::TextShadow => PropertyIdTag::TextShadow,
             PropertyId::Direction => PropertyIdTag::Direction,
+            PropertyId::ListStyleType => PropertyIdTag::ListStyleType,
+            PropertyId::ListStyle => PropertyIdTag::ListStyle,
             PropertyId::Composes => PropertyIdTag::Composes,
             PropertyId::MaskImage(..) => PropertyIdTag::MaskImage,
             PropertyId::MaskMode => PropertyIdTag::MaskMode,
@@ -1512,6 +1521,8 @@ impl PropertyId {
                 b"text-emphasis-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisColor),
                 b"text-shadow" => (VendorPrefix::NONE, |_| PropertyId::TextShadow),
                 b"direction" => (VendorPrefix::NONE, |_| PropertyId::Direction),
+                b"list-style-type" => (VendorPrefix::NONE, |_| PropertyId::ListStyleType),
+                b"list-style" => (VendorPrefix::NONE, |_| PropertyId::ListStyle),
                 b"composes" => (VendorPrefix::NONE, |_| PropertyId::Composes),
                 b"mask-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskImage),
                 b"mask-mode" => (VendorPrefix::NONE, |_| PropertyId::MaskMode),
@@ -1835,6 +1846,8 @@ pub enum Property {
     TextEmphasisColor((css::css_values::color::CssColor, VendorPrefix)),
     TextShadow(SmallList<text::TextShadow, 1>),
     Direction(text::Direction),
+    ListStyleType(list::ListStyleType),
+    ListStyle(list::ListStyle),
     Composes(css_modules::Composes),
     MaskImage((SmallList<css::css_values::image::Image, 1>, VendorPrefix)),
     MaskMode(SmallList<masking::MaskMode, 1>),
@@ -2115,6 +2128,8 @@ impl Property {
             Property::TextEmphasisColor(v) => PropertyId::TextEmphasisColor(v.1),
             Property::TextShadow(..) => PropertyId::TextShadow,
             Property::Direction(..) => PropertyId::Direction,
+            Property::ListStyleType(..) => PropertyId::ListStyleType,
+            Property::ListStyle(..) => PropertyId::ListStyle,
             Property::Composes(..) => PropertyId::Composes,
             Property::MaskImage(v) => PropertyId::MaskImage(v.1),
             Property::MaskMode(..) => PropertyId::MaskMode,
@@ -2387,6 +2402,8 @@ impl Property {
             Property::TextEmphasisColor(v) => css::generic::to_css(&v.0, dest),
             Property::TextShadow(v) => css::generic::to_css(v, dest),
             Property::Direction(v) => css::generic::to_css(v, dest),
+            Property::ListStyleType(v) => css::generic::to_css(v, dest),
+            Property::ListStyle(v) => css::generic::to_css(v, dest),
             Property::Composes(v) => css::generic::to_css(v, dest),
             Property::MaskImage(v) => css::generic::to_css(&v.0, dest),
             Property::MaskMode(v) => css::generic::to_css(v, dest),
@@ -3684,6 +3701,16 @@ impl Property {
                     return Ok(Property::Direction(c));
                 }
             }
+            PropertyId::ListStyleType => {
+                if let Some(c) = parse_value::<list::ListStyleType>(input, options) {
+                    return Ok(Property::ListStyleType(c));
+                }
+            }
+            PropertyId::ListStyle => {
+                if let Some(c) = parse_value::<list::ListStyle>(input, options) {
+                    return Ok(Property::ListStyle(c));
+                }
+            }
             PropertyId::Composes => {
                 return css::generic::parse_with_options::<css_modules::Composes>(input, options)
                     .map(Property::Composes);
@@ -4394,6 +4421,10 @@ impl Property {
             }
             Property::TextShadow(v) => Property::TextShadow(css::generic::deep_clone(v, arena)),
             Property::Direction(v) => Property::Direction(css::generic::deep_clone(v, arena)),
+            Property::ListStyleType(v) => {
+                Property::ListStyleType(css::generic::deep_clone(v, arena))
+            }
+            Property::ListStyle(v) => Property::ListStyle(css::generic::deep_clone(v, arena)),
             Property::Composes(v) => Property::Composes(css::generic::deep_clone(v, arena)),
             Property::MaskImage(v) => {
                 Property::MaskImage((css::generic::deep_clone(&v.0, arena), v.1))
@@ -4939,6 +4970,8 @@ impl Property {
             }
             (Property::TextShadow(a), Property::TextShadow(b)) => css::generic::eql(a, b),
             (Property::Direction(a), Property::Direction(b)) => css::generic::eql(a, b),
+            (Property::ListStyleType(a), Property::ListStyleType(b)) => css::generic::eql(a, b),
+            (Property::ListStyle(a), Property::ListStyle(b)) => css::generic::eql(a, b),
             (Property::Composes(a), Property::Composes(b)) => css::generic::eql(a, b),
             (Property::MaskImage(a), Property::MaskImage(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1

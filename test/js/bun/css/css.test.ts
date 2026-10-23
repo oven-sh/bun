@@ -7842,6 +7842,144 @@ describe("css tests", () => {
     );
   });
 
+  describe("list-style", () => {
+    // list-style-type: `none`, a string, or a counter style.
+    minify_test(".foo { list-style-type: disc }", ".foo{list-style-type:disc}");
+    minify_test(".foo { list-style-type: DISC }", ".foo{list-style-type:disc}");
+    minify_test(".foo { list-style-type: Lower-Roman }", ".foo{list-style-type:lower-roman}");
+    // The CSS 2 name of `trad-chinese-informal` is a predefined counter style too.
+    minify_test(".foo { list-style-type: CJK-Ideographic }", ".foo{list-style-type:cjk-ideographic}");
+    minify_test(".foo { list-style-type: NONE }", ".foo{list-style-type:none}");
+    minify_test('.foo { list-style-type: "★" }', '.foo{list-style-type:"★"}');
+    minify_test(".foo { list-style-type: '-' }", '.foo{list-style-type:"-"}');
+    minify_test(
+      ".foo { list-style-type: symbols(cyclic '○' '●') }",
+      '.foo{list-style-type:symbols(cyclic "○" "●")}',
+    );
+    minify_test(".foo { list-style-type: symbols('○' '●') }", '.foo{list-style-type:symbols("○" "●")}');
+    minify_test(".foo { list-style-type: symbols(symbolic '○' '●') }", '.foo{list-style-type:symbols("○" "●")}');
+    minify_test(
+      ".foo { list-style-type: SYMBOLS(Fixed linear-gradient(red, blue) 'x') }",
+      '.foo{list-style-type:symbols(fixed linear-gradient(red,#00f) "x")}',
+    );
+    // The name of an `@counter-style` rule is case-sensitive.
+    minify_test(".foo { list-style-type: thumbs }", ".foo{list-style-type:thumbs}");
+    minify_test(".foo { list-style-type: Thumbs }", ".foo{list-style-type:Thumbs}");
+    minify_test(".foo { list-style-type: inside }", ".foo{list-style-type:inside}");
+    // Not a list-style-type value: kept as written.
+    minify_test(".foo { list-style-type: INHERIT }", ".foo{list-style-type:INHERIT}");
+    minify_test(".foo { list-style-type: Default }", ".foo{list-style-type:Default}");
+    minify_test(".foo { list-style-type: thumbs Up }", ".foo{list-style-type:thumbs Up}");
+    minify_test(".foo { list-style-type: symbols(cyclic '○' Up) }", '.foo{list-style-type:symbols(cyclic "○" Up)}');
+    minify_test(".foo { list-style-type: var(--marker) }", ".foo{list-style-type:var(--marker)}");
+    minify_test(".foo{list-style-type:;color:red}", ".foo{list-style-type:;color:red}");
+
+    // list-style: a position, an image and a type, in any order. Initial values are left out.
+    minify_test(".foo { list-style: disc }", ".foo{list-style:outside}");
+    minify_test(".foo { list-style: Disc Outside }", ".foo{list-style:outside}");
+    minify_test(".foo { list-style: INSIDE }", ".foo{list-style:inside}");
+    minify_test(".foo { list-style: square inside }", ".foo{list-style:inside square}");
+    minify_test(".foo { list-style: thumbs }", ".foo{list-style:thumbs}");
+    minify_test(".foo { list-style: thumbs outside }", ".foo{list-style:thumbs}");
+    minify_test(".foo { list-style: Thumbs inside }", ".foo{list-style:inside Thumbs}");
+    minify_test(
+      '.foo { list-style: "★" linear-gradient(red, blue) outside }',
+      '.foo{list-style:linear-gradient(red,#00f) "★"}',
+    );
+    minify_test(
+      ".foo { list-style: thumbs linear-gradient(red, blue) inside }",
+      ".foo{list-style:inside linear-gradient(red,#00f) thumbs}",
+    );
+    minify_test(
+      ".foo { list-style: symbols('○' '●') inside }",
+      '.foo{list-style:inside symbols("○" "●")}',
+    );
+    // One `none` is the value of whichever of the image and the type is not given. Two are both.
+    minify_test(".foo { list-style: none }", ".foo{list-style:none}");
+    minify_test(".foo { list-style: NONE none outside }", ".foo{list-style:none}");
+    minify_test(".foo { list-style: none none inside }", ".foo{list-style:inside none}");
+    minify_test(".foo { list-style: none inside }", ".foo{list-style:inside none}");
+    minify_test(".foo { list-style: none disc }", ".foo{list-style:outside}");
+    minify_test(".foo { list-style: none inside disc }", ".foo{list-style:inside}");
+    minify_test('.foo { list-style: none "★" }', '.foo{list-style:"★"}');
+    minify_test(".foo { list-style: thumbs none }", ".foo{list-style:thumbs}");
+    minify_test(
+      ".foo { list-style: none linear-gradient(red, blue) }",
+      ".foo{list-style:linear-gradient(red,#00f) none}",
+    );
+    // After a position, `inside` and `outside` are the name of a counter style. The initial
+    // position stays before such a name: the name alone is a position.
+    minify_test(".foo { list-style: outside inside }", ".foo{list-style:outside inside}");
+    minify_test(".foo { list-style: OUTSIDE Inside }", ".foo{list-style:outside Inside}");
+    minify_test(".foo { list-style: outside outside }", ".foo{list-style:outside outside}");
+    minify_test(".foo { list-style: inside outside }", ".foo{list-style:inside outside}");
+    minify_test(
+      ".foo { list-style: outside linear-gradient(red, blue) inside }",
+      ".foo{list-style:outside linear-gradient(red,#00f) inside}",
+    );
+    // Not a list-style value: kept as written.
+    minify_test(".foo{list-style:;color:red}", ".foo{list-style:;color:red}");
+    minify_test(".foo{list-style:square;list-style:}", ".foo{list-style:square;list-style:}");
+    minify_test(".foo { list-style: Disc Square }", ".foo{list-style:Disc Square}");
+    minify_test(".foo { list-style: thumbs Up }", ".foo{list-style:thumbs Up}");
+    minify_test(".foo { list-style: NONE none NONE }", ".foo{list-style:NONE none NONE}");
+    minify_test(".foo { list-style: none none Disc }", ".foo{list-style:none none Disc}");
+    minify_test(".foo { list-style: Inside Outside thumbs }", ".foo{list-style:Inside Outside thumbs}");
+    minify_test(".foo { list-style: INHERIT }", ".foo{list-style:INHERIT}");
+    minify_test(".foo { list-style: Inside inherit }", ".foo{list-style:Inside inherit}");
+    minify_test(".foo { list-style: Disc var(--position) }", ".foo{list-style:Disc var(--position)}");
+
+    // Both names are in the property table: the name prints in lower case.
+    minify_test(".foo { LIST-STYLE: Square; List-Style-Type: DISC }", ".foo{list-style:square;list-style-type:disc}");
+    // Rules merge only when the values are equal.
+    minify_test(".a { list-style: disc outside } .b { list-style: outside }", ".a,.b{list-style:outside}");
+    minify_test(".a { list-style: thumbs } .b { list-style: Thumbs }", ".a{list-style:thumbs}.b{list-style:Thumbs}");
+    minify_test(".a { list-style: inside } .b { list-style: outside }", ".a{list-style:inside}.b{list-style:outside}");
+    minify_test(
+      ".a { list-style-type: symbols('a' 'b') } .b { list-style-type: symbols(symbolic 'a' 'b') }",
+      '.a,.b{list-style-type:symbols("a" "b")}',
+    );
+    minify_test(
+      ".a { list-style-type: symbols('a' 'b') } .b { list-style-type: symbols('a' 'c') }",
+      '.a{list-style-type:symbols("a" "b")}.b{list-style-type:symbols("a" "c")}',
+    );
+    minify_test('.a { list-style-type: "a" } .b { list-style-type: \'a\' }', '.a,.b{list-style-type:"a"}');
+    minify_test('.a { list-style-type: "a" } .b { list-style-type: a }', '.a{list-style-type:"a"}.b{list-style-type:a}');
+    // A rule is not a duplicate of a later rule that sets another property.
+    minify_test(
+      "ul { list-style: none } .b { color: red } ul { float: left }",
+      "ul{list-style:none}.b{color:red}ul{float:left}",
+    );
+    minify_test(
+      ".a { list-style: square } .b { color: red } .a { list-style-type: thumbs }",
+      ".a{list-style:square}.b{color:red}.a{list-style-type:thumbs}",
+    );
+    minify_test(
+      ".a { transition-property: list-style } .b { transition-property: content }",
+      ".a{transition-property:list-style}.b{transition-property:content}",
+    );
+    // A rule that is split for an old browser gets its own copy of the values.
+    prefix_test(
+      ".a, .b:focus-visible { list-style: thumbs inside; list-style-type: symbols('a' linear-gradient(red, blue)) }",
+      indoc`
+        .a {
+          list-style: inside thumbs;
+          list-style-type: symbols("a" linear-gradient(red, #00f));
+        }
+
+        .b:focus-visible {
+          list-style: inside thumbs;
+          list-style-type: symbols("a" linear-gradient(red, #00f));
+        }
+      `,
+      { safari: 13 << 16 },
+    );
+    minify_test(
+      "@container style(list-style-type: DISC) { .foo { color: red } }",
+      "@container style(list-style-type:disc){.foo{color:red}}",
+    );
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");

@@ -12,6 +12,7 @@ import {
   isASAN,
   isCI,
   isDebug,
+  isIPv6,
   isWindows,
   randomPort,
   tempDir,
@@ -10173,5 +10174,38 @@ describe.each([
     } finally {
       server.close();
     }
+  });
+});
+
+describe.skipIf(!isIPv6())("listen({ ipv6Only })", () => {
+  function dial(host: string, port: number) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = connect(port, host);
+    socket.on("connect", () => {
+      socket.destroy();
+      resolve("connected");
+    });
+    socket.on("error", (error: NodeJS.ErrnoException) => resolve(error.code!));
+    return promise;
+  }
+
+  describe.each([
+    ["http", () => createServer()],
+    ["https", () => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert })],
+  ])("an %s server on ::", (_, create) => {
+    it.each([
+      [true, "ECONNREFUSED"],
+      [false, "connected"],
+      [undefined, "connected"],
+    ])("with ipv6Only: %p", async (ipv6Only, v4) => {
+      const server = create();
+      try {
+        await once(server.listen({ host: "::", port: 0, ipv6Only }), "listening");
+        const { port } = server.address() as AddressInfo;
+        expect({ v6: await dial("::1", port), v4: await dial("127.0.0.1", port) }).toEqual({ v6: "connected", v4 });
+      } finally {
+        server.close();
+      }
+    });
   });
 });

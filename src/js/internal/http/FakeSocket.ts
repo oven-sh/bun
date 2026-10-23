@@ -103,7 +103,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(_timeout, _callback) {}
+  setTimeout(_timeout, _callback) {
+    return this;
+  }
 
   unref() {
     return this;

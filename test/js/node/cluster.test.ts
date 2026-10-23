@@ -2214,3 +2214,48 @@ test.skipIf(isWindows).concurrent.each(["a unix socket", "port 0", "a fixed port
   },
   30_000,
 );
+
+test.skipIf(!isIPv6()).concurrent.each([
+  ["the primary binds for it", {}],
+  ["it binds for itself", { exclusive: true }],
+])("an http worker's listen({ ipv6Only: true }) takes no IPv4 connection when %s", async (_, extra) => {
+  using dir = tempDir("cluster-http-ipv6only", {
+    "fixture.js": `
+      const cluster = require("node:cluster");
+      const http = require("node:http");
+      const net = require("node:net");
+      function dial(host, port) {
+        return new Promise(resolve => {
+          const socket = net.connect(port, host);
+          socket.on("connect", () => (socket.destroy(), resolve("connected")));
+          socket.on("error", error => resolve(error.code));
+        });
+      }
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("message", async port => {
+          console.log(JSON.stringify({ v6: await dial("::1", port), v4: await dial("127.0.0.1", port) }));
+          worker.kill();
+        });
+      } else {
+        const server = http.createServer();
+        server.listen({ host: "::", port: 0, ipv6Only: true, ...JSON.parse(process.env.EXTRA) }, () => {
+          process.send(server.address().port);
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, EXTRA: JSON.stringify(extra) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ v6: "connected", v4: "ECONNREFUSED" }),
+    stderr: "",
+    exitCode: 0,
+  });
+});

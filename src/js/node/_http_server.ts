@@ -749,6 +749,7 @@ Server.prototype.listen = function () {
   let socketPath;
   let fd: number | undefined;
   let reusePort = false;
+  let ipv6Only = false;
   let exclusive = false;
   const tlsServer = this[tlsSymbol];
   // The context already has the verify mode. socket.authorized reads requestCert.
@@ -779,6 +780,7 @@ Server.prototype.listen = function () {
         host = arg0.host;
         socketPath = arg0.path;
         reusePort = arg0.reusePort === true;
+        ipv6Only = arg0.ipv6Only === true;
         exclusive = reusePort || !!arg0.exclusive;
         // Like net.Server.listen(), an explicit `port: undefined` or `port: null` binds any free port.
         if ((port === undefined && "port" in arg0) || port === null) port = 0;
@@ -831,7 +833,7 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, reusePort, fd);
+      server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd);
       return this;
     }
 
@@ -843,7 +845,7 @@ Server.prototype.listen = function () {
       process.platform !== "win32" &&
       (fd !== undefined || (!exclusive && (socketPath || port === 0)))
     ) {
-      listenInCluster(server, tls, port, host, socketPath, fd);
+      listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd);
       return this;
     }
 
@@ -866,7 +868,7 @@ Server.prototype.listen = function () {
       process.send!(message, undefined, kInternalSendOptions);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, fd);
+    server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
     if (!exclusive) cluster._trackServer(server);
   } catch (err) {
     emitListenError(server, err, port, host, socketPath, fd);
@@ -876,10 +878,10 @@ Server.prototype.listen = function () {
 };
 
 // net.Server's listenInCluster, always `sharedOnly` like its TLS servers: Bun.serve can't take connections the primary accepted.
-function listenInCluster(server, tls, port, host, socketPath, fd) {
+function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   const listeningId = ++server[kClusterListeningId];
   function query(address, queryPort, addressType) {
-    const serverQuery = { address, port: queryPort, addressType, fd, flags: 0, sharedOnly: true };
+    const serverQuery = { address, port: queryPort, addressType, fd, flags: ipv6Only ? 1 : 0, sharedOnly: true };
     cluster._getServer(server, serverQuery, (errno, handle, reply) => {
       if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
         handle?.close();
@@ -894,7 +896,7 @@ function listenInCluster(server, tls, port, host, socketPath, fd) {
       server[kClusterHandle] = handle;
       handle[kClusterOwner] = server;
       try {
-        server[kRealListen](tls, port, host, socketPath, false, handle.sharedFd);
+        server[kRealListen](tls, port, host, socketPath, false, false, handle.sharedFd);
         handle.adopted = true;
       } catch (err) {
         // Once Bun.serve() returned, the listener owns the descriptor and handle.close() must not close it again.
@@ -921,7 +923,7 @@ function listenInCluster(server, tls, port, host, socketPath, fd) {
   });
 }
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, fd?: number) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, ipv6Only, fd?: number) {
   {
     // What the first connection and the first request need, so that neither waits for it.
     loadNet(tls);
@@ -950,6 +952,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       unix: socketPath,
       fd,
       reusePort,
+      ipv6Only,
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
       onNodeHTTPRequest(

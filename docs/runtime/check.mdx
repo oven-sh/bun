@@ -246,7 +246,7 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 
 A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
-If one of those files imports an HTML page, Bun also checks the local scripts of the page, as [`--check`](#check-before-you-run-build-or-test) does. `bun check` has no `--loader` and does not read `bunfig.toml`, so a page is a `.html` file, or any file imported `with { type: "html" }`. `bun check` without a path follows no page: the `tsconfig.json` says which files the project has.
+If a file that you name imports an HTML page, Bun also checks the local scripts of the page, as [`--check`](#check-before-you-run-build-or-test) does. A directory works the same way, with one exception: if the directory has every file of its project, Bun checks the whole project and follows no page, as `bun check` without a path does. Without a `tsconfig.json` there is no such project, so Bun follows the pages of every file it checks. `bun check` has no `--loader` and does not read `bunfig.toml`, so a page is a `.html` file, or any file imported `with { type: "html" }`.
 
 ### Without a `tsconfig.json`
 
@@ -419,6 +419,8 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 note: TS6500: The expected type comes from property 'age' which is declared here on type '{ name?: string | undefined; age: number; }'
    at /app/src/greet.ts:1:46
 ```
+
+The check follows the HTML pages that the bundle loads. It does not follow a page that the bundle leaves out: an `--external` import, an import that only a type uses, or a file that a plugin loads in another way.
 
 ### `Bun.build`
 

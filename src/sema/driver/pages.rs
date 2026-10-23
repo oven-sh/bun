@@ -8,7 +8,7 @@ use bun_sema::atom::Atom;
 use bun_sema::hir::{self, ExprId, ExprKind, SpecifierKind, skip_assertions};
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{Host, is_relative, join};
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::SharedSort;
 
 /// Finds the pages that the files of one program import.
 pub(crate) struct Pages<'a, 's> {
@@ -20,8 +20,6 @@ pub(crate) struct Pages<'a, 's> {
     is_page_without_extension: bool,
     /// The extensions that `loaders` gives the HTML loader, except `.html`.
     other_page_extensions: Vec<&'a [u8]>,
-    /// The real paths of the pages whose scripts `scripts_imported_by` has returned.
-    followed: FxHashSet<Vec<u8>>,
 }
 
 /// A specifier of one file that can name a page, and what its uses in the file say.
@@ -58,23 +56,26 @@ impl<'a, 's> Pages<'a, 's> {
             loaders,
             is_page_without_extension: Loader::of_extension(b"", loaders) == Some(Loader::Html),
             other_page_extensions: of_pages.filter(|it| *it != b".html").collect(),
-            followed: FxHashSet::default(),
         }
     }
 
-    /// The scripts of the pages that `file` imports. A page's scripts are returned once per program.
-    pub(crate) fn scripts_imported_by(&mut self, file: FileId) -> Vec<Vec<u8>> {
+    /// The scripts of the pages that `file` imports, in the order of the imports.
+    pub(crate) fn scripts_imported_by(&self, file: FileId) -> Vec<Vec<u8>> {
         let module = self.files.module(file);
         let hir = &module.hir;
-        // A `type` attribute makes a page of a file with any name.
+        let mut attributes = Attributes::default();
+        // Without a `type` that names the HTML loader somewhere in the file, only the extension makes a page.
         let mut clauses = hir.import_attributes.iter();
-        let names_html = clauses.any(|it| self.loader_named_in(hir, it.1) == Some(Loader::Html));
+        let mut uses = hir.specifier_uses.iter();
+        let can_name_html = clauses.any(|it| self.loader_named_in(hir, it.1) == Some(Loader::Html))
+            || (uses.any(|it| it.kind == SpecifierKind::ImportCall)
+                && !attributes.options(hir).is_empty());
         let mut imports = Vec::new();
         for &specifier in module.bound.specifiers.iter() {
             let written = self.files.atoms.bytes(specifier);
             let has_page_extension = self.has_page_extension(written);
             // Where a specifier that is no path leads is for Bun's resolver to say.
-            if (has_page_extension || names_html) && is_relative(written) {
+            if (has_page_extension || can_name_html) && is_relative(written) {
                 imports.push(Import {
                     specifier,
                     has_page_extension,
@@ -86,25 +87,16 @@ impl<'a, 's> Pages<'a, 's> {
         if imports.is_empty() {
             return Vec::new();
         }
-        self.read_attributes(hir, &mut imports);
+        self.read_attributes(hir, &mut attributes, &mut imports);
         let directory = dirname::<Posix>(module.file_name());
         let mut scripts = Vec::new();
         for import in &imports {
-            let is_named_by_extension = import.names_nothing && import.has_page_extension;
-            if !import.names_html && !is_named_by_extension {
+            if !import.names_html && !(import.names_nothing && import.has_page_extension) {
                 continue;
             }
-            let written = join(directory, self.files.atoms.bytes(import.specifier));
-            if !self.host.is_file(&written) {
-                continue;
-            }
-            // Bun's resolver returns the real path, and takes the loader of that.
-            let real = self.host.realpath(&written);
-            if !import.names_html && !self.has_page_extension(&real) {
-                continue;
-            }
-            let page = self.in_spelling_of(&written, &real);
-            if self.followed.insert(real) {
+            let page = join(directory, self.files.atoms.bytes(import.specifier));
+            // Anything else is not read: a named pipe would block.
+            if self.host.is_file(&page) {
                 scripts.extend(self.host.scripts_of_page(&page));
             }
         }
@@ -133,26 +125,20 @@ impl<'a, 's> Pages<'a, 's> {
             || self.other_page_extensions.iter().any(|it| ends_with(it))
     }
 
-    /// `real` in the spelling `written` has for its folder: a page's scripts get the names the program's files have.
-    fn in_spelling_of(&self, written: &[u8], real: &[u8]) -> Vec<u8> {
-        if written == real {
-            return real.to_vec();
-        }
-        let folder = dirname::<Posix>(written);
-        let below = real.strip_prefix(&self.host.realpath(folder)[..]);
-        match below.and_then(|it| it.strip_prefix(b"/")) {
-            Some(below) => join(folder, below),
-            None => real.to_vec(),
-        }
-    }
-
     /// Reads the `type` attribute of every use of `imports` in the file, in one pass over its specifiers.
-    fn read_attributes(&self, hir: &hir::File<'s>, imports: &mut [Import]) {
-        imports.shared_sort_unstable_by_key(|it| it.specifier.0);
-        let mut attributes = Attributes::default();
+    fn read_attributes(
+        &self,
+        hir: &hir::File<'s>,
+        attributes: &mut Attributes,
+        imports: &mut [Import],
+    ) {
+        // Only to find an import by its specifier: the numbers of atoms differ from run to run.
+        let mut by_atom: Vec<usize> = (0..imports.len()).collect();
+        by_atom.shared_sort_unstable_by_key(|&at| imports[at].specifier.0);
         for specifier_use in hir.specifier_uses.iter() {
-            let found = imports.binary_search_by_key(&specifier_use.spec.0, |it| it.specifier.0);
-            let Ok(at) = found else {
+            let atom = specifier_use.spec.0;
+            let Ok(found) = by_atom.binary_search_by_key(&atom, |&at| imports[at].specifier.0)
+            else {
                 continue;
             };
             // Bun reads attributes after `import .. from` and in the options of `import()`, not after `export .. from`.
@@ -165,10 +151,11 @@ impl<'a, 's> Pages<'a, 's> {
                     .and_then(|options| self.with_in(hir, options)),
                 _ => None,
             };
+            let import = &mut imports[by_atom[found]];
             match clause.and_then(|it| self.loader_named_in(hir, it)) {
-                Some(Loader::Html) => imports[at].names_html = true,
+                Some(Loader::Html) => import.names_html = true,
                 Some(_) => {}
-                None => imports[at].names_nothing = true,
+                None => import.names_nothing = true,
             }
         }
     }
@@ -224,9 +211,8 @@ impl Attributes {
         (clause.0 < end).then_some(clause.1)
     }
 
-    /// The second argument of the `import()` whose first argument is at `specifier`.
-    fn of_import_call(&mut self, hir: &hir::File, specifier: u32) -> Option<ExprId> {
-        let options = self.options.get_or_insert_with(|| {
+    fn options(&mut self, hir: &hir::File) -> &[(u32, ExprId)] {
+        self.options.get_or_insert_with(|| {
             let calls = hir.exprs.iter().filter_map(|it| match it.kind {
                 ExprKind::ImportCall { args, .. } => {
                     let mut args = hir.ids::<ExprId>(args);
@@ -237,7 +223,12 @@ impl Attributes {
             let mut options: Vec<(u32, ExprId)> = calls.collect();
             options.shared_sort_unstable_by_key(|it| it.0);
             options
-        });
+        })
+    }
+
+    /// The second argument of the `import()` whose first argument is at `specifier`.
+    fn of_import_call(&mut self, hir: &hir::File, specifier: u32) -> Option<ExprId> {
+        let options = self.options(hir);
         let at = options.binary_search_by_key(&specifier, |it| it.0).ok()?;
         Some(options[at].1)
     }

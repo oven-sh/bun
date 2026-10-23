@@ -3930,7 +3930,7 @@ fn check_named_files(
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let of_program = |loaders| pages::Pages::new(host, program.files, loaders);
-        let mut pages = request.loaders.map(of_program);
+        let pages = request.loaders.map(of_program);
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))
@@ -3941,7 +3941,7 @@ fn check_named_files(
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
             let importer = FileId(i as u32);
-            let scripts = pages.iter_mut();
+            let scripts = pages.iter();
             let scripts = scripts.flat_map(|pages| pages.scripts_imported_by(importer));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);

@@ -393,12 +393,16 @@ test.concurrent("Bun.serve({ app }) returns before a pending plugin setup() sett
     "fixture.ts": `
       const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
       const events = [];
+      const seenBy = {};
       const gate = Promise.withResolvers();
       const virtual = (name, wait) => ({
         name,
         async setup(build) {
           events.push(name + " starts");
           await wait;
+          // The plugins of one array share \`build.config\`.
+          seenBy[name] = [...(build.config.seenBy ??= []), name];
+          build.config.seenBy.push(name);
           build.onResolve({ filter: new RegExp("^virtual:(both|" + name + ")$") }, args => ({
             path: args.path.slice("virtual:".length),
             namespace: name,
@@ -416,7 +420,7 @@ test.concurrent("Bun.serve({ app }) returns before a pending plugin setup() sett
         development: true,
         app: {
           framework: { fileSystemRouterTypes: [fsr], plugins: [virtual("first", gate.promise)] },
-          plugins: [virtual("second")],
+          plugins: [virtual("second", gate.promise.then(() => new Promise(resolve => setImmediate(resolve)))), virtual("third")],
         },
       });
       events.push("Bun.serve() returned");
@@ -424,7 +428,7 @@ test.concurrent("Bun.serve({ app }) returns before a pending plugin setup() sett
       const response = fetch(server.url);
       while (server.pendingRequests === 0) await new Promise(resolve => setImmediate(resolve));
       gate.resolve();
-      console.log(JSON.stringify({ body: await (await response).text(), again: await (await fetch(server.url)).text(), events }));
+      console.log(JSON.stringify({ body: await (await response).text(), again: await (await fetch(server.url)).text(), events, seenBy }));
       await server.stop(true);
       process.exit(0);
     `,
@@ -443,7 +447,17 @@ test.concurrent("Bun.serve({ app }) returns before a pending plugin setup() sett
   expect(JSON.parse(stdout.trim().split("\n").at(-1) || "null")).toEqual({
     body: "first second first",
     again: "first second first",
-    events: ["first starts", "Bun.serve() returned", "immediate", "first ends", "second starts", "second ends"],
+    events: [
+      "first starts",
+      "Bun.serve() returned",
+      "immediate",
+      "first ends",
+      "second starts",
+      "second ends",
+      "third starts",
+      "third ends",
+    ],
+    seenBy: { first: ["first"], second: ["second"], third: ["second", "third"] },
   });
   expect(exitCode).toBe(0);
 });
@@ -502,6 +516,53 @@ test.concurrent.each([
       .split("\n")
       .map(line => JSON.parse(line)),
   ).toEqual([{ waiting: 500, later: "Plugin Error" }]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a plugin setup() that runs after Bun.serve() returned can stop the server", async () => {
+  using dir = tempDir("bake-app-async-plugin-stops", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `export default () => new Response("ok");`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const gate = Promise.withResolvers();
+      const ran = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: { fileSystemRouterTypes: [fsr] },
+          plugins: [
+            { name: "waits", setup: () => gate.promise },
+            {
+              name: "stops",
+              setup() {
+                server.stop(true);
+                Bun.gc(true);
+              },
+            },
+            { name: "last", setup: () => ran.resolve() },
+          ],
+        },
+      });
+      gate.resolve();
+      await ran.promise;
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("done");
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("done\n");
   expect(exitCode).toBe(0);
 });
 

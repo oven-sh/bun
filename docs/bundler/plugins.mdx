@@ -72,7 +72,7 @@ await Bun.build({
 });
 ```
 
-`setup()` can return a promise. Bun calls the `setup()` of the next plugin after that promise fulfills, so plugins register their callbacks in the order of the `plugins` array. `Bun.build()` returns its own promise without waiting. It reads the remaining options after the last `setup()` has finished, which is what lets `setup()` change `build.config`. Leave the options object unchanged until the promise from `Bun.build()` settles.
+`setup()` can return a promise. Bun calls the `setup()` of the next plugin after that promise fulfills, so plugins register their callbacks in the order of the `plugins` array. `Bun.build()` returns its own promise without waiting. It reads the remaining options after the last `setup()` has finished, which is what lets `setup()` change `build.config`. Leave the options object unchanged until the promise from `Bun.build()` settles. The same applies when an `onStart()` callback returns a promise.
 
 ## Plugin lifecycle
 

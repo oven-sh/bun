@@ -362,6 +362,11 @@ impl DevServer {
         let Some(dev) = Self::waiting_for_plugin_setup(global, context)? else {
             return Ok(JSValue::UNDEFINED);
         };
+        // The next `setup()` can stop the server, and a drained server frees `dev`, so count as a pending request until the end.
+        let mut server = dev.server;
+        if let Some(server) = server.as_mut() {
+            server.on_pending_request();
+        }
         dev.bundler_options.pending_plugin_setup = None;
         if let Err(err) = dev
             .bundler_options
@@ -370,12 +375,13 @@ impl DevServer {
         {
             let err = global.take_exception(err);
             Self::plugin_setup_failed(global, Some(dev), err);
-            return Ok(JSValue::UNDEFINED);
-        }
-        if dev.bundler_options.pending_plugin_setup.is_none() {
+        } else if dev.bundler_options.pending_plugin_setup.is_none() {
             dev.forget_plugin_setup();
             dev.plugin_state = PluginState::Loaded;
             dev.start_next_bundle_if_present();
+        }
+        if let Some(server) = server.as_mut() {
+            server.on_static_request_complete();
         }
         Ok(JSValue::UNDEFINED)
     }

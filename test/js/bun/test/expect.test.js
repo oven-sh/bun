@@ -5416,6 +5416,19 @@ describe("matchers that wait for a promise", () => {
     expect(() => expect(pending).toEqual(expect.rejectsTo.anything())).toThrow(
       "expect.rejectsTo cannot wait for a pending promise",
     );
+    // `.not` does not turn the error into a match, after which the comparison would go on.
+    let comparedTheNextProperty = false;
+    const received = {
+      a: pending,
+      get b() {
+        comparedTheNextProperty = true;
+        return 1;
+      },
+    };
+    expect(() => expect(received).toEqual({ a: expect.not.resolvesTo.stringContaining("x"), b: 1 })).toThrow(
+      "expect.resolvesTo cannot wait for a pending promise",
+    );
+    expect(comparedTheNextProperty).toBe(false);
   });
 });
 

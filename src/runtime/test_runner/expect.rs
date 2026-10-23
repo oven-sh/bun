@@ -664,6 +664,9 @@ impl Expect {
             context.put_index(global_this, ResumeContext::ARGUMENTS + i as u32, *argument)?;
         }
         awaited.then_with_value(global_this, context, Bun__Expect__onSettled, Bun__Expect__onSettled);
+        if let Some(parent) = &self.parent {
+            parent.matcher_started();
+        }
         Ok(outcome)
     }
 
@@ -708,6 +711,10 @@ impl Expect {
                 }
                 outcome.reject(global_this, error)?;
             }
+        }
+        let expect = context.get_index(global_this, ResumeContext::EXPECT)?;
+        if let Some(parent) = expect.as_class_ref::<Expect>().and_then(|expect| expect.parent.as_ref()) {
+            parent.matcher_settled(global_this);
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -958,14 +965,14 @@ impl Expect {
 /// Indices into the array a promise reaction of a matcher gets as its context. The array is the
 /// only holder of what it lists, so a promise that is collected unsettled takes all of it along.
 ///
-/// [`Expect::settle_outcome`] reads the first two of either layout.
+/// [`Expect::settle_outcome`] reads the first three of either layout.
 struct ResumeContext;
 impl ResumeContext {
     const OUTCOME: u32 = 0;
     const CALL_STACK: u32 = 1;
-    /// The matcher function, and the `this` and arguments to call it with.
-    const MATCHER: u32 = 2;
-    const EXPECT: u32 = 3;
+    /// The `this` to call the matcher function with.
+    const EXPECT: u32 = 2;
+    const MATCHER: u32 = 3;
     const ARGUMENTS: u32 = 4;
 }
 
@@ -974,11 +981,13 @@ struct CustomMatcherContext;
 impl CustomMatcherContext {
     const OUTCOME: u32 = ResumeContext::OUTCOME;
     const CALL_STACK: u32 = ResumeContext::CALL_STACK;
+    /// The `Expect` the matcher was called on.
+    const EXPECT: u32 = ResumeContext::EXPECT;
     /// The user's function.
-    const MATCHER_FN: u32 = 2;
+    const MATCHER_FN: u32 = 3;
     /// [`Flags::encode`]
-    const FLAGS: u32 = 3;
-    const LEN: usize = 4;
+    const FLAGS: u32 = 4;
+    const LEN: usize = 5;
 }
 
 bun_jsc::jsc_promise_handler!(
@@ -1597,8 +1606,10 @@ impl Expect {
         matcher_fn: JSValue,
         args: &[JSValue],
         flags: Flags,
-        silent: bool,
+        // The `Expect` it was called on. `None` is an asymmetric matcher: silent=true.
+        expect_value: Option<JSValue>,
     ) -> JsResult<Result<bool, JSValue>> {
+        let silent = expect_value.is_none();
         // prepare the this object
         let matcher_context_jsvalue = ExpectMatcherContext { flags }.to_js(global_this);
         matcher_context_jsvalue.ensure_still_alive();
@@ -1610,11 +1621,12 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            if !silent {
+            if let Some(expect_value) = expect_value {
                 let outcome = bun_jsc::JSPromise::create(global_this).to_js();
                 let context = JSValue::create_empty_array(global_this, CustomMatcherContext::LEN)?;
                 context.put_index(global_this, CustomMatcherContext::OUTCOME, outcome)?;
                 context.put_index(global_this, CustomMatcherContext::CALL_STACK, Self::capture_call_stack(global_this))?;
+                context.put_index(global_this, CustomMatcherContext::EXPECT, expect_value)?;
                 context.put_index(global_this, CustomMatcherContext::MATCHER_FN, matcher_fn)?;
                 context.put_index(global_this, CustomMatcherContext::FLAGS, JSValue::js_number_from_int32(i32::from(flags.encode())))?;
                 result.then_with_value(
@@ -1623,6 +1635,9 @@ impl Expect {
                     Bun__Expect__onCustomMatcherResolve,
                     Bun__Expect__onCustomMatcherReject,
                 );
+                if let Some(parent) = expect_value.as_class_ref::<Expect>().and_then(|expect| expect.parent.as_ref()) {
+                    parent.matcher_started();
+                }
                 return Ok(Err(outcome));
             }
 
@@ -1812,7 +1827,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        match Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)? {
+        match Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), Some(this_value))? {
             Ok(_) => Ok(this_value),
             Err(promise) => Ok(promise),
         }
@@ -2566,7 +2581,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, true)
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, None)
             .map(|matched| matched.expect("silent"))
     }
 

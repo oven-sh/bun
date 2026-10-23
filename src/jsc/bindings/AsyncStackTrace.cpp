@@ -201,3 +201,8 @@ extern "C" void Bun__takeStackIfNativeOnly(JSC::JSGlobalObject* globalObject, JS
     instance->setStackFrames(vm, WTF::Vector<JSC::StackFrame>(*frames));
     vm.writeBarrier(instance);
 }
+
+extern "C" JSC::CallFrame* JSC__JSGlobalObject__topCallFrame(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).topCallFrame;
+}

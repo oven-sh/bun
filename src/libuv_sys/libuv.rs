@@ -538,11 +538,6 @@ impl Loop {
         // SAFETY: self is a live loop.
         unsafe { uv_loop_alive(self) != 0 }
     }
-    #[inline]
-    pub fn tick(&mut self) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
-    }
 }
 
 /// `Loop::close_thread_loop` diagnostics: which handles keep the worker's loop busy.

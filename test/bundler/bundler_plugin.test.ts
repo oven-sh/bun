@@ -2223,6 +2223,23 @@ describe("bundler", () => {
       ).rejects.toThrow();
     });
 
+    test("an onStart() that returns a promise makes the last setup() one", async () => {
+      const events: string[] = [];
+      const plugin = {
+        name: "starts slowly",
+        setup(build: Bun.PluginBuilder) {
+          build.onStart(async () => {
+            await new Promise(resolve => setImmediate(resolve));
+            events.push("onStart() is done");
+          });
+        },
+      };
+      const build = Bun.build({ entrypoints: ["/entry.js"], files, plugins: [plugin], format: "nope" as any });
+      events.push("Bun.build() returned");
+      await expect(build).rejects.toThrow("format must be one of");
+      expect(events).toEqual(["Bun.build() returned", "onStart() is done"]);
+    });
+
     test("an error before it is still thrown by the call", () => {
       const slow = { name: "slow", setup: () => new Promise<void>(() => {}) };
       expect(() => Bun.build({ entrypoints: ["/entry.js"], files, plugins: [{ name: "", setup() {} }, slow] })).toThrow(

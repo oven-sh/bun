@@ -14,16 +14,22 @@ pub(crate) struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
-    /// The `setup` functions that `run_plugin_setups` has yet to call, in the order of the
-    /// plugins. The order in which they finish decides which plugin sees a module first, so each
-    /// one waits for the promise of the one before it.
-    pub(crate) plugin_setups: VecDeque<bun_jsc::Strong>,
+    /// What `run_plugin_setups` has yet to call, in the order of the plugins. The order in which
+    /// they finish decides which plugin sees a module first, so each one waits for the promise of
+    /// the one before it.
+    pub(crate) plugin_setups: VecDeque<PluginSetup>,
     /// The promise of the `setup()` call that is under way. `plugin` is complete, and a bundle
     /// may start, once this is `None` and `plugin_setups` is empty.
     pub(crate) pending_plugin_setup: Option<bun_jsc::Strong>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
+}
+
+pub(crate) struct PluginSetup {
+    function: bun_jsc::Strong,
+    /// `build.config`: one object for the plugins of one array.
+    config: bun_jsc::Strong,
 }
 
 pub(crate) struct BuildConfigSubset {
@@ -79,6 +85,8 @@ impl SplitBundlerOptions {
             );
         }
 
+        let empty_object = JSValue::create_empty_object(global, 0);
+
         let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
             if !plugin_config.is_object() {
@@ -107,8 +115,10 @@ impl SplitBundlerOptions {
                     )));
                 }
             };
-            self.plugin_setups
-                .push_back(bun_jsc::Strong::create(function, global));
+            self.plugin_setups.push_back(PluginSetup {
+                function: bun_jsc::Strong::create(function, global),
+                config: bun_jsc::Strong::create(empty_object, global),
+            });
         }
         self.run_plugin_setups(global)
     }
@@ -117,15 +127,15 @@ impl SplitBundlerOptions {
     /// waits: the caller does, and calls this again once it has cleared `pending_plugin_setup`.
     pub(crate) fn run_plugin_setups(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         while self.pending_plugin_setup.is_none() {
-            let Some(function) = self.plugin_setups.pop_front() else {
+            let Some(setup) = self.plugin_setups.pop_front() else {
                 break;
             };
             let plugin = self.plugin.expect("parse_plugin_array created it");
             // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
             // deref. Handle held live in `self.plugin` (protected JSCell).
             let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
-                function.get(),
-                JSValue::create_empty_object(global, 0),
+                setup.function.get(),
+                setup.config.get(),
                 JSValue::NULL,
                 false,
                 true,

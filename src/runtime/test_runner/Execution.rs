@@ -167,6 +167,12 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// Matcher calls of the active entry that returned a promise which has not settled. The entry
+    /// is not done before they are, so an assertion that nobody awaits still counts against its
+    /// own test. A timeout ends the wait.
+    pub(crate) pending_matchers: u32,
+    /// The callback of the active entry is done, and `pending_matchers` is all that holds it.
+    pub(crate) waiting_for_matchers: bool,
 }
 
 impl ExecutionSequence {
@@ -189,7 +195,15 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            pending_matchers: 0,
+            waiting_for_matchers: false,
         }
+    }
+
+    /// The callback of the active entry is done. Whether the entry has to wait for its matchers.
+    fn wait_for_matchers(&mut self) -> bool {
+        self.waiting_for_matchers = self.pending_matchers > 0;
+        self.waiting_for_matchers
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -373,6 +387,12 @@ impl Execution {
 
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
+                // SAFETY: as above; no other borrow of the sequence is live.
+                if unsafe { &mut *sequence_ptr.as_ptr() }.wait_for_matchers() {
+                    // SAFETY: as above; arena-owned entry.
+                    let timeout = unsafe { sequence_ptr.as_ref().active_entry.unwrap().as_ref() }.timespec;
+                    return Ok(StepResult::Waiting { timeout });
+                }
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
@@ -512,6 +532,8 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
+        sequence.pending_matchers = 0;
+        sequence.waiting_for_matchers = false;
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
@@ -1042,7 +1064,11 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            if !next_item.evaluate_timeout(sequence, now) && sequence.wait_for_matchers() {
+                return Ok(Some(AdvanceSequenceStatus::Execute {
+                    timeout: next_item.timespec,
+                }));
+            }
 
             // the result is available immediately; advance the sequence and run again.
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);

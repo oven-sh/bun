@@ -41,8 +41,10 @@ describe.each([
     async () => {
       const refused = cases.filter(c => c.tree === null);
       expect(refused.length).toBeGreaterThan(50);
-      const { trees, exitCode } = await install(bunExe(), refused, streaming);
+      const { trees, exitCode, stderr } = await install(bunExe(), refused, streaming);
       expect(refused.filter(c => trees.get(c.id) !== null).map(c => c.id)).toEqual([]);
+      // Only the streaming extractor says how far into the download it got.
+      expect(stderr.includes("(at byte ")).toBe(streaming);
       expect(exitCode).toBe(1);
     },
     60_000,

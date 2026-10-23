@@ -72,6 +72,10 @@ describe("int32 to string", () => {
     const expected = values.map(n => (n === 123456789 ? "123456789" : "123458614"));
     expect(run(paths.concat, values)).toEqual(expected);
     expect(run(paths.join, values)).toEqual(expected);
+    // The JSString side ("" + n) and the String side (join) of the slot, alternating.
+    const interleaved: string[] = [];
+    for (const n of values) interleaved.push(paths.concat(n), paths.join(n));
+    expect(interleaved).toEqual(expected.flatMap(s => [s, s]));
   });
 
   test("a GC between a fill and a hit", () => {

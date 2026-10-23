@@ -801,6 +801,11 @@ impl WebWorker {
             self.flush_logs(vm);
             return self.shutdown();
         }
+        // Start-up went on: what it logged must not join the report of a later failure.
+        let start_up_log = vm.log_mut().unwrap();
+        if !start_up_log.msgs.is_empty() {
+            start_up_log.reset();
+        }
 
         // 'online' before the entry runs, as in node: it precedes anything the entry posts.
         WebWorker__workerThreadStarted(self.messaging_proxy);
@@ -934,7 +939,6 @@ impl WebWorker {
             vm.global(),
         );
 
-        self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
         // Pending -> Running: messages and tasks queued while the entry loaded are delivered.
         WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
@@ -1000,7 +1004,6 @@ impl WebWorker {
         }
         drop(entry_promise);
 
-        self.flush_logs(vm);
         self.shutdown();
     }
 

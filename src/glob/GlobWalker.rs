@@ -44,6 +44,10 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 #[cfg(windows)]
 pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
+    // `AccessorHandle::EMPTY`: an absolute path, with no directory to join.
+    if !fd.is_valid() {
+        return Syscall::stat(path);
+    }
     // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
     // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
@@ -79,6 +83,7 @@ pub trait Accessor {
 
     fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
     fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
+    /// `handle` may be `EMPTY` when `path` is absolute.
     fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
@@ -304,12 +309,11 @@ pub enum IterState<A: Accessor> {
     /// Currently iterating over a directory
     Directory(Directory<A>),
 
-    /// Two particular cases where this is used:
+    /// A literally named final path that matched. Only `match_literal` sets it, in two cases:
     ///
-    /// 1. A pattern with no special glob syntax was supplied, for example: `/Users/zackradisic/foo/bar`
+    /// 1. An absolute pattern with no special glob syntax was supplied, for example: `/Users/zackradisic/foo/bar`
     ///
-    ///    In that case, the mere existence of the file/dir counts as a match, so we can eschew directory
-    ///    iterating and walking for a simple stat call to the path.
+    ///    There is nothing to walk: one stat call to the path decides.
     ///
     /// 2. Pattern ending in literal optimization
     ///
@@ -317,6 +321,15 @@ pub enum IterState<A: Accessor> {
     ///    the final component, which is a literal string ("package.json"), we can similarly make a
     ///    single stat call to complete the pattern.
     Matched(MatchedPath),
+}
+
+/// The literally named path that `match_literal` resolves.
+#[derive(Clone, Copy)]
+enum Literal {
+    /// The whole absolute pattern: a trailing separator needs a directory, ENOTDIR is no match.
+    Pattern,
+    /// The last component in a reached directory: no separator check, ENOTDIR is an error.
+    LastComponent,
 }
 
 pub struct Directory<A: Accessor> {
@@ -421,33 +434,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // This means we got a pattern without any special glob syntax, for example:
                 // `/Users/zackradisic/foo/bar`
                 //
-                // In that case we don't need to do any walking and can just open up the FS entry
+                // In that case we don't need to do any walking and can just stat the path
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL. The open()
-                    // probe always needs a NUL — use a separate dupeZ for it so
-                    // SENTINEL=false matched paths don't carry a spurious 0x00.
-                    let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
-                    let pathz_owned = dupe_z(path_without_special_syntax);
-                    // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
-                    let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
-                    let fd = match A::open(pathz)? {
-                        Err(e) => {
-                            if e.get_errno() == E::ENOTDIR {
-                                self.iter_state = IterState::Matched(path);
-                                return Ok(Ok(()));
-                            }
-                            // Doesn't exist
-                            if e.get_errno() == E::ENOENT {
-                                self.iter_state = IterState::GetNext;
-                                return Ok(Ok(()));
-                            }
-                            return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
-                        }
-                        Ok(fd) => fd,
+                    // A trailing separator is not part of the name. The root keeps its own.
+                    let path = path_without_special_syntax;
+                    let root = if IS_WINDOWS {
+                        resolve_path::windows_filesystem_root(path).len().max(1)
+                    } else {
+                        1
                     };
-                    let _ = A::close(fd);
-                    self.iter_state = IterState::Matched(path);
-                    return Ok(Ok(()));
+                    let mut literal = path.len();
+                    while literal > root && bun_core::path_sep::is_sep_native(path[literal - 1]) {
+                        literal -= 1;
+                    }
+                    return self.match_literal(Literal::Pattern, A::Handle::EMPTY, b"", 0..literal);
                 }
 
                 // In the above branch, if `starting_component_idx >= pattern_components.len` then
@@ -546,6 +546,57 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 debug_assert!(self.fds_open <= 2);
             }
         }
+    }
+
+    /// The only place that sets `IterState::Matched`. `name` is a byte range of the pattern.
+    fn match_literal(
+        &mut self,
+        literal: Literal,
+        base: A::Handle,
+        dir_path: &[u8],
+        name: core::ops::Range<usize>,
+    ) -> Result<Maybe<()>, Error> {
+        let (dir_only, enotdir_is_missing) = match literal {
+            Literal::Pattern => (
+                self.walker
+                    .pattern_components
+                    .last()
+                    .is_some_and(|last| last.trailing_sep),
+                true,
+            ),
+            Literal::LastComponent => (false, false),
+        };
+        let namez = dupe_z(&self.walker.pattern[name]);
+        let name = &namez[..namez.len() - 1];
+        debug_assert!(!strings::contains_char(name, 0));
+        let matches = match A::statat(base, ZStr::from_slice_with_nul(&namez[..])) {
+            Ok(stat) => {
+                let mode = stat.st_mode as u32;
+                if dir_only {
+                    S::ISDIR(mode) && !self.walker.only_files
+                } else {
+                    S::ISREG(mode) || !self.walker.only_files
+                }
+            }
+            Err(e) => {
+                let errno = e.get_errno();
+                if errno != E::ENOENT && !(enotdir_is_missing && errno == E::ENOTDIR) {
+                    let full_path = self.walker.join(&[dir_path, name])?;
+                    return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&full_path))));
+                }
+                false
+            }
+        };
+        let matched = if matches {
+            self.walker.prepare_matched_path(name, dir_path)?
+        } else {
+            None
+        };
+        self.iter_state = match matched {
+            Some(path) => IterState::Matched(path),
+            None => IterState::GetNext,
+        };
+        Ok(Ok(()))
     }
 
     fn transition_to_dir_iter_state<const ROOT: bool>(
@@ -661,46 +712,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
                 && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
             {
-                // `close_disallowing_cwd(fd)` is covered explicitly on
-                // both exit paths below (Err arm and post-Ok); no `?` between here
-                // and those calls, so a scopeguard is unnecessary.
-                let pat_slice = self.walker.pattern_components[idx as usize]
-                    .pattern_slice(&self.walker.pattern)
-                    .to_vec();
-                let pathz = dupe_z(&pat_slice);
-                // SAFETY: dupe_z NUL-terminates
-                let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
-                let stat_result: Stat = match A::statat(fd, pathz_ref) {
-                    Err(e_) => {
-                        let e: SysError = e_;
-                        self.close_disallowing_cwd(fd);
-                        if e.get_errno() == E::ENOENT {
-                            self.iter_state = IterState::GetNext;
-                            return Ok(Ok(()));
-                        }
-                        let full_path = self.walker.join(&[dir_path.as_bytes(), &pat_slice])?;
-                        return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&full_path))));
-                    }
-                    Ok(stat) => stat,
-                };
+                let name = self.walker.pattern_components[idx as usize].pattern_range();
+                let result =
+                    self.match_literal(Literal::LastComponent, fd, dir_path.as_bytes(), name);
                 self.close_disallowing_cwd(fd);
-                let mode = stat_result.st_mode as u32;
-                let matches = (S::ISDIR(mode) && !self.walker.only_files)
-                    || S::ISREG(mode)
-                    || !self.walker.only_files;
-                if matches {
-                    if let Some(path) = self
-                        .walker
-                        .prepare_matched_path(&pathz[..pathz.len() - 1], dir_path.as_bytes())?
-                    {
-                        self.iter_state = IterState::Matched(path);
-                    } else {
-                        self.iter_state = IterState::GetNext;
-                    }
-                } else {
-                    self.iter_state = IterState::GetNext;
-                }
-                return Ok(Ok(()));
+                return result;
             }
         }
 
@@ -772,7 +788,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // `<` `>` `"` are NT wildcards; treating them as literals would over-match,
         // but they are invalid in Windows filenames so such a pattern never matches
         // anyway.
-        if strings::index_of_any(slice, b"?[{\\!<>\"(|").is_some() {
+        if strings::index_of_any(slice, b"?[{\\!<>\"(|\0").is_some() {
             return None;
         }
 
@@ -1355,9 +1371,14 @@ impl Default for Component {
 }
 
 impl Component {
-    pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
+    /// The component's bytes in the pattern, without a trailing separator.
+    fn pattern_range(&self) -> core::ops::Range<usize> {
         let end = (self.start + self.len - u32::from(self.trailing_sep)) as usize;
-        &pattern[self.start as usize..end]
+        self.start as usize..end
+    }
+
+    pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
+        &pattern[self.pattern_range()]
     }
 }
 
@@ -1525,8 +1546,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             };
             let Some(path) = path else { break };
             log!("walker: matched path: {}", bstr::BStr::new(&path));
-            // The paths are already put into self.matched_paths, which we use for the output,
-            // so we don't need to do anything here
+            // `matched_paths` is the output.
+            debug_assert!(iter.walker.matched_paths.contains_key(&path));
         }
 
         Ok(Ok(()))
@@ -2083,7 +2104,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         !filepath.is_empty() && filepath[0] == b'.'
     }
 
-    const SYNTAX_TOKENS: &'static [u8] = b"*[{?!";
+    // NUL is here so that a name with one is never `Literal` and never becomes a C string.
+    const SYNTAX_TOKENS: &'static [u8] = b"*[{?!\0";
 
     fn check_special_syntax(pattern: &[u8]) -> bool {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
@@ -2279,26 +2301,13 @@ pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `allocator.dupeZ(u8, s)` — returns owned bytes with trailing NUL included
-/// at index `len()-1`. Kept as `Box<[u8]>` (not `ZBox`) so `dupe_matched` can
-/// store sentinel and non-sentinel payloads in the same `MatchedPath` shape.
+/// `s` with a trailing NUL at `len() - 1`, as a `Box<[u8]>` so that it can be a `MatchedPath`.
 #[inline]
 fn dupe_z(s: &[u8]) -> Box<[u8]> {
     bun_core::ZBox::from_bytes(s).into_boxed_slice_with_nul()
 }
 
-/// Allocate a matched-path payload: when `SENTINEL` is true the box has a
-/// trailing NUL at `len()-1`; when false it does not.
-#[inline]
-fn dupe_matched<const SENTINEL: bool>(s: &[u8]) -> Box<[u8]> {
-    if SENTINEL {
-        dupe_z(s)
-    } else {
-        Box::<[u8]>::from(s)
-    }
-}
-
-/// Slice of a `dupe_matched` payload that excludes the trailing NUL (when
+/// Slice of a matched-path payload that excludes the trailing NUL (when
 /// `SENTINEL`), suitable for `e.with_path` and other `[]const u8` consumers.
 #[inline]
 fn matched_as_slice<const SENTINEL: bool>(p: &[u8]) -> &[u8] {

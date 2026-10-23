@@ -661,6 +661,27 @@ describe("trailing directory separator", async () => {
   });
 });
 
+// The result of `scanSync`, or `{ code, syscall, path }` of what it throws.
+function scanOutcome(pattern: string, opts?: GlobScanOptions) {
+  try {
+    return Array.from(new Glob(pattern).scanSync(opts));
+  } catch (e: any) {
+    return { code: e.code, syscall: e.syscall, path: e.path };
+  }
+}
+
+// `scanOutcome`, after a check that `scan` gives the same.
+async function scanBoth(pattern: string, opts?: GlobScanOptions) {
+  const sync = scanOutcome(pattern, opts);
+  const async = await Array.fromAsync(new Glob(pattern).scan(opts)).catch(e => ({
+    code: e.code,
+    syscall: e.syscall,
+    path: e.path,
+  }));
+  expect(async).toEqual(sync);
+  return sync;
+}
+
 describe("absolute path pattern", async () => {
   test("works *", async () => {
     const tmpdir = tmpdirSync();
@@ -713,7 +734,202 @@ describe("absolute path pattern", async () => {
     const tmpdir = tmpdirSync();
     await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
     const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
-    console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
+    expect(Array.from(glob.scanSync({ cwd: tmpdir }))).toEqual([]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/16709
+  describe("without glob syntax", () => {
+    const all = { onlyFiles: false };
+
+    test("one stat decides, with the onlyFiles and trailing separator rules", async () => {
+      using dir = tempDir("glob-abs-literal", {
+        "a.js": "x",
+        ".env": "x",
+        "sub/inner.txt": "x",
+        "other/keep": "",
+      });
+      const root = String(dir);
+      const file = path.join(root, "a.js");
+      const sub = path.join(root, "sub");
+
+      expect({
+        file: await scanBoth(file),
+        nestedFile: scanOutcome(path.join(sub, "inner.txt")),
+        dotfile: scanOutcome(path.join(root, ".env"), { dot: false }),
+        dir: scanOutcome(sub),
+        dirAll: await scanBoth(sub, all),
+        missing: await scanBoth(path.join(root, "missing.js"), all),
+        missingParent: scanOutcome(path.join(root, "nope", "a.js"), all),
+        underFile: scanOutcome(path.join(file, "child"), all),
+        dirTrailingSep: scanOutcome(sub + path.sep),
+        dirTrailingSepAll: scanOutcome(sub + path.sep, all),
+        fileTrailingSepAll: scanOutcome(file + path.sep, all),
+        absoluteOption: scanOutcome(file, { absolute: true }),
+        cwdIgnored: scanOutcome(file, { cwd: path.join(root, "other") }),
+      }).toEqual({
+        file: [file],
+        nestedFile: [path.join(sub, "inner.txt")],
+        dotfile: [path.join(root, ".env")],
+        dir: [],
+        dirAll: [sub],
+        missing: [],
+        missingParent: [],
+        underFile: [],
+        dirTrailingSep: [],
+        dirTrailingSepAll: [sub],
+        fileTrailingSepAll: [],
+        absoluteOption: [file],
+        cwdIgnored: [file],
+      });
+    });
+
+    test("the result is what stat says, for any name with no glob syntax", () => {
+      const names = [
+        "a b",
+        "#hash",
+        "100%",
+        "close]",
+        "close}",
+        "(paren)",
+        ".dotfile",
+        "\u00e9",
+        "e\u0301",
+        "日本語",
+        "🙂",
+      ];
+      // Windows has no name that ends with a dot, and a backslash there is a separator.
+      if (!isWindows) names.push("...", Buffer.alloc(255, "n").toString(), "\\", "a\\b", "back\\");
+      using dir = tempDir("glob-abs-literal-names", {});
+      const root = String(dir);
+      fs.mkdirSync(path.join(root, "file"));
+      for (const name of names) {
+        fs.writeFileSync(path.join(root, "file", name), "x");
+        fs.mkdirSync(path.join(root, "dir", name), { recursive: true });
+      }
+
+      const actual: Record<string, unknown> = {};
+      const expected: Record<string, unknown> = {};
+      for (const kind of ["file", "dir", "missing"]) {
+        for (const name of names) {
+          const target = path.join(root, kind, name);
+          const stat = fs.statSync(target, { throwIfNoEntry: false });
+          for (const sep of ["", path.sep]) {
+            for (const onlyFiles of [true, false]) {
+              const row = `${kind} ${JSON.stringify(name + sep)} onlyFiles=${onlyFiles}`;
+              actual[row] = scanOutcome(target + sep, { onlyFiles });
+              const matches = sep ? stat?.isDirectory() && !onlyFiles : stat?.isFile() || (!!stat && !onlyFiles);
+              expected[row] = matches ? [target] : [];
+            }
+          }
+        }
+      }
+      expect(actual).toEqual(expected);
+    });
+
+    test("agrees with the same name spelled with a bracket", () => {
+      using dir = tempDir("glob-abs-literal-bracket", {
+        "a.js": "x",
+        ".env": "x",
+        "sub/inner.txt": "x",
+      });
+      const root = String(dir);
+
+      const literal: Record<string, unknown> = {};
+      const bracket: Record<string, unknown> = {};
+      for (const name of ["a.js", ".env", "sub", "missing"]) {
+        for (const sep of ["", path.sep]) {
+          for (const onlyFiles of [true, false]) {
+            const row = `${name}${sep} onlyFiles=${onlyFiles}`;
+            literal[row] = scanOutcome(path.join(root, name) + sep, { onlyFiles });
+            bracket[row] = scanOutcome(path.join(root, `${name.slice(0, -1)}[${name.at(-1)}]`) + sep, { onlyFiles });
+          }
+        }
+      }
+      expect(literal).toEqual(bracket);
+    });
+
+    test("the filesystem root", async () => {
+      const root = path.parse(process.cwd()).root;
+      for (const spelling of isWindows ? [root, root.replaceAll("\\", "/")] : [root]) {
+        expect({
+          root: scanOutcome(spelling),
+          rootAll: await scanBoth(spelling, all),
+        }).toEqual({
+          root: [],
+          rootAll: [spelling],
+        });
+      }
+    });
+
+    // Windows has no device node at a path.
+    test.skipIf(isWindows)("a device node is not a regular file", () => {
+      expect({
+        device: scanOutcome("/dev/null"),
+        deviceAll: scanOutcome("/dev/null", all),
+      }).toEqual({
+        device: [],
+        deviceAll: ["/dev/null"],
+      });
+    });
+
+    // A rooted pattern resolves on the drive of the cwd, so the scan runs with the cwd on the fixture's drive.
+    test.skipIf(!isWindows)("a rooted pattern with no drive letter", async () => {
+      using dir = tempDir("glob-abs-literal-rooted", { "a.js": "x" });
+      const file = path.join(String(dir), "a.js");
+      const rooted = file.slice(path.parse(file).root.length - 1).replaceAll("\\", "/");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "console.log(JSON.stringify([...new Bun.Glob(process.argv[1]).scanSync()]))", rooted],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([rooted]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+});
+
+describe("literal last component", () => {
+  test("matches a file, and a directory that has a trailing separator", () => {
+    using dir = tempDir("glob-literal-tail", {
+      "a.js": "x",
+      "sub/inner.txt": "x",
+    });
+    const cwd = String(dir);
+    const scan = (pattern: string, onlyFiles: boolean) => Array.from(new Glob(pattern).scanSync({ cwd, onlyFiles }));
+
+    expect({
+      file: scan("a.js", true),
+      dirTrailingSep: scan("sub/", false),
+      dirTrailingSepOnlyFiles: scan("sub/", true),
+      afterWildcard: scan("*/inner.txt", true),
+    }).toEqual({
+      file: ["a.js"],
+      dirTrailingSep: ["sub"],
+      dirTrailingSepOnlyFiles: [],
+      afterWildcard: [path.join("sub", "inner.txt")],
+    });
+  });
+
+  test("after a wildcard, each directory that has the name matches", async () => {
+    using dir = tempDir("glob-literal-tail-dirs", {
+      "a/t": "x",
+      "b/t": "x",
+      "c/t": "x",
+      "d/other": "x",
+    });
+    const cwd = String(dir);
+
+    const expected = ["a", "b", "c"].map(name => path.join(name, "t"));
+    const sorted = (found: unknown) => (Array.isArray(found) ? found.sort() : found);
+    expect(sorted(await scanBoth("*/t", { cwd }))).toEqual(expected);
+    expect(sorted(scanOutcome("*/t", { cwd, onlyFiles: false }))).toEqual(expected);
   });
 });
 
@@ -1192,6 +1408,81 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
+  });
+});
+
+describe.skipIf(!canCreateDirSymlink)("symlink named by the whole pattern", () => {
+  test.each([
+    ["absolute", true],
+    ["relative", false],
+  ])("%s pattern: the link's target decides the match", (_, absolute) => {
+    using dir = tempDir("glob-scan-literal-symlink", {
+      "a.js": "x",
+      "sub/inner.txt": "x",
+    });
+    const cwd = String(dir);
+    fs.symlinkSync("a.js", path.join(cwd, "to-file"), "file");
+    fs.symlinkSync("sub", path.join(cwd, "to-dir"), "dir");
+    fs.symlinkSync("missing", path.join(cwd, "broken"), "file");
+
+    const named = (name: string) => (absolute ? path.join(cwd, name) : name);
+    const scan = (name: string, onlyFiles: boolean) => Array.from(new Glob(named(name)).scanSync({ cwd, onlyFiles }));
+
+    expect({
+      toFile: scan("to-file", true),
+      toDir: scan("to-dir", true),
+      toDirAll: scan("to-dir", false),
+      broken: scan("broken", false),
+    }).toEqual({
+      toFile: [named("to-file")],
+      toDir: [],
+      toDirAll: [named("to-dir")],
+      broken: [],
+    });
+  });
+});
+
+// Windows reports these from `stat`, with other codes.
+describe.skipIf(isWindows)("a stat error on a literally named path", () => {
+  test("is thrown with the path, unless the path is missing", async () => {
+    using dir = tempDir("glob-scan-literal-errors", { "a.js": "x" });
+    const cwd = String(dir);
+    fs.symlinkSync("loop", path.join(cwd, "loop"));
+    fs.symlinkSync(path.join("a.js", "child"), path.join(cwd, "through-file"));
+    const long = Buffer.alloc(300, "n").toString();
+
+    expect({
+      absoluteLoop: await scanBoth(path.join(cwd, "loop")),
+      relativeLoop: scanOutcome("loop", { cwd }),
+      absoluteLong: scanOutcome(path.join(cwd, long)),
+      relativeLong: scanOutcome(long, { cwd }),
+      absoluteThroughFile: scanOutcome(path.join(cwd, "through-file")),
+      relativeThroughFile: scanOutcome("through-file", { cwd }),
+    }).toEqual({
+      absoluteLoop: { code: "ELOOP", syscall: "fstatat", path: path.join(cwd, "loop") },
+      relativeLoop: { code: "ELOOP", syscall: "fstatat", path: "loop" },
+      absoluteLong: { code: "ENAMETOOLONG", syscall: "fstatat", path: path.join(cwd, long) },
+      relativeLong: { code: "ENAMETOOLONG", syscall: "fstatat", path: long },
+      // A target under a regular file does not exist. The relative form still reports it.
+      absoluteThroughFile: [],
+      relativeThroughFile: { code: "ENOTDIR", syscall: "fstatat", path: "through-file" },
+    });
+  });
+
+  test("after a wildcard, names the path from the cwd", async () => {
+    using dir = tempDir("glob-scan-literal-tail-error", {
+      "f": "x",
+      "a/t": "x",
+      "through-file/keep": "",
+    });
+    const cwd = String(dir);
+    fs.symlinkSync(path.join("..", "f", "child"), path.join(cwd, "through-file", "t"));
+
+    expect(await scanBoth("*/t", { cwd })).toEqual({
+      code: "ENOTDIR",
+      syscall: "fstatat",
+      path: path.join("through-file", "t"),
+    });
   });
 });
 

@@ -501,7 +501,25 @@ async function end(scope: Scope, commit: boolean, grace: number | undefined) {
     const { BEFORE_COMMIT_OR_ROLLBACK, COMMIT, ROLLBACK } = scope.statements!;
     const last = commit ? COMMIT : ROLLBACK;
     if (BEFORE_COMMIT_OR_ROLLBACK) {
-      await send(scope, BEFORE_COMMIT_OR_ROLLBACK, dispatchEnd.bind(scope, false));
+      try {
+        await send(scope, BEFORE_COMMIT_OR_ROLLBACK, dispatchEnd.bind(scope, false));
+      } catch (err) {
+        // The server rolled the work back and still has the transaction: only ROLLBACK ends it.
+        if (scope.connection === null || !scope.pool.isRollbackOwed?.(err)) {
+          throw err;
+        }
+        try {
+          await send(scope, ROLLBACK, dispatchOwn.bind(scope));
+        } catch (rollbackError) {
+          // The transaction is still there, and the status that release() reads may not show it.
+          scope.connection?.close();
+          throw commit ? withCause(rollbackError, err) : rollbackError;
+        }
+        if (commit) {
+          throw err;
+        }
+        return;
+      }
       const answer = await send(scope, last, dispatchOwn.bind(scope));
       prepared = commit;
       return answer;

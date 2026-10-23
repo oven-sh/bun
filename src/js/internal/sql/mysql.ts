@@ -11,6 +11,8 @@ const {
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
+const StringPrototypeIncludes = String.prototype.includes;
+
 const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
@@ -77,6 +79,19 @@ class MySQLAdapter extends BaseSQLAdapter<$Bindgen.MySQLConnection, $Bindgen.MyS
       COMMIT: `XA PREPARE '${name}'`,
       ROLLBACK: `XA ROLLBACK '${name}'`,
     };
+  }
+
+  /// Only an answer that proves a ROLLBACK ONLY branch of this session: XA ROLLBACK works by name, also on a prepared branch of another session.
+  isRollbackOwed(error: any): boolean {
+    switch (error.errno) {
+      case 1402: // XA_RBROLLBACK
+      case 1613: // XA_RBTIMEOUT
+      case 1614: // XA_RBDEADLOCK
+        return true;
+      case 1399: // XAER_RMFAIL: MariaDB answers it for every state, and names the state.
+        return StringPrototypeIncludes.$call(error.message, "ROLLBACK ONLY");
+    }
+    return false;
   }
 }
 

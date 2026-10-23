@@ -8,6 +8,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type net from "node:net";
 import { join } from "node:path";
 import {
+  MYSQL_SERVER_STATUS_AUTOCOMMIT,
+  MYSQL_SERVER_STATUS_IN_TRANS,
   listeningServer,
   mysqlAckSessionSetup,
   mysqlErrPacket,
@@ -28,6 +30,8 @@ import {
 type Received = { conn: number; sql: string };
 // Can delay the answer to a statement; "error" makes the answer to a simple query an error. Answers keep the order of the statements.
 type Hold = (sql: string) => Promise<void | "error"> | void | "error";
+// The answer of the server to a simple query on connection `conn`. Nothing: a plain OK.
+type Reply = (conn: number, sql: string) => Buffer | undefined;
 type MockServer = (
   received: Received[],
   hold: Hold,
@@ -35,6 +39,8 @@ type MockServer = (
   leavesAfter: (sql: string) => boolean,
   // PostgreSQL only
   tagOf: (sql: string) => string,
+  // MySQL only
+  reply?: Reply,
 ) => Promise<{ port: number; server: net.Server }>;
 
 function answerInOrder(hold: Hold) {
@@ -107,7 +113,7 @@ const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => 
   });
 };
 
-const mysqlMockServer: MockServer = (received, hold, drops, leavesAfter) => {
+const mysqlMockServer: MockServer = (received, hold, drops, leavesAfter, _tagOf, reply) => {
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
   const COM_STMT_PREPARE = 0x16;
@@ -142,7 +148,7 @@ const mysqlMockServer: MockServer = (received, hold, drops, leavesAfter) => {
               : socket.write(reply);
           answer(
             sql,
-            () => send(mysqlOkPacket(1)),
+            () => send(reply?.(connId, sql) ?? mysqlOkPacket(1)),
             () => send(mysqlErrPacket(1, 1105, "HY000", `refused: ${sql}`)),
           );
         } else if (payload[0] === COM_STMT_PREPARE) {
@@ -221,7 +227,11 @@ type Server = {
   answerWithTag(text: string, tag: string): void;
 };
 
-async function withServer<T>({ adapter, mockServer }: Adapter, run: (server: Server) => Promise<T>): Promise<T> {
+async function withServer<T>(
+  { adapter, mockServer }: Adapter,
+  run: (server: Server) => Promise<T>,
+  reply?: Reply,
+): Promise<T> {
   const received: Received[] = [];
   const holds = new Map<string, { seen: PromiseWithResolvers<void>; gate: PromiseWithResolvers<void> }>();
   const refused = new Set<string>();
@@ -240,6 +250,7 @@ async function withServer<T>({ adapter, mockServer }: Adapter, run: (server: Ser
     text => dropped.has(text),
     text => last.has(text),
     text => tags.get(text) ?? "SELECT 0",
+    reply,
   );
   const options: Bun.SQL.Options = {
     adapter,
@@ -1433,6 +1444,327 @@ describe.each(adapters)("$adapter", entry => {
       expect(JSON.parse(stdout).sort()).toEqual([endedCode, "handler"].sort());
       expect(exitCode).toBe(0);
       expect(log()).toEqual([BEGIN, "SELECT 'T1'", "COMMIT", "SELECT 'pool'"]);
+    }));
+});
+
+type XaAnswer = [errno: number, sqlState: string, message: string];
+// A statement that makes the server roll the work of a branch back, its error, and what MySQL then answers to XA END.
+const xaRollbacks: Record<string, { error: XaAnswer; end: XaAnswer }> = {
+  "SELECT 'DEADLOCK'": {
+    error: [1213, "40001", "Deadlock found when trying to get lock; try restarting transaction"],
+    end: [1614, "XA102", "XA_RBDEADLOCK: Transaction branch was rolled back: deadlock was detected"],
+  },
+  // With innodb_rollback_on_timeout. Without it the server rolls back the statement only.
+  "SELECT 'LOCK WAIT TIMEOUT'": {
+    error: [1205, "HY000", "Lock wait timeout exceeded; try restarting transaction"],
+    end: [1613, "XA106", "XA_RBTIMEOUT: Transaction branch was rolled back: took too long"],
+  },
+  "SELECT 'LOCK TABLE FULL'": {
+    error: [1206, "HY000", "The total number of locks exceeds the lock table size"],
+    end: [1402, "XA100", "XA_RBROLLBACK: Transaction branch was rolled back"],
+  },
+};
+
+/**
+ * The XA branch of each connection, as MySQL 8.4 ("mysql") and MariaDB 11.8 ("mariadb") answer for it. An OK says
+ * whether the session is in a transaction as those servers do: not any more once the server rolled the work back.
+ */
+function xaBranches(kind: "mysql" | "mariadb", faults: { end?: XaAnswer; rollback?: XaAnswer } = {}) {
+  type Branch = {
+    state: "NON-EXISTING" | "ACTIVE" | "IDLE" | "PREPARED" | "ROLLBACK ONLY";
+    // MySQL keeps the branch ACTIVE after it rolled the work back. XA END gets this answer then.
+    rolledBack?: XaAnswer;
+    // MySQL detaches a prepared branch from the session. XA ROLLBACK still finds it by name.
+    detached: boolean;
+  };
+  const branches: Branch[] = [];
+  const rmfail = ({ state }: Branch): XaAnswer => [
+    1399,
+    "XAE07",
+    `XAER_RMFAIL: The command cannot be executed when global transaction is in the  ${state} state`,
+  ];
+  /** Applies one statement to the branch. Returns the error of a statement that the server refuses. */
+  function apply(branch: Branch, sql: string): XaAnswer | undefined {
+    if (sql.startsWith("XA START")) {
+      if (branch.state !== "NON-EXISTING") return rmfail(branch);
+      branch.state = "ACTIVE";
+    } else if (sql in xaRollbacks) {
+      if (kind === "mariadb") branch.state = "ROLLBACK ONLY";
+      else branch.rolledBack = xaRollbacks[sql].end;
+      return xaRollbacks[sql].error;
+    } else if (sql.startsWith("XA END")) {
+      if (faults.end) return faults.end;
+      if (branch.rolledBack) {
+        branch.state = "ROLLBACK ONLY";
+        return branch.rolledBack;
+      }
+      if (branch.state !== "ACTIVE") return rmfail(branch);
+      branch.state = "IDLE";
+    } else if (sql.startsWith("XA PREPARE")) {
+      if (branch.state !== "IDLE") return rmfail(branch);
+      branch.state = kind === "mysql" ? "NON-EXISTING" : "PREPARED";
+      branch.detached = kind === "mysql";
+    } else if (sql.startsWith("XA ROLLBACK")) {
+      if (branch.state === "ACTIVE") return rmfail(branch);
+      if (branch.state === "NON-EXISTING" && !branch.detached) return [1397, "XAE04", "XAER_NOTA: Unknown XID"];
+      if (faults.rollback) return faults.rollback;
+      branch.state = "NON-EXISTING";
+      branch.rolledBack = undefined;
+      branch.detached = false;
+    }
+  }
+  const reply: Reply = (conn, sql) => {
+    const branch = (branches[conn] ??= { state: "NON-EXISTING", detached: false });
+    const refused = apply(branch, sql);
+    if (refused) return mysqlErrPacket(1, ...refused);
+    const inTransaction = !branch.rolledBack && ["ACTIVE", "IDLE", "PREPARED"].includes(branch.state);
+    return mysqlOkPacket(1, 0x00, MYSQL_SERVER_STATUS_AUTOCOMMIT | (inTransaction ? MYSQL_SERVER_STATUS_IN_TRANS : 0));
+  };
+  return { reply, state: (conn: number) => branches[conn]?.state };
+}
+
+describe("mysql: the server refuses XA END", () => {
+  const mysql = adapters.find(entry => entry.adapter === "mysql")!;
+  const { closedCode } = mysql;
+  const failure = new Error("callback failed");
+  const answerOf = (err: any) => ({ errno: err?.errno, sqlState: err?.sqlState, cause: err?.cause });
+  const on = (conn: number, ...statements: string[]) => statements.map(sql => ({ conn, sql }));
+
+  type Xa = Server & { closed(): number; state(conn: number): string | undefined };
+  function scenario<T>(
+    kind: "mysql" | "mariadb",
+    faults: Parameters<typeof xaBranches>[1],
+    run: (xa: Xa) => Promise<T>,
+  ) {
+    const branches = xaBranches(kind, faults);
+    return withServer(
+      mysql,
+      async server => {
+        let closed = 0;
+        const sql = new SQL({ ...server.options, onclose: () => void closed++ });
+        try {
+          return await run({ ...server, sql, closed: () => closed, state: branches.state });
+        } finally {
+          await sql.close({ timeout: 0 }).catch(() => {});
+        }
+      },
+      branches.reply,
+    );
+  }
+
+  const rolledBack = [
+    { server: "MariaDB: 1399 ROLLBACK ONLY", kind: "mariadb", by: "SELECT 'DEADLOCK'", end: [1399, "XAE07"] },
+    { server: "MySQL: 1614 XA_RBDEADLOCK", kind: "mysql", by: "SELECT 'DEADLOCK'", end: [1614, "XA102"] },
+    { server: "MySQL: 1613 XA_RBTIMEOUT", kind: "mysql", by: "SELECT 'LOCK WAIT TIMEOUT'", end: [1613, "XA106"] },
+    { server: "MySQL: 1402 XA_RBROLLBACK", kind: "mysql", by: "SELECT 'LOCK TABLE FULL'", end: [1402, "XA100"] },
+  ] as const;
+  const rolledBackLog = ["XA START 'x'", "SELECT 'DEADLOCK'", "XA END 'x'", "XA ROLLBACK 'x'"];
+  const deadlockThen = (settle: (tx: any) => unknown) => async (tx: any) => {
+    await errorOf(tx.unsafe("SELECT 'DEADLOCK'"));
+    return settle(tx);
+  };
+  const fail = () => {
+    throw failure;
+  };
+
+  describe.each(rolledBack)("the server rolled the branch back ($server)", ({ kind, by, end: [errno, sqlState] }) => {
+    // The OK of one more statement says "not in a transaction", and only that tells the pool to close the connection.
+    test.each([
+      { callback: "throws", throws: true, then: [] },
+      { callback: "returns", throws: false, then: [] },
+      { callback: "runs one more statement and throws", throws: true, then: ["SELECT 'after'"] },
+      { callback: "runs one more statement and returns", throws: false, then: ["SELECT 'after'"] },
+    ])("the callback $callback: XA ROLLBACK follows, and the next caller gets the connection", ({ throws, then }) =>
+      scenario(kind, {}, async ({ sql, received, closed, state }) => {
+        const begin = await errorOf(
+          sql.beginDistributed("x", async tx => {
+            await errorOf(tx.unsafe(by));
+            for (const text of then) await tx.unsafe(text);
+            if (throws) throw failure;
+          }),
+        );
+        await sql.unsafe("SELECT 'next'");
+        if (throws) expect(begin).toBe(failure);
+        else expect(answerOf(begin)).toEqual({ errno, sqlState, cause: undefined });
+        expect({ received, state: state(0), closed: closed() }).toEqual({
+          received: on(0, "XA START 'x'", by, ...then, "XA END 'x'", "XA ROLLBACK 'x'", "SELECT 'next'"),
+          state: "NON-EXISTING",
+          closed: 0,
+        });
+      }),
+    );
+  });
+
+  // The answer to XA END and the goodbye of the server in one read: there is no connection for XA ROLLBACK.
+  describe.each(rolledBack)("the server leaves behind its answer to XA END ($server)", ({ kind, by, end }) => {
+    test.each([
+      { callback: "throws", throws: true },
+      { callback: "returns", throws: false },
+    ])("the callback $callback: begin() rejects with that answer, and nothing follows", ({ throws }) =>
+      scenario(kind, {}, async ({ sql, leaveAfter, log, closed }) => {
+        leaveAfter("XA END 'x'");
+        const begin = await errorOf(
+          sql.beginDistributed("x", async tx => {
+            await errorOf(tx.unsafe(by));
+            if (throws) throw failure;
+          }),
+        );
+        expect({ ...answerOf(begin), log: log(), closed: closed() }).toEqual({
+          errno: end[0],
+          sqlState: end[1],
+          cause: throws ? failure : undefined,
+          log: ["XA START 'x'", by, "XA END 'x'"],
+          closed: 1,
+        });
+      }),
+    );
+  });
+
+  test("sql.distributed() is the same call", () =>
+    scenario("mysql", {}, async ({ sql, log }) => {
+      expect(await errorOf(sql.distributed("x", deadlockThen(fail)))).toBe(failure);
+      expect(log()).toEqual(rolledBackLog);
+    }));
+
+  test("reserved.beginDistributed(): the next transaction of the reservation and its holder get the connection", () =>
+    scenario("mysql", {}, async ({ sql, received, closed }) => {
+      const reserved = await sql.reserve();
+      const begin = errorOf(reserved.beginDistributed("x", deadlockThen(fail)));
+      const queued = reserved.begin(tx => tx.unsafe("SELECT 'queued'"));
+      expect(await begin).toBe(failure);
+      await queued;
+      await reserved.unsafe("SELECT 'holder'");
+      reserved.release();
+      expect({ received, closed: closed() }).toEqual({
+        received: on(0, ...rolledBackLog, "START TRANSACTION", "SELECT 'queued'", "COMMIT", "SELECT 'holder'"),
+        closed: 0,
+      });
+    }));
+
+  test.each([
+    { close: "is awaited", awaited: true },
+    { close: "nobody awaits", awaited: false },
+  ])("tx.close() that $close resolves: the transaction is rolled back", ({ awaited }) =>
+    scenario("mariadb", {}, async ({ sql, received, closed }) => {
+      let close!: Promise<string>;
+      const begin = await errorOf(
+        sql.beginDistributed(
+          "x",
+          deadlockThen(async tx => {
+            close = outcome(tx.close());
+            if (awaited) await close;
+            throw failure;
+          }),
+        ),
+      );
+      await sql.unsafe("SELECT 'next'");
+      expect(begin).toBe(failure);
+      expect({ close: await close, received, closed: closed() }).toEqual({
+        close: "resolved",
+        received: on(0, ...rolledBackLog, "SELECT 'next'"),
+        closed: 0,
+      });
+    }),
+  );
+
+  // XA ROLLBACK works by name, also on a prepared branch that another session owns. So it follows only an answer
+  // that proves a ROLLBACK ONLY branch of this session.
+  test.each<{ branch: string; kind: "mysql" | "mariadb"; by: string[]; end?: XaAnswer }>([
+    { branch: "IDLE: the callback sent XA END", kind: "mysql", by: ["XA END 'x'"] },
+    { branch: "gone: the callback rolled it back", kind: "mysql", by: ["XA END 'x'", "XA ROLLBACK 'x'"] },
+    { branch: "prepared by the callback and detached (MySQL)", kind: "mysql", by: ["XA END 'x'", "XA PREPARE 'x'"] },
+    { branch: "prepared by the callback (MariaDB)", kind: "mariadb", by: ["XA END 'x'", "XA PREPARE 'x'"] },
+    { branch: "not known to the server (1397)", kind: "mysql", by: [], end: [1397, "XAE04", "XAER_NOTA: Unknown XID"] },
+  ])("no XA ROLLBACK follows when the branch is $branch", ({ kind, by, end }) =>
+    scenario(kind, { end }, async ({ sql, log }) => {
+      const begin = await errorOf(
+        sql.beginDistributed("x", async tx => {
+          for (const text of by) await tx.unsafe(text);
+          throw failure;
+        }),
+      );
+      expect(answerOf(begin)).toEqual({ errno: end?.[0] ?? 1399, sqlState: end?.[1] ?? "XAE07", cause: failure });
+      expect(log()).toEqual(["XA START 'x'", ...by, "XA END 'x'"]);
+    }),
+  );
+
+  describe.each<{ refusal: string; rollback: XaAnswer }>([
+    { refusal: "1205", rollback: [1205, "HY000", "Lock wait timeout exceeded; try restarting transaction"] },
+    { refusal: "1400", rollback: [1400, "XAE09", "XAER_OUTSIDE: Some work is done outside global transaction"] },
+  ])("the server refuses that XA ROLLBACK too ($refusal)", ({ rollback }) => {
+    test.each([
+      { callback: "throws", throws: true, then: [] },
+      { callback: "returns", throws: false, then: [] },
+      // After the OK of one more statement the pool would keep the connection: only end() closes it.
+      { callback: "runs one more statement and throws", throws: true, then: ["SELECT 'after'"] },
+      { callback: "runs one more statement and returns", throws: false, then: ["SELECT 'after'"] },
+    ])("the callback $callback: the connection is closed, and begin() rejects with that refusal", ({ throws, then }) =>
+      scenario("mariadb", { rollback }, async ({ sql, received, closed }) => {
+        let next!: Promise<unknown>;
+        const begin = await errorOf(
+          sql.beginDistributed("x", async tx => {
+            await errorOf(tx.unsafe("SELECT 'DEADLOCK'"));
+            for (const text of then) await tx.unsafe(text);
+            // It waits for the one connection of the pool.
+            next = sql.unsafe("SELECT 'next'").execute();
+            if (throws) throw failure;
+          }),
+        );
+        await next;
+        expect({ ...answerOf(begin), received, closed: closed() }).toEqual({
+          errno: rollback[0],
+          sqlState: rollback[1],
+          // When the callback returned, the answer to XA END says why a rollback was sent.
+          cause: throws ? failure : expect.objectContaining({ errno: 1399, sqlState: "XAE07" }),
+          received: [
+            ...on(0, "XA START 'x'", "SELECT 'DEADLOCK'", ...then, "XA END 'x'", "XA ROLLBACK 'x'"),
+            ...on(1, "SELECT 'next'"),
+          ],
+          closed: 1,
+        });
+      }),
+    );
+
+    test("reserved.beginDistributed(): the holder gets the error of a closed connection, not the branch", () =>
+      scenario("mariadb", { rollback }, async ({ sql, received }) => {
+        const reserved = await sql.reserve();
+        const begin = await errorOf(reserved.beginDistributed("x", deadlockThen(fail)));
+        const holder = await outcome(reserved.unsafe("SELECT 'holder'"));
+        expect({ ...answerOf(begin), holder, received }).toEqual({
+          errno: rollback[0],
+          sqlState: rollback[1],
+          cause: failure,
+          holder: closedCode,
+          received: on(0, ...rolledBackLog),
+        });
+      }));
+
+    test("tx.close() rejects with that refusal, and begin() with the error of a closed connection", () =>
+      scenario("mariadb", { rollback }, async ({ sql, log }) => {
+        let close!: Promise<any>;
+        const begin = await errorOf(
+          sql.beginDistributed(
+            "x",
+            deadlockThen(async tx => {
+              close = errorOf(tx.close());
+              await close;
+              throw failure;
+            }),
+          ),
+        );
+        expect({ close: (await close).errno, begin: begin.code, log: log() }).toEqual({
+          close: rollback[0],
+          begin: closedCode,
+          log: rolledBackLog,
+        });
+      }));
+  });
+
+  test("a connection that drops at that XA ROLLBACK rejects begin() with the loss, and the error of the callback as cause", () =>
+    scenario("mariadb", {}, async ({ sql, drop, log }) => {
+      drop("XA ROLLBACK 'x'");
+      const { code, cause } = await errorOf(sql.beginDistributed("x", deadlockThen(fail)));
+      expect({ code, cause, log: log() }).toEqual({ code: closedCode, cause: failure, log: rolledBackLog });
     }));
 });
 

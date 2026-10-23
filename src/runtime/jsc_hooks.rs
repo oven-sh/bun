@@ -754,7 +754,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // `init_runtime_state` returns `Err` on `Transpiler::init`
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
     // failed to build its transpiler never reaches `load_preloads` (this hook
-    // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
+    // only runs via `reload_entry_point*` and `bun repl`, which operate on an already-`Ok` VM).
     let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir();
     // SAFETY: per fn contract.
     let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {

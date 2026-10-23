@@ -467,22 +467,6 @@ impl WStr {
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
-    /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if
-    /// `p` is null. UTF-16 mirror of [`ZStr::from_c_ptr`]; single audited
-    /// funnel for the `wcslen`-then-`from_raw` shape at Windows path-API
-    /// ingestion points.
-    ///
-    /// # Safety
-    /// If non-null, `p` must point to a NUL-terminated u16 sequence readable
-    /// for `'a`. Null is explicitly allowed (→ `WStr::EMPTY`).
-    #[inline]
-    pub unsafe fn from_ptr<'a>(p: *const u16) -> &'a WStr {
-        if p.is_null() {
-            return Self::EMPTY;
-        }
-        // SAFETY: non-null and NUL-terminated per caller contract.
-        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
-    }
     #[inline]
     pub const fn as_slice(&self) -> &[u16] {
         &self.0

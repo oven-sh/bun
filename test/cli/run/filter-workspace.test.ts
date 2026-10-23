@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   isLinux,
+  isRoot,
   isWindows,
   makeTreeSync,
   MAX_PATH_BYTES,
@@ -12,7 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -1670,5 +1671,215 @@ describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buff
     const { stdout, exitCode } = await runFilter(cwd);
     expect(stdout).toContain("ok present: ok-ran");
     expect(exitCode).toBe(0);
+  });
+});
+
+// `bun run --filter` and `--workspaces` take the first package.json with "workspaces" above the
+// current directory as the workspace root, and run the script in every package that it lists.
+// In a directory with the mode of /tmp any local user can put one above somebody else's project.
+// The walk is the one `bun install` uses, which passes over a package.json in such a directory.
+describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared directory above the cwd", () => {
+  const pkg = (name: string) => JSON.stringify({ name, scripts: { hello: `echo ran:${name}` } });
+
+  // `shared/package.json` lists every directory next to it. `root`, the package.json above it,
+  // lists `shared/proj` alone, and keeps the walk inside the fixture.
+  function fixture({
+    mode = 0o1777,
+    root = true,
+    planted = JSON.stringify({ name: "planted", workspaces: ["*"] }),
+    files = {} as Record<string, string>,
+  } = {}) {
+    const dir = tempDir("filter-sticky-root", {
+      ...(root ? { "package.json": JSON.stringify({ name: "root", workspaces: ["shared/proj"] }) } : {}),
+      "shared/package.json": planted,
+      "shared/evil/package.json": pkg("evil"),
+      "shared/proj/package.json": pkg("proj"),
+      "shared/sub/.keep": "",
+      ...files,
+    });
+    chmodSync(join(String(dir), "shared"), mode);
+    return dir;
+  }
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(),
+      warnings: stderr.split("\n").filter(line => line.startsWith("warn:")),
+      stdout,
+      stderr,
+      exitCode,
+    };
+  }
+
+  const proj = (root: string) => join(root, "shared", "proj");
+  const ignored = (root: string) =>
+    `warn: ignoring package.json in ${join(root, "shared")}: directory is writable by other users`;
+
+  test.each([
+    ["run --filter * hello"],
+    ["--filter * hello"],
+    ["run -F * hello"],
+    ["run --workspaces hello"],
+    ["--workspaces hello"],
+    ["run --parallel --filter * hello"],
+    ["run --sequential --workspaces hello"],
+  ])("bun %s does not run the packages that it lists", async command => {
+    using dir = fixture();
+    const root = String(dir);
+
+    expect(await run(proj(root), command.split(" "))).toMatchObject({
+      ran: ["proj"],
+      warnings: [ignored(root)],
+      exitCode: 0,
+    });
+  });
+
+  test("bun --cwd=<dir> run --filter does not run the packages that it lists", async () => {
+    using dir = fixture();
+    const root = String(dir);
+
+    expect(await run(root, [`--cwd=${proj(root)}`, "run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["proj"],
+      warnings: [ignored(root)],
+      exitCode: 0,
+    });
+  });
+
+  test("writable by the group: is not the workspace root", async () => {
+    using dir = fixture({ mode: 0o1770 });
+    const root = String(dir);
+
+    expect(await run(proj(root), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["proj"],
+      warnings: [ignored(root)],
+      exitCode: 0,
+    });
+  });
+
+  // Nothing in the fixture stops this walk, so it goes on through the directories above the
+  // fixture, and the first warning is the one to look at.
+  test("with no workspace root above it, the packages in and below the cwd are the candidates", async () => {
+    using dir = fixture({ root: false, files: { "shared/proj/nested/package.json": pkg("nested") } });
+    const root = String(dir);
+
+    const all = await run(proj(root), ["run", "--filter", "*", "hello"]);
+    expect(all).toMatchObject({ ran: ["nested", "proj"], exitCode: 0 });
+    expect(all.warnings[0]).toBe(ignored(root));
+
+    const workspaces = await run(proj(root), ["run", "--workspaces", "hello"]);
+    expect(workspaces).toMatchObject({ ran: ["nested"], exitCode: 0 });
+    expect(workspaces.warnings[0]).toBe(ignored(root));
+
+    // `evil` is a package of the root that was passed over.
+    const sibling = await run(proj(root), ["run", "--filter", "evil", "hello"]);
+    expect(sibling.stderr).toEndWith('error: No workspace packages matched the filter "evil"\n');
+    expect(sibling).toMatchObject({ ran: [], exitCode: 1 });
+    expect(sibling.warnings[0]).toBe(ignored(root));
+  });
+
+  test("is not the workspace root of a directory without a package.json", async () => {
+    using dir = fixture();
+    const root = String(dir);
+
+    expect(await run(join(root, "shared", "sub"), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["proj"],
+      warnings: [ignored(root)],
+      exitCode: 0,
+    });
+  });
+
+  test("one that is not JSON does not fail the command", async () => {
+    using dir = fixture({ planted: "{{{" });
+    const root = String(dir);
+
+    expect(await run(proj(root), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["proj"],
+      stderr: `${ignored(root)}\n`,
+      exitCode: 0,
+    });
+  });
+
+  // root opens the file whatever its mode is
+  test.skipIf(isRoot)("is passed over as well when it cannot be opened", async () => {
+    using dir = fixture();
+    const root = String(dir);
+    chmodSync(join(root, "shared", "package.json"), 0);
+
+    expect(await run(proj(root), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["proj"],
+      warnings: [ignored(root)],
+      exitCode: 0,
+    });
+  });
+
+  test("bun install passes over it with the same warning", async () => {
+    using dir = fixture();
+    const root = String(dir);
+
+    const installed = await run(proj(root), ["install"]);
+    const ran = await run(proj(root), ["run", "--workspaces", "hello"]);
+
+    expect(installed.warnings).toEqual([ignored(root)]);
+    expect(ran.warnings).toEqual(installed.warnings);
+    expect(installed.exitCode).toBe(0);
+  });
+
+  test("is the workspace root when the command runs in that directory", async () => {
+    using dir = fixture();
+    const root = String(dir);
+
+    expect(await run(join(root, "shared"), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["evil", "proj"],
+      warnings: [],
+      exitCode: 0,
+    });
+  });
+
+  // A script that runs bun again starts in its package, below the shared directory.
+  test("is not the workspace root for a script that runs bun in a package", async () => {
+    using dir = fixture({
+      files: {
+        "shared/proj/package.json": JSON.stringify({
+          name: "proj",
+          scripts: { outer: `${bunExe()} run --filter evil hello` },
+        }),
+      },
+    });
+    const root = String(dir);
+
+    expect(await run(join(root, "shared"), ["run", "--filter", "proj", "outer"])).toMatchObject({
+      stdout:
+        `proj outer: ${ignored(root)}\n` +
+        `proj outer: error: No workspace packages matched the filter "evil"\n` +
+        `proj outer: Exited with code 1\n`,
+      exitCode: 1,
+    });
+  });
+
+  test.each([
+    ["sticky, writable by its owner only", 0o1755],
+    ["writable by everyone, not sticky", 0o777],
+  ])("%s: is still the workspace root", async (_, mode) => {
+    using dir = fixture({ mode });
+    const root = String(dir);
+
+    expect(await run(proj(root), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: ["evil", "proj"],
+      warnings: [],
+      exitCode: 0,
+    });
+  });
+
+  test("one that is not JSON in a directory that is not shared still fails the command", async () => {
+    using dir = fixture({ mode: 0o755, planted: "{{{" });
+    const root = String(dir);
+
+    expect(await run(proj(root), ["run", "--filter", "*", "hello"])).toMatchObject({
+      ran: [],
+      stderr: "error: ParserError\n",
+      exitCode: 1,
+    });
   });
 });

@@ -2034,7 +2034,7 @@ impl<'a> PackageJsonWalk<'a> {
             );
             if !matches!(&opened, Err(e) if e.get_errno() == bun_sys::E::ENOENT)
                 && dir.len() != self.cwd.len()
-                && is_shared_directory(dir)
+                && self.is_in_shared_directory()
             {
                 bun_core::warn!(
                     "ignoring package.json in <b>{}<r>: directory is writable by other users",
@@ -2045,6 +2045,23 @@ impl<'a> PackageJsonWalk<'a> {
             return Some((dir, opened));
         }
     }
+
+    /// [`is_shared_directory`] for the directory of `path`, read from `path` itself.
+    fn is_in_shared_directory(&mut self) -> bool {
+        let dir_len = self.path.len() - b"/package.json".len();
+        self.path[dir_len] = 0;
+        let is_shared = is_shared_directory(ZStr::from_buf(&self.path, dir_len));
+        self.path[dir_len] = b'/';
+        is_shared
+    }
+}
+
+/// [`PackageJsonWalk`] for `bun run --filter`, which has no `PackageManager`.
+pub fn package_json_walk<'a>(
+    cwd: &'a [u8],
+) -> impl Iterator<Item = (&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
+    let mut walk = PackageJsonWalk::new(cwd);
+    core::iter::from_fn(move || walk.next(bun_sys::O::RDONLY))
 }
 
 /// Continues `walk` above `child_cwd` to find the workspace root that `child_cwd` belongs to. Only
@@ -2252,16 +2269,16 @@ fn find_workspace_root_above<'a>(
 /// Returns true if `dir` is sticky and group- or world-writable, like `/tmp`. Any local user can
 /// create a `package.json` there.
 #[cfg(unix)]
-fn is_shared_directory(dir: &[u8]) -> bool {
+fn is_shared_directory(dir: &ZStr) -> bool {
     use bun_sys::S;
-    !bun_sys::stat(&ZBox::from_bytes(dir)).is_ok_and(|st| {
+    !bun_sys::stat(dir).is_ok_and(|st| {
         let mode = st.st_mode as bun_sys::Mode;
         mode & S::ISVTX == 0 || mode & (S::IWGRP | S::IWOTH) == 0
     })
 }
 
 #[cfg(not(unix))]
-fn is_shared_directory(_: &[u8]) -> bool {
+fn is_shared_directory(_: &ZStr) -> bool {
     false
 }
 

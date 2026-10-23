@@ -1,5 +1,5 @@
-//! `yaml-unist-parser` 3.2: the tree that Prettier prints, from what Bun's parser reads: the documents say what is in
-//! what, the tokens where it is written.
+//! A port of `yaml-unist-parser` 3.2. Builds the tree that Prettier prints from the output of Bun's parser: the
+//! documents give the nesting, and the tokens give the source positions.
 
 use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
@@ -106,12 +106,12 @@ pub(crate) enum Chomping {
     Strip,
 }
 
-/// Which of `Tree::nodes`: its index plus one, so that `Option<Id>` is no larger.
+/// An index into `Tree::nodes`, stored plus one so that `Option<Id>` is no larger than `Id`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Id(std::num::NonZeroU32);
 
 impl Id {
-    fn of_index(index: usize) -> Id {
+    fn from_index(index: usize) -> Id {
         Id(std::num::NonZeroU32::MIN.saturating_add(index as u32))
     }
 
@@ -120,7 +120,7 @@ impl Id {
     }
 }
 
-/// Nodes that follow each other by their `next`. Each node is in one list at most.
+/// A linked list of nodes, chained through `next`. A node is in at most one list.
 #[derive(Debug, Copy, Clone, Default)]
 pub(crate) struct List {
     first: Option<Id>,
@@ -151,7 +151,7 @@ pub(crate) struct Node<'a> {
     pub(crate) kind: Kind,
     pub(crate) position: Position,
     pub(crate) parent: Option<Id>,
-    /// What follows in the list that it is in.
+    /// The next node in the list that contains this one.
     pub(crate) next: Option<Id>,
     pub(crate) children: List,
     pub(crate) leading_comments: List,
@@ -161,14 +161,14 @@ pub(crate) struct Node<'a> {
     pub(crate) indicator_comment: Option<Id>,
     pub(crate) tag: Option<Id>,
     pub(crate) anchor: Option<Id>,
-    /// Of a comment, an alias and an anchor. Of a directive: all of it.
+    /// The text of a comment, alias or anchor. For a directive, all of it.
     pub(crate) value: &'a [u8],
-    /// Of a tag: it is `tag:yaml.org,2002:set`.
+    /// For a tag: true if it's `tag:yaml.org,2002:set`.
     pub(crate) is_set_tag: bool,
-    /// Of a block scalar.
+    /// For a block scalar.
     pub(crate) chomping: Chomping,
     pub(crate) indent: Option<u32>,
-    /// Of a document.
+    /// For a document.
     pub(crate) directives_end_marker: bool,
     pub(crate) document_end_marker: bool,
 }
@@ -183,7 +183,7 @@ fn items<'t>(nodes: &'t [Node<'_>], list: List) -> impl Iterator<Item = Id> + 't
     std::iter::successors(list.first, |&id| nodes[id.index()].next)
 }
 
-/// Which list of a node.
+/// Selects one of a node's lists.
 #[derive(Copy, Clone)]
 enum Which {
     Children,
@@ -192,7 +192,7 @@ enum Which {
     EndComments,
 }
 
-/// Adds `item` to a list of `owner`, which is its parent from now on.
+/// Appends `item` to one of `owner`'s lists and makes `owner` its parent.
 fn append(nodes: &mut [Node<'_>], owner: Id, which: Which, item: Id) {
     let node = &mut nodes[owner.index()];
     let list = match which {
@@ -230,24 +230,26 @@ type Props = smallvec::SmallVec<[SourceToken; 4]>;
 struct Context<'c, 'a> {
     text: &'a [u8],
     tokens: &'c [SourceToken],
-    /// How many of `tokens` have been looked at.
+    /// Number of `tokens` consumed so far.
     at: usize,
-    /// The `%TAG` directives of the document: handles and prefixes. The last with a handle counts.
+    /// The document's `%TAG` directives as (handle, prefix). The last one for a handle wins.
     tags: smallvec::SmallVec<[(&'a [u8], &'a [u8]); 2]>,
     is_ascii: bool,
-    /// Where the lines start.
+    /// The offset of each line's start.
     line_starts: Vec<u32>,
-    /// The line that has been asked for last: its number, where it starts, and where the next one does.
+    /// The last line that was looked up: its number, its start and the next line's start.
     last_line: std::cell::Cell<(u32, u32, u32)>,
-    /// A place in that line, and how many UTF-16 code units are before it in the line. The next place that is asked for is
-    /// near it as a rule, and a line can be as long as the text.
-    last_place: std::cell::Cell<(u32, u32)>,
+    /// An offset in that line, and the number of UTF-16 code units before it in the line. The next lookup is usually
+    /// nearby, and a line can be as long as the whole text.
+    last_offset: std::cell::Cell<(u32, u32)>,
     nodes: Vec<Node<'a>>,
     comments: Vec<Id>,
-    /// The nodes whose parents are not made yet.
+    /// Nodes whose parents haven't been created yet.
     pending: Vec<Id>,
-    /// There is a tag or an anchor.
+    /// True if there's a tag or an anchor.
     has_properties: bool,
+    /// Message and position of an `Unexpected` error, if it has them.
+    recorded_error: Option<SyntaxError>,
     stack: &'c Stack,
 }
 
@@ -268,7 +270,7 @@ fn is_empty_node(node: &Expr, props: &[SourceToken]) -> bool {
 impl<'a> Context<'_, 'a> {
     /// `transformOffset`
     fn point(&self, offset: u32) -> Point {
-        // Most of the time it is the same line as the last time, or the next one.
+        // It's usually the same line as last time, or the next one.
         let (mut line, mut start, mut next) = self.last_line.get();
         if offset < start || offset >= next {
             let start_of = |line: u32| {
@@ -284,7 +286,7 @@ impl<'a> Context<'_, 'a> {
             .max(1);
             (start, next) = (start_of(line), start_of(line + 1));
             self.last_line.set((line, start, next));
-            self.last_place.set((start, 0));
+            self.last_offset.set((start, 0));
         }
         // Columns count UTF-16 code units.
         let column = match self.is_ascii {
@@ -302,16 +304,16 @@ impl<'a> Context<'_, 'a> {
                     };
                     count as u32
                 };
-                // Near the start of the line nothing is gained by remembering.
+                // Caching doesn't pay off near the start of the line.
                 if offset.saturating_sub(start) <= 64 {
                     units(start, offset)
                 } else {
-                    let (place, before_place) = self.last_place.get();
-                    let column = match offset >= place {
-                        true => before_place + units(place, offset),
-                        false => before_place.saturating_sub(units(offset, place)),
+                    let (cached_offset, cached_units) = self.last_offset.get();
+                    let column = match offset >= cached_offset {
+                        true => cached_units + units(cached_offset, offset),
+                        false => cached_units.saturating_sub(units(offset, cached_offset)),
                     };
-                    self.last_place.set((offset, column));
+                    self.last_offset.set((offset, column));
                     column
                 }
             }
@@ -323,7 +325,7 @@ impl<'a> Context<'_, 'a> {
         }
     }
 
-    /// `transformOffset`, next to a point that is known.
+    /// `transformOffset`, reusing `known` if it's at the same offset.
     fn point_near(&self, offset: u32, known: Point) -> Point {
         if known.offset == offset {
             known
@@ -341,7 +343,7 @@ impl<'a> Context<'_, 'a> {
     }
 
     fn new_node(&mut self, kind: Kind, position: Position) -> Id {
-        let id = Id::of_index(self.nodes.len());
+        let id = Id::from_index(self.nodes.len());
         self.nodes.push(Node {
             kind,
             position,
@@ -385,7 +387,7 @@ impl<'a> Context<'_, 'a> {
         self.pending.truncate(from);
     }
 
-    /// `related` belongs to `owner`.
+    /// Makes `owner` the parent of `related`.
     fn own(&mut self, owner: Id, related: Id) -> Option<Id> {
         self.node(related).parent = Some(owner);
         Some(related)
@@ -405,7 +407,7 @@ impl<'a> Context<'_, 'a> {
         self.tokens.get(self.at).copied()
     }
 
-    /// The next token, if it is of `kind`.
+    /// Consumes the next token if it's of `kind`.
     fn take(&mut self, kind: TokenKind) -> Option<SourceToken> {
         let token = self.peek().filter(|token| token.kind == kind)?;
         self.at += 1;
@@ -416,7 +418,7 @@ impl<'a> Context<'_, 'a> {
         self.take(kind).ok_or(Unexpected)
     }
 
-    /// Adds the comments, tags and anchors that follow to `props`.
+    /// Moves the comments, tags and anchors that follow into `props`.
     fn take_props(&mut self, props: &mut Props) {
         while let Some(token) = self.peek().filter(|&token| is_content_property(token)) {
             props.push(token);
@@ -424,10 +426,10 @@ impl<'a> Context<'_, 'a> {
         }
     }
 
-    /// Adds the properties of `node` to `props`, which is written behind `indicator`, in a block collection. Of a node that
-    /// is not written otherwise, they are on the line of the indicator, or further to the right than `entry`, where
-    /// what the indicator belongs to starts: anything else belongs to what follows.
-    fn take_props_behind(
+    /// Moves the properties of `node`, which comes after `indicator` in a block collection, into `props`. If the node
+    /// has no content of its own, its properties must be on the indicator's line or indented further than `entry`,
+    /// the start of the item that the indicator belongs to. Anything else belongs to the next item.
+    fn take_props_after(
         &mut self,
         indicator: SourceToken,
         entry: u32,
@@ -439,9 +441,9 @@ impl<'a> Context<'_, 'a> {
         }
         while let Some(token) = self.peek().filter(|&token| is_content_property(token)) {
             if token.kind != TokenKind::Comment {
-                let place = self.point(token.start);
-                if place.line != self.point(indicator.start).line
-                    && place.column <= self.point(entry).column
+                let token_point = self.point(token.start);
+                if token_point.line != self.point(indicator.start).line
+                    && token_point.column <= self.point(entry).column
                 {
                     break;
                 }
@@ -466,7 +468,7 @@ impl<'a> Context<'_, 'a> {
         }
     }
 
-    /// Whether the tag that is written `source` is `tag:yaml.org,2002:set`.
+    /// True if the tag written as `source` resolves to `tag:yaml.org,2002:set`.
     fn is_set_tag(&self, source: &[u8]) -> bool {
         const SET: &[u8] = b"tag:yaml.org,2002:set";
         if let Some(verbatim) = source.strip_prefix(b"!<") {
@@ -516,8 +518,8 @@ impl<'a> Context<'_, 'a> {
         }
     }
 
-    /// Whether what starts at the next token is `mapping` in braces, and not a mapping without, whose first key is in
-    /// brackets or braces: that starts where its key does.
+    /// True if the next token opens `mapping` itself, written in braces. It could also open the first key of a block
+    /// mapping, if that key is in brackets or braces. A block mapping starts where its first key does.
     fn is_in_braces(&self, node: &Expr, mapping: &E::Object) -> bool {
         let first_key = mapping.properties.first().and_then(|it| it.key.as_ref());
         self.peek()
@@ -527,7 +529,7 @@ impl<'a> Context<'_, 'a> {
             })
     }
 
-    /// `transformNode`. `node` is written at the next token, behind `props`.
+    /// `transformNode`. `node` starts at the next token, after `props`.
     fn transform_node(&mut self, node: &Expr, props: Props) -> Result<Id> {
         if !self.stack.has_room() {
             return Err(Unexpected);
@@ -556,7 +558,7 @@ impl<'a> Context<'_, 'a> {
         }
     }
 
-    /// A node of which nothing is written but a tag or an anchor.
+    /// A node that consists only of a tag or an anchor.
     fn transform_empty_node(&mut self, props: &[SourceToken]) -> Result<Id> {
         let mut properties = props.iter().filter(|it| it.kind != TokenKind::Comment);
         let end = properties.next_back().ok_or(Unexpected)?.end;
@@ -572,7 +574,7 @@ impl<'a> Context<'_, 'a> {
             Some(b'>') => return self.transform_block_scalar(Kind::BlockFolded, token, props),
             Some(b'"') => (Kind::QuoteDouble, token.end),
             Some(b'\'') => (Kind::QuoteSingle, token.end),
-            // Which Bun's parser takes outside of brackets.
+            // Bun's parser accepts this outside of brackets.
             Some(b',') => return Err(Unexpected),
             _ => {
                 let source = self.text.get(token.start as usize..token.end as usize);
@@ -587,9 +589,9 @@ impl<'a> Context<'_, 'a> {
         Ok(id)
     }
 
-    /// Where `yaml` has the block scalar end whose lines start at `body`, and which something at `next` follows. Lines at
-    /// the end with nothing in them, and not indented further than the first, are only part of it with `+`.
-    fn end_of_block_scalar(&self, body: usize, next: usize, is_kept: bool) -> usize {
+    /// Returns where `yaml` ends the block scalar whose lines start at `body` and whose successor starts at `next`.
+    /// Trailing blank lines that aren't indented further than the first line are only part of it with `+`.
+    fn end_of_block_scalar(&self, body: usize, next: usize, has_keep_indicator: bool) -> usize {
         let text = self.text;
         let mut after_line_break = match next >= text.len() && !text.ends_with(b"\n") {
             true => text.len() + 1,
@@ -604,12 +606,12 @@ impl<'a> Context<'_, 'a> {
                 _ => break,
             }
         }
-        while !is_kept && after_line_break >= 2 {
+        while !has_keep_indicator && after_line_break >= 2 {
             let last = after_line_break - 2;
-            let blanks = (text.get(..=last).unwrap_or_default().iter().rev())
+            let trailing_spaces = (text.get(..=last).unwrap_or_default().iter().rev())
                 .take_while(|&&byte| byte == b' ')
                 .count();
-            match last.checked_sub(blanks) {
+            match last.checked_sub(trailing_spaces) {
                 Some(at) if at >= body && text[at] == b'\n' && at + 1 + indent > last => {
                     after_line_break = at + 1;
                 }
@@ -627,6 +629,17 @@ impl<'a> Context<'_, 'a> {
     ) -> Result<Id> {
         let rest = self.text.get(token.start as usize..).unwrap_or_default();
         let header = &rest[..strings::index_of_any(rest, b" \t\n").unwrap_or(rest.len())];
+        // Bun's parser reads `| 2` and `|2 -` as `|2` and `|2-`. In YAML only a comment can follow the whitespace.
+        let after_header = &rest[header.len()..];
+        let whitespace_len = after_header
+            .iter()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count();
+        if !matches!(after_header.get(whitespace_len), None | Some(b'\n' | b'#')) {
+            let at = token.start + (header.len() + whitespace_len) as u32;
+            self.recorded_error = Some(SyntaxError(Message::UnexpectedCharacter, at));
+            return Err(Unexpected);
+        }
         let indicator_comment = self
             .peek()
             .filter(|it| it.kind == TokenKind::Comment && it.start < token.end)
@@ -674,8 +687,8 @@ impl<'a> Context<'_, 'a> {
         Ok(id)
     }
 
-    /// The comments and commas before the end of a flow collection, and the end. `children`: where its items start in
-    /// `self.pending`.
+    /// Consumes the comments and commas before a flow collection's closing bracket, and the bracket. `children` is
+    /// the index in `self.pending` where its items start.
     fn finish_flow_collection(
         &mut self,
         kind: Kind,
@@ -745,7 +758,7 @@ impl<'a> Context<'_, 'a> {
         )
     }
 
-    /// A node of `kind` from the first to the last of `self.pending[children..]`, which are in it.
+    /// Creates a node of `kind` that spans `self.pending[children..]` and takes them as its children.
     fn finish_block_collection(
         &mut self,
         kind: Kind,
@@ -770,14 +783,14 @@ impl<'a> Context<'_, 'a> {
 
     fn transform_map(&mut self, mapping: &E::Object, mut props: Props) -> Result<Id> {
         let start = self.peek().ok_or(Unexpected)?.start;
-        // `getFirstKeyStartProps`: what is on the line of the first key belongs to that.
+        // `getFirstKeyStartProps`: properties on the first key's line belong to that key.
         let line_start = strings::last_index_of_char(&self.text[..start as usize], b'\n')
             .map_or(0, |at| at as u32 + 1);
         let own = props.iter().take_while(|it| it.start < line_start).count();
         let mut key_props: Props = props.drain(own..).collect();
         let children = self.pending.len();
         for property in mapping.properties.iter() {
-            if self.pending.len() > children && self.is_at_key_that_yaml_refuses() {
+            if self.pending.len() > children && self.is_at_key_yaml_rejects() {
                 return Err(Unexpected);
             }
             let key_props = std::mem::take(&mut key_props);
@@ -787,9 +800,9 @@ impl<'a> Context<'_, 'a> {
         self.finish_block_collection(Kind::Mapping, start, children, &props)
     }
 
-    /// `yaml` 2.9 cannot read a key in brackets or braces without a `?` if anything is written, be it blanks, between it
-    /// and the line that the value above it ends on. That value is in the last of `self.pending`.
-    fn is_at_key_that_yaml_refuses(&self) -> bool {
+    /// `yaml` 2.9 can't read a key in brackets or braces without a `?` if anything, even spaces, comes between it and
+    /// the line where the previous value ends. That value is in the last entry of `self.pending`.
+    fn is_at_key_yaml_rejects(&self) -> bool {
         let rest = self.tokens.get(self.at..).unwrap_or_default();
         let mut rest = rest.iter().filter(|it| it.kind != TokenKind::Comment);
         let Some(first) = rest.next() else {
@@ -823,7 +836,7 @@ impl<'a> Context<'_, 'a> {
             self.take_comments();
             let indicator = self.expect(TokenKind::SequenceEntry)?;
             let mut item_props = Props::new();
-            self.take_props_behind(indicator, indicator.start, item, &mut item_props);
+            self.take_props_after(indicator, indicator.start, item, &mut item_props);
             // `transformItemValue`
             let content = match is_empty_node(item, &item_props) {
                 true => {
@@ -848,7 +861,7 @@ impl<'a> Context<'_, 'a> {
         self.finish_block_collection(Kind::Sequence, start, children, props)
     }
 
-    /// `transformPair`. `kind`: of the item. `key_props`: what has been seen of the properties of the key.
+    /// `transformPair`. `kind` is the item's kind. `key_props` holds the key's properties that were already consumed.
     fn transform_pair(
         &mut self,
         pair: &G::Property,
@@ -862,7 +875,7 @@ impl<'a> Context<'_, 'a> {
         let mut explicit_key_ind = None;
         loop {
             match explicit_key_ind.filter(|_| !is_flow) {
-                Some(it) => self.take_props_behind(it, it.start, key, &mut key_props),
+                Some(it) => self.take_props_after(it, it.start, key, &mut key_props),
                 None => self.take_props(&mut key_props),
             }
             match self.peek().map(|token| token.kind) {
@@ -894,7 +907,7 @@ impl<'a> Context<'_, 'a> {
             false => Some(self.transform_node(key, key_props)?),
         };
         self.take_comments();
-        // Further to the left than its `?`, it is that of a mapping around.
+        // A `:` to the left of its `?` belongs to an enclosing mapping.
         let map_value_ind = self.peek().filter(|colon| {
             colon.kind == TokenKind::MappingValue
                 && (is_flow
@@ -908,7 +921,7 @@ impl<'a> Context<'_, 'a> {
             self.at += 1;
             match is_flow {
                 true => self.take_props(&mut value_props),
-                false => self.take_props_behind(colon, entry, value, &mut value_props),
+                false => self.take_props_after(colon, entry, value, &mut value_props),
             }
         }
         let value_content = match is_empty_node(value, &value_props) {
@@ -963,7 +976,7 @@ impl<'a> Context<'_, 'a> {
         Ok(id)
     }
 
-    /// The directive whose `%` is `token`, and the comment behind it.
+    /// Returns the directive whose `%` is `token`, and the comment after it.
     fn transform_directive(&mut self, token: SourceToken) -> (Id, Option<SourceToken>) {
         let text = self.text;
         let rest = text.get(token.start as usize..).unwrap_or_default();
@@ -992,15 +1005,15 @@ impl<'a> Context<'_, 'a> {
         (directive, comment)
     }
 
-    /// The comments behind `content`, which is all that is in a document, as far as they are in the document for `yaml`.
-    /// Returns those that it has at the end of the document, and in nothing that is in it.
+    /// Consumes the comments after `content`, a document's whole content, as far as `yaml` counts them as part of the
+    /// document. Returns the ones that `yaml` puts at the end of the document itself and not inside any node.
     fn take_end_comments(&mut self, content: Option<Id>) -> Vec<Id> {
         let mut end_comments = Vec::new();
         let Some(content) = content.map(|content| &self.nodes[content.index()]) else {
             return end_comments;
         };
         let is_block = matches!(content.kind, Kind::Mapping | Kind::Sequence);
-        // What is behind an item without a value is in that item.
+        // A comment after an item without a value belongs to that item.
         let is_open = is_block
             && (content.children.last())
                 .map(|item| &self.nodes[item.index()])
@@ -1019,17 +1032,20 @@ impl<'a> Context<'_, 'a> {
             _ => content.position.end.offset,
         };
         let last_line = self.point(end.saturating_sub(1)).line;
+        // A comment that isn't indented more than the items doesn't belong to any of them.
+        let items_column = (content.children.first())
+            .map_or(1, |item| self.nodes[item.index()].position.start.column);
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
-            let place = self.point(token.start);
-            // A document whose content is no block collection ends with the line after that.
-            if !is_block && place.line > last_line + 1 {
+            let token_point = self.point(token.start);
+            // A document whose content isn't a block collection ends with the line after the content.
+            if !is_block && token_point.line > last_line + 1 {
                 break;
             }
             self.at += 1;
             let comment = self.transform_comment(token);
-            if place.line > last_line
+            if token_point.line > last_line
                 && !is_open
-                && (!is_block || place.column == 1 || !end_comments.is_empty())
+                && (!is_block || token_point.column <= items_column || !end_comments.is_empty())
             {
                 end_comments.push(comment);
             }
@@ -1037,17 +1053,17 @@ impl<'a> Context<'_, 'a> {
         end_comments
     }
 
-    /// `transformDocument`. `root`: what is in it.
+    /// `transformDocument`. `root` is the document's content.
     fn transform_document(&mut self, root: Option<&Expr>) -> Result<Id> {
         let root = root.filter(|root| !matches!(root.data, Data::ENull(_)));
         // `transformDocumentHead`
         self.tags.clear();
         let mut directives: Vec<Id> = Vec::new();
         let mut end_comment_candidates: Vec<Id> = Vec::new();
-        // Bun's parser takes it for a part of a directive that it does not know.
-        let mut comment_of_directive = None;
+        // Bun's parser treats this comment as part of a directive that it doesn't know.
+        let mut directive_comment = None;
         loop {
-            let unlisted = comment_of_directive.take();
+            let unlisted = directive_comment.take();
             if let Some(token) = unlisted.or_else(|| self.take(TokenKind::Comment)) {
                 let comment = self.transform_comment(token);
                 let position = self.position_of(comment);
@@ -1066,7 +1082,7 @@ impl<'a> Context<'_, 'a> {
             } else if let Some(token) = self.take(TokenKind::Directive) {
                 let (directive, comment) = self.transform_directive(token);
                 directives.push(directive);
-                comment_of_directive = comment.filter(|_| self.peek() != comment);
+                directive_comment = comment.filter(|_| self.peek() != comment);
                 end_comment_candidates.clear();
             } else {
                 break;
@@ -1183,7 +1199,7 @@ impl<'a> Context<'_, 'a> {
         Ok(document)
     }
 
-    /// `transformDocuments`. For `yaml`, every `...` ends a document of its own.
+    /// `transformDocuments`. In `yaml`, every `...` ends a separate document.
     fn transform_documents(&mut self, documents: &[Expr]) -> Result<Vec<Id>> {
         let mut roots = documents.iter();
         let mut children = Vec::with_capacity(documents.len());
@@ -1316,8 +1332,7 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
     }
 }
 
-/// `next_leading[line]`: the first line from the one with the index `line` on that has a
-/// `leading_attachable_node`.
+/// `next_leading[line]` is the index of the first line at or after index `line` that has a `leading_attachable_node`.
 fn attach_comment(
     nodes: &mut [Node<'_>],
     table: &[Line],
@@ -1344,7 +1359,7 @@ fn attach_comment(
     while line >= document_position.start.line as usize && line > 0 {
         let mut current = match line_at(line).trailing_node {
             Some(node) => node,
-            // A comment in a line before, and what it belongs to.
+            // Use the owner of a comment on an earlier line.
             None => match line_at(line).comment.filter(|_| line != comment_line) {
                 Some(other) => nodes[other.index()].parent.ok_or(Unexpected)?,
                 None => {
@@ -1380,7 +1395,7 @@ fn attach_comment(
         }
         break;
     }
-    // The first line after that of the comment, in the document.
+    // The first such line after the comment's line, if it's still in the document.
     if let Some(&index) = next_leading.get(comment_line)
         && index < document_position.end.line
         && let Some(node) = table
@@ -1399,8 +1414,8 @@ fn attach_comment(
     Ok(())
 }
 
-/// `updatePositions`. `has_properties`: there are comments, tags or anchors. Without them, everything in the body of
-/// a document is where it is said to be from the start.
+/// `updatePositions`. `has_properties` means there are comments, tags or anchors. Without them, the positions in a
+/// document's body are already correct.
 fn update_positions(nodes: &mut [Node<'_>], id: Id, has_properties: bool, stack: &Stack) {
     if !stack.has_room() {
         return;
@@ -1501,7 +1516,7 @@ fn update_start_points(
     }
 }
 
-/// `parse` of `yaml-unist-parser`.
+/// `yaml-unist-parser`'s `parse`.
 pub(crate) fn build<'a>(
     text: &'a [u8],
     documents: &[Expr],
@@ -1520,26 +1535,29 @@ pub(crate) fn build<'a>(
         at: 0,
         tags: Default::default(),
         is_ascii: text.is_ascii(),
-        // Before the first.
+        // An empty range before the first line, so the first lookup misses.
         last_line: std::cell::Cell::new((0, 0, 0)),
-        last_place: std::cell::Cell::new((0, 0)),
+        last_offset: std::cell::Cell::new((0, 0)),
         line_starts,
         // A key, its `:` and its value are three tokens and five nodes.
         nodes: Vec::with_capacity(tokens.len() * 2 + 16),
         comments: Vec::new(),
         pending: Vec::new(),
         has_properties: false,
+        recorded_error: None,
         stack,
     };
-    // What has been made last is next to what cannot be.
+    // The last node created is next to the one that failed, so report its position.
     let children = context
         .transform_documents(documents)
         .map_err(|Unexpected| {
-            let last = context.nodes.last();
-            SyntaxError(
-                Message::CannotBeFormatted,
-                last.map_or(0, |it| it.position.start.offset),
-            )
+            context.recorded_error.unwrap_or_else(|| {
+                let last = context.nodes.last();
+                SyntaxError(
+                    Message::CannotBeFormatted,
+                    last.map_or(0, |it| it.position.start.offset),
+                )
+            })
         })?;
     let root = context.new_node(Kind::Root, context.position(0, text.len() as u32));
     for &child in &children {

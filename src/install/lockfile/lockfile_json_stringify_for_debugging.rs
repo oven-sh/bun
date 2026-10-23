@@ -243,6 +243,7 @@ where
             let (relative_path, depth) =
                 tree::relative_path_and_depth::<{ IteratorPathStyle::NodeModules }>(
                     this.buffers.trees.as_slice(),
+                    hoisted_deps,
                     this.buffers.dependencies.as_slice(),
                     this.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).expect("int cast"),

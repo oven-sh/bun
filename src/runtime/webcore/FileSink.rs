@@ -47,8 +47,6 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
-    #[cfg(unix)]
-    pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -743,14 +741,6 @@ impl FileSink {
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
-        #[cfg(unix)]
-        if is_tty_out {
-            // TTY writes are synchronous, as in Node.
-            self.is_tty.set(true);
-            self.force_sync.set(true);
-            // SAFETY(JsCell): single-field write; does not call into JS.
-            self.writer.with_mut(|w| w.force_sync = true);
-        }
 
         let fd = match result {
             sys::Result::Err(err) => {
@@ -776,8 +766,10 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer
-                            .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                        self.writer.with_mut(|w| {
+                            w.owns_fd = true;
+                            w.update_ref(self.io_evtloop(), false);
+                        });
                     }
                 }
                 return sys::Result::Ok(());
@@ -791,12 +783,19 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                // `open_for_writing` opened or dup'd `fd` for this sink, so `end()` must close it.
+                #[cfg(windows)]
+                self.writer.with_mut(|w| w.owns_fd = true);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer
                     .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                 #[cfg(unix)]
                 {
+                    // TTY writes are synchronous, as in Node.
+                    let force_sync = self.force_sync.get() || is_tty_out;
+                    self.writer.with_mut(|w| w.force_sync = force_sync);
+
                     if self.nonblocking.get() {
                         self.writer
                             .get()
@@ -811,7 +810,7 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Socket);
-                    } else if self.is_tty.get() {
+                    } else if is_tty_out {
                         self.writer
                             .get()
                             .get_poll()
@@ -1068,11 +1067,9 @@ impl FileSink {
         // Per-wrapper accounting is on `ref_count` directly: each path that
         // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
         // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
-        // `JsSinkType::construct` allocates with `ref_count=1` and that +1
-        // belongs to the wrapper it's about to be stored in, so no extra
-        // `ref_()` there. Callers that allocate via `init`/`create` and then
+        // Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`). `pending`/`pipe` are left for
+        // `Blob::writer`). `pending`/`pipe` are left for
         // `deinit` (Box drop) since in-flight IO may still need them.
         // SAFETY: as above; the `deref` is the last use of `this`.
         unsafe {
@@ -1145,23 +1142,6 @@ impl FileSink {
         // SAFETY: `this` was just allocated above and is the sole reference.
         unsafe { (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr()) };
         this
-    }
-
-    // Called by JSSink codegen on a pre-allocated `m_ctx` slot via
-    // `JsSinkType::construct(&mut MaybeUninit<Self>)`, which `write`s this
-    // by-value result into the slot.
-    pub(crate) fn construct() -> FileSink {
-        // `construct` is only called from JSSink codegen on a thread that
-        // already has a Bun VM (`get()` panics otherwise); `event_loop()` is
-        // the live per-thread `jsc::EventLoop`.
-        FileSink::new(
-            EventLoopHandle::init(
-                (*bun_jsc::VirtualMachineRef::get())
-                    .event_loop()
-                    .cast::<()>(),
-            ),
-            Fd::INVALID,
-        )
     }
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
@@ -1476,7 +1456,6 @@ crate::impl_js_sink_abi!(FileSink, "FileSink");
 // `Sink.JSSink(@This(), "FileSink")`.
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
-    const HAS_CONSTRUCT: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const HAS_PROTECT_JS_WRAPPER: bool = true;
     const HAS_UPDATE_REF: bool = true;
@@ -1492,11 +1471,6 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     unsafe fn controller_finalize(this: *mut Self) {
         // SAFETY: same contract, forwarded.
         unsafe { Self::controller_finalize(this) }
-    }
-    fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        // `Self::construct()` allocates with `ref_count=1`; that +1 belongs to
-        // the C++ `JSFileSink` wrapper `js_construct` is about to create.
-        this.write(Self::construct());
     }
     /// Behind the chunks the fd refused, like any other chunk written now.
     fn write_empty(&mut self) -> streams::Writable {
@@ -1650,8 +1624,6 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
-            #[cfg(unix)]
-            is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),
@@ -1819,7 +1791,8 @@ impl FileSink {
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.stream_bytes.set(Some(0));
-        let promise = bun_jsc::JSPromise::create(global_this).to_js();
+        let done_promise = bun_jsc::JSPromise::create(global_this);
+        let promise = done_promise.to_js();
         let controller =
             JSSink::create_controller(global_this, core::ptr::NonNull::from(&mut *self));
         self.pipe.set(streams::PipeCell::create(
@@ -1856,7 +1829,11 @@ impl FileSink {
             readable_stream::NativeWireResult::NotNative => {
                 let result = self
                     .assign_to_js_stream(stream, controller, global_this)
-                    .inspect_err(|_| self.stream_bytes.set(None))?;
+                    .inspect_err(|_| {
+                        self.stream_bytes.set(None);
+                        // The caller gets the throw, not the done-promise that a close(error) inside pull() rejected.
+                        done_promise.set_handled();
+                    })?;
                 // A pump that already failed reports through the done-promise.
                 if let Some(pump) = result.as_any_promise() {
                     if pump.status() == bun_jsc::js_promise::Status::Rejected {

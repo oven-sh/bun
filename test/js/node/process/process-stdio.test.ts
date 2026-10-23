@@ -159,6 +159,31 @@ describe.concurrent("process-stdio", () => {
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
   });
+
+  test.skipIf(isWindows)("process.stdout still writes when it's first read with no file descriptors left", async () => {
+    const script = `
+      const fs = require("node:fs");
+      // Debug builds load the stream modules from disk on first use, so load them before the fds run out.
+      process.stderr;
+      await new Promise(resolve => process.nextTick(resolve));
+      const held = [];
+      try {
+        for (;;) held.push(fs.openSync("/dev/null", "r"));
+      } catch {}
+      const stdout = process.stdout;
+      for (const fd of held) fs.closeSync(fd);
+      stdout.write("written\\n", err => console.error("callback", err));
+    `;
+    await using proc = spawn({
+      cmd: ["sh", "-c", 'ulimit -n 64 && exec "$0" -e "$1"', bunExe(), script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "written\n", stderr: "callback null\n" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open

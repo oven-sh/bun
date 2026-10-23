@@ -35,7 +35,104 @@ async function format(files: Record<string, string>, args: string[] = []) {
 
 const bunfig = { "bunfig.toml": "[fmt]\nsortImports = true\n" };
 
+// oxfmt 0.72.0 moves each of these down with `z`. TypeScript, Flow and Bun only read a pragma that comes before all
+// code, and a linter applies `eslint-disable` from its position onward.
+const fileComments = [
+  "// @ts-nocheck",
+  "// @ts-check",
+  '/// <reference types="node" />',
+  '/// <reference path="./x.d.ts" />',
+  '/// <amd-module name="x" />',
+  "/* eslint-disable */",
+  "/* eslint no-console: 0 */",
+  "// oxlint-disable",
+  "// biome-ignore-all lint: x",
+  "// @flow",
+  "/** @jsxImportSource preact */",
+  "/** @jsx h */",
+  "/** @format */",
+  "/** @noprettier */",
+  "// @bun",
+  "// Copyright 2026 Someone. MIT license.",
+  "// SPDX-License-Identifier: MIT",
+  "/* @license MIT */",
+  "/*! x 1.0 */",
+  "/** @jest-environment jsdom */",
+  "// @vitest-environment happy-dom",
+  "/** @file What the file is for. */",
+  "/** @fileoverview What the file is for. */",
+  "/** @overview What the file is for. */",
+  "/** @module x */",
+  "/** @packageDocumentation */",
+  "// deno-lint-ignore-file",
+  "// deno-fmt-ignore-file",
+  "// dprint-ignore-file",
+];
+const unsorted = `import z from "z";\nimport a from "a";\n`;
+const sorted = `import a from "a";\nimport z from "z";\n`;
+
 const cases: [name: string, input: string, output: string][] = [
+  ...fileComments.map((comment): [string, string, string] => [
+    `keeps ${comment} above the imports`,
+    `${comment}\n${unsorted}`,
+    `${comment}\n${sorted}`,
+  ]),
+  [
+    "keeps a comment about the file above the imports after a shebang",
+    `#!/usr/bin/env bun\n// @ts-nocheck\n${unsorted}`,
+    `#!/usr/bin/env bun\n// @ts-nocheck\n${sorted}`,
+  ],
+  [
+    "keeps a comment about the file above the imports after a directive",
+    `"use client";\n/* eslint-disable */\n${unsorted}`,
+    `"use client";\n/* eslint-disable */\n${sorted}`,
+  ],
+  [
+    "keeps every comment above a comment about the file",
+    `// Copyright 2026 Someone.\n// See the file LICENSE.\n// @ts-check\n${unsorted}`,
+    `// Copyright 2026 Someone.\n// See the file LICENSE.\n// @ts-check\n${sorted}`,
+  ],
+  ["changes nothing if the first import stays first", `// @ts-nocheck\n${sorted}`, `// @ts-nocheck\n${sorted}`],
+  [
+    "moves a comment about the first import with it",
+    `// about z\n${unsorted}`,
+    `import a from "a";\n// about z\nimport z from "z";\n`,
+  ],
+  [
+    "moves a comment about the first import with it, below a comment about the file",
+    `// @ts-nocheck\n// about z\n${unsorted}`,
+    `// @ts-nocheck\nimport a from "a";\n// about z\nimport z from "z";\n`,
+  ],
+  [
+    "moves @ts-expect-error with the first import",
+    `// @ts-expect-error\n${unsorted}`,
+    `import a from "a";\n// @ts-expect-error\nimport z from "z";\n`,
+  ],
+  [
+    "moves @ts-ignore with the first import",
+    `// @ts-ignore\n${unsorted}`,
+    `import a from "a";\n// @ts-ignore\nimport z from "z";\n`,
+  ],
+  [
+    "moves eslint-disable-next-line with the first import",
+    `// eslint-disable-next-line no-restricted-imports\n${unsorted}`,
+    `import a from "a";\n// eslint-disable-next-line no-restricted-imports\nimport z from "z";\n`,
+  ],
+  [
+    "doesn't mistake a package name for a pragma",
+    `// the types are in @bun/types\n${unsorted}`,
+    `import a from "a";\n// the types are in @bun/types\nimport z from "z";\n`,
+  ],
+  [
+    "doesn't mistake @jest/globals for a pragma",
+    `// the mocks are in @jest/globals\n${unsorted}`,
+    `import a from "a";\n// the mocks are in @jest/globals\nimport z from "z";\n`,
+  ],
+  [
+    "moves deno-lint-ignore with the first import",
+    `// deno-lint-ignore no-explicit-any\n${unsorted}`,
+    `import a from "a";\n// deno-lint-ignore no-explicit-any\nimport z from "z";\n`,
+  ],
   [
     "sorts names case-insensitively, with numbers in natural order, ignoring inline `type`",
     `import { b, a, C, a10, a2, type T, type d, _e, $f } from "x";
@@ -759,6 +856,28 @@ describe.concurrent("sortImports sources", () => {
     const [oxfmt, flag] = await Promise.all([format(files), format(files, ["--sort-imports"])]);
     expect(oxfmt.files["a.ts"]).toBe(asOxfmt);
     expect(flag.files["a.ts"]).toBe(tidy);
+  });
+
+  test("a comment about the file stays above the imports, however sorting is turned on", async () => {
+    const files = { "a.ts": `// @ts-nocheck\n${unsorted}` };
+    const results = await Promise.all([
+      format({ ...bunfig, ...files }),
+      format({ "bunfig.toml": "[fmt.sortImports]\nnewlinesBetween = false\n", ...files }),
+      format(files, ["--sort-imports"]),
+      format({ ".oxfmtrc.json": `{ "sortImports": true }`, ...files }),
+    ]);
+    for (const result of results) {
+      expect(result.files["a.ts"]).toBe(`// @ts-nocheck\n${sorted}`);
+      expect(result.second.files).toEqual(result.files);
+    }
+  });
+
+  test("a Flow file is still a Flow file after its imports are sorted", async () => {
+    const code = (imports: string) =>
+      `// @flow\n${imports}export function f(x: ?number): %checks {\n  return !!x;\n}\n`;
+    const result = await format({ ...bunfig, "a.js": code(unsorted) });
+    expect(result).toMatchObject({ stderr: "", exitCode: 0, files: { "a.js": code(sorted) } });
+    expect(result.second).toMatchObject({ stderr: "", exitCode: 0, files: { "a.js": code(sorted) } });
   });
 
   test("sortSideEffects = true lets side-effect imports move", async () => {

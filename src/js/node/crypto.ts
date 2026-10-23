@@ -52,7 +52,6 @@ const {
 const {
   pbkdf2,
   pbkdf2Sync,
-  timingSafeEqual,
   randomInt,
   randomUUID,
   randomUUIDv7,
@@ -70,7 +69,8 @@ const {
   argon2Sync: _argon2Sync,
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
+const timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
 
 const {
   validateFunction,
@@ -246,7 +246,7 @@ Object.assign(Hash.prototype, {
     return new Hash(this[kHandle], options);
   },
   _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
+    this[kHandle].update(this, chunk, encoding, false);
     callback();
   },
   _flush: function (callback) {
@@ -286,7 +286,7 @@ Object.assign(Hmac.prototype, {
     return this[kHandle].digest(outputEncoding);
   },
   _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
+    this[kHandle].update(this, chunk, encoding, false);
     callback();
   },
   _flush: function (callback) {

@@ -108,7 +108,7 @@ test/js/web/fetch/fetch.stream.test.ts  # 11 of 80 builds; should drain response
 test/js/web/fetch/fetch.tls.wildcard.test.ts  # the peer closed the connection before the TLS handshake finished (3 builds, macOS), not root-caused
 test/js/web/workers/structuredClone-classes.test.ts  # 20 of 80 builds; parallel batch; (worker crashed): worker process crashed before reporting results (in the parallel bat...
 test/js/web/workers/worker-late-completion.test.ts  # work that comes back after its worker began tearing down > BroadcastChannel message from another thread: seen was false (build 109486, debian 13 x64-asan)
-test/js/web/workers/worker-terminate-lifetime.test.ts  # 11 of 80 builds; worker exit with streaming-request-body fetches whose response.body was touched: expec...
+test/js/web/workers/worker-terminate-lifetime.test.ts  # a worker ends while a stream is still being piped into a FileSink: Segmentation fault on a libuv-worker thread (4 builds, Windows, e.g. 126359), not root-caused
 test/js/workerd/html-rewriter.test.js  # 1 of 80 builds; mac
 test/napi/napi-value-ffi.test.ts  # 1 of 80 builds; mac; error: build failed
 test/napi/napi.test.ts  # 22 of 80 builds

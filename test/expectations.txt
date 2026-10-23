@@ -35,3 +35,8 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# `bun lint` is a command in canary builds only (IS_ENABLED in
+# src/runtime/cli/lint_command.rs), so nothing in this directory can run on a
+# release build. Remove when a release has `bun lint`.
+[ STABLE ] test/cli/lint/ [ SKIP ] # a release build has no `bun lint`

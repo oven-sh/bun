@@ -1212,7 +1212,8 @@ build({ runExternalCode: true }).then(() => exit("the build has settled"));
 const wait = () => (fs.existsSync("node_modules/m/working.txt") ? exit("the mapper is working") : setImmediate(wait));
 wait();`;
     // The mapper has the standard error of the process, so this only returns once both have exited.
-    expect(await run({ mapper }, program)).toBe("the mapper is working");
+    // The test runner sets `BUN_DESTRUCT_VM_ON_EXIT` for some builds. With it, a process that exits waits for the build.
+    expect(await run({ mapper }, program, { BUN_DESTRUCT_VM_ON_EXIT: "0" })).toBe("the mapper is working");
   });
 
   // A leak would add at least one per build. The garbage collector and the JIT start a few threads when they see fit.

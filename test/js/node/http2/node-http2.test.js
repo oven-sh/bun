@@ -6340,6 +6340,731 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
   }
 });
 
+describe.concurrent("write() after end()", () => {
+  // The late write() errors the stream without destroying it (autoDestroy is off, like node), and
+  // an errored Duplex never emits 'finish' or 'end'. The stream still has to emit 'close' once the
+  // native side has closed, whichever of the two comes first.
+  const lateWriteEvents = ["write:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END", "close"];
+
+  // Records the stream's events and returns the callback for the late write().
+  function record(stream, closed) {
+    const events = [];
+    for (const name of ["finish", "error"]) {
+      stream.on(name, err => events.push(err ? `${name}:${err.code}` : name));
+    }
+    stream.on("close", () => closed.resolve(events.concat("close")));
+    return err => events.push(`write:${err.code}`);
+  }
+
+  // Resolves with the server stream's events and the length of the body the client received.
+  async function serve(respond, requestBody) {
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverClosed = Promise.withResolvers();
+      server.on("stream", stream => respond(stream, record(stream, serverClosed)));
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", serverClosed.reject);
+      const req = client.request({ ":path": "/", ":method": requestBody === undefined ? "GET" : "POST" });
+      const received = new Promise((resolve, reject) => {
+        let length = 0;
+        req.on("error", reject);
+        req.on("data", chunk => (length += chunk.length));
+        req.on("end", () => resolve(length));
+      });
+      req.end(requestBody);
+      return await Promise.all([serverClosed.promise, received]);
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("server stream, late write before the native close", async () => {
+    let closedByEnd;
+    const result = await serve((stream, late) => {
+      stream.respond({ ":status": 200 });
+      stream.end("done");
+      closedByEnd = stream.closed;
+      stream.write("late", late);
+    });
+    expect([closedByEnd, ...result]).toEqual([false, lateWriteEvents, 4]);
+  });
+
+  it("server stream, native close inside end(chunk)", async () => {
+    // The request has fully arrived, so end(chunk) closes the native stream and the destroy is
+    // already waiting for 'finish' when the late write errors the stream.
+    let closedByEnd;
+    const result = await serve((stream, late) => {
+      stream.resume();
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end("done");
+        closedByEnd = stream.closed;
+        stream.write("late", late);
+      });
+    }, "body");
+    expect([closedByEnd, ...result]).toEqual([true, lateWriteEvents, 4]);
+  });
+
+  // Drives one client request against a server that answers "ok" once the request has ended.
+  async function request(drive) {
+    const server = http2.createServer();
+    let client;
+    try {
+      const clientClosed = Promise.withResolvers();
+      server.on("stream", stream => {
+        stream.on("error", clientClosed.reject);
+        stream.resume();
+        stream.on("end", () => {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        });
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", clientClosed.reject);
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      drive(client, req, record(req, clientClosed));
+      return await clientClosed.promise;
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("client stream, late write before the native close", async () => {
+    let closedByEnd;
+    const events = await request((client, req, late) => {
+      req.end("body");
+      closedByEnd = req.closed;
+      req.write("late", late);
+    });
+    expect([closedByEnd, events]).toEqual([false, lateWriteEvents]);
+  });
+
+  it("client stream, native close before the late write", async () => {
+    // Nothing reads the response, so the destroy is waiting for 'end'. The PING is answered after
+    // the whole response, which makes its ack the first point where the stream is closed for sure.
+    let closedBeforeLateWrite;
+    const events = await request((client, req, late) => {
+      req.end("body");
+      req.on("response", () => {
+        client.ping(() => {
+          closedBeforeLateWrite = req.closed && !req.destroyed;
+          req.write("late", late);
+        });
+      });
+    });
+    expect([closedBeforeLateWrite, events]).toEqual([true, ["finish", ...lateWriteEvents]]);
+  });
+
+  // Guard, passes without the fix too: an 'error' that user code emits does not make the stream
+  // errored. The natively closed stream still waits for 'end', and a late reader gets the response.
+  it("client stream, 'error' emitted by user code on a stream that is not errored", async () => {
+    let length = 0;
+    const events = await request((client, req) => {
+      req.end("body");
+      req.on("response", () => {
+        client.ping(() => {
+          req.emit("error", new Error("emitted by user code"));
+          setImmediate(() => req.on("data", chunk => (length += chunk.length)));
+        });
+      });
+    });
+    expect([length, events]).toEqual([2, ["finish", "error:undefined", "close"]]);
+  });
+
+  // A chunk written before end() goes out without END_STREAM, which then comes from _final. The
+  // Writable never calls _final on an errored stream, and the stream still has to end.
+  describe("last write in flight at end()", () => {
+    const big = Buffer.alloc(128 * 1024, "a");
+
+    function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
+    }
+
+    // Calls onFrame(type, flags, streamId, length) for each HTTP/2 frame that the socket receives.
+    function readFrames(socket, onFrame) {
+      let received = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        while (received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const [type, flags, streamId] = [received[3], received[4], received.readUInt32BE(5)];
+          received = received.subarray(9 + length);
+          onFrame(type, flags, streamId, length);
+        }
+      });
+    }
+
+    // HEADERS with END_STREAM: :method GET, :scheme http, :path <path>, :authority x
+    function rawRequest(streamId, path) {
+      const block = [0x82, 0x86, 0x44, path.length, ...Buffer.from(path), 0x41, 0x01, 0x78];
+      return frame(1, 5, streamId, Buffer.from(block));
+    }
+
+    // Raw HTTP/2 client: one GET on stream 1. Resolves with [length, END_STREAM flag] of each DATA
+    // frame of the response, once the server has answered a PING that follows the first END_STREAM.
+    function rawGet(port) {
+      return new Promise((resolve, reject) => {
+        const socket = net.connect(port, "127.0.0.1");
+        const data = [];
+        let pinged = false;
+        socket.on("error", reject);
+        socket.on("close", () => reject(new Error("closed before the PING was answered")));
+        socket.on("connect", () => {
+          socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+          socket.write(frame(4, 0, 0));
+          socket.write(rawRequest(1, "/"));
+        });
+        readFrames(socket, (type, flags, streamId, length) => {
+          const endStream = flags & 1;
+          if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+          if (type === 6 && endStream) {
+            resolve(data);
+            socket.destroy();
+          }
+          if (type !== 0) return;
+          data.push([length, endStream]);
+          if (length > 0) {
+            const increment = Buffer.alloc(4);
+            increment.writeUInt32BE(length);
+            socket.write(frame(8, 0, 0, increment));
+            if (!endStream) socket.write(frame(8, 0, 1, increment));
+          }
+          if (endStream && !pinged) {
+            pinged = true;
+            socket.write(frame(6, 0, 0, Buffer.alloc(8)));
+          }
+        });
+      });
+    }
+
+    // Raw HTTP/2 client with a stream window of 1024 bytes that it never reopens. It asks for
+    // /blocked on stream 1 and, once that stream has used its window, for /late on stream 3. Then it
+    // is silent. Resolves with [length, END_STREAM flag] of each DATA frame of stream 3.
+    function rawBlockedThenLate(port) {
+      return new Promise((resolve, reject) => {
+        const socket = net.connect(port, "127.0.0.1");
+        const data = [];
+        let blocked = 0;
+        socket.on("error", reject);
+        socket.on("close", () => reject(new Error("closed before stream 3 ended")));
+        socket.on("connect", () => {
+          socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+          // SETTINGS_INITIAL_WINDOW_SIZE = 1024
+          socket.write(frame(4, 0, 0, Buffer.from([0, 4, 0, 0, 4, 0])));
+          socket.write(rawRequest(1, "/blocked"));
+        });
+        readFrames(socket, (type, flags, streamId, length) => {
+          const endStream = flags & 1;
+          if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+          if (type !== 0) return;
+          if (streamId === 1) {
+            if (blocked < 1024 && (blocked += length) >= 1024) socket.write(rawRequest(3, "/late"));
+            return;
+          }
+          data.push([length, endStream]);
+          if (endStream) {
+            resolve(data);
+            socket.destroy();
+          }
+        });
+      });
+    }
+
+    it("server stream", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
+    it("server stream, request already ended", async () => {
+      // The END_STREAM goes out as 'error' is emitted and closes the native stream at once. The late
+      // write callback and the 'error' listener still get a live stream, like node.
+      const live = [];
+      const isLive = stream => !stream.destroyed && stream.session !== undefined;
+      const result = await serve((stream, late) => {
+        stream.resume();
+        stream.on("end", () => {
+          stream.on("error", () => live.push(isLive(stream)));
+          stream.respond({ ":status": 200 });
+          stream.write("done");
+          stream.end();
+          stream.write("late", err => {
+            live.push(isLive(stream));
+            late(err);
+          });
+        });
+      }, "body");
+      expect([live, ...result]).toEqual([[true, true], lateWriteEvents, 4]);
+    });
+
+    it("server stream, corked writes (_writev)", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.cork();
+        stream.write("do");
+        stream.write("ne");
+        stream.uncork();
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
+    it("client stream", async () => {
+      const events = await request((client, req, late) => {
+        // Written at 'ready' so that the chunk is dispatched before end(). A write on a stream
+        // that is still pending is held until 'ready', after end(), and carries END_STREAM itself.
+        req.on("ready", () => {
+          req.write("body");
+          req.end();
+          req.write("late", late);
+        });
+      });
+      expect(events).toEqual(lateWriteEvents);
+    });
+
+    it("client stream that is still pending", async () => {
+      // The write is held until 'ready', after end(), and carries END_STREAM itself.
+      let pending;
+      const events = await request((client, req, late) => {
+        pending = req.pending;
+        req.write("body");
+        req.end();
+        req.write("late", late);
+      });
+      expect([pending, events]).toEqual([true, lateWriteEvents]);
+    });
+
+    // One request over a duplexPair, which is connected from the start: the request is made without
+    // an id and gets it one tick before 'ready' dispatches the write it holds. Resolves with
+    // req.pending, the length of the body that the server received, and the events of the request.
+    async function pairRequest(drive) {
+      const [clientSide, serverSide] = duplexPair();
+      const server = http2.createServer();
+      let client;
+      try {
+        const received = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        server.on("stream", stream => {
+          let length = 0;
+          stream.on("error", received.reject);
+          stream.on("data", chunk => (length += chunk.length));
+          stream.on("end", () => {
+            received.resolve(length);
+            stream.respond({ ":status": 200 });
+            stream.end("ok");
+          });
+        });
+        server.emit("connection", serverSide);
+        client = http2.connect("http://localhost", { createConnection: () => clientSide });
+        client.on("error", closed.reject);
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        const pending = req.pending;
+        req.resume();
+        drive(req, record(req, closed));
+        return [pending, await received.promise, await closed.promise];
+      } finally {
+        client?.close();
+        server.close();
+      }
+    }
+
+    // Four bytes through the write that the request holds until 'ready'.
+    const heldWrites = [
+      ["_write", (req, done) => req.write("body", done)],
+      [
+        "_writev",
+        (req, done) => {
+          req.cork();
+          req.write("bo");
+          req.write("dy", done);
+          req.uncork();
+        },
+      ],
+    ];
+
+    it.each(heldWrites)("client stream that gets its id before the late write's 'error' (held %s)", async (_, hold) => {
+      // The late write's 'error' falls between the id and 'ready'. The held write carries END_STREAM
+      // itself, and the body must still reach the server.
+      const result = await pairRequest((req, late) => {
+        hold(req);
+        req.end();
+        req.write("late", late);
+      });
+      expect(result).toEqual([true, 4, lateWriteEvents]);
+    });
+
+    it.each(heldWrites)("late write after the held %s was dispatched", async (_, hold) => {
+      // The request has no id until the session connects, so its first write is held. 'ready' dispatches
+      // it and clears its mark: the next write in flight is on the wire, and the stream is owed its
+      // END_STREAM again.
+      let pending;
+      const events = await request((client, req, late) => {
+        pending = req.pending;
+        hold(req, () => {
+          req.write("more");
+          req.end();
+          req.write("late", late);
+        });
+      });
+      expect([pending, events]).toEqual([true, lateWriteEvents]);
+    });
+
+    it("write blocked on flow control", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big);
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, big.length]);
+    });
+
+    it("write blocked on flow control, late write on a later turn", async () => {
+      // setImmediate runs before the loop polls again, so no WINDOW_UPDATE has arrived and the
+      // write is still blocked when the late write comes.
+      let blockedLength;
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big);
+        stream.end();
+        setImmediate(() => {
+          blockedLength = stream.writableLength;
+          stream.write("late", late);
+        });
+      });
+      expect([blockedLength, ...result]).toEqual([big.length, lateWriteEvents, big.length]);
+    });
+
+    it("chunk buffered behind the blocked write", async () => {
+      // The buffered chunk is dispatched when the blocked write completes, and carries END_STREAM itself.
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big);
+        stream.write("tail");
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, big.length + 4]);
+    });
+
+    it("empty chunk buffered behind the blocked write", async () => {
+      // end("") leaves a chunk of length 0 behind the blocked write. It carries END_STREAM when that
+      // write completes. A second END_STREAM frame is a protocol error for the peer.
+      const server = http2.createServer();
+      try {
+        const serverClosed = Promise.withResolvers();
+        server.on("stream", stream => {
+          const late = record(stream, serverClosed);
+          stream.respond({ ":status": 200 });
+          stream.write(big);
+          stream.end("");
+          stream.write("late", late);
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        const data = await rawGet(port);
+        expect({
+          length: data.reduce((sum, [length]) => sum + length, 0),
+          // The END_STREAM flag of each DATA frame, without the frames that come before the first one.
+          endStream: data
+            .map(([, endStream]) => endStream)
+            .join("")
+            .replace(/^0+/, ""),
+          events: await serverClosed.promise,
+        }).toEqual({ length: big.length, endStream: "1", events: lateWriteEvents });
+      } finally {
+        server.close();
+      }
+    });
+
+    it("late write on a later turn while another stream of the session is blocked", async () => {
+      // The frames of the blocked stream stay queued on the session, so the END_STREAM of the other
+      // stream is queued too. The peer sends nothing more, and the error path has to flush it.
+      const server = http2.createServer();
+      try {
+        const serverClosed = Promise.withResolvers();
+        let queued;
+        server.on("stream", (stream, headers) => {
+          stream.respond({ ":status": 200 });
+          if (headers[":path"] === "/blocked") {
+            stream.on("error", () => {});
+            // 1024 bytes fit the window of the peer. The rest stays queued for the whole test.
+            stream.write(Buffer.alloc(8192, "x"));
+            return;
+          }
+          const late = record(stream, serverClosed);
+          setImmediate(() => {
+            queued = stream.session.state.outboundQueueSize;
+            stream.write("done");
+            stream.end();
+            stream.write("late", late);
+          });
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        const data = await rawBlockedThenLate(port);
+        expect({
+          queued,
+          length: data.reduce((sum, [length]) => sum + length, 0),
+          endStream: data
+            .map(([, endStream]) => endStream)
+            .join("")
+            .replace(/^0+/, ""),
+          events: await serverClosed.promise,
+        }).toEqual({ queued: 1, length: 4, endStream: "1", events: lateWriteEvents });
+      } finally {
+        server.close();
+      }
+    });
+
+    // Guard, passes without the fix too: the END_STREAM must not make the callback of a write run
+    // before its bytes are flushed.
+    it("destroy() in the callback of the blocked write does not truncate the body", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big, () => stream.destroy());
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, big.length]);
+    });
+
+    // Guard, passes without the fix too: the END_STREAM must not go out ahead of a pending reset.
+    it("close(code) in the same tick still resets the stream", async () => {
+      const result = serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+        stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      });
+      await expect(result).rejects.toMatchObject({
+        code: "ERR_HTTP2_STREAM_ERROR",
+        message: expect.stringContaining("NGHTTP2_INTERNAL_ERROR"),
+      });
+    });
+
+    it("close() with no code in the same tick still ends the stream", async () => {
+      // The RST_STREAM of a close() with NO_ERROR waits for 'finish', which an errored stream never emits.
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+        stream.close();
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
+    // Guard, passes without the fix too: a file response sends its own END_STREAM when the file is done.
+    it("late write during a file response does not cut the file short", async () => {
+      using dir = tempDir("http2-late-write-file", { "body.bin": Buffer.alloc(512 * 1024, "f") });
+      const result = await serve((stream, late) => {
+        stream.respondWithFile(path.join(String(dir), "body.bin"), { ":status": 200 });
+        // respondWithFile ends the writable side, so 'finish' comes while the file is still in transit.
+        stream.on("finish", () => stream.write("late", late));
+      });
+      expect(result).toEqual([["finish", ...lateWriteEvents], 512 * 1024]);
+    });
+
+    // Guard, passes without the fix too: a stream that end() did not close is owed no END_STREAM,
+    // so the reset from its 'error' listener reaches the peer.
+    it("error on a stream that has not ended does not end it", async () => {
+      const result = serve(stream => {
+        stream.on("error", () => stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR));
+        stream.respond({ ":status": 200 });
+        stream.resume();
+        // unshift() after 'end' errors the stream (ERR_STREAM_UNSHIFT_AFTER_END_EVENT) and does not destroy it.
+        stream.on("end", () => stream.unshift("x"));
+      });
+      await expect(result).rejects.toMatchObject({
+        code: "ERR_HTTP2_STREAM_ERROR",
+        message: expect.stringContaining("NGHTTP2_INTERNAL_ERROR"),
+      });
+    });
+
+    // With trailers pending, END_STREAM rides the trailers, and node leaves this stream open too.
+    // A 'wantTrailers' from the error path would come before the 'error' listener runs.
+    it("respond({ waitForTrailers: true }) is not asked for trailers", async () => {
+      const server = http2.createServer();
+      let client;
+      try {
+        const errored = Promise.withResolvers();
+        server.on("stream", stream => {
+          const events = [];
+          stream.on("wantTrailers", () => events.push("wantTrailers"));
+          stream.on("error", err => errored.resolve(events.concat(`error:${err.code}`)));
+          stream.respond({ ":status": 200 }, { waitForTrailers: true });
+          stream.write("done");
+          stream.end();
+          stream.write("late", err => events.push(`write:${err.code}`));
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        client = http2.connect(`http://127.0.0.1:${port}`);
+        client.on("error", errored.reject);
+        const req = client.request({ ":path": "/" });
+        req.on("error", errored.reject);
+        req.resume();
+        expect(await errored.promise).toEqual(["write:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END"]);
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+
+    it("request(headers, { waitForTrailers: true }) is not asked for trailers", async () => {
+      const server = http2.createServer();
+      let client;
+      try {
+        const errored = Promise.withResolvers();
+        // The request never ends, so this stream sees only the teardown below.
+        server.on("stream", stream => stream.on("error", () => {}));
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        client = http2.connect(`http://127.0.0.1:${port}`);
+        client.on("error", errored.reject);
+        const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+        const events = [];
+        req.on("wantTrailers", () => events.push("wantTrailers"));
+        req.on("error", err => errored.resolve(events.concat(`error:${err.code}`)));
+        req.on("ready", () => {
+          req.write("body");
+          req.end();
+          req.write("late", err => events.push(`write:${err.code}`));
+        });
+        expect(await errored.promise).toEqual(["write:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END"]);
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+
+    // END_STREAM goes out before the 'error' listeners run (node submits it before 'error' too),
+    // so a reset from an 'error' listener comes after a clean end.
+    it.each([
+      ["close(code)", stream => stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR)],
+      ["destroy(err)", (stream, err) => stream.destroy(err)],
+    ])("%s from the 'error' listener follows a clean end", async (_, reset) => {
+      const result = await serve((stream, late) => {
+        stream.on("error", err => reset(stream, err));
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
+    // The native side drops a reset stream on the read after the RST_STREAM, and JS hears about
+    // the reset a tick later. With the writes and both reads in one turn, the first write
+    // completes in between, when the native stream is already gone. That must not throw.
+    it("peer reset that drops the native stream before the write completes", async () => {
+      // HEADERS (:status 200), RST_STREAM, then frames of an unknown type, which the receiver
+      // ignores. They make the burst longer than the 64 KiB that one read of a TLS socket decrypts.
+      const rstCode = Buffer.alloc(4);
+      rstCode.writeUInt32BE(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      const burst = Buffer.concat([
+        frame(1, 4, 1, Buffer.from([0x88])),
+        frame(3, 0, 1, rstCode),
+        ...Array(8).fill(frame(0xfa, 0, 0, Buffer.alloc(16384))),
+      ]);
+      const closed = Promise.withResolvers();
+      // Resolves on `event`. An 'error' or a 'close' that comes first rejects.
+      const waitFor = (emitter, event) =>
+        new Promise((resolve, reject) => {
+          emitter.once(event, resolve);
+          emitter.once("error", reject);
+          emitter.once("close", () => reject(new Error(`closed before '${event}'`)));
+        });
+      // Raw HTTP/2 peer: sends SETTINGS, then answers the first HEADERS frame with the burst.
+      const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+        let received = Buffer.alloc(0);
+        let sawPreface = false;
+        let answered = false;
+        socket.on("error", closed.reject);
+        socket.write(frame(4, 0, 0));
+        socket.on("data", chunk => {
+          received = Buffer.concat([received, chunk]);
+          if (!sawPreface) {
+            if (received.length < 24) return;
+            received = received.subarray(24);
+            sawPreface = true;
+          }
+          while (received.length >= 9) {
+            const length = received.readUIntBE(0, 3);
+            if (received.length < 9 + length) break;
+            const type = received[3];
+            received = received.subarray(9 + length);
+            if (type === 1 && !answered) {
+              answered = true;
+              socket.write(burst);
+            }
+          }
+        });
+      });
+      let raw, session;
+      try {
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        raw = net.connect(port, "127.0.0.1");
+        await waitFor(raw, "connect");
+        // The TLS socket reads through this Duplex. Once `held` is an array, the ciphertext is kept
+        // until it is at least as long as the burst and then pushed at once, which makes the TLS
+        // socket deliver its reads back to back in one turn.
+        let held = null;
+        let heldLength = 0;
+        let req, late;
+        const proxy = new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            // The teardown below destroys `raw` while the session still writes its GOAWAY.
+            if (raw.destroyed) return callback();
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => {
+          if (held === null) return proxy.push(chunk);
+          held.push(chunk);
+          heldLength += chunk.length;
+          if (heldLength >= burst.length) {
+            req.write("body");
+            req.end();
+            req.write("late", late);
+            proxy.push(Buffer.concat(held));
+            held = null;
+          }
+        });
+        const socket = tls.connect({ socket: proxy, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+        await waitFor(socket, "secureConnect");
+        session = http2.connect(`https://localhost:${port}`, { createConnection: () => socket });
+        await waitFor(session, "remoteSettings");
+        for (const emitter of [raw, proxy, socket, session]) emitter.on("error", closed.reject);
+
+        held = [];
+        req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+        late = record(req, closed);
+        expect(await closed.promise).toEqual(lateWriteEvents);
+      } finally {
+        session?.destroy();
+        raw?.destroy();
+        server.close();
+      }
+    });
+  });
+});
+
 it("write() completes its callback on a later turn, not inside write()", async () => {
   // _write hands the chunk to the native session with the write callback deferred, so the
   // chunk is still counted in writableLength when write() returns and the Writable settles it

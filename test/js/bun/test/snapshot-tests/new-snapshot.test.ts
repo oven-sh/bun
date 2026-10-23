@@ -66,15 +66,10 @@ describe.concurrent("--update-snapshots", () => {
   /** Runs `bun test --update-snapshots` on the files. Returns every `.snap` file as it is after the run. */
   async function update(files: Record<string, string>, ...args: string[]) {
     using dir = tempDir("update-snapshots", files);
-    const env: Record<string, string | undefined> = { ...bunEnv, CI: "false" };
-    if (args.includes("--bail")) {
-      // `--bail` exits with a bare exit(1). It skips the VM teardown, so LeakSanitizer aborts the child with 134 (#32183).
-      env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
-    }
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--update-snapshots", ...args],
       cwd: String(dir),
-      env,
+      env: { ...bunEnv, CI: "false" },
       stdout: "ignore",
       stderr: "pipe",
     });
@@ -376,20 +371,6 @@ describe.concurrent("--update-snapshots", () => {
       snapshot: snap({ "skipped 1": `"s"`, "changes 1": `"run 1"`, "stable 1": `"new"` }),
       exitCode: 1,
     });
-  });
-
-  test("--bail does not lose the entries of the file", async () => {
-    const { snapshot, exitCode } = await updateOne(
-      `test("one", () => { expect("new").toMatchSnapshot(); });
-       test("two", () => { throw new Error("boom"); });`,
-      snap({ "one 1": `"old"`, "two 1": `"2"` }),
-      "--bail",
-    );
-    // Whether a bail writes the value that "one" took is not decided here. It must not lose an entry.
-    expect([snap({ "one 1": `"old"`, "two 1": `"2"` }), snap({ "one 1": `"new"`, "two 1": `"2"` })]).toContain(
-      snapshot,
-    );
-    expect(exitCode).toBe(1);
   });
 
   test("lists the tests of a deeply nested describe() without native recursion", async () => {

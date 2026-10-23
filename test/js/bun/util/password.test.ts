@@ -12,7 +12,12 @@ describe.skipIf(isDebug)("does not leak", () => {
   async function run(code: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],
-      env: bunEnv,
+      // Bun.gc(true) frees all the dead hash strings at once (about 7 MB in
+      // hashSync). mimalloc gives freed pages back to the OS 100 ms later, on
+      // its own thread. An rss() read right after the GC races that purge, so
+      // one side of the delta can miss those pages. With a zero delay the pages
+      // go back before Bun.gc() returns, and each read counts live memory only.
+      env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
       stdout: "inherit",
       stderr: "pipe",
     });

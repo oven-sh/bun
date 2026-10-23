@@ -35,10 +35,26 @@
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include "headers.h"
 
+#include "BunProcess.h"
 #include "CachedScript.h"
+#include "ModuleLoader.h"
 
 namespace WebCore {
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportExceptionAtEventLoop, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* exception = JSC::Exception::create(lexicalGlobalObject->vm(), callFrame->argument(0), JSC::Exception::StackCaptureAction::DoNotCaptureStack);
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
+    return JSValue::encode(jsUndefined());
+}
+
+void reportExceptionOnNextTick(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* function = JSFunction::create(globalObject->vm(), globalObject, 1, String(), jsFunctionReportExceptionAtEventLoop, ImplementationVisibility::Private);
+    globalObject->processObject()->queueNextTick(lexicalGlobalObject, function, exceptionValue);
+}
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception, CachedScript* cachedScript, bool fromModule, ExceptionDetails* exceptionDetails)
 {
@@ -62,8 +78,16 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     int columnNumber = 0;
     String exceptionSourceURL;
 
-    // The listener's realm can be a node:vm context, which isn't a Zig::GlobalObject.
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
+    // Script called dispatchEvent() or abort(), and it goes on after the callback that threw. Node
+    // throws the error on the next tick for that reason:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1117-L1119
+    // `bun test` reports it now, to the running test.
+    if (vm.entryScope && !Bun::isBunTest)
+        reportExceptionOnNextTick(lexicalGlobalObject, exception->value());
+    else {
+        // The listener's realm can be a node:vm context, which isn't a Zig::GlobalObject.
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
+    }
     RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {

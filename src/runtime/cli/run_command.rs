@@ -1361,6 +1361,9 @@ enum Unchecked {
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
 // VM, so it has no way to reach the stack-local `Run`; the flag lives here.
 static ANY_UNHANDLED: AtomicBool = AtomicBool::new(false);
+// `--print` has not printed the value of the entry point yet. `exit_with_unhandled_note` is a
+// plain fn pointer on the VM too.
+static OWES_ENTRY_POINT_RESULT: AtomicBool = AtomicBool::new(false);
 
 impl Run<'_> {
     /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
@@ -1537,6 +1540,8 @@ impl Run<'_> {
             }
             // A watcher stays for the next save. Any other run ends where the error is reported.
             cli::command::HotReload::None => {
+                OWES_ENTRY_POINT_RESULT
+                    .store(ctx.runtime_options.eval.eval_and_print, Ordering::Relaxed);
                 vm.unhandled_error_exit = Some(exit_with_unhandled_note);
             }
         }
@@ -1582,23 +1587,21 @@ impl Run<'_> {
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
                     let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
-                    // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    // `load_entry_point` has reported a rejection that came while it waited.
+                    if vm.pending_internal_promise_reported_at != vm.hot_reload_counter {
+                        // SAFETY: `global` valid for VM lifetime.
+                        let _ = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    }
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
-                    // When --hot/--watch is on (or a user
-                    // `uncaughtException` handler swallowed the error), keep the
-                    // process alive instead of hard-exiting on a rejected entry.
+                    // The run is still here: --hot/--watch is on, or a user
+                    // `uncaughtException` handler swallowed the error.
                     // The core run-loop below does the actual waiting.
-                    if vm.hot_reload != cli::command::HotReload::None || handled {
-                        vm.add_main_to_watcher_if_needed();
-                        // SAFETY: `event_loop` is a self-pointer into this VM;
-                        // uniquely accessed here.
-                        vm.event_loop_ref().tick();
-                    } else {
-                        exit_with_unhandled_note(vm);
-                    }
+                    vm.add_main_to_watcher_if_needed();
+                    // SAFETY: `event_loop` is a self-pointer into this VM;
+                    // uniquely accessed here.
+                    vm.event_loop_ref().tick();
                 }
 
                 // SAFETY: `vm.jsc_vm` set in `init`.
@@ -1658,50 +1661,33 @@ impl Run<'_> {
             }
 
             if ctx.runtime_options.eval.eval_and_print {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                // C-ABI shims are emitted by
-                                // `generate-host-exports.ts` into
-                                // `crate::generated_host_exports` under their
-                                // link name (`Bun__on…EntryPointResult`).
-                                result.then2(
-                                    vm.global(),
-                                    JSValue::UNDEFINED,
-                                    crate::generated_host_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_host_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
-                };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
+                let result = vm
+                    .entry_point_result
+                    .value
+                    .get()
+                    .unwrap_or(JSValue::UNDEFINED);
+                if let Some(promise) = result.as_any_promise()
+                    && promise.status() == PromiseStatus::Pending
+                {
+                    // C-ABI shims are emitted by
+                    // `generate-host-exports.ts` into
+                    // `crate::generated_host_exports` under their
+                    // link name (`Bun__on…EntryPointResult`).
+                    result.then2(
                         vm.global(),
-                        &raw const to_print,
-                        1,
+                        JSValue::UNDEFINED,
+                        crate::generated_host_exports::Bun__onResolveEntryPointResult,
+                        crate::generated_host_exports::Bun__onRejectEntryPointResult,
                     );
+                    vm.tick();
+                    vm.auto_tick_active();
+                    while vm.is_event_loop_alive() {
+                        vm.tick();
+                        vm.auto_tick_active();
+                    }
                 }
+                OWES_ENTRY_POINT_RESULT.store(false, Ordering::Relaxed);
+                print_entry_point_result(vm);
             }
 
             vm.on_before_exit();
@@ -1789,6 +1775,15 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     unsafe(link_section = ".text.unlikely")
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
+    // `--print` prints the value of an entry point that completed, whatever ends the run after that.
+    if OWES_ENTRY_POINT_RESULT.swap(false, Ordering::Relaxed)
+        && vm.pending_internal_promise().is_some_and(|promise| {
+            // SAFETY: the VM's slot keeps this JSC heap cell alive.
+            unsafe { &*promise }.status() == PromiseStatus::Fulfilled
+        })
+    {
+        print_entry_point_result(vm);
+    }
     vm.exit_handler.exit_code = 1;
     vm.exit_handler.requested = true;
     vm.on_exit();
@@ -1796,6 +1791,33 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
         print_unhandled_version_note();
     }
     vm.global_exit();
+}
+
+/// `--print`: the value of the entry point, or of the promise it is once that has settled.
+#[cold]
+#[inline(never)]
+fn print_entry_point_result(vm: &mut VirtualMachine) {
+    let result = vm
+        .entry_point_result
+        .value
+        .get()
+        .unwrap_or(JSValue::UNDEFINED);
+    let to_print = match result.as_any_promise() {
+        Some(promise) if promise.status() != PromiseStatus::Pending => promise.result(vm.jsc_vm()),
+        _ => result,
+    };
+    // SAFETY: `vals[..1]` is the single stack `to_print`; null
+    // `ctype` routes to the VM's stdout/stderr default.
+    unsafe {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            ::core::ptr::null_mut(),
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            vm.global(),
+            &raw const to_print,
+            1,
+        );
+    }
 }
 
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.

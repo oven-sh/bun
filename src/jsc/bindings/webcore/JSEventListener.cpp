@@ -134,19 +134,9 @@ inline void JSEventListener::visitJSFunctionImpl(Visitor& visitor)
 void JSEventListener::visitJSFunction(AbstractSlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
 void JSEventListener::visitJSFunction(SlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto exception = callFrame->argument(0);
-    reportException(lexicalGlobalObject, exception);
-    return JSValue::encode(JSC::jsUndefined());
-}
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    Bun::Process* process = globalObject->processObject();
-    auto exception = callFrame->argument(0);
-    auto func = JSFunction::create(globalObject->vm(), globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
-    process->queueNextTick(lexicalGlobalObject, func, exception);
+    reportExceptionOnNextTick(lexicalGlobalObject, callFrame->argument(0));
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

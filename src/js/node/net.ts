@@ -36,6 +36,7 @@ const {
   startPerf,
   stopPerf,
   isStoppedModuleGraphRunning,
+  reportUncaughtException,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -197,7 +198,6 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
-const reportError = globalThis.reportError;
 
 let uvBinding;
 function uv() {
@@ -688,7 +688,7 @@ function onClientHandshake(self, socket, success, verifyError) {
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
   // Node has no try/catch around these emits; a listener throw reaches
-  // InternalCallbackScope as uncaughtException. reportError mirrors that
+  // InternalCallbackScope as uncaughtException. reportUncaughtException mirrors that
   // without changing Bun.connect's handshake-throw-to-error-handler contract.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
@@ -748,7 +748,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
     self.emit("secure", self);
   } catch (err) {
-    reportError(err);
+    reportUncaughtException(err);
   }
 }
 // Unlike node, a wrap rejects a bad certificate: node leaves that check to the app, and a forgotten check accepts anything.
@@ -808,7 +808,7 @@ function pushDataToSocket(self, socket, buffer) {
   try {
     full = self.push(buffer) === false;
   } catch (e) {
-    reportError(e);
+    reportUncaughtException(e);
     return;
   }
   if (full) readStop(self, socket);
@@ -1414,7 +1414,7 @@ const ServerHandlers = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
       if (!server) self.emit("secure", self);
     } catch (err) {
-      reportError(err);
+      reportUncaughtException(err);
     }
   },
   error(socket, error) {
@@ -1651,7 +1651,7 @@ function onconnection(err, clientHandle) {
   try {
     self.emit("connection", _socket);
   } catch (e) {
-    reportError(e);
+    reportUncaughtException(e);
   }
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
@@ -2125,7 +2125,7 @@ function Socket(options?): void {
             // The native data dispatch would otherwise route a throw to the
             // socket error handler; hand it to the uncaught-exception path
             // synchronously the way node's bare call does.
-            reportError(e);
+            reportUncaughtException(e);
           }
           if (self.destroyed) return;
           if (ret === false || self.isPaused()) {
@@ -2155,7 +2155,7 @@ function Socket(options?): void {
         } catch (e) {
           // Same as above: report then fall through so the next slice is
           // delivered, matching node's per-onStreamRead behavior.
-          reportError(e);
+          reportUncaughtException(e);
         }
         if (self.destroyed) return;
         if (ret === false || self.isPaused()) {

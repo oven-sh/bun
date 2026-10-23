@@ -13,7 +13,7 @@ const Readable = require("internal/streams/readable");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
-const { kEmptyObject } = require("internal/shared");
+const { kEmptyObject, reportUncaughtException } = require("internal/shared");
 const { validateBoolean, validateObject, validateOneOf } = require("internal/validators");
 const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
@@ -140,7 +140,7 @@ class ReadableFromWeb extends Readable {
     try {
       callback(error);
     } catch (error) {
-      globalThis.reportError(error);
+      reportUncaughtException(error);
     }
   }
 }

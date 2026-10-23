@@ -353,9 +353,9 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
-    /// Ends the process once an error that nothing handled is printed, as node's
-    /// `TriggerUncaughtException` does. `bun run` installs it, except under `--watch` and `--hot`.
-    /// A VM without it counts the error and returns to the caller.
+    /// Ends the process once an error that nothing handled is printed. `bun run` installs it,
+    /// except under `--watch` and `--hot`. A VM without it counts the error and returns to the caller.
+    /// <https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.cc#L1369-L1375>
     pub unhandled_error_exit: Option<fn(&mut VirtualMachine) -> !>,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
     hot_run_failed: bool,
@@ -3255,6 +3255,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
+    fn Bun__reportEntryPointRejectionOf(global: &JSGlobalObject, promise: *mut JSInternalPromise);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3778,8 +3779,15 @@ impl VirtualMachine {
             }
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
-            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
-                return Ok(promise);
+            match crate::JSPromise::status_ptr(promise) {
+                crate::js_promise::Status::Rejected => return Ok(promise),
+                // The entry point waits for a callback. If that callback rejects it, the run
+                // ends before the next callback, not when this wait next looks.
+                crate::js_promise::Status::Pending if self.unhandled_error_exit.is_some() => {
+                    // SAFETY: `promise` is a live JSC heap cell.
+                    unsafe { Bun__reportEntryPointRejectionOf(self.global(), promise) };
+                }
+                _ => {}
             }
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }

@@ -9,7 +9,6 @@ const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
-const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
   throw err;
@@ -209,7 +208,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       handle.onflushed?.();
     } catch (err) {
       // A 'finish' listener that throws must not unwind into the socket's write callbacks or 'close' listeners.
-      reportError(err);
+      require("internal/shared").reportUncaughtException(err);
     }
   }
 

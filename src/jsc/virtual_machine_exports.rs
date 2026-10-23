@@ -98,6 +98,16 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     }
 }
 
+/// The reaction that `load_entry_point` leaves on a pending entry point.
+// HOST_EXPORT(Bun__reportEntryPointRejection, c)
+pub fn report_entry_point_rejection(global: &JSGlobalObject, reason: JSValue) {
+    let vm = global.bun_vm().as_mut();
+    // As in the run command: only an ESM entry rejection has origin "unhandledRejection".
+    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
+    let _ = vm.uncaught_exception(global, reason, is_rejection);
+    vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+}
+
 /// `ScriptExecutionContext::postTask` — the context addresses the thread's VM
 /// directly because it outlives the `Zig::GlobalObject` it was created with.
 // HOST_EXPORT(Bun__VM__queueTask, c)

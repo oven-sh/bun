@@ -60,6 +60,8 @@ WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalO
 String retrieveErrorMessage(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::TopExceptionScope&);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::JSValue exception, CachedScript* = nullptr, bool = false);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::Exception*, CachedScript* = nullptr, bool = false, ExceptionDetails* = nullptr);
+// For a caller that goes on after the callback that threw (node: `process.nextTick(() => { throw err; })`).
+WEBCORE_EXPORT void reportExceptionOnNextTick(JSC::JSGlobalObject*, JSC::JSValue exception);
 
 JSC::JSValue createDOMException(JSC::JSGlobalObject&, Exception&&);
 JSC::JSValue createDOMException(JSC::JSGlobalObject*, ExceptionCode, const String& = emptyString(), const String& extra = String());

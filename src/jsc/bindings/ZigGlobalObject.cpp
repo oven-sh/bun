@@ -3533,8 +3533,8 @@ void GlobalObject::handleRejectedPromises()
 }
 
 // For the frame that an event loop callback returns to, when its checkpoint says DrainedWithRejections.
-// Node does this in processTicksAndRejections(): report, run what the listeners queued, and repeat
-// until nothing is left. The next callback runs after that.
+// Report, run what the listeners queued, and repeat until nothing is left. The next callback runs after that.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/task_queues.js#L72-L110
 Checkpoint GlobalObject::handleRejectedPromisesAfterCallback()
 {
     // Script is on the stack: native code reached a checkpoint in the middle of a JS turn, and that

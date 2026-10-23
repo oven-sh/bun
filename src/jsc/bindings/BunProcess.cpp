@@ -4494,6 +4494,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" void Bun__reportEntryPointRejection(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportEntryPointRejection, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Bun__reportEntryPointRejection(globalObject, JSValue::encode(callFrame->argument(0)));
+    return JSValue::encode(jsUndefined());
+}
+
+// The module loader marks the promise of the entry point as handled, so handleRejectedPromises() never
+// sees it. This reaction reports its rejection in the checkpoint that rejects it.
+extern "C" void Bun__reportEntryPointRejectionOf(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* onRejected = JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportEntryPointRejection, ImplementationVisibility::Private);
+    promise->then(globalObject, jsUndefined(), onRejected);
+    // Without the reaction, the wait for the entry point still sees the rejection.
+    (void)scope.tryClearException();
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception

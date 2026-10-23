@@ -85,7 +85,7 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
     try {
       context = transform(data);
     } catch (err) {
-      process.nextTick(() => reportError(err));
+      process.nextTick(require("internal/shared").reportUncaughtException, err);
       return next();
     }
 
@@ -150,7 +150,7 @@ class ActiveChannel {
         const onMessage = subscribers[i];
         onMessage(data, this.name);
       } catch (err) {
-        process.nextTick(() => reportError(err));
+        process.nextTick(require("internal/shared").reportUncaughtException, err);
       }
     }
   }

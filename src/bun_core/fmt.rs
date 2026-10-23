@@ -1610,6 +1610,7 @@ pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
 }
 
 /// Prints `text` as a terminal hyperlink to `link` (OSC 8). Prints plain `text` if `enabled` is false.
+/// A byte of `link` outside 32..=126 is written as `%XX`.
 pub struct TerminalHyperlink<'a> {
     link: &'a [u8],
     text: &'a [u8],
@@ -1635,12 +1636,30 @@ impl Display for TerminalHyperlink<'_> {
                 f,
                 "{esc}]8;;{link}{esc}\\{text}{esc}]8;;{esc}\\",
                 esc = ESC,
-                link = bstr::BStr::new(self.link),
+                link = Osc8Uri(self.link),
                 text = bstr::BStr::new(self.text),
             )
         } else {
             write!(f, "{}", bstr::BStr::new(self.text))
         }
+    }
+}
+
+/// OSC 8 allows only the bytes 32..=126 in a URI, and says to URI-encode every other byte. A raw
+/// ESC or BEL would end the sequence before the URI does.
+/// https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda#encodings
+struct Osc8Uri<'a>(&'a [u8]);
+
+impl Display for Osc8Uri<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut rest = self.0;
+        while let Some(i) = rest.iter().position(|byte| !matches!(byte, 0x20..=0x7E)) {
+            let [high, low] = hex_byte_upper(rest[i]);
+            write_bytes(f, &rest[..i])?;
+            write_bytes(f, &[b'%', high, low])?;
+            rest = &rest[i + 1..];
+        }
+        write_bytes(f, rest)
     }
 }
 

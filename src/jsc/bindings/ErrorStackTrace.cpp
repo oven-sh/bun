@@ -237,16 +237,6 @@ String sourceURL(JSC::StackVisitor& visitor)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
-{
-    auto* executable = function->executable();
-    if (!executable || executable->isHostFunction()) {
-        return String();
-    }
-
-    return Zig::sourceURL(function->jsExecutable()->source());
-}
-
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
     auto codeType = codeBlock->codeType();

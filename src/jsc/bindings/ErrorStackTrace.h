@@ -7,7 +7,6 @@
 
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
-#include <JavaScriptCore/WasmIndexOrName.h>
 
 #include "ZigGlobalObject.h"
 
@@ -30,7 +29,6 @@ String sourceURL(const JSC::SourceCode& sourceCode);
 String sourceURL(JSC::CodeBlock* codeBlock);
 String sourceURL(JSC::CodeBlock& codeBlock);
 String sourceURL(JSC::StackVisitor& visitor);
-String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);

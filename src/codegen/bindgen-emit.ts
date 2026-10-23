@@ -443,35 +443,29 @@ extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${origin.stem}_${names
 `;
 }
 
-/** C++ that returns the variant `string` spells, of `candidates` of its length: the characters that tell them apart leave one to compare. */
+/** The body of a `case`: returns the variant of the candidate that `string` equals. All have its length, so it switches on characters where they differ and compares the one left. */
 function cppMatchSpelling(candidates: readonly (readonly [spelling: string, variant: string])[]): string {
   if (candidates.length === 1) {
     const [[spelling, variant]] = candidates;
     return `if (string == ${asciiLiteral(spelling)})\n    return ${variant};\nbreak;`;
   }
-  const groupsAt = (at: number) => {
-    const groups = new Map<string, (typeof candidates)[number][]>();
-    for (const candidate of candidates)
-      groups.set(candidate[0][at], [...(groups.get(candidate[0][at]) ?? []), candidate]);
-    return groups;
-  };
-  const positions = Array.from(candidates[0][0], (character, at) => at);
-  const at = positions.reduce((best, at) => (groupsAt(at).size > groupsAt(best).size ? at : best));
+  const [at, groups] = Array.from(
+    candidates[0][0],
+    (character, at) => [at, Map.groupBy(candidates, ([spelling]) => spelling[at])] as const,
+  ).reduce((best, next) => (next[1].size > best[1].size ? next : best));
   return `switch (string[${at}]) {
-${[...groupsAt(at)].map(([character, group]) => `case '${character.replace(/['\\]/, "\\$&")}':\n${indent(cppMatchSpelling(group), 4)}`).join("\n")}
+${[...groups].map(([character, group]) => `case '${character}':\n${indent(cppMatchSpelling(group), 4)}`).join("\n")}
 }
 break;`;
 }
 
 function cppSourceForEnum(type: EnumerationType): string {
-  const byLength = new Map<number, (readonly [string, string])[]>();
-  type.spellings.forEach((spellings, index) => {
-    for (const spelling of spellings)
-      byLength.set(spelling.length, [
-        ...(byLength.get(spelling.length) ?? []),
-        [spelling, `${type.cpp}::${type.variants[index]}`],
-      ]);
-  });
+  const byLength = Map.groupBy(
+    type.spellings.flatMap((spellings, index) =>
+      spellings.map(spelling => [spelling, `${type.cpp}::${type.variants[index]}`] as const),
+    ),
+    ([spelling]) => spelling.length,
+  );
   return `
 template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type.cpp}>(const WTF::String& string)
 {
@@ -595,7 +589,7 @@ extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalOb
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ${type.cpp} converted;
-    ${cppReturnIfFailed("Bun::Bindgen::convertDictionaryInto(*globalObject, JSC::JSValue::decode(value), converted)", "false").replace("\n", "\n    ")}
+${indent(cppReturnIfFailed("Bun::Bindgen::convertDictionaryInto(*globalObject, JSC::JSValue::decode(value), converted)", "false"), 4)}
     *result = ${toExtern("converted")};
     return true;
 }
@@ -619,8 +613,7 @@ function cppDeclareConverted(
   name: string,
   failure: string,
 ): string[] {
-  if (!type.convertsInPlace && !type.conversionThrows)
-    return [`auto ${variable} = ${type.cppConvert(value, ctx, name)};`];
+  if (!type.conversionThrows) return [`auto ${variable} = ${type.cppConvert(value, ctx)};`];
   return [
     `${implementationType(type)} ${variable};`,
     ...type.cppConvertInto(variable, value, ctx, name, failure).split("\n"),
@@ -989,7 +982,7 @@ ${
     if (JSC::JSValue cached = cachedValue.get())
         return JSC::JSValue::encode(cached);
     JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));
-    ${cppReturnIfFailed("!!result", "{}").replace("\n", "\n    ")}
+${indent(cppReturnIfFailed("!!result", "{}"), 4)}
     cachedValue.set(vm, thisObject, result);
     return JSC::JSValue::encode(result);`
 }
@@ -1064,7 +1057,7 @@ JSC_DEFINE_HOST_FUNCTION(construct${name}, (JSC::JSGlobalObject * globalObject, 
 {
 ${cppPrologue}
     JSC::Structure* structure = Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
-    ${cppReturnIfFailed("!!structure", "{}").replace("\n", "\n    ")}
+${indent(cppReturnIfFailed("!!structure", "{}"), 4)}
 ${
   type.refCounted && !type.passStructure
     ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [

@@ -76,10 +76,11 @@ not compile.
 To reach the function:
 
 - from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`. A `.nullable` result, and a `.nullable` getter without a setter, is `T | null`;
-- from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`;
+- from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`. The table gives its `.length`, and the schema's `length` is not read;
 - from Rust, or from C++ that compares host functions: `export: "Bun__CronJob__onPromiseResolve"` gives the host function C
   linkage under that name. The generated header declares it, and in Rust it is a `JSHostFn`,
-  `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`.
+  `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`. What makes
+  the function gives its `.length`, so `length` is refused.
 
 `passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds `callee: JsLocal<'a>`, the
 function that was called, after it.
@@ -196,7 +197,7 @@ arguments from left to right:
    same call. It keeps the candidates where the argument can be left out, or if there are none,
    those whose type takes every kind.
 3. A candidate with no argument at that position takes only `undefined`.
-4. If no candidate takes the argument, all of them stay, and the next argument decides.
+4. If no candidate takes the argument, those that have an argument at that position stay, and the next argument decides.
 5. When the arguments run out, the candidate written first wins. Its conversion reports
    whatever is wrong.
 
@@ -256,7 +257,7 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
-- `.otherAsNull`: `Option<T>`. A value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), is `None` and nothing is thrown, as if the type were in a union with `ignored: b.any` after it. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `ignored: b.any` as its last alternative.
+- `.otherAsNull`: a value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent and nothing is thrown, as if the type were in a union with `ignored: b.any` after it; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `ignored: b.any` as its last alternative.
 - `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` differ: both work, like `alert`, or a test of Node pins an error for each, like `URL.revokeObjectURL`. It also goes on a type that takes `undefined`, like `b.any`. It is only for an argument, and not for one of an overload.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 

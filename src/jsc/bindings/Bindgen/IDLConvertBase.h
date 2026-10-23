@@ -52,11 +52,11 @@ private:
 
 }
 
-// Whether a conversion threw, from what it returned: false, null or empty. As WebCore's ConversionResult::hasException.
-ALWAYS_INLINE bool hasException(JSC::ThrowScope& scope, bool converted)
+// Whether a call threw, from what it returned: false, null or empty. As WebCore's ConversionResult::hasException.
+ALWAYS_INLINE bool hasException(JSC::ThrowScope& scope, bool succeeded)
 {
-    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !converted);
-    return !converted;
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !succeeded);
+    return !succeeded;
 }
 
 // Conversion context where the name of the value being converted is specified as an

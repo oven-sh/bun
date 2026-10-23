@@ -530,12 +530,12 @@ export const overloaded = b.overloads(
     returns: b.string.utf8,
     rustPath: "crate::bindgen_test::overloaded_text_upper",
   },
+  { args: { number: b.f64 }, returns: b.string.utf8, rustPath: "crate::bindgen_test::overloaded_number" },
   {
     args: { a: b.f64, b: b.f64 },
     returns: b.string.utf8,
     rustPath: "crate::bindgen_test::overloaded_two_numbers",
   },
-  { args: { number: b.f64 }, returns: b.string.utf8, rustPath: "crate::bindgen_test::overloaded_number" },
   { args: { list: b.array(b.f64) }, returns: b.string.utf8, rustPath: "crate::bindgen_test::overloaded_list" },
   {
     args: { counter: TestCounter },

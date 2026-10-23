@@ -24,7 +24,7 @@
 //   shape        impl signature                                          → thunk
 //   ──────────── ─────────────────────────────────────────────────────────────────
 //   lazy         (&JSGlobalObject) -> JsResult<JSValue>|JSValue
-//                  → host_fn::host_fn_result(g, || path::name(g))
+//                  → host_fn::to_js_host_call(g, || path::name(g))
 //   generic      (T0, T1, …) -> R   where Tn ∈ {&X, &mut X, *T, scalar}
 //                  → unsafe extern "C" fn(<ptr-ified Tn>) -> R { path::name(<deref>) }
 //
@@ -396,7 +396,7 @@ function emitThunk(e: Export): string {
       // ABI-identical to non-null `*const JSGlobalObject`; C++ never passes
       // null here.
       const body = retIsJsResult
-        ? `    host_fn::host_fn_result(g, || ${impl}(g))`
+        ? `    host_fn::to_js_host_call(g, || ${impl}(g))`
         : `    host_fn::host_fn_lazy_passthrough(g, ${impl})`;
       return `
 // ${loc}
@@ -444,7 +444,7 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
         .join("");
       const call = e.params.map(p => p.name).join(", ");
       // If the impl returns `JsResult<JSValue>` and takes a `&JSGlobalObject`
-      // somewhere, route through `host_fn_result` so the error is mapped; else
+      // somewhere, route through `to_js_host_call` so the error is mapped; else
       // forward raw.
       const globalParam = e.params.find(p => /JSGlobalObject$/.test(p.ty));
       const cRet = retIsJsResult ? "JSValue" : e.ret;
@@ -452,11 +452,11 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       if (e.isUnsafe) {
         // Place `unsafe { }` at the call site so the SAFETY comment sits next
         // to the actual unsafe operation. (Closures inherit the enclosing
-        // `unsafe` context, so wrapping the whole `host_fn_result(..)`
+        // `unsafe` context, so wrapping the whole `to_js_host_call(..)`
         // expression would also compile — this is for clarity, not necessity.)
         inner = `\n        // SAFETY: C++ caller upholds the impl fn's documented safety contract.\n        unsafe { ${inner} }`;
       }
-      const body = retIsJsResult && globalParam ? `host_fn::host_fn_result(${globalParam.name}, || ${inner})` : inner;
+      const body = retIsJsResult && globalParam ? `host_fn::to_js_host_call(${globalParam.name}, || ${inner})` : inner;
       return `
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;

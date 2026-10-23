@@ -20,7 +20,7 @@ ALWAYS_INLINE typename WebCore::Converter<T>::ReturnType convertIDL(
     }
 }
 
-// False if it threw. A converter that has `convertInto` says so itself, as WebCore's ConversionResult does. After another one the VM is asked.
+// False if it threw. A converter with `convertInto` reports that itself, as WebCore's ConversionResult does. For any other, this asks the VM.
 template<typename T, IDLConversionContext Ctx, typename Result>
 ALWAYS_INLINE bool convertIDLInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Result& result)
 {

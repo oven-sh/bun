@@ -495,7 +495,7 @@ impl DateHeaderTimer {
 
 // `generate-host-exports.ts`
 // scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
-// `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
+// `generated_host_exports.rs`, each routing through `host_fn::to_js_host_call`.
 //
 // C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
 // these in `headers.h` as `(JSGlobalObject*, EncodedJSValue…) -> EncodedJSValue`.

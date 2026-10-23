@@ -15,8 +15,8 @@ bool isSharedBuffer(JSC::JSValue);
 // Optional: ~MallocSpan calls free, of null too.
 using BytesCopy = std::optional<WTF::MallocSpan<uint8_t>>;
 
-// A copy of the bytes, which `copy` holds, or the bytes themselves if there are none. Allocating it can throw.
-std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, BytesCopy& copy);
+// `bytes` become a copy of themselves, which `copy` holds, unless there are none. False if it threw: allocating can.
+bool copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>& bytes, BytesCopy& copy);
 
 // Whether it holds a Blob: a Blob, or a `Bun.build()` output. Throws for one whose bytes are not in memory: a file.
 bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
@@ -43,26 +43,25 @@ public:
             m_bytes = bytesOfBlobOrBuffer(argument);
     }
 
-    // The bytes of a shared buffer become those of `copy`. Whether it is one: copying can throw.
+    // The bytes of a shared buffer become those of `copy`. False if it threw.
     ALWAYS_INLINE bool copyIfShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
     {
         if (!m_isBlobOrBuffer || !isSharedBuffer(argument)) [[likely]]
-            return false;
-        m_bytes = copyBytes(globalObject, bytesOfBlobOrBuffer(argument), copy);
-        return true;
+            return true;
+        m_bytes = bytesOfBlobOrBuffer(argument);
+        return copyBytes(globalObject, m_bytes, copy);
     }
 
     // `read` and `copyIfShared` in one look at the buffer.
     ALWAYS_INLINE bool readCopyingShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
     {
         if (!m_isBlobOrBuffer)
-            return false;
+            return true;
         bool isShared = false;
         m_bytes = bytesOfBlobOrBuffer(argument, isShared);
         if (!isShared) [[likely]]
-            return false;
-        m_bytes = copyBytes(globalObject, m_bytes, copy);
-        return true;
+            return true;
+        return copyBytes(globalObject, m_bytes, copy);
     }
 
     // Null data for a Blob or a buffer that was neither read nor copied: Rust reads it, each time it borrows the bytes.

@@ -113,6 +113,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.namespace({ f: { [key]: true } })).toThrow(`f: a function of a namespace has no ${key}`);
   }
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
+  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow("a range reports the name of its argument");
   const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
   expect(() => b.array(stringOrBuffer)).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.dictionary({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
@@ -777,6 +778,9 @@ describe("functions", () => {
     expect(made(21)).toBe(42);
     expect(() => made("21")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(() => b.fn({ export: "not a name" })).toThrow("export: not a name is not a C identifier");
+    expect(() => b.fn({ export: "Bun__name", length: 1 })).toThrow(
+      "length: what makes an exported function gives its length",
+    );
   });
 
   it("promisePtr and nativePromiseContext give the pointer in the context of a promise reaction", () => {

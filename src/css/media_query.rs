@@ -18,7 +18,7 @@ type CSSNumber = f32;
 type CSSInteger = i32;
 
 // ───────────────────────── QueryCondition trait ─────────────────────────
-// Implementors: MediaCondition, StyleQuery, ContainerCondition.
+// Implementors: MediaCondition, StyleQuery, ScrollStateQuery, ContainerCondition.
 // NOT SupportsCondition — its variant set {Not, And(Vec), Or(Vec), Declaration,
 // Selector, Unknown} and its `needs_parens(&Self)` / `b" not "` contract are
 // structurally different and must stay hand-rolled.
@@ -65,13 +65,13 @@ pub trait QueryCondition: Sized + ToCss {
         v.extend(conditions);
         Self::create_operation(operator, v)
     }
-    fn parse_style_query(input: &mut Parser) -> Result<Self>;
-    /// See `parse_feature_with_options` — same default-forward rationale.
-    fn parse_style_query_with_options(
-        input: &mut Parser,
+    /// Parse a query function block after its `name(` token. `None`: no such function here.
+    fn parse_query_function(
+        _name: &[u8],
+        _input: &mut Parser,
         _options: &css::ParserOptions,
-    ) -> Result<Self> {
-        Self::parse_style_query(input)
+    ) -> Option<Result<Self>> {
+        None
     }
     fn needs_parens(
         &self,
@@ -198,8 +198,6 @@ bitflags::bitflags! {
     pub struct QueryConditionFlags: u8 {
         /// Whether to allow top-level "or" boolean logic.
         const ALLOW_OR = 1 << 0;
-        /// Whether to allow style container queries.
-        const ALLOW_STYLE = 1 << 1;
     }
 }
 
@@ -207,10 +205,6 @@ impl QueryConditionFlags {
     #[inline]
     fn allow_or(self) -> bool {
         self.contains(Self::ALLOW_OR)
-    }
-    #[inline]
-    fn allow_style(self) -> bool {
-        self.contains(Self::ALLOW_STYLE)
     }
 }
 
@@ -843,9 +837,6 @@ impl QueryCondition for MediaCondition {
             operator,
             conditions,
         }
-    }
-    fn parse_style_query(input: &mut Parser) -> Result<Self> {
-        Err(input.new_error_for_next_token())
     }
     fn needs_parens(
         &self,
@@ -1501,41 +1492,22 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
 ) -> Result<C> {
     use bun_core::strings;
     let location = input.current_source_location();
-    let (is_negation, is_style) = 'brk: {
-        let tok = *input.next()?;
-        match &tok {
-            css::Token::OpenParen => break 'brk (false, false),
-            css::Token::Ident(ident) => {
-                if strings::eql_case_insensitive_ascii_check_length(ident, b"not") {
-                    break 'brk (true, false);
-                }
-            }
-            css::Token::Function(f) => {
-                if flags.allow_style()
-                    && strings::eql_case_insensitive_ascii_check_length(f, b"style")
-                {
-                    break 'brk (false, true);
-                }
-            }
-            _ => {}
-        }
-        return Err(location.new_unexpected_token_error(tok));
-    };
-
     let alloc = ArenaPtr::new(input.arena());
 
-    // (is_negation, is_style)
-    let first_condition: C = match (is_negation, is_style) {
-        (true, false) => {
+    let tok = *input.next()?;
+    let first_condition: C = match &tok {
+        css::Token::OpenParen => parse_paren_block::<C>(input, flags, options)?,
+        css::Token::Ident(ident)
+            if strings::eql_case_insensitive_ascii_check_length(ident, b"not") =>
+        {
             let inner_condition = parse_parens_or_function::<C>(input, flags, options)?;
             return Ok(C::create_negation_in(inner_condition, alloc));
         }
-        (true, true) => {
-            let inner_condition = C::parse_style_query_with_options(input, options)?;
-            return Ok(C::create_negation_in(inner_condition, alloc));
-        }
-        (false, false) => parse_paren_block::<C>(input, flags, options)?,
-        (false, true) => C::parse_style_query_with_options(input, options)?,
+        css::Token::Function(name) => match C::parse_query_function(name, input, options) {
+            Some(condition) => condition?,
+            None => return Err(location.new_unexpected_token_error(tok)),
+        },
+        _ => return Err(location.new_unexpected_token_error(tok)),
     };
 
     let operator: Operator = match input.try_parse(Operator::parse) {
@@ -1564,21 +1536,19 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     }
 }
 
-/// Parse a media condition in parentheses, or a style() function.
+/// Parse a condition in parentheses, or a query function such as `style()`.
 pub(crate) fn parse_parens_or_function<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
-    use bun_core::strings;
     let location = input.current_source_location();
     let t = *input.next()?;
     match &t {
         css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
-        css::Token::Function(f) => {
-            if flags.allow_style() && strings::eql_case_insensitive_ascii_check_length(f, b"style")
-            {
-                return C::parse_style_query_with_options(input, options);
+        css::Token::Function(name) => {
+            if let Some(condition) = C::parse_query_function(name, input, options) {
+                return condition;
             }
         }
         _ => {}

@@ -7929,6 +7929,99 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+
+    // Scroll state queries (css-conditional-5): the function takes the same
+    // `not`/`and`/`or` grammar as style(), over the stuck, snapped,
+    // scrollable and scrolled features.
+    minify_test(
+      "@container scroll-state(stuck: top) { .header > .inner { box-shadow: 0 2px 4px #0003 } }",
+      "@container scroll-state(stuck:top){.header>.inner{box-shadow:0 2px 4px #0003}}",
+    );
+    minify_test(
+      "@container scroll-state(scrollable: top) { .foo { color: red } }",
+      "@container scroll-state(scrollable:top){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state(snapped: x) { .foo { color: red } }",
+      "@container scroll-state(snapped:x){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state(scrolled: top) { .foo { color: red } }",
+      "@container scroll-state(scrolled:top){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state(stuck) { .foo { color: red } }",
+      "@container scroll-state(stuck){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state((stuck: top) and (stuck: left)) { .foo { color: red } }",
+      "@container scroll-state((stuck:top) and (stuck:left)){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state((stuck: top) or (stuck: left)) { .foo { color: red } }",
+      "@container scroll-state((stuck:top) or (stuck:left)){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state(not (stuck: top)) { .foo { color: red } }",
+      "@container scroll-state(not (stuck:top)){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state(not ((scrollable: bottom) and (scrollable: right))) { .foo { color: red } }",
+      "@container scroll-state(not ((scrollable:bottom) and (scrollable:right))){.foo{color:red}}",
+    );
+    minify_test(
+      "@container (scroll-state(scrollable: inline-end)) { .foo { color: red } }",
+      "@container scroll-state(scrollable:inline-end){.foo{color:red}}",
+    );
+    minify_test(
+      "@container not scroll-state(scrollable: top) { .foo { color: red } }",
+      "@container not scroll-state(scrollable:top){.foo{color:red}}",
+    );
+    minify_test(
+      "@container sidebar scroll-state(stuck: top) { .foo { color: red } }",
+      "@container sidebar scroll-state(stuck:top){.foo{color:red}}",
+    );
+    minify_test(
+      "@container (width > 100px) and scroll-state(stuck: top) { .foo { color: red } }",
+      "@container (width>100px) and scroll-state(stuck:top){.foo{color:red}}",
+    );
+    minify_test(
+      "@container scroll-state(stuck: top) or style(--a: 1) { .foo { color: red } }",
+      "@container scroll-state(stuck:top) or style(--a:1){.foo{color:red}}",
+    );
+    minify_test(
+      "@container SCROLL-STATE(STUCK: top) { .foo { color: red } }",
+      "@container scroll-state(stuck:top){.foo{color:red}}",
+    );
+    minify_test(
+      ".foo { @container scroll-state(stuck: top) { color: red } }",
+      ".foo{@container scroll-state(stuck:top){&{color:red}}}",
+    );
+    // An unknown feature name is kept as written, as in @media and size queries.
+    minify_test(
+      "@container scroll-state(width: 100px) { .foo { color: red } }",
+      "@container scroll-state(width:100px){.foo{color:red}}",
+    );
+
+    // Query functions belong to the condition they appear in. scroll-state()
+    // does not nest, style() does not take scroll-state(), and @media takes
+    // neither.
+    test.each([
+      ["@container scroll-state() {}", "Invalid media query"],
+      ["@container scroll-state(stuck: 100px) {}", "Invalid media query"],
+      ["@container scroll-state(stuck > top) {}", "Invalid media query"],
+      ["@container scroll-state(scroll-state(scrollable: top)) {}", "Invalid media query"],
+      ["@container style(scroll-state(scrollable: top)) {}", "Unexpected token: scroll-state("],
+      ["@container scroll-state(style(--a: 1)) {}", "Invalid media query"],
+      ["@container style(style(--a: 1)) {}", "Unexpected token: style("],
+      ["@container unknown(foo) {}", "Unexpected token: unknown("],
+      ["@container not unknown(foo) {}", "Unexpected token: unknown("],
+      ["@container (width > 100px) and unknown(foo) {}", "Unexpected token: unknown("],
+      ["@media scroll-state(stuck: top) {}", "Unexpected token: scroll-state("],
+      ["@media style(--a: 1) {}", "Unexpected token: style("],
+    ])("ERROR: %s", (css, message) => {
+      expect(() => minify_test_with_options(css, "")).toThrow(message);
+    });
   });
 
   describe("font-palette-values", () => {

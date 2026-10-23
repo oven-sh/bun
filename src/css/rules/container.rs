@@ -163,9 +163,6 @@ impl QueryCondition for StyleQuery {
             conditions,
         }
     }
-    fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
-        Err(input.new_error_for_next_token())
-    }
     fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
         match self {
             StyleQuery::Not(_) => true,
@@ -193,6 +190,130 @@ impl StyleQuery {
     }
 }
 
+pub(crate) type ScrollStateFeature = QueryFeature<ScrollStateFeatureId>;
+
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
+pub enum ScrollStateFeatureId {
+    /// The [stuck](https://drafts.csswg.org/css-conditional-5/#stuck) scroll state feature.
+    Stuck,
+    /// The [snapped](https://drafts.csswg.org/css-conditional-5/#snapped) scroll state feature.
+    Snapped,
+    /// The [scrollable](https://drafts.csswg.org/css-conditional-5/#scrollable) scroll state feature.
+    Scrollable,
+    /// The [scrolled](https://drafts.csswg.org/css-conditional-5/#scrolled) scroll state feature.
+    Scrolled,
+}
+
+impl crate::media_query::FeatureIdTrait for ScrollStateFeatureId {
+    fn value_type(&self) -> MediaFeatureType {
+        MediaFeatureType::Ident
+    }
+
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        css::enum_property_util::to_css(self, dest)
+    }
+
+    fn from_str(s: &[u8]) -> Option<Self> {
+        <Self as css::EnumProperty>::from_ascii_case_insensitive(s)
+    }
+}
+
+/// Represents a scroll state query within a container condition.
+pub enum ScrollStateQuery {
+    /// A scroll state feature, implicitly parenthesized.
+    Feature(Box<ScrollStateFeature>),
+
+    /// A negation of a condition.
+    Not(Box<ScrollStateQuery>),
+
+    /// A set of joint operations.
+    Operation {
+        /// The operator for the conditions.
+        operator: Operator,
+        /// The conditions for the operator.
+        conditions: Vec<ScrollStateQuery>,
+    },
+}
+
+impl ToCss for ScrollStateQuery {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        self.condition_to_css(dest)
+    }
+}
+
+impl QueryCondition for ScrollStateQuery {
+    type Feature = ScrollStateFeature;
+
+    fn as_feature(&self) -> Option<&ScrollStateFeature> {
+        if let Self::Feature(f) = self {
+            Some(f.as_ref())
+        } else {
+            None
+        }
+    }
+    fn as_not(&self) -> Option<&Self> {
+        if let Self::Not(c) = self {
+            Some(c)
+        } else {
+            None
+        }
+    }
+    fn as_operation(&self) -> Option<(Operator, &[Self])> {
+        if let Self::Operation {
+            operator,
+            conditions,
+        } = self
+        {
+            Some((*operator, conditions))
+        } else {
+            None
+        }
+    }
+    fn feature_to_css(
+        f: &ScrollStateFeature,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        f.to_css(dest)
+    }
+
+    fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
+        let feature = QueryFeature::<ScrollStateFeatureId>::parse(input)?;
+        Ok(ScrollStateQuery::Feature(Box::new(feature)))
+    }
+    fn create_negation(condition: Box<Self>) -> Self {
+        ScrollStateQuery::Not(condition)
+    }
+    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
+        ScrollStateQuery::Operation {
+            operator,
+            conditions,
+        }
+    }
+    fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
+        match self {
+            ScrollStateQuery::Not(_) => true,
+            ScrollStateQuery::Operation { operator, .. } => Some(*operator) != parent_operator,
+            ScrollStateQuery::Feature(f) => f.needs_parens(parent_operator, targets),
+        }
+    }
+}
+
+impl ScrollStateQuery {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        match self {
+            Self::Feature(f) => Self::Feature(Box::new(super::dc::query_feature(f, bump))),
+            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
+            Self::Operation {
+                operator,
+                conditions,
+            } => Self::Operation {
+                operator: *operator,
+                conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
+            },
+        }
+    }
+}
+
 pub enum ContainerCondition {
     /// A size container feature, implicitly parenthesized.
     Feature(Box<ContainerSizeFeature>),
@@ -208,6 +329,8 @@ pub enum ContainerCondition {
     },
     /// A style query.
     Style(StyleQuery),
+    /// A scroll state query.
+    ScrollState(ScrollStateQuery),
 }
 
 impl ToCss for ContainerCondition {
@@ -251,12 +374,29 @@ impl QueryCondition for ContainerCondition {
         f.to_css(dest)
     }
     fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Self::Style(query) = self else {
-            unreachable!()
-        };
-        dest.write_str("style(")?;
-        query.to_css(dest)?;
-        dest.write_char(b')')
+        match self {
+            Self::Style(query) => {
+                dest.write_str("style(")?;
+                query.to_css(dest)?;
+                dest.write_char(b')')
+            }
+            Self::ScrollState(query) => {
+                // A plain feature prints its own parentheses.
+                let needs_parens = query.needs_parens(None, &dest.targets);
+                dest.write_str("scroll-state")?;
+                if needs_parens {
+                    dest.write_char(b'(')?;
+                }
+                query.to_css(dest)?;
+                if needs_parens {
+                    dest.write_char(b')')?;
+                }
+                Ok(())
+            }
+            Self::Feature(_) | Self::Not(_) | Self::Operation { .. } => {
+                unreachable!("handled by condition_to_css")
+            }
+        }
     }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
@@ -272,23 +412,32 @@ impl QueryCondition for ContainerCondition {
             conditions,
         }
     }
-    fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
-        use crate::media_query::QueryConditionFlags;
-        input.parse_nested_block(|i| {
-            if let Ok(res) = i.try_parse(|i2| {
-                media_query::parse_query_condition::<StyleQuery>(i2, QueryConditionFlags::ALLOW_OR)
-            }) {
-                return Ok(ContainerCondition::Style(res));
-            }
-            Ok(ContainerCondition::Style(StyleQuery::parse_feature(i)?))
-        })
+    fn parse_query_function(
+        name: &[u8],
+        input: &mut css::Parser,
+        _options: &css::ParserOptions,
+    ) -> Option<css::Result<Self>> {
+        use bun_core::strings;
+        if strings::eql_case_insensitive_ascii_check_length(name, b"style") {
+            return Some(Self::parse_query_function_block(
+                input,
+                ContainerCondition::Style,
+            ));
+        }
+        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-state") {
+            return Some(Self::parse_query_function_block(
+                input,
+                ContainerCondition::ScrollState,
+            ));
+        }
+        None
     }
     fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
         match self {
             ContainerCondition::Not(_) => true,
             ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
-            ContainerCondition::Style(_) => false,
+            ContainerCondition::Style(_) | ContainerCondition::ScrollState(_) => false,
         }
     }
 }
@@ -308,17 +457,34 @@ impl ContainerCondition {
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
             Self::Style(q) => Self::Style(q.deep_clone(bump)),
+            Self::ScrollState(q) => Self::ScrollState(q.deep_clone(bump)),
         }
     }
 }
 
 // ─── ContainerCondition parse ─────────────────────────────────────────────
 impl ContainerCondition {
+    /// Parse a query function block: a condition over `Q`, or one bare feature.
+    fn parse_query_function_block<Q: QueryCondition>(
+        input: &mut css::Parser,
+        wrap: fn(Q) -> Self,
+    ) -> css::Result<Self> {
+        use crate::media_query::QueryConditionFlags;
+        input.parse_nested_block(|i| {
+            if let Ok(res) = i.try_parse(|i2| {
+                media_query::parse_query_condition::<Q>(i2, QueryConditionFlags::ALLOW_OR)
+            }) {
+                return Ok(wrap(res));
+            }
+            Ok(wrap(Q::parse_feature(i)?))
+        })
+    }
+
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
         use crate::media_query::QueryConditionFlags;
         media_query::parse_query_condition::<ContainerCondition>(
             input,
-            QueryConditionFlags::ALLOW_OR | QueryConditionFlags::ALLOW_STYLE,
+            QueryConditionFlags::ALLOW_OR,
         )
     }
 }

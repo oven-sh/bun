@@ -1022,22 +1022,17 @@ impl std::fmt::Display for UpdateOperator {
     }
 }
 
-/// Not in upstream: the source expression of a `PropertyStore` or `ComputedStore` that reads the
-/// member before it writes it. Upstream lowers such an expression to a load, a
-/// `BinaryExpression` and a store of its result, and the analysis reads it that way. Printed
-/// that way, `object` and `property` run twice, and the old value of a postfix update needs a
-/// statement of its own, ahead of the expression that the update is part of. Codegen prints the
-/// source expression, and the result of the store is the result of that expression.
+/// Not in upstream: the source form of a store whose `value` is `load op right`. The analysis
+/// reads the load, the `BinaryExpression` and the store. Codegen prints this form on the load's
+/// own node, so the object and the key print once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberUpdate {
-    /// `object.property++`, `--object.property`. `value` is `object.property + 1` or `- 1`, and
-    /// codegen does not print it.
+    /// `object.property++`, `--object.property`
     UpdateExpression {
         operation: UpdateOperator,
         prefix: bool,
     },
-    /// `object.property += right`. `value` is `object.property + right`, and codegen prints
-    /// only its `right`.
+    /// `object.property += right`
     AssignmentExpression { operator: BinaryOperator },
 }
 

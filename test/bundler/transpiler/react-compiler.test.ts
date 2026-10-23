@@ -4119,418 +4119,790 @@ describe("bundler", () => {
     },
   });
 
-  // The compiler lowers `a[k] += v` and `a[k]++` to a load and a store that
-  // both read the object and the key, and codegen prints an unnamed temporary
-  // at every site that reads it: `a[i++] += 10` came out as
-  // `a[i++] = a[i++] + 10`. An object or key that does more than read (`i++`,
-  // a call) now leaves the function uncompiled. One that only reads is still
-  // printed at both sites. `client` mode is target=browser, `ssr` mode is
-  // target=bun. `minifySyntax` joins the statements with commas first.
-  for (const target of ["browser", "bun"] as const) {
-    for (const minifySyntax of [false, true]) {
-      itBundled(`react-compiler/MemberUpdateEvaluatesObjectAndKeyOnce-${target}-syntax=${minifySyntax}`, {
-        files: {
-          "/entry.jsx": /* jsx */ `
-            const log = [];
-            let n = 0;
-            const next = () => (log.push("next"), n++);
-            const key = k => (log.push("key:" + k), k);
-            const store = { b: { n: 1 } };
-            const get = k => (log.push("get:" + k), store[k]);
-            const wrap = (...xs) => xs;
-            const Stub = () => null;
-
-            function Body({ arr, start }) {
-              let i = start;
-              const a = [...arr];
-              let b = [...arr];
-              const box = { list: [...arr] };
-              a[i++] += 10;
-              a[next()]++;
-              --a[next()];
-              b[i++] *= 2;
-              box.list[next()] -= 1;
-              a[(log.push("seq"), 3)] **= 2;
-              get("b")[key("n")] *= 2;
-              get("b").n += 5;
-              get("b").n++;
-              return <div>{[a.join(), b.join(), box.list.join(), i, store.b.n].join("|")}</div>;
-            }
-
-            function Handler({ arr }) {
-              const onEvent = () => {
-                const a = [...arr];
-                let b = [...arr];
-                a[next()] += 10;
-                a[next()]++;
-                b[next()] -= 1;
-                get("b")[key("n")] *= 2;
-                get("b").n += 5;
-                --get("b").n;
-                const doubled = (a[key(0)] *= 2);
-                const bump = x => (a[key(x)] += 100);
-                const pre = () => {
-                  return ++a[key(2)];
-                };
-                return [a.join(), b.join(), store.b.n, doubled, bump(1), pre()].join("|");
-              };
-              return <Stub run={onEvent} />;
-            }
-
-            function InCallArgument({ arr }) {
-              const a = [...arr];
-              const r = wrap((a[next()] += 1), next());
-              return <div>{[a.join(), r.join()].join("|")}</div>;
-            }
-
-            function InLoopUpdate({ arr }) {
-              const a = [...arr];
-              for (let j = 0; j < 2; a[next()] += j++) {}
-              return <div>{a.join()}</div>;
-            }
-
-            function Reads({ arr, k }) {
-              const a = [...arr];
-              const o = { v: { w: 2 } };
-              a[k] += 1;
-              a[k + 1]++;
-              a[\`\${k}\`] -= 4;
-              o.v.w *= 7;
-              const r = wrap((a[k] += 1), --o.v.w);
-              return <div>{[a.join(), o.v.w, r.join()].join("|")}</div>;
-            }
-
-            const run = (name, fn) => {
-              n = 0;
-              store.b.n = 1;
-              const value = fn();
-              console.log(name + ": " + value + " [" + log.splice(0).join(" ") + "]");
-            };
-            const arr = [1, 2, 3, 4];
-            run("Body", () => Body({ arr, start: 0 }).props.children);
-            run("Handler", () => Handler({ arr }).props.run());
-            run("InCallArgument", () => InCallArgument({ arr }).props.children);
-            run("InLoopUpdate", () => InLoopUpdate({ arr }).props.children);
-            run("Reads", () => Reads({ arr, k: 0 }).props.children);
-          `,
-          ...jsxCallShapeRuntime,
-        },
-        reactCompiler: true,
-        backend: "cli",
-        target,
-        minifySyntax,
-        // What the source prints when nothing compiles it.
-        run: {
-          stdout: `
-            Body: 12,1,3,16|1,4,3,4|1,2,2,4|2|8 [next next next seq get:b key:n get:b get:b]
-            Handler: 22,3,3,4|1,2,2,4|6|22|103|4 [next next next get:b key:n get:b get:b key:0 key:1 key:2]
-            InCallArgument: 2,2,3,4|2,1 [next next]
-            InLoopUpdate: 1,3,3,4 [next next]
-            Reads: -1,3,3,4|13|-1,13 []
-          `,
-        },
-        onAfterBundle(api) {
-          const out = api.readFile("/out.js");
-          // Not compiled: the parameter is still the destructuring pattern.
-          expect(out).toContain("function Body({ arr, start })");
-          expect(out).toContain("function Handler({ arr })");
-          expect(out).toContain("function InCallArgument({ arr })");
-          expect(out).toContain("function InLoopUpdate({ arr })");
-          // Compiled: the props object became the parameter `t0`, and the
-          // reads are printed at both sites, as upstream prints them.
-          expect(out).toContain("function Reads(t0)");
-          expect(out).toContain("a[k] = a[k] + 1");
-          expect(out).toContain("a[k + 1] = a[k + 1] + 1");
-          expect(out).toContain("o.v.w = o.v.w * 7");
-        },
-      });
-    }
-
-  // `r.n++` is lowered to a load, an add and a store, and its value was the
-  // load. Nothing read the store, so it printed as a statement. In a callback
-  // the load printed again after it, so `const id = ref.current++` gave the
-  // new value (facebook/react#35205). The load and the store both printed the
-  // object and the key: `get().n++` was `get().n = get().n + 1`, and
-  // `m[i++] += 10` was `m[i++] = m[i++] + 10`. For a string or a BigInt, `+ 1`
-  // is not `++`. A member update and a compound assignment to a member now
-  // print as written, in place.
+  // `o.p += v` and `o.p++` are lowered to a load, a `BinaryExpression` and a store. The load and the
+  // store both read the object and the key, and codegen printed what a temporary holds at each place
+  // that reads it: `m[i++] += 10` was `m[i++] = m[i++] + 10`, and `get().n++` called `get` twice. The
+  // value of `r.n++` was the load, which printed again after the store in a callback, so
+  // `const id = ref.current++` gave the new value (facebook/react#35205). For a string or a BigInt,
+  // `+ 1` is not `++`. These now print as written, on the node of the load.
   //
-  // A callback runs twice. In client mode every component has to take a memo
-  // cache: without the fix some of these forms are right only because the
-  // compiler gives up on the component.
-  for (const target of ["bun", "browser"] as const) {
-    itBundled(`react-compiler/MemberUpdatePrintsAsWritten-${target}`, {
+  // A callback runs twice. In client mode every component has to take a memo cache: without the fix
+  // some of these forms are right only because the compiler gives up on the component.
+  for (const backend of ["cli", "api"] as const) {
+    for (const target of ["bun", "browser"] as const) {
+      for (const minifySyntax of [false, true]) {
+        itBundled(`react-compiler/MemberUpdatePrintsAsWritten-${backend}-${target}-syntax=${minifySyntax}`, {
+          files: {
+            "/entry.ts": /* ts */ `
+              import * as forms from "./forms";
+              import { caches } from "react/compiler-runtime";
+              const results: Record<string, unknown> = {};
+              const withoutCache: string[] = [];
+              for (const [name, Form] of Object.entries(forms)) {
+                const before = caches();
+                try {
+                  const children = Form({ n: 2, flag: true, items: [5, 6, 7, 8] }).props.children;
+                  results[name] = typeof children === "function" ? [children(), children()] : JSON.parse(children);
+                } catch (e) {
+                  results[name] = "threw " + e;
+                }
+                if (caches() === before) withoutCache.push(name);
+              }
+              console.log(JSON.stringify({ results, withoutCache }));
+            `,
+            "/forms.jsx": /* jsx */ `
+              import { useMemo, useRef } from "react";
+
+              const list = (...values) => values;
+              class Made {
+                constructor(order) {
+                  order.push("new");
+                }
+              }
+              const call = order => order.push("call");
+              const counter = value => ({
+                value,
+                gets: 0,
+                sets: 0,
+                get n() {
+                  this.gets++;
+                  return this.value;
+                },
+                set n(value) {
+                  this.sets++;
+                  this.value = value;
+                },
+              });
+
+              // Each read of \\\`G.k\\\` is in \\\`seen\\\`.
+              const seen = [];
+              const G = {
+                get k() {
+                  seen.push("k");
+                  return 1;
+                },
+              };
+              let K = 1;
+              const moveK = () => {
+                K = 2;
+                return 0;
+              };
+
+              export function EarlierSum(p) {
+                const r = { n: p.n };
+                const a = [r.n + 1, r.n++];
+                return <div>{JSON.stringify([a, r.n])}</div>;
+              }
+              export function EarlierSumThenDecrement(p) {
+                const r = { n: p.n };
+                const a = [r.n + 1, r.n--];
+                return <div>{JSON.stringify([a, r.n])}</div>;
+              }
+              export function ComputedKey(p) {
+                const r = { n: p.n };
+                const k = "n";
+                const a = [r[k] * 2, r[k]++, r[k]];
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              export function Arguments(p) {
+                const r = { n: p.n };
+                const a = list(r.n + 1, r.n++, r.n * 2, r.n++);
+                return <div>{JSON.stringify([a, r.n])}</div>;
+              }
+              export function AfterACompoundAssignment(p) {
+                const o = { n: p.n };
+                const a = list(o.n + 1, (o.n += 2), o.n * 2, o.n++);
+                return <div>{JSON.stringify([a, o.n])}</div>;
+              }
+              export function EarlierNewAndCall(p) {
+                const r = { n: p.n };
+                const order = [];
+                const a = list(new Made(order) instanceof Made, call(order), r.n++);
+                return <div>{JSON.stringify([a, order])}</div>;
+              }
+              export function EarlierLiterals(p) {
+                const r = { n: p.n };
+                const a = [\`k\${r.n}\`, -r.n, { a: r.n + 1 }, [r.n], r.n++, \`k\${r.n}\`];
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              export function EarlierTernaryLogicalOptionalComma(p) {
+                const r = { n: p.n };
+                const a = list(p.flag ? r.n : 0, p.flag && r.n, p.items?.[r.n], (0, r.n + 1), r.n++);
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              export function ValueOfAKeyedStore(p) {
+                const r = { n: p.n };
+                const o = {};
+                o["k" + r.n] = r.n++;
+                return <div>{JSON.stringify([o, r.n])}</div>;
+              }
+              export function JsxAttribute(p) {
+                const r = { n: p.n };
+                const el = <a title={"k" + r.n} id={r.n++} />;
+                return <div>{JSON.stringify([el.props, r.n])}</div>;
+              }
+              export function InLoop(p) {
+                const r = { n: p.n };
+                const out = [];
+                for (const x of [1, 2]) out.push(list(r.n + x, r.n++));
+                return <div>{JSON.stringify(out)}</div>;
+              }
+              export function InTernaryBranch(p) {
+                const r = { n: p.n };
+                const a = p.flag ? list(r.n + 1, r.n++, r.n) : list(r.n--);
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              export function InLogical(p) {
+                const r = { n: p.n };
+                const a = p.flag && r.n++ && list(r.n, r.n++ || 0, r.n);
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              export function WhileTest() {
+                const r = { n: 0 };
+                let turns = 0;
+                while (r.n++ < 3) turns++;
+                return <div>{JSON.stringify([turns, r.n])}</div>;
+              }
+              export function InCallback() {
+                const ref = useRef(0);
+                const next = () => {
+                  const id = ref.current++;
+                  const key = \`k\${ref.current++}\`;
+                  return [id, key, ref.current + 1, ref.current--, ref.current];
+                };
+                return <div>{next}</div>;
+              }
+              export function InImmediatelyInvokedFunction(p) {
+                const r = { n: p.n };
+                const row = (() => {
+                  const first = r.n++;
+                  return [first, r.n, r.n--, r.n];
+                })();
+                return <div>{JSON.stringify(row)}</div>;
+              }
+              export function InUseMemoCallback(p) {
+                const row = useMemo(() => {
+                  const r = { n: p.n };
+                  const first = r.n++;
+                  return [first, r.n, r.n--, r.n];
+                }, [p.n]);
+                return <div>{JSON.stringify(row)}</div>;
+              }
+              export function TargetRunsOnce(p) {
+                const o = { n: p.n };
+                const log = [];
+                const get = () => (log.push("get"), o);
+                const key = () => (log.push("key"), "n");
+                get().n++;
+                const a = [o.n, get().n++, ++o[key()], o[key()]--, --get()[key()]];
+                return <div>{JSON.stringify([a, o.n, log])}</div>;
+              }
+              export function Accessor(p) {
+                const o = counter(p.n);
+                const a = [o.n++, ++o.n, o.n--];
+                o.n++;
+                return <div>{JSON.stringify([a, o.value, o.gets, o.sets])}</div>;
+              }
+              export function StringAndBigInt(p) {
+                const o = { s: "5", b: BigInt(p.n) };
+                const a = [o.s++, o.s, ++o.s, String(o.b++), String(--o.b)];
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              export function Statements(p) {
+                const r = { n: p.n, m: [1, 2] };
+                r.n++;
+                ++r.n;
+                r.n--;
+                r.m[1]++;
+                for (let i = 0; i < 2; r.n++) r.m[i++]--;
+                return <div>{JSON.stringify([r.n, r.m])}</div>;
+              }
+              export function CompoundAssignmentTargetRunsOnce(p) {
+                const o = { n: p.n };
+                const i = { n: 0 };
+                const m = [5, 6, 7];
+                const log = [];
+                const get = () => (log.push("get"), o);
+                const key = () => (log.push("key"), "n");
+                get().n += 5;
+                o[key()] *= 2;
+                m[i.n++] += 10;
+                const a = [(get()[key()] -= 1), (m[i.n++] **= 2), o.n, i.n];
+                return <div>{JSON.stringify([a, m, log])}</div>;
+              }
+              export function CompoundAssignmentInCallback() {
+                const next = useRef(0);
+                const counts = useRef([0, 0, 0]);
+                const hit = () => {
+                  counts.current[next.current++ % 3] += 10;
+                  return [...counts.current, next.current];
+                };
+                return <div>{hit}</div>;
+              }
+              // The inlined function runs ahead of the statement, so the load of \`o.n\` gets a name.
+              export function CompoundAssignmentWithANamedLoad(p) {
+                const o = { n: p.n };
+                const v = (o.n += (() => {
+                  o.n = 100;
+                  return 1;
+                })());
+                return <div>{JSON.stringify([v, o.n])}</div>;
+              }
+              // A later operand that has its own memo block does not move the update.
+              export function LaterOperandIsMemoized(p) {
+                const r = { n: p.n };
+                const a = list(r.n, r.n++, [p.items], r.n);
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              // The key writes a local.
+              export function KeyIsAPostfixUpdate(p) {
+                let i = 0;
+                const arr = [1, 2, 3];
+                arr[i++] += p.n;
+                arr[i++]++;
+                --arr[i++];
+                return <div>{JSON.stringify([arr, i])}</div>;
+              }
+              export function KeyIsASequence(p) {
+                const a = [1, 2, 3];
+                const log = [];
+                a[(log.push("statement"), 1)] **= p.n;
+                const r = list((a[(log.push("argument"), 2)] += 1), log.length);
+                return <div>{JSON.stringify([a, r, log])}</div>;
+              }
+              export function InForUpdate(p) {
+                const a = [0, 0, 0, 0];
+                const at = { n: 0 };
+                for (let j = 0; j < p.n; a[at.n++] += j++) {}
+                return <div>{JSON.stringify([a, at.n])}</div>;
+              }
+              export function KeyCallInLogicalAndWhile(p) {
+                const a = [0, 0];
+                const log = [];
+                const key = i => (log.push(i), i);
+                const first = p.flag && a[key(0)]++;
+                let turns = 0;
+                while (a[key(1)]++ < 3) turns++;
+                return <div>{JSON.stringify([first, turns, a, log])}</div>;
+              }
+              export function InNestedCallbacks() {
+                const a = useRef([1, 2, 3]);
+                const log = useRef([]);
+                const run = () => {
+                  const key = k => (log.current.push(k), k);
+                  const doubled = (a.current[key(0)] *= 2);
+                  const bump = x => (a.current[key(x)] += 100);
+                  const pre = () => {
+                    return ++a.current[key(2)];
+                  };
+                  return [doubled, bump(1), pre(), [...a.current], [...log.current]];
+                };
+                return <div>{run}</div>;
+              }
+              // Constant propagation makes the computed key a property name.
+              export function ConstantKeys(p) {
+                const o = { n: p.n, 1: 10 };
+                const name = "n";
+                const index = 1;
+                const a = [(o[name] += 5), o[name]++, (o[index] *= 2), o[index]--, o];
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              // The inlined function runs ahead of the statement, so the load of \\\`a[G.k]\\\` gets a name. The
+              // object and the key then have a name too: the store after it does not read \\\`G.k\\\` again.
+              export function GetterKeyWithANamedLoad(p) {
+                const a = [1, 2, 3];
+                const t = (a[G.k] += (() => {
+                  a[0] = 9;
+                  return p.n;
+                })());
+                return <div>{JSON.stringify([a, t, seen.splice(0)])}</div>;
+              }
+              export function GetterKeyPlusOneWithANamedLoad(p) {
+                const a = [1, 2, 3];
+                const t = (a[G.k + 1] += (() => {
+                  a[0] = 9;
+                  return p.n;
+                })());
+                return <div>{JSON.stringify([a, t, seen.splice(0)])}</div>;
+              }
+              export function ArrayLiteralObjectWithANamedLoad(p) {
+                const a = [1, 2, 3];
+                const log = [];
+                const t = ([log.push("object"), a][1][2] += (() => {
+                  a[0] = 9;
+                  return p.n;
+                })());
+                return <div>{JSON.stringify([a, t, log])}</div>;
+              }
+              // The right-hand side writes the module-level key after the target has read it.
+              export function ModuleLevelKeyWithANamedLoad(p) {
+                const a = [1, 2, 3];
+                a[K] += (() => {
+                  a.push(moveK());
+                  return p.n;
+                })();
+                return <div>{JSON.stringify(a)}</div>;
+              }
+              // The array in the right-hand side has a memo block of its own, between the load and the store.
+              export function GetterKeyAcrossAMemoBlock(p) {
+                const o = { list: [1, 2, 3] };
+                const t = (o.list[G.k] -= [p.n, 5].filter(x => x > 1).length);
+                return <div>{JSON.stringify([o.list, t, seen.splice(0)])}</div>;
+              }
+            `,
+            "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+            "/node_modules/react/index.js": /* js */ `
+              export const useRef = current => ({ current });
+              export const useMemo = compute => compute();
+            `,
+            "/node_modules/react/jsx-runtime.js": /* js */ `
+              export const jsx = (type, props) => ({ type, props });
+              export const jsxs = jsx;
+            `,
+            "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+              export const jsxDEV = (type, props) => ({ type, props });
+            `,
+            "/node_modules/react/compiler-runtime.js": /* js */ `
+              let count = 0;
+              export const caches = () => count;
+              export function c(size) {
+                count++;
+                return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+              }
+            `,
+          },
+          reactCompiler: true,
+          backend,
+          target,
+          minifySyntax,
+          run: {
+            validate({ stdout }) {
+              const { results, withoutCache } = JSON.parse(stdout);
+              // What the source gives when nothing compiles it.
+              expect(results).toEqual({
+                EarlierSum: [[3, 2], 3],
+                EarlierSumThenDecrement: [[3, 2], 1],
+                ComputedKey: [4, 2, 3],
+                Arguments: [[3, 2, 6, 3], 4],
+                AfterACompoundAssignment: [[3, 4, 8, 4], 5],
+                // prettier-ignore
+                EarlierNewAndCall: [[true, 2, 2], ["new", "call"]],
+                EarlierLiterals: ["k2", -2, { a: 3 }, [2], 2, "k3"],
+                EarlierTernaryLogicalOptionalComma: [2, 2, 7, 3, 2],
+                ValueOfAKeyedStore: [{ k2: 2 }, 3],
+                JsxAttribute: [{ title: "k2", id: 2 }, 3],
+                // prettier-ignore
+                InLoop: [[3, 2], [5, 3]],
+                InTernaryBranch: [3, 2, 3],
+                InLogical: [3, 3, 4],
+                WhileTest: [3, 4],
+                // prettier-ignore
+                InCallback: [[0, "k1", 3, 2, 1], [1, "k2", 4, 3, 2]],
+                InImmediatelyInvokedFunction: [2, 3, 3, 2],
+                InUseMemoCallback: [2, 3, 3, 2],
+                TargetRunsOnce: [[3, 3, 5, 5, 3], 3, ["get", "get", "key", "key", "get", "key"]],
+                Accessor: [[2, 4, 4], 4, 4, 4],
+                StringAndBigInt: [5, 6, 7, "2", "2"],
+                Statements: [5, [0, 2]],
+                // prettier-ignore
+                CompoundAssignmentTargetRunsOnce: [[13, 36, 13, 2], [15, 36, 7], ["get", "key", "get", "key"]],
+                // prettier-ignore
+                CompoundAssignmentInCallback: [[10, 0, 0, 1], [10, 10, 0, 2]],
+                CompoundAssignmentWithANamedLoad: [3, 3],
+                LaterOperandIsMemoized: [2, 2, [[5, 6, 7, 8]], 3],
+                KeyIsAPostfixUpdate: [[3, 3, 2], 3],
+                // prettier-ignore
+                KeyIsASequence: [[1, 4, 4], [4, 2], ["statement", "argument"]],
+                InForUpdate: [[0, 1, 0, 0], 2],
+                // prettier-ignore
+                KeyCallInLogicalAndWhile: [0, 3, [1, 4], [0, 1, 1, 1, 1]],
+                // prettier-ignore
+                InNestedCallbacks: [[2, 102, 4, [2, 102, 4], [0, 1, 2]], [4, 202, 5, [4, 202, 5], [0, 1, 2, 0, 1, 2]]],
+                ConstantKeys: [7, 7, 20, 20, { 1: 19, n: 8 }],
+                GetterKeyWithANamedLoad: [[9, 4, 3], 4, ["k"]],
+                GetterKeyPlusOneWithANamedLoad: [[9, 2, 5], 5, ["k"]],
+                ArrayLiteralObjectWithANamedLoad: [[9, 2, 5], 5, ["object"]],
+                ModuleLevelKeyWithANamedLoad: [1, 4, 3, 0],
+                GetterKeyAcrossAMemoBlock: [[1, 0, 3], 0, ["k"]],
+              });
+              // The ssr output has no memo cache at all.
+              expect(withoutCache).toEqual(target === "browser" ? [] : Object.keys(results));
+            },
+          },
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            expect(out).toContain("arr[i++] += ");
+            expect(out).toContain("get()[key()] -= 1");
+            expect(out).not.toContain("arr[i++] = arr[i++]");
+          },
+        });
+      }
+    }
+  }
+
+  // A function inside a component gets no pass that gives a temporary a name, so there the load
+  // of `ref.current++` printed again after the store: `const id = ref.current++` gave `id` the new
+  // value (facebook/react#35205). The update now prints in place, as written.
+  //
+  // Each callback runs twice. `compiled` says that the component took a memo cache. The compiler
+  // inlines an IIFE and a `useMemo` callback into the component. `minify.syntax` turns
+  // `const first = seq.n++; return [first, seq.n]` into one array before the compiler sees it.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/MemberUpdateInNestedFunction-syntax=${minifySyntax}`, {
       files: {
-        "/entry.ts": /* ts */ `
-          import * as forms from "./forms";
-          import { caches } from "react/compiler-runtime";
-          const results: Record<string, unknown> = {};
-          const withoutCache: string[] = [];
-          for (const [name, Form] of Object.entries(forms)) {
-            const before = caches();
-            try {
-              const children = Form({ n: 2, flag: true, items: [5, 6, 7, 8] }).props.children;
-              results[name] = typeof children === "function" ? [children(), children()] : JSON.parse(children);
-            } catch (e) {
-              results[name] = "threw " + e;
-            }
-            if (caches() === before) withoutCache.push(name);
-          }
-          console.log(JSON.stringify({ results, withoutCache }));
-        `,
-        "/forms.jsx": /* jsx */ `
+        "/entry.jsx": /* jsx */ `
           import { useMemo, useRef } from "react";
+          import { sizes } from "react/compiler-runtime";
 
-          const list = (...values) => values;
-          class Made {
-            constructor(order) {
-              order.push("new");
-            }
-          }
-          const call = order => order.push("call");
-          const counter = value => ({
-            value,
-            gets: 0,
-            sets: 0,
-            get n() {
-              this.gets++;
-              return this.value;
-            },
-            set n(value) {
-              this.sets++;
-              this.value = value;
-            },
-          });
+          const Handle = "handle";
 
-          export function EarlierSum(p) {
-            const r = { n: p.n };
-            const a = [r.n + 1, r.n++];
-            return <div>{JSON.stringify([a, r.n])}</div>;
-          }
-          export function EarlierSumThenDecrement(p) {
-            const r = { n: p.n };
-            const a = [r.n + 1, r.n--];
-            return <div>{JSON.stringify([a, r.n])}</div>;
-          }
-          export function ComputedKey(p) {
-            const r = { n: p.n };
-            const k = "n";
-            const a = [r[k] * 2, r[k]++, r[k]];
-            return <div>{JSON.stringify(a)}</div>;
-          }
-          export function Arguments(p) {
-            const r = { n: p.n };
-            const a = list(r.n + 1, r.n++, r.n * 2, r.n++);
-            return <div>{JSON.stringify([a, r.n])}</div>;
-          }
-          export function AfterACompoundAssignment(p) {
-            const o = { n: p.n };
-            const a = list(o.n + 1, (o.n += 2), o.n * 2, o.n++);
-            return <div>{JSON.stringify([a, o.n])}</div>;
-          }
-          export function EarlierNewAndCall(p) {
-            const r = { n: p.n };
-            const order = [];
-            const a = list(new Made(order) instanceof Made, call(order), r.n++);
-            return <div>{JSON.stringify([a, order])}</div>;
-          }
-          export function EarlierLiterals(p) {
-            const r = { n: p.n };
-            const a = [\`k\${r.n}\`, -r.n, { a: r.n + 1 }, [r.n], r.n++, \`k\${r.n}\`];
-            return <div>{JSON.stringify(a)}</div>;
-          }
-          export function EarlierTernaryLogicalOptionalComma(p) {
-            const r = { n: p.n };
-            const a = list(p.flag ? r.n : 0, p.flag && r.n, p.items?.[r.n], (0, r.n + 1), r.n++);
-            return <div>{JSON.stringify(a)}</div>;
-          }
-          export function ValueOfAKeyedStore(p) {
-            const r = { n: p.n };
-            const o = {};
-            o["k" + r.n] = r.n++;
-            return <div>{JSON.stringify([o, r.n])}</div>;
-          }
-          export function JsxAttribute(p) {
-            const r = { n: p.n };
-            const el = <a title={"k" + r.n} id={r.n++} />;
-            return <div>{JSON.stringify([el.props, r.n])}</div>;
-          }
-          export function InLoop(p) {
-            const r = { n: p.n };
-            const out = [];
-            for (const x of [1, 2]) out.push(list(r.n + x, r.n++));
-            return <div>{JSON.stringify(out)}</div>;
-          }
-          export function InTernaryBranch(p) {
-            const r = { n: p.n };
-            const a = p.flag ? list(r.n + 1, r.n++, r.n) : list(r.n--);
-            return <div>{JSON.stringify(a)}</div>;
-          }
-          export function InLogical(p) {
-            const r = { n: p.n };
-            const a = p.flag && r.n++ && list(r.n, r.n++ || 0, r.n);
-            return <div>{JSON.stringify(a)}</div>;
-          }
-          export function WhileTest() {
-            const r = { n: 0 };
-            let turns = 0;
-            while (r.n++ < 3) turns++;
-            return <div>{JSON.stringify([turns, r.n])}</div>;
-          }
-          export function InCallback() {
+          function DeclaratorInit() {
             const ref = useRef(0);
             const next = () => {
               const id = ref.current++;
-              const key = \`k\${ref.current++}\`;
-              return [id, key, ref.current + 1, ref.current--, ref.current];
+              return id;
             };
-            return <div>{next}</div>;
+            return <Handle run={next} />;
           }
-          export function InImmediatelyInvokedFunction(p) {
-            const r = { n: p.n };
-            const row = (() => {
-              const first = r.n++;
-              return [first, r.n, r.n--, r.n];
-            })();
-            return <div>{JSON.stringify(row)}</div>;
+          function ReturnDecrement() {
+            const ref = useRef(5);
+            const next = () => {
+              return ref.current--;
+            };
+            return <Handle run={next} />;
           }
-          export function InUseMemoCallback(p) {
+          function ExpressionBody() {
+            const ref = useRef(0);
+            return <Handle run={() => ref.current++} />;
+          }
+          function TemplateLiteral() {
+            const newTabIndex = useRef(0);
+            const add = () => \`newTab\${newTabIndex.current++}\`;
+            return <Handle run={add} />;
+          }
+          function PrefixIncrement() {
+            const ref = useRef(0);
+            const next = () => {
+              const id = ++ref.current;
+              return id;
+            };
+            return <Handle run={next} />;
+          }
+          function Statement() {
+            const ref = useRef(0);
+            const next = () => {
+              ref.current++;
+              return ref.current;
+            };
+            return <Handle run={next} />;
+          }
+          function EarlierOperands() {
+            const ref = useRef(0);
+            const next = () => [ref.current, ref.current++, ref.current];
+            return <Handle run={next} />;
+          }
+          function MethodCallArgument() {
+            const ids = useRef([]);
+            const nextId = useRef(0);
+            const add = () => {
+              ids.current.push(nextId.current++);
+              return [...ids.current];
+            };
+            return <Handle run={add} />;
+          }
+          function ComputedMember() {
+            const counts = useRef({ a: 0 });
+            const hit = key => counts.current[key]++;
+            return <Handle run={hit} />;
+          }
+          function ObjectMethod() {
+            const ref = useRef(0);
+            const api = {
+              next() {
+                return ref.current++;
+              },
+            };
+            return <Handle run={() => api.next()} />;
+          }
+          // \`bump\` captures nothing, so the compiler moves it out of the component.
+          function OutlinedFunction() {
+            const bump = counter => counter.n++;
+            return <Handle run={bump} />;
+          }
+          function TemporaryNamesInUse() {
+            const ref = useRef(0);
+            const next = () => {
+              const t0 = String(ref.current);
+              const t1 = ref.current++;
+              const t2 = ref.current++;
+              return [t0, t1, t2];
+            };
+            return <Handle run={next} />;
+          }
+          function LoopBody() {
+            const ref = useRef(0);
+            const next = () => {
+              const out = [];
+              for (let i = 0; i < 2; i++) out.push(ref.current++);
+              return out;
+            };
+            return <Handle run={next} />;
+          }
+          function InnerFunction() {
+            const ref = useRef(0);
+            const next = () => {
+              const inner = () => ref.current++;
+              return [inner(), inner()];
+            };
+            return <Handle run={next} />;
+          }
+          function EarlierSum() {
+            const ref = useRef(0);
+            const next = () => [ref.current + 1, ref.current++];
+            return <Handle run={next} />;
+          }
+          const order = [];
+          class Made {
+            constructor() {
+              order.push("new");
+            }
+          }
+          const call = () => order.push("call");
+          function EarlierNewAndCall() {
+            const ref = useRef(0);
+            const next = () => {
+              order.length = 0;
+              const made = [new Made(), call(), ref.current++];
+              return [...order, made[2]];
+            };
+            return <Handle run={next} />;
+          }
+          function ForUpdate() {
+            const ref = useRef(0);
+            const next = () => {
+              const seen = [];
+              for (let i = 0; i < 2; ref.current++) seen.push(i++ + ref.current);
+              return seen;
+            };
+            return <Handle run={next} />;
+          }
+          function Conditional() {
+            const ref = useRef(0);
+            return <Handle run={on => (on ? ref.current++ : -1)} />;
+          }
+          function LogicalStatement() {
+            const ref = useRef(0);
+            const next = on => {
+              on && ref.current++;
+              return ref.current;
+            };
+            return <Handle run={next} />;
+          }
+          function SkippedOptionalCall() {
+            const ref = useRef(0);
+            const next = target => [target?.(ref.current++), ref.current];
+            return <Handle run={next} />;
+          }
+          function WhileTest() {
+            const ref = useRef(0);
+            const next = () => {
+              let turns = 0;
+              while (ref.current++ < 3) turns++;
+              return turns;
+            };
+            return <Handle run={next} />;
+          }
+
+          function UseMemoBody() {
             const row = useMemo(() => {
-              const r = { n: p.n };
-              const first = r.n++;
-              return [first, r.n, r.n--, r.n];
-            }, [p.n]);
-            return <div>{JSON.stringify(row)}</div>;
+              const seq = { n: 0, deep: { c: 5 } };
+              const first = seq.n++;
+              return [first, seq.n, "c".concat(seq.deep.c--), seq.deep.c];
+            }, []);
+            return <Handle run={() => row} />;
           }
-          export function TargetRunsOnce(p) {
-            const o = { n: p.n };
-            const log = [];
-            const get = () => (log.push("get"), o);
-            const key = () => (log.push("key"), "n");
-            get().n++;
-            const a = [o.n, get().n++, ++o[key()], o[key()]--, --get()[key()]];
-            return <div>{JSON.stringify([a, o.n, log])}</div>;
+          function IifeBody() {
+            const row = (() => {
+              const seq = { n: 0, deep: { c: 5 } };
+              const first = seq.n++;
+              return [first, seq.n, "c".concat(seq.deep.c--), seq.deep.c];
+            })();
+            return <Handle run={() => row} />;
           }
-          export function Accessor(p) {
-            const o = counter(p.n);
-            const a = [o.n++, ++o.n, o.n--];
-            o.n++;
-            return <div>{JSON.stringify([a, o.value, o.gets, o.sets])}</div>;
+          function CallbackInUseMemo() {
+            const rows = useMemo(() => {
+              const seq = { n: 0 };
+              return ["a", "b"].map(it => it + seq.n++);
+            }, []);
+            return <Handle run={() => rows} />;
           }
-          export function StringAndBigInt(p) {
-            const o = { s: "5", b: BigInt(p.n) };
-            const a = [o.s++, o.s, ++o.s, String(o.b++), String(--o.b)];
-            return <div>{JSON.stringify(a)}</div>;
-          }
-          export function Statements(p) {
-            const r = { n: p.n, m: [1, 2] };
-            r.n++;
-            ++r.n;
-            r.n--;
-            r.m[1]++;
-            for (let i = 0; i < 2; r.n++) r.m[i++]--;
-            return <div>{JSON.stringify([r.n, r.m])}</div>;
-          }
-          export function CompoundAssignmentTargetRunsOnce(p) {
-            const o = { n: p.n };
-            const i = { n: 0 };
-            const m = [5, 6, 7];
-            const log = [];
-            const get = () => (log.push("get"), o);
-            const key = () => (log.push("key"), "n");
-            get().n += 5;
-            o[key()] *= 2;
-            m[i.n++] += 10;
-            const a = [(get()[key()] -= 1), (m[i.n++] **= 2), o.n, i.n];
-            return <div>{JSON.stringify([a, m, log])}</div>;
-          }
-          export function CompoundAssignmentInCallback() {
-            const next = useRef(0);
-            const counts = useRef([0, 0, 0]);
-            const hit = () => {
-              counts.current[next.current++ % 3] += 10;
-              return [...counts.current, next.current];
+
+          function CompoundAssignment() {
+            const ref = useRef(0);
+            const next = () => {
+              let x = ref.current++;
+              return [x, (x += 2), x];
             };
-            return <div>{hit}</div>;
+            return <Handle run={next} />;
           }
-          // The inlined function runs ahead of the statement, so the load of \`o.n\` gets a name.
-          export function CompoundAssignmentWithANamedLoad(p) {
-            const o = { n: p.n };
-            const v = (o.n += (() => {
-              o.n = 100;
-              return 1;
-            })());
-            return <div>{JSON.stringify([v, o.n])}</div>;
+          function CompoundAssignmentToCaptured() {
+            const ref = useRef(0);
+            const next = () => {
+              let x = ref.current++;
+              const read = () => x;
+              return [x, (x -= 2), read()];
+            };
+            return <Handle run={next} />;
           }
-          // A later operand that has its own memo block does not move the update.
-          export function LaterOperandIsMemoized(p) {
-            const r = { n: p.n };
-            const a = list(r.n, r.n++, [p.items], r.n);
-            return <div>{JSON.stringify(a)}</div>;
+          // No update whose value is used: these callbacks are inlined.
+          function UseMemoStatements() {
+            const total = useMemo(() => {
+              const seq = { n: 0 };
+              seq.n++;
+              seq.n--;
+              seq.n++;
+              return seq.n;
+            }, []);
+            return <Handle run={() => total} />;
           }
+          function TryFirstUseMemo() {
+            const text = useMemo(() => {
+              try {
+                return JSON.parse("[1]").concat(2);
+              } catch (error) {
+                return [error];
+              }
+            }, []);
+            return <Handle run={() => text} />;
+          }
+          const pair = (...values) => values;
+          function ComponentBody() {
+            const seq = { n: 0 };
+            const row = pair(seq.n++, seq.n, seq.n--);
+            return <Handle run={() => row} />;
+          }
+
+          function probe(Component, ...args) {
+            const before = sizes().length;
+            const { run } = Component({}).props;
+            const compiled = sizes().length > before;
+            return { compiled, results: [run(...args), run(...args)] };
+          }
+          const counter = { n: 3 };
+          console.log(JSON.stringify({
+            DeclaratorInit: probe(DeclaratorInit),
+            ReturnDecrement: probe(ReturnDecrement),
+            ExpressionBody: probe(ExpressionBody),
+            TemplateLiteral: probe(TemplateLiteral),
+            PrefixIncrement: probe(PrefixIncrement),
+            Statement: probe(Statement),
+            EarlierOperands: probe(EarlierOperands),
+            MethodCallArgument: probe(MethodCallArgument),
+            ComputedMember: probe(ComputedMember, "a"),
+            ObjectMethod: probe(ObjectMethod),
+            OutlinedFunction: probe(OutlinedFunction, counter),
+            TemporaryNamesInUse: probe(TemporaryNamesInUse),
+            LoopBody: probe(LoopBody),
+            InnerFunction: probe(InnerFunction),
+            EarlierSum: probe(EarlierSum),
+            EarlierNewAndCall: probe(EarlierNewAndCall),
+            ForUpdate: probe(ForUpdate),
+            Conditional: probe(Conditional, true),
+            LogicalStatement: probe(LogicalStatement, true),
+            SkippedOptionalCall: probe(SkippedOptionalCall, null),
+            WhileTest: probe(WhileTest),
+            UseMemoBody: probe(UseMemoBody),
+            IifeBody: probe(IifeBody),
+            CallbackInUseMemo: probe(CallbackInUseMemo),
+            CompoundAssignment: probe(CompoundAssignment),
+            CompoundAssignmentToCaptured: probe(CompoundAssignmentToCaptured),
+            UseMemoStatements: probe(UseMemoStatements),
+            TryFirstUseMemo: probe(TryFirstUseMemo),
+            ComponentBody: probe(ComponentBody),
+          }));
         `,
-        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        ...jsxCallShapeRuntime,
         "/node_modules/react/index.js": /* js */ `
-          export const useRef = current => ({ current });
-          export const useMemo = compute => compute();
-        `,
-        "/node_modules/react/jsx-runtime.js": /* js */ `
-          export const jsx = (type, props) => ({ type, props });
-          export const jsxs = jsx;
-        `,
-        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
-          export const jsxDEV = (type, props) => ({ type, props });
+          exports.useRef = current => ({ current });
+          exports.useMemo = compute => compute();
         `,
         "/node_modules/react/compiler-runtime.js": /* js */ `
-          let count = 0;
-          export const caches = () => count;
-          export function c(size) {
-            count++;
+          const sizes = [];
+          exports.c = function useMemoCache(size) {
+            sizes.push(size);
             return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
-          }
+          };
+          exports.sizes = () => sizes;
         `,
       },
       reactCompiler: true,
+      target: "browser",
       backend: "cli",
-      target,
+      minifySyntax,
       run: {
         validate({ stdout }) {
-          const { results, withoutCache } = JSON.parse(stdout);
-          expect(results).toEqual({
-            EarlierSum: [[3, 2], 3],
-            EarlierSumThenDecrement: [[3, 2], 1],
-            ComputedKey: [4, 2, 3],
-            Arguments: [[3, 2, 6, 3], 4],
-            AfterACompoundAssignment: [[3, 4, 8, 4], 5],
+          expect(JSON.parse(stdout)).toEqual({
+            DeclaratorInit: { compiled: true, results: [0, 1] },
+            ReturnDecrement: { compiled: true, results: [5, 4] },
+            ExpressionBody: { compiled: true, results: [0, 1] },
+            TemplateLiteral: { compiled: true, results: ["newTab0", "newTab1"] },
+            PrefixIncrement: { compiled: true, results: [1, 2] },
+            Statement: { compiled: true, results: [1, 2] },
             // prettier-ignore
-            EarlierNewAndCall: [[true, 2, 2], ["new", "call"]],
-            EarlierLiterals: ["k2", -2, { a: 3 }, [2], 2, "k3"],
-            EarlierTernaryLogicalOptionalComma: [2, 2, 7, 3, 2],
-            ValueOfAKeyedStore: [{ k2: 2 }, 3],
-            JsxAttribute: [{ title: "k2", id: 2 }, 3],
+            EarlierOperands: { compiled: true, results: [[0, 0, 1], [1, 1, 2]] },
+            MethodCallArgument: { compiled: true, results: [[0], [0, 1]] },
+            ComputedMember: { compiled: true, results: [0, 1] },
+            ObjectMethod: { compiled: true, results: [0, 1] },
+            OutlinedFunction: { compiled: true, results: [3, 4] },
             // prettier-ignore
-            InLoop: [[3, 2], [5, 3]],
-            InTernaryBranch: [3, 2, 3],
-            InLogical: [3, 3, 4],
-            WhileTest: [3, 4],
+            TemporaryNamesInUse: { compiled: true, results: [["0", 0, 1], ["2", 2, 3]] },
             // prettier-ignore
-            InCallback: [[0, "k1", 3, 2, 1], [1, "k2", 4, 3, 2]],
-            InImmediatelyInvokedFunction: [2, 3, 3, 2],
-            InUseMemoCallback: [2, 3, 3, 2],
-            TargetRunsOnce: [[3, 3, 5, 5, 3], 3, ["get", "get", "key", "key", "get", "key"]],
-            Accessor: [[2, 4, 4], 4, 4, 4],
-            StringAndBigInt: [5, 6, 7, "2", "2"],
-            Statements: [5, [0, 2]],
+            LoopBody: { compiled: true, results: [[0, 1], [2, 3]] },
             // prettier-ignore
-            CompoundAssignmentTargetRunsOnce: [[13, 36, 13, 2], [15, 36, 7], ["get", "key", "get", "key"]],
+            InnerFunction: { compiled: true, results: [[0, 1], [2, 3]] },
             // prettier-ignore
-            CompoundAssignmentInCallback: [[10, 0, 0, 1], [10, 10, 0, 2]],
-            CompoundAssignmentWithANamedLoad: [3, 3],
-            LaterOperandIsMemoized: [2, 2, [[5, 6, 7, 8]], 3],
+            EarlierSum: { compiled: true, results: [[1, 0], [2, 1]] },
+            // prettier-ignore
+            EarlierNewAndCall: { compiled: true, results: [["new", "call", 0], ["new", "call", 1]] },
+            // prettier-ignore
+            ForUpdate: { compiled: true, results: [[0, 2], [2, 4]] },
+            Conditional: { compiled: true, results: [0, 1] },
+            LogicalStatement: { compiled: true, results: [1, 2] },
+            // JSON turns the `undefined` of the call that does not happen into `null`.
+            // prettier-ignore
+            SkippedOptionalCall: { compiled: true, results: [[null, 0], [null, 0]] },
+            WhileTest: { compiled: true, results: [3, 0] },
+            // prettier-ignore
+            UseMemoBody: { compiled: true, results: [[0, 1, "c5", 4], [0, 1, "c5", 4]] },
+            // prettier-ignore
+            IifeBody: { compiled: true, results: [[0, 1, "c5", 4], [0, 1, "c5", 4]] },
+            // prettier-ignore
+            CallbackInUseMemo: { compiled: true, results: [["a0", "b1"], ["a0", "b1"]] },
+            // prettier-ignore
+            CompoundAssignment: { compiled: true, results: [[0, 2, 2], [1, 3, 3]] },
+            // prettier-ignore
+            CompoundAssignmentToCaptured: { compiled: true, results: [[0, -2, -2], [1, -1, -1]] },
+            UseMemoStatements: { compiled: true, results: [1, 1] },
+            // prettier-ignore
+            TryFirstUseMemo: { compiled: true, results: [[1, 2], [1, 2]] },
+            // prettier-ignore
+            ComponentBody: { compiled: true, results: [[0, 1, 1], [0, 1, 1]] },
           });
-          // The ssr output has no memo cache at all.
-          expect(withoutCache).toEqual(target === "browser" ? [] : Object.keys(results));
         },
+      },
+      onAfterBundle(api) {
+        // The body of an inlined callback is in the component.
+        const out = api.readFile("/out.js");
+        const component = (name: string) => {
+          const start = out.indexOf(`function ${name}(`);
+          return out.slice(start, out.indexOf("\nfunction ", start + 1));
+        };
+        expect({
+          UseMemoBody: component("UseMemoBody").includes("seq.n"),
+          IifeBody: component("IifeBody").includes("seq.n"),
+          UseMemoStatements: component("UseMemoStatements").includes("seq.n"),
+          TryFirstUseMemo: component("TryFirstUseMemo").includes("JSON.parse"),
+        }).toEqual({ UseMemoBody: true, IifeBody: true, UseMemoStatements: true, TryFirstUseMemo: true });
       },
     });
   }
@@ -5005,6 +5377,165 @@ test("react-compiler compiles branches that have nothing in them", async () => {
   expect(stderr).toBe("");
   expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(bodies.length);
   expect(exitCode).toBe(0);
+});
+
+// A seeded differential run for member updates. Each generated function evaluates one random
+// expression around `cell.now.a++` and its relatives, and `note` and `hold` record the order of
+// the side effects. The module has to print the same with and without the compiler: an update
+// keeps its value and its place among the other operands, and its object and key run once.
+//
+// The function is a callback that captures a ref, a callback that captures nothing (the compiler
+// moves it out of the component), or an IIFE or a `useMemo` callback (the compiler inlines it into
+// the component).
+test("react-compiler keeps the value and the order of member updates in a callback", async () => {
+  // mulberry32
+  let seed = 1;
+  const random = (below: number) => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % below;
+  };
+  const atoms = [
+    "cell.now.a",
+    "cell.now.a++",
+    "cell.now.a--",
+    "++cell.now.a",
+    "cell.now.b++",
+    "cell.now[key]++",
+    "cell.now[note(key)]++",
+    "(cell.now[note(key)] += 2)",
+    "--hold(cell.now).b",
+    "(hold(box).a -= 1)",
+    "box.a++",
+    "box.a",
+    "note(cell.now.a)",
+    "1",
+  ];
+  const expression = (depth: number): string => {
+    if (depth === 0 || random(4) === 0) return atoms[random(atoms.length)];
+    const [a, b, c] = [expression(depth - 1), expression(depth - 1), expression(depth - 1)];
+    const shapes = [
+      `[${a}, ${b}]`,
+      `(${a} + ${b})`,
+      `note(${a})`,
+      `({ k: ${a}, j: ${b} })`,
+      `(${a}, ${b})`,
+      "`${" + a + "}-${" + b + "}`",
+      `pair(${a}, ${b})`,
+      `new Pair(${a}, ${b})`,
+      `(${a} ? ${b} : ${c})`,
+      `(${a} && ${b})`,
+      `(${a} ?? ${b})`,
+      `list[${a} % 3]`,
+      `String(${a}).concat(${b})`,
+      `present?.(${a}, ${b})`,
+      `absent?.(${a})`,
+      `(-${a})`,
+    ];
+    return shapes[random(shapes.length)];
+  };
+  const body = (): string => {
+    const value = expression(3);
+    const bodies = [
+      `const v = ${value}; return [v, cell.now, box];`,
+      `return [${value}, cell.now, box];`,
+      `const all = []; for (let i = 0; i < 2; i++) all.push(${value}); return [all, cell.now, box];`,
+      `let turns = 0, v; while (turns++ < 2 && (v = ${value}, true)); return [v, cell.now, box];`,
+      `let v; if (${expression(1)}) v = ${value}; else v = [${expression(2)}]; return [v, cell.now, box];`,
+    ];
+    return bodies[random(bodies.length)];
+  };
+  const bodies = Array.from({ length: 48 }, body);
+  const hook = (body: string, i: number) =>
+    [
+      `const ref = useRef({ now: { a: 0, b: 10 } });
+       const run = box => { const cell = ref.current; ${body} };
+       return { run };`,
+      `useRef(0);
+       const run = box => { const cell = { now: { a: 0, b: 10 } }; ${body} };
+       return { run };`,
+      `useRef(0);
+       const cell = { now: { a: 0, b: 10 } };
+       const box = { a: 100 };
+       const result = ${i % 2 === 0 ? `(() => { ${body} })()` : `useMemo(() => { ${body} }, [])`};
+       return { run: () => result };`,
+    ][i % 3];
+
+  // One module for each part, so that the parts compile on different threads.
+  // A debug build takes 50 ms for each component.
+  const parts = 4;
+  const caseModule = (part: number) => `
+    import { useMemo, useRef } from "react";
+    import { note, hold, pair, Pair, list, key, present, absent } from "./helpers";
+    ${bodies
+      .map((body, i) => (i % parts !== part ? "" : `export function useGenerated${i}() { ${hook(body, i)} }`))
+      .join("\n")}
+  `;
+  using dir = tempDir("react-compiler-member-update-order", {
+    "helpers.js": `
+      export let log = [];
+      export const resetLog = () => (log = []);
+      export const note = value => (log.push(value), value);
+      export const hold = value => (log.push("hold"), value);
+      export const pair = (a, b) => (log.push("pair"), [a, b]);
+      export class Pair { constructor(a, b) { log.push("new Pair"); this.pair = [a, b]; } }
+      export const list = ["p", "q", "s"];
+      export const key = "a";
+      export const present = (...values) => values;
+      export const absent = null;
+    `,
+    ...Object.fromEntries(Array.from({ length: parts }, (_, part) => [`cases-${part}.jsx`, caseModule(part)])),
+    "entry.js": `
+      import { sizes } from "react/compiler-runtime";
+      import { log, resetLog } from "./helpers";
+      ${Array.from({ length: parts }, (_, part) => `import * as cases${part} from "./cases-${part}.jsx";`).join("\n")}
+      const hooks = { ${Array.from({ length: parts }, (_, part) => `...cases${part}`).join(", ")} };
+      for (let i = 0; i < ${bodies.length}; i++) {
+        resetLog();
+        const before = sizes().length;
+        const { run } = hooks["useGenerated" + i]();
+        const compiled = sizes().length > before;
+        console.log(JSON.stringify({ result: run({ a: 100 }), log, compiled }));
+      }
+    `,
+    "node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "node_modules/react/index.js": `
+      exports.useRef = current => ({ current });
+      exports.useMemo = compute => compute();
+    `,
+    "node_modules/react/compiler-runtime.js": `
+      const sizes = [];
+      exports.c = size => {
+        sizes.push(size);
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+      exports.sizes = () => sizes;
+    `,
+  });
+
+  const results = async (reactCompiler: boolean) => {
+    const built = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], target: "browser", reactCompiler });
+    const outfile = reactCompiler ? "compiled.js" : "plain.js";
+    await Bun.write(join(String(dir), outfile), await built.outputs[0].text());
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return stdout
+      .trim()
+      .split("\n")
+      .map((line, i) => ({ body: bodies[i], ...JSON.parse(line) }));
+  };
+  const [plain, compiled] = await Promise.all([results(false), results(true)]);
+
+  // Every generated hook compiled, and gives what the plain build gives.
+  expect(compiled).toEqual(plain.map(expected => ({ ...expected, compiled: true })));
 });
 
 // The parser has a stack check. The lowering, which takes more of the stack for a

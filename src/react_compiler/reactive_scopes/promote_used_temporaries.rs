@@ -593,6 +593,8 @@ enum Effect {
 struct Temporary {
     position: u32,
     effect: Effect,
+    /// Codegen prints it as an identifier or a literal.
+    is_atom: bool,
 }
 
 /// Positions of the last statement that reads and of the last statement that writes.
@@ -613,6 +615,8 @@ struct InterState<'a> {
     /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
     operands_of_macro_operands: IdMap<DeclarationId, Places>,
+    /// The `BinaryExpression` visited last, and its left operand.
+    last_binary: Option<(DeclarationId, DeclarationId)>,
 }
 
 impl<'a> InterState<'a> {
@@ -624,16 +628,18 @@ impl<'a> InterState<'a> {
             value_block_statements: None,
             inline_macro_operands,
             operands_of_macro_operands: IdMap::new(),
+            last_binary: None,
         }
     }
 
-    fn temporary(&mut self, id: DeclarationId, effect: Effect) {
+    fn temporary(&mut self, id: DeclarationId, effect: Effect, is_atom: bool) {
         self.position += 1;
         self.temporaries.insert(
             id,
             Temporary {
                 position: self.position,
                 effect,
+                is_atom,
             },
         );
     }
@@ -810,6 +816,52 @@ fn promote_interposed_operands(
     effect
 }
 
+/// Not in upstream: see `MemberUpdate`. Codegen prints `object[key] op= right` on the node of the
+/// load while the load is inline. A load that has a name ran ahead of a statement in `right`, and
+/// the store prints `object[key] = value` after it. The object and the key get a name too, so
+/// that they do not run a second time there.
+fn promote_member_update_target(
+    iv: &InstructionValue,
+    state: &mut State,
+    inter_state: &mut InterState<'_>,
+    env: &mut Environment,
+) {
+    let (object, key, value) = match iv {
+        InstructionValue::PropertyStore {
+            object,
+            value,
+            update: Some(_),
+            ..
+        } => (object, None, value),
+        InstructionValue::ComputedStore {
+            object,
+            property,
+            value,
+            update: Some(_),
+            ..
+        } => (object, Some(property), value),
+        _ => return,
+    };
+    let value_id = env.identifiers[value.identifier.0 as usize].declaration_id;
+    let is_load_inline = inter_state
+        .last_binary
+        .is_some_and(|(binary, load)| binary == value_id && !state.promoted.contains(load));
+    if is_load_inline && inline_temporary(value, state, inter_state, env).is_some() {
+        return;
+    }
+    for place in key.into_iter().chain([object]) {
+        let Some(temporary) = inline_temporary(place, state, inter_state, env) else {
+            continue;
+        };
+        // An identifier or a literal can print twice. fbt wants its operands inline.
+        if temporary.is_atom || inter_state.inline_macro_operands.contains(&place.identifier) {
+            continue;
+        }
+        promote_identifier(place.identifier, state, env);
+        inter_state.promoted(temporary);
+    }
+}
+
 /// A const cannot change between being loaded and being used.
 fn is_reassignable(id: IdentifierId, consts: &IdBitSet<IdentifierId>, env: &Environment) -> bool {
     let identifier = &env.identifiers[id.0 as usize];
@@ -954,6 +1006,14 @@ fn promote_interposed_instruction(
                         globals.insert(lvalue.identifier);
                     }
                 }
+                InstructionValue::BinaryExpression { left, .. } => {
+                    if let Some(lvalue) = &instr.lvalue {
+                        inter_state.last_binary = Some((
+                            env.identifiers[lvalue.identifier.0 as usize].declaration_id,
+                            env.identifiers[left.identifier.0 as usize].declaration_id,
+                        ));
+                    }
+                }
                 _ => {}
             }
             promote_interposed_value(&instr.value, state, inter_state, consts, globals, env)
@@ -983,7 +1043,16 @@ fn promote_interposed_instruction(
                     crate::hir::visitors::each_instruction_value_operand(iv, env),
                 );
             }
-            inter_state.temporary(declaration_id, effect);
+            let is_atom = match &instr.value {
+                ReactiveValue::Instruction(
+                    InstructionValue::LoadLocal { place, .. }
+                    | InstructionValue::LoadContext { place, .. },
+                ) => inline_temporary(place, state, inter_state, env)
+                    .is_none_or(|temporary| temporary.is_atom),
+                ReactiveValue::Instruction(InstructionValue::Primitive { .. }) => true,
+                _ => false,
+            };
+            inter_state.temporary(declaration_id, effect, is_atom);
         }
         // With no lvalue, or a named one, codegen emits this instruction as a statement.
         _ => inter_state.statement(effect),
@@ -1007,9 +1076,11 @@ fn promote_interposed_value(
     match value {
         ReactiveValue::Instruction(iv) => {
             let operands = crate::hir::visitors::each_instruction_value_operand(iv, env);
-            instruction_effect(iv, &operands, consts, globals, env).max(
+            let effect = instruction_effect(iv, &operands, consts, globals, env).max(
                 promote_interposed_operands(operands, state, inter_state, consts, env),
-            )
+            );
+            promote_member_update_target(iv, state, inter_state, env);
+            effect
         }
         ReactiveValue::SequenceExpression {
             instructions,

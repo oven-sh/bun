@@ -1100,18 +1100,14 @@ fn lower_update(
                 builder,
                 InstructionValue::BinaryExpression {
                     operator: binary_op,
-                    left: prev_value,
+                    left: prev_value.clone(),
                     right: one,
                     loc: member_loc,
                 },
             )?;
 
-            // Unlike upstream: the store prints as the update expression, in place. It is the
-            // value of a postfix update too. Upstream returns `prev_value` for that. The store
-            // then prints as a statement, and in a nested function `prev_value` prints again
-            // after it.
             let update = Some(MemberUpdate::UpdateExpression { operation, prefix });
-            let result_place = match lowered_property {
+            let new_value_place = match lowered_property {
                 MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
                     builder,
                     InstructionValue::PropertyStore {
@@ -1134,6 +1130,14 @@ fn lower_update(
                 )?,
             };
 
+            // Unlike upstream: the store prints as the update expression, so it is the value of
+            // a postfix update too. `bun lint` prints nothing and keeps the value of upstream.
+            let is_lint = builder.environment().output_mode == environment::OutputMode::Lint;
+            let result_place = if prefix || !is_lint {
+                new_value_place
+            } else {
+                prev_value
+            };
             Ok(InstructionValue::LoadLocal {
                 loc: result_place.loc,
                 place: result_place,

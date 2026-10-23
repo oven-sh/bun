@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, githubTarball, isDebug, nodeModulesPackages, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, hostedGitRepository, isDebug, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 import npmMetadata from "./yarn/npm-metadata.json";
@@ -3784,4 +3784,135 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
       expect(exitCode).toBe(0);
     },
   );
+});
+
+// yarn.lock records neither the bins nor the scripts of a package. For a registry package the migration reads them
+// from the registry's manifest. A tarball, a git repository and a GitHub repository have no manifest: only the
+// package.json inside says what they are.
+describe.concurrent("yarn.lock entries of packages that only their own package.json describes", () => {
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const files = {
+    "package.json": JSON.stringify({
+      name: "tool",
+      version: "1.0.0",
+      bin: { tool: "cli.js" },
+      scripts: { postinstall: "exit 0" },
+    }),
+    "cli.js": "#!/usr/bin/env node\n",
+  };
+  // What a fresh resolve of each of these dependencies records.
+  const described = { hasInstallScript: true, bin: { tool: "cli.js" } };
+
+  let repo: Awaited<ReturnType<typeof hostedGitRepository>>;
+  beforeAll(async () => {
+    repo = await hostedGitRepository(["https://git.example.com/me/tool.git"], files);
+  });
+  afterAll(() => repo[Symbol.dispose]());
+
+  // Each kind: the range in package.json, what yarn.lock has as `resolved`, and the requests of one install.
+  const kinds = {
+    "a tarball URL with its sha1": (origin: string, sha1: string) =>
+      [`${origin}/dl/tool.tgz`, `${origin}/dl/tool.tgz#${sha1}`, ["/dl/tool.tgz"]] as const,
+    "a tarball URL": (origin: string) => [`${origin}/dl/tool.tgz`, `${origin}/dl/tool.tgz`, ["/dl/tool.tgz"]] as const,
+    "owner/repo": (origin: string) =>
+      ["me/tool", `${origin}/me/tool/tar.gz/${commit}`, [`/me/tool/tar.gz/${commit}`]] as const,
+    "a file: tarball": (_: string, sha1: string) =>
+      ["file:./vendor/tool.tgz", `file:./vendor/tool.tgz#${sha1}`, []] as const,
+    "a GitHub repository": () =>
+      [
+        "git+https://github.com/me/tool.git",
+        `git+https://github.com/me/tool.git#${commit}`,
+        [`/repos/me/tool/tarball/${commit.slice(0, 7)}`],
+      ] as const,
+    "a git repository": () =>
+      ["git+https://git.example.com/me/tool.git", `git+https://git.example.com/me/tool.git#${repo.sha}`, []] as const,
+  };
+  const cases = (Object.keys(kinds) as (keyof typeof kinds)[]).flatMap(kind =>
+    (["hoisted", "isolated"] as const).map(linker => [kind, linker] as const),
+  );
+
+  // Serves the tarball at every URL above, and gives each project the yarn.lock of `kind`.
+  async function fixture(kind: keyof typeof kinds) {
+    const [tarball, archive] = await Promise.all([
+      githubTarball("package", files),
+      githubTarball(`me-tool-${commit.slice(0, 7)}`, files),
+    ]);
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (pathname === "/dl/tool.tgz" || pathname === `/me/tool/tar.gz/${commit}`) return new Response(tarball);
+        if (pathname.startsWith("/repos/me/tool/tarball/")) return new Response(archive);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const origin = server.url.origin;
+    const [range, resolved, download] = kinds[kind](origin, new Bun.CryptoHasher("sha1").update(tarball).digest("hex"));
+    const project = () =>
+      tempDir("yarn-migration-described-by-package-json", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { tool: range } }),
+        "yarn.lock": `# yarn lockfile v1\n\n\n"tool@${range}":\n  version "1.0.0"\n  resolved "${resolved}"\n`,
+        "vendor/tool.tgz": tarball,
+      });
+    const install = async (cwd: string, cache: string, ...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...flags],
+        cwd,
+        env: {
+          ...repo.env,
+          BUN_CONFIG_REGISTRY: server.url.href,
+          GITHUB_API_URL: origin,
+          BUN_INSTALL_CACHE_DIR: cache,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const bin = join(cwd, "node_modules", ".bin");
+      const lock = join(cwd, "bun.lock");
+      return {
+        errors: stderr.split("\n").filter(line => line.startsWith("error")),
+        bins: fs.existsSync(bin)
+          ? [...new Set(fs.readdirSync(bin).map(name => name.replace(/\.(exe|bunx)$/, "")))]
+          : [],
+        row: fs.existsSync(lock)
+          ? (Bun.JSONC.parse(fs.readFileSync(lock, "utf8")) as { packages: Record<string, unknown[]> }).packages.tool[1]
+          : null,
+        blocked: stdout.includes("Blocked 1 postinstall"),
+        exitCode,
+      };
+    };
+    return { project, install, requests, download, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  test.each(cases)("%s: bun install --linker %s links the bin and records it", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    const linked = { errors: [], bins: ["tool"], row: described, blocked: true, exitCode: 0 };
+
+    using first = server.project();
+    expect(await server.install(String(first), String(cache), "--linker", linker)).toEqual(linked);
+    expect(server.requests).toEqual([...server.download]);
+
+    // The package is in the cache now, so this install extracts nothing.
+    using second = server.project();
+    expect(await server.install(String(second), String(cache), "--linker", linker)).toEqual(linked);
+  });
+
+  test.each(cases)("%s: bun install --frozen-lockfile --linker %s links the bin", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    expect(await server.install(String(dir), String(cache), "--frozen-lockfile", "--linker", linker)).toEqual({
+      errors: [],
+      bins: ["tool"],
+      row: null,
+      blocked: true,
+      exitCode: 0,
+    });
+    expect(server.requests).toEqual([...server.download]);
+  });
 });

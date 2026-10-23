@@ -21,7 +21,7 @@
 // readable from process exit until close, so a dropped ready_polls slot is
 // harmless — the next epoll_wait returns it again.
 import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { test } from "bun:test";
 import { isLinux } from "harness";
 
 // pidfd path is Linux-only; macOS/FreeBSD use EVFILT_PROC which is keyed

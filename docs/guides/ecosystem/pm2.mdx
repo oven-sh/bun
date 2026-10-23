@@ -17,7 +17,7 @@ You can use PM2 with Bun in two ways: as a CLI option or in a configuration file
 To start your application with PM2 and Bun as the interpreter, run:
 
 ```bash terminal icon="terminal"
-pm2 start --interpreter ~/.bun/bin/bun index.ts
+NODE_ENV=production pm2 start --interpreter ~/.bun/bin/bun index.ts
 ```
 
 ---
@@ -33,6 +33,7 @@ module.exports = {
   interpreter: "bun", // Bun interpreter
   env: {
     PATH: `${process.env.HOME}/.bun/bin:${process.env.PATH}`, // Add "~/.bun/bin/bun" to PATH
+    NODE_ENV: "production", // Run in production mode
   },
 };
 ```

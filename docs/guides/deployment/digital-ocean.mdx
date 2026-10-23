@@ -75,7 +75,8 @@ This guide deploys a Bun HTTP server to DigitalOcean using a `Dockerfile`.
     	# Expose the port (DigitalOcean will set PORT env var)
     	EXPOSE 8080
 
-    	# Run the application
+    	# Run the application in production mode
+    	ENV NODE_ENV=production
     	CMD ["bun", "index.ts"]
     	```
 

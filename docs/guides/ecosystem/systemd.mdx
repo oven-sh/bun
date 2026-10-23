@@ -37,6 +37,8 @@ Type=simple
 User=YOUR_USER
 # path to your application's root directory
 WorkingDirectory=/home/YOUR_USER/path/to/my-app
+# run the app in production mode
+Environment=NODE_ENV=production
 # the command to start the app
 # requires absolute paths
 ExecStart=/home/YOUR_USER/.bun/bin/bun run index.ts

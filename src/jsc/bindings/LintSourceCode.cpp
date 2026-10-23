@@ -359,7 +359,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, Encod
     LintHost* host = LintHost::from(globalObject);
     LintSourceCodeState& state = host->sourceCode;
     // It depends on the rule that asks.
-    if (host->hasTypes() && !host->isOxlint() && !host->isEspree()) {
+    if (host->hasTypes()) {
         JSValue typed = callHook(globalObject, state.typedServices);
         RETURN_IF_EXCEPTION(scope, {});
         if (typed.isObject())

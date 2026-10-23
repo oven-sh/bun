@@ -760,13 +760,15 @@ impl<S: RuleSet> Linter<S> {
             options.again,
         ) && !running_js.is_empty()
         {
-            let waits_for_types = options.can_lint_with_types && file.types.is_none();
+            let can_have_types = js_plugin::Host::hands_out_types(file)
+                && (file.types.is_some() || options.can_lint_with_types);
+            let waits_for_types = can_have_types && file.types.is_none();
             let needs_types = || LintResult {
                 needs_types: true,
                 ..LintResult::default()
             };
             if waits_for_types
-                && !(running_js.iter()).all(|it| host.can_run(&it.configured.rule, file))
+                && (running_js.iter()).any(|it| host.can_use_types(&it.configured.rule))
             {
                 return needs_types();
             }
@@ -813,15 +815,16 @@ impl<S: RuleSet> Linter<S> {
                         if let Some(at) =
                             at.filter(|it| running_js.get(*it).is_some_and(asks_for_types))
                         {
-                            if waits_for_types {
+                            // In the next run the rule gets the types, or shows what it reads from them.
+                            if can_have_types && !had_asked[at] {
+                                continue;
+                            }
+                            let rule = &running_js[at].configured.rule;
+                            if waits_for_types && host.can_use_types(rule) {
                                 return needs_types();
                             }
-                            // The next run has the types, unless this one had them.
-                            let rule = &running_js[at].configured.rule;
-                            if had_asked[at] || !host.can_run(rule, file) {
-                                skip(rule);
-                                running_js.remove(at);
-                            }
+                            skip(rule);
+                            running_js.remove(at);
                             continue;
                         }
                         let rule = at.and_then(|it| running_js.get(it));

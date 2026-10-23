@@ -7,7 +7,7 @@ use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
 use crate::code_path;
-use crate::estree::Dialect;
+use crate::estree::{Dialect, is_typescript_estree};
 use crate::fix::Fix;
 use crate::language::{LanguageOptions, SourceType};
 use crate::linter::{normalize_plugin_name, write_json};
@@ -343,15 +343,23 @@ impl<'e> Host<'e> {
             && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(&it.rule, rule))
     }
 
-    /// False if `rule` [has asked for types](Host::has_asked_for_types) that it can't get: the file has none, or it
-    /// has read something from them that isn't known.
-    pub fn can_run(&self, rule: &Arc<Rule>, file: &File) -> bool {
-        if !self.has_been_asked_for_types.load(Ordering::Relaxed) {
-            return true;
-        }
-        let state = self.state.lock();
-        let asked = (state.asked_for_types.iter()).find(|it| Arc::ptr_eq(&it.rule, rule));
-        asked.is_none_or(|it| file.types.is_some() && it.unknown.is_none())
+    /// True if `rule` [has asked for types](Host::has_asked_for_types) and hasn't read anything from them that isn't
+    /// known. So it runs on a file that has types, and linting a file with types is worth it.
+    pub fn can_use_types(&self, rule: &Arc<Rule>) -> bool {
+        self.has_been_asked_for_types.load(Ordering::Relaxed)
+            && (self.state.lock().asked_for_types.iter())
+                .any(|it| Arc::ptr_eq(&it.rule, rule) && it.unknown.is_none())
+    }
+
+    /// True if a rule gets types from `file`'s `parserServices`, provided the file is linted with types.
+    pub(crate) fn hands_out_types(file: &File) -> bool {
+        is_typescript_estree(file)
+    }
+
+    /// False if `rule` [has asked for types](Host::has_asked_for_types) that it can't get from `file`.
+    pub(crate) fn can_run(&self, rule: &Arc<Rule>, file: &File) -> bool {
+        !self.has_asked_for_types(rule)
+            || (file.types.is_some() && Self::hands_out_types(file) && self.can_use_types(rule))
     }
 
     /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
@@ -378,7 +386,7 @@ impl<'e> Host<'e> {
     }
 
     /// `rule`, which [has asked for types](Host::has_asked_for_types), didn't run on a file.
-    pub fn skip_for_types(&self, rule: &Arc<Rule>) {
+    pub(crate) fn skip_for_types(&self, rule: &Arc<Rule>) {
         let mut state = self.state.lock();
         let mut asked = state.asked_for_types.iter_mut();
         if let Some(asked) = asked.find(|it| Arc::ptr_eq(&it.rule, rule)) {
@@ -408,17 +416,25 @@ impl<'e> Host<'e> {
             .store(like == FlagValues::BeforeTypeScript6, Ordering::Relaxed);
     }
 
-    /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, their positions, and what they can
-    /// learn about the types in `file`. `None` if none of them has asked, or the file has no types.
+    /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, whether `file` has types, these rules'
+    /// positions, and what they can learn about the types in `file`. `None` if none of them has asked.
+    ///
+    /// Without types, the rules still get `parserServices` that look as if there were types. That shows, without a type
+    /// check, whether a rule reads something that isn't known.
     fn types_for<'a>(&self, file: &'a File<'a>, enabled: &[&Configured]) -> Option<Vec<u32>> {
-        file.types.as_ref()?;
+        if !Self::hands_out_types(file) {
+            return None;
+        }
         let positions = (0..).zip(enabled);
         let asked = positions.filter(|it| self.has_asked_for_types(&it.1.rule));
-        let mut words = vec![0];
+        let mut words = vec![0, u32::from(file.types.is_some())];
         words.extend(asked.map(|it| it.0));
-        words[0] = words.len() as u32 - 1;
+        words[0] = words.len() as u32 - 2;
         if words[0] == 0 {
             return None;
+        }
+        if file.types.is_none() {
+            return Some(words);
         }
         let is_before_6 = (self.numbers_type_flags_as_before_typescript_6).load(Ordering::Relaxed);
         let flag_values = match is_before_6 {

@@ -2020,6 +2020,67 @@ it(Math.random() > 0 ? label : load);
       timeout,
     );
 
+    const twenty = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`${i}.ts`, `declare function it(title: unknown): void;\nit(it);\n`]),
+    );
+    const withTypes = (stderr: string) => Number(/linted with types: (\d+) files/.exec(stderr)?.[1]);
+
+    test.concurrent(
+      "only the files on which a rule can use types are type checked",
+      async () => {
+        const [usable, unusable, never] = await Promise.all([
+          lint({ ...typed(facts), ...twenty }, ["-f", "unix", "--timing", "."]),
+          lint({ ...typed("services => services.program.getTypeChecker()"), ...twenty }, [
+            "-f",
+            "unix",
+            "--timing",
+            ".",
+          ]),
+          lint({ ...typed(facts, `"demo/title": "off", "demo/optional": "warn"`), ...twenty }, [
+            "--quiet",
+            "--timing",
+            ".",
+          ]),
+        ]);
+        expect({
+          files: withTypes(usable.stderr),
+          problems: usable.stdout.split("\n").at(-1),
+          exitCode: usable.exitCode,
+        }).toEqual({
+          files: 20,
+          problems: "20 problems",
+          exitCode: 1,
+        });
+        expect(unusable.stdout).toBe("");
+        expect(unusable.stderr).toContain("demo/title (Program.getTypeChecker)");
+        expect({ files: withTypes(unusable.stderr), exitCode: unusable.exitCode }).toEqual({ files: 0, exitCode: 2 });
+        expect({ files: withTypes(never.stderr), exitCode: never.exitCode }).toEqual({ files: 0, exitCode: 0 });
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "a file whose `parserServices` aren't typescript-eslint's isn't type checked for a rule",
+      async () => {
+        const files = typed(facts);
+        const espree = files["eslint.config.mjs"]
+          .replace(`files: ["**/*.ts"]`, `files: ["**/*.js"]`)
+          .replace(`parser: { meta: { name: "typescript-eslint/parser" } }, `, "");
+        const { stderr, exitCode } = await lint(
+          {
+            ...files,
+            "eslint.config.mjs": espree,
+            "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,
+            "a.js": "it(it);\n",
+          },
+          ["--timing", "a.js"],
+        );
+        expect(stderr).toContain("1 rule did not run because there is no type information for the files: demo/title");
+        expect({ files: withTypes(stderr), exitCode }).toEqual({ files: 0, exitCode: 2 });
+      },
+      timeout,
+    );
+
     test.concurrent(
       "text from standard input has types too",
       async () => {

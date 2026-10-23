@@ -384,7 +384,7 @@ function readTypes() {
   const { emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations } =
     fileSettings.languageOptions.parserOptions;
   const words = native.askWords(TYPES, "", 0xffffffff);
-  const first = 1 + words[0];
+  const first = 2 + words[0];
   // Where the row of a node begins. The rows are sorted.
   const find = (start, end, type) => {
     let low = 0;
@@ -409,6 +409,8 @@ function readTypes() {
     tsNodeToESTreeNodeMap: lookAlike("tsNodeToESTreeNodeMap", {}),
     getSymbolAtLocation: node => refuse(`getSymbolAtLocation(${node.type})`),
     getTypeAtLocation(node) {
+      // The file is linted again, with types.
+      if (words[1] === 0) throw new Error("You have used a rule which requires type information.");
       const at = find(node.range[0], node.range[1], native.typeId(node.type));
       if (at === -1) refuse(`getTypeAtLocation(${node.type})`);
       const flags = words[at + 3];
@@ -420,7 +422,7 @@ function readTypes() {
       });
     },
   };
-  return { asked: new Set(words.subarray(1, 1 + words[0])), services };
+  return { asked: new Set(words.subarray(2, first)), services };
 }
 
 // ------------- ESLint's `context` -------------

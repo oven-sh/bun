@@ -304,6 +304,8 @@ pub(crate) struct Timing {
     pub(crate) rules: AtomicU64,
     /// Files in which `File::mentions` returns true for every name, so no rule that looks for a name can be skipped.
     pub(crate) without_filter: AtomicU64,
+    /// Files that were linted with types. A file counts again for each pass of `--fix`.
+    pub(crate) with_types: AtomicU64,
 }
 
 impl Timing {
@@ -616,10 +618,7 @@ impl Run<'_> {
                     listed: None,
                 });
             }
-        } else if name.is_some()
-            && !config.language.is_oxlint
-            && loader.wants_types(&loaded, config)
-        {
+        } else if name.is_some() && loader.wants_types(&loaded, config) {
             let without_types = context.verify_text_without_types(
                 display_path.clone(),
                 &path,
@@ -868,10 +867,7 @@ impl Run<'_> {
         // The files on which a JavaScript rule asks for types, if their config turns types on.
         let waiting_for_types = Guarded::new(Vec::new());
         let can_get_types = |target: &Target| match &target.status {
-            // oxlint gives plugins no parser services.
-            Status::Matched(config) => {
-                !config.language.is_oxlint && loader.wants_types(&target.loaded, config)
-            }
+            Status::Matched(config) => loader.wants_types(&target.loaded, config),
             _ => false,
         };
         let lint = |target: &Target| {
@@ -919,32 +915,57 @@ impl Run<'_> {
             false => {}
         }
         phases.linting = started.elapsed().as_secs_f64();
-        let waiting = std::mem::take(&mut *waiting_for_types.lock());
-        let waiting: FxHashSet<Vec<u8>> = waiting.into_iter().collect();
-        if !waiting.is_empty() {
+        // Ends because a file only waits again if a rule has asked for types in the meantime.
+        loop {
+            let waiting = std::mem::take(&mut *waiting_for_types.lock());
+            if waiting.is_empty() {
+                break;
+            }
             let started = Instant::now();
             loader.advise_about_typescript();
             loader.number_type_flags();
-            let targets = (without_types.iter()).filter(|it| waiting.contains(&it.path));
-            let files = targets.clone().filter_map(|target| match &target.status {
-                Status::Matched(config) => Some(Typed {
+            let waiting: FxHashSet<Vec<u8>> = waiting.into_iter().collect();
+            let waiting = (without_types.iter()).filter(|it| waiting.contains(&it.path));
+            let waiting = waiting.filter_map(|target| match &target.status {
+                Status::Matched(config) => Some((*target, config)),
+                _ => None,
+            });
+            let lint_with_types = |waiting: &[(&Target, &Arc<ResolvedConfig>)]| {
+                let files = waiting.iter().map(|&(target, config)| Typed {
                     path: &target.path,
                     config,
                     text: None,
-                }),
-                _ => None,
+                });
+                let files: Vec<Typed> = files.collect();
+                let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
+                for (&(target, _), result) in waiting.iter().zip(linted) {
+                    // A file that's in no program is linted without the rule.
+                    match result.map_or_else(
+                        || context.lint_file(target, &on_circular_fixes, None),
+                        |it| Ok(Some(it)),
+                    ) {
+                        Ok(result) => results.lock().extend(result),
+                        Err(error) => _ = failure.lock().get_or_insert(error),
+                    }
+                }
+            };
+            // What a rule reads from the types may have become known since the file was put aside.
+            let (with_types, without): (Vec<_>, Vec<_>) = waiting.partition(|it| {
+                let mut rules = it.1.js_rules.iter().map(|it| &it.configured.rule);
+                rules.any(|it| context.js_plugins.can_use_types(it))
             });
-            let files: Vec<Typed> = files.collect();
-            let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
-            for (target, result) in targets.zip(linted) {
-                // A file that's in no program is linted without the rule.
-                let result = result.map_or_else(
-                    || context.lint_file(target, &on_circular_fixes, None),
-                    |it| Ok(Some(it)),
-                )?;
-                results.get_mut().extend(result);
-            }
-            (results.get_mut()).append(&mut context.invalid_tsconfigs.lock().results);
+            lint_with_types(&with_types);
+            let is_heavy = |at: usize| {
+                without
+                    .get(at)
+                    .is_some_and(|it| needs(it.0) == Needs::Heavy)
+            };
+            (context.js_plugins).for_each(without.len(), &is_heavy, &|at| {
+                if let Some(it) = without.get(at) {
+                    lint(it.0);
+                }
+            });
+            (results.lock()).append(&mut context.invalid_tsconfigs.lock().results);
             phases.checking += started.elapsed().as_secs_f64();
         }
         if let Some(error) = failure.get_mut().take() {
@@ -1921,9 +1942,10 @@ impl Run<'_> {
             }
         }
         let without_filter = timing.without_filter.load(Ordering::Relaxed);
+        let with_types = timing.with_types.load(Ordering::Relaxed);
         let _ = writeln!(
             self.out.stderr,
-            "\n  linted without the name filter: {without_filter} files"
+            "\n  linted without the name filter: {without_filter} files\n  linted with types: {with_types} files"
         );
     }
 }

@@ -458,6 +458,7 @@ fn check_and_lint_in(
             },
         );
         context.timing.add(&context.timing.rules, started);
+        context.timing.count(&context.timing.with_types);
         // A checker task can run more than once. The last run wins.
         match linted {
             Some(linted) => results.lock()[at] = Some(linted),

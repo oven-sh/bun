@@ -20,6 +20,7 @@ pub(crate) use field::Field;
 pub(crate) use schema::{FieldEntry, NodeType};
 pub(crate) use value::Sink;
 pub(crate) use value::{Nodes, Object, Value};
+pub(crate) use views::is_typescript_estree;
 pub(crate) use vnode::VNode;
 
 use crate::ast::File;

@@ -880,7 +880,10 @@ describe.concurrent("S3 - List Objects", () => {
   });
 
   it("Should work with big responses", async () => {
-    const contents = new Array(40 * 1000).fill("").map(x => ({
+    // S3 sends at most 1000 keys per page. 2000 keeps the body (~700KB) larger than one
+    // 512KB socket read, but small enough that parsing it (~0.3ms per entry on a debug build,
+    // all on the main thread) does not starve the other concurrent tests of their 5s timeout.
+    const contents = new Array(2000).fill("").map(x => ({
       key: randomUUIDv7(),
       eTag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
       lastModified: new Date().toISOString(),

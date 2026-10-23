@@ -238,11 +238,8 @@ impl Watcher {
         (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
     }
 
-    /// kqueue reports a truncation as `NOTE_ATTRIB` alone, as it reports `chmod` and `utimes`.
-    /// Adds `Op::WRITE` to the event of a file whose size changed since its last event.
-    ///
-    /// A new size of 0 is not a write here: `open(O_TRUNC)` starts most saves, and the `write()`
-    /// that follows it is reported.
+    /// kqueue reports a truncation as `NOTE_ATTRIB` alone, like `chmod`: a changed size is a write.
+    /// Not a new size of 0, which is the `open(O_TRUNC)` before the `write()` of most saves.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn report_truncations(&mut self, event_count: usize) {
         for event in &mut self.watch_events[..event_count] {
@@ -541,9 +538,8 @@ impl Watcher {
         // we want to know about the vnode
         event.filter = EVFILT_VNODE as _;
 
-        // A truncation of a file is `NOTE_ATTRIB` alone; see `report_truncations`. A directory
-        // reports it only for its own metadata, which nothing here reads.
         let mut fflags = NOTE_WRITE | NOTE_RENAME | NOTE_DELETE;
+        // For `report_truncations`.
         if kind == WatchItemKind::File {
             fflags |= NOTE_ATTRIB;
         }

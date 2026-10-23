@@ -71,10 +71,11 @@ pub struct Summary {
     pub(crate) offline_misses: OfflineMisses,
 }
 
-/// `--offline` only, one entry per folder. `report_offline_misses` judges them.
+/// Only used with `--offline`. Has one entry per folder. `report_offline_misses` decides which ones
+/// are errors.
 #[derive(Default)]
 pub(crate) struct OfflineMisses {
-    /// Neither installed nor in the cache.
+    /// Packages that are neither installed nor in the cache.
     pub(crate) missing: Vec<PackageID>,
     /// Already installed.
     pub(crate) in_place: Vec<PackageID>,
@@ -106,7 +107,8 @@ pub enum Method {
     /// - it reads each dir twice incase the first pass modifies it
     Copyfile,
 
-    /// One symlink per file: `--backend=symlink`, or a package that depends on itself (`file:.`).
+    /// Creates one symlink per file. Used for `--backend=symlink` and for a package that depends on
+    /// itself (`file:.`).
     Symlink,
 }
 
@@ -183,7 +185,8 @@ impl InstallResult {
         InstallResult::Failure(Failure::boxed(err, step))
     }
 
-    /// Prints what a backend, maybe on a thread of the pool, has to say beyond the failure itself.
+    /// Prints the details that a backend recorded in addition to the error itself. The backend may
+    /// have run on a thread pool thread.
     pub(crate) fn report(self) -> InstallResult {
         if let InstallResult::Failure(failure) = &self
             && !failure.file.is_empty()
@@ -219,20 +222,24 @@ impl Step {
     }
 }
 
-/// Whether, and under which names, an install links packages by way of a `StagingPath`.
+/// Controls whether an install links packages through a `StagingPath`, and how it names those
+/// folders.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Staging {
     Off,
-    /// This install has the project's lock: fixed names, which the next install clears.
+    /// This install holds the project's lock. It uses fixed names, which the next install cleans
+    /// up.
     Locked,
-    /// It has not: names of its own (the seed). What is left if it dies stays until `bun prune`.
+    /// This install doesn't hold the lock, so it uses unique names derived from this seed. If it's
+    /// killed, its leftovers stay until `bun prune`.
     Unlocked(u64),
 }
 
-/// `flock` on the root `node_modules`, which also stands for those of the workspaces.
+/// A `flock` on the root `node_modules`. It also covers the workspaces' `node_modules`.
 pub(crate) struct StagingLock {
     pub(crate) mode: Staging,
-    /// Another install has it. Otherwise `Unlocked` means no directory locks here (Windows, NFS).
+    /// True if another install holds the lock. If this is false and the install is `Unlocked`,
+    /// directories can't be locked here (Windows, NFS).
     pub(crate) is_busy: bool,
     _node_modules: Option<Dir>,
 }
@@ -275,7 +282,7 @@ impl core::fmt::Display for StagingPath<'_> {
         };
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
         let scope = &self.0[..name_start];
-        // A hash, because the name can be NAME_MAX long already.
+        // Use a hash, because the name itself may already be NAME_MAX bytes long.
         write!(
             f,
             "{}{}{:016x}",
@@ -293,7 +300,8 @@ pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) ->
         .map_err(|err| err.err)
 }
 
-// A hint, written on any thread: whoever reads the old value finds out for itself, so `Relaxed`.
+// Only a hint, and any thread can write it. A thread that reads a stale value just detects the
+// right method again, so `Relaxed` is enough.
 pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
 } else {
@@ -447,7 +455,7 @@ fn open_dir(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// `Dir::make_open_path` that does not follow a link at the last component.
+/// Like `Dir::make_open_path`, but doesn't follow a symlink at the last component.
 #[cfg(not(windows))]
 pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir> {
     let open = || {
@@ -458,7 +466,7 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     };
     match open() {
         Err(err) if err.get_errno() == sys::E::ENOENT => {}
-        // What Linux and macOS say to a link.
+        // Linux and macOS return these errors for a symlink.
         Err(err) if matches!(err.get_errno(), sys::E::ENOTDIR | sys::E::ELOOP) => {
             crate::prune::remove_planted_link(base, sub_path)?;
         }
@@ -468,8 +476,8 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     open()
 }
 
-/// Whether `dest` is still a hardlinked copy of `src`: both have the same entry names and inodes.
-/// `rel` is the path of `src` inside the `file:` folder.
+/// Returns true if `dest` is still a hardlinked copy of `src`, which means both have the same entry
+/// names and inodes. `rel` is the path of `src` inside the `file:` folder.
 fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, dest: &Dir) -> bool {
     const INO_LEN: usize = core::mem::size_of::<u64>();
     // Lists each entry name followed by its inode number, or 0 for a directory. `folder` is `Some`
@@ -558,7 +566,8 @@ pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
     let (Ok(dest_stat), Ok(src_stat)) = (sys::fstat(dest.fd()), sys::fstat(src.fd())) else {
         return false;
     };
-    // Inode numbers only compare on one device. The same directory is a link to the folder.
+    // Inode numbers are only comparable on the same device. If both are the same directory, `dest`
+    // is a link to the folder, not a copy of it.
     dest_stat.st_dev == src_stat.st_dev
         && dest_stat.st_ino != src_stat.st_ino
         && is_hardlinked_copy(&mut FolderRoot(src, None), &mut Vec::new(), src, dest)
@@ -664,8 +673,8 @@ fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     (len < text.len()).then(|| Box::from(&text[..len]))
 }
 
-/// What the installed copy of a `file:` folder gets in place of one of the folder's symlinks. A
-/// symlink in the copy never leads out of it, and a file only comes from the folder or the project.
+/// What a symlink in a `file:` folder becomes in the installed copy. A symlink in the copy never
+/// points outside the copy, and a file is only copied from the folder or the project.
 enum FolderLink {
     /// A symlink with this target text.
     Link(Box<[u8]>),
@@ -1047,7 +1056,7 @@ pub(crate) struct LinkJob {
     /// A package that is nested in two places has its dependencies, with the same ids, in two trees.
     pub(crate) tree_id: crate::lockfile::tree::Id,
     pub(crate) dependency_id: DependencyID,
-    /// The `node_modules` it goes into. Whoever made the batch keeps it open.
+    /// The `node_modules` to install into. The creator of the batch keeps it open.
     pub(crate) tree_dir: Fd,
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: bun_core::ZBox,
@@ -1055,18 +1064,20 @@ pub(crate) struct LinkJob {
     /// See `PackageInstaller::copy_trees`.
     pub(crate) copy: bool,
     pub(crate) skip_delete: bool,
-    /// From the main thread: `fast_random` gives every thread the same numbers.
+    /// Generated on the main thread, because `fast_random` returns the same numbers on every
+    /// thread.
     pub(crate) random: u64,
     pub(crate) resolution_tag: resolution::Tag,
     pub(crate) result: std::sync::OnceLock<InstallResult>,
 }
 
-/// Linked at the same time: no destination is or is inside another's, and all are free.
+/// Jobs that are linked in parallel. No destination equals or contains another one, and nothing
+/// exists at any of them.
 pub(crate) struct LinkBatch {
     pub(crate) jobs: Vec<LinkJob>,
     pub(crate) staging: Staging,
     pub(crate) next: AtomicUsize,
-    /// The threads that are not done. The last one wakes the main thread.
+    /// The number of threads that are still running. The last one to finish wakes the main thread.
     pub(crate) remaining: AtomicUsize,
 }
 
@@ -1077,7 +1088,8 @@ impl LinkBatch {
         } else {
             PackageInstall::supported_method()
         };
-        // Here and not before: a package is away for no longer than it takes to link it.
+        // Move the old package aside right before linking, so it's only missing for as long as
+        // linking takes.
         let tree_dir = Dir::borrow(&job.tree_dir);
         let old = if job.skip_delete {
             None
@@ -1109,14 +1121,16 @@ impl LinkBatch {
 
     /// `run_tasks(until)` runs on this thread meanwhile; it is to return when `until` is 0.
     pub(crate) fn run(&self, run_tasks: &mut dyn FnMut(&AtomicUsize)) {
-        // The kernel lets one thread at a time into a `node_modules`: more threads are slower.
+        // The kernel only lets one thread at a time modify a `node_modules` directory, so more
+        // threads make it slower.
         const MAX_THREADS: usize = 8;
 
         if let [job] = self.jobs.as_slice() {
             return self.link(job);
         }
         let pool = &PackageManager::get().thread_pool;
-        // What is scheduled on a pool whose first worker the OS refuses never runs.
+        // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
+        // run.
         pool.warm(1);
         if !pool.has_workers() {
             return self.jobs.iter().for_each(|job| self.link(job));
@@ -1135,7 +1149,8 @@ impl LinkBatch {
             },
             &mut vec![(); threads],
             || {
-                // The threads wait for the disk much of the time: with few of them this one is missed.
+                // The threads spend much of their time waiting on the disk, so when there are only
+                // a few of them, this thread links packages too.
                 if self.jobs.len() > threads {
                     while let Some(job) = self.next_job() {
                         self.link(job);
@@ -1150,10 +1165,10 @@ impl LinkBatch {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
-/// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
+/// Contains a git package's commit or a tarball's integrity. Both linkers read it.
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 
-/// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
+/// Returns true if an installed tarball's `.bun-tag` matches the integrity in bun.lock.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
     // A copy installed with `--no-verify` has an empty tag.
     strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag, true)
@@ -1278,7 +1293,8 @@ impl<'a> PackageInstall<'a> {
             .is_ok_and(|target| target.st_ino == linked.st_ino && target.st_dev == linked.st_dev)
     }
 
-    /// A folder changes without its lockfile row changing, so what is compared is the folder.
+    /// A folder's contents can change while its lockfile entry stays the same, so this compares the
+    /// folder itself.
     fn verify_folder(&self) -> bool {
         let Ok(node_modules) = Dir::open(&self.node_modules.path) else {
             return false;
@@ -1475,7 +1491,7 @@ impl PackageFiles<'_> {
                         let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
                         let clone =
                             || sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_);
-                        // What is there can be another version's file.
+                        // The existing file may belong to a different version.
                         let cloned = match clone() {
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {
                                 let _ = sys::unlinkat(destination_dir_, path_);
@@ -1495,7 +1511,7 @@ impl PackageFiles<'_> {
                                 sys::Errno::ENOENT => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
                                 }
-                                // a directory of that name, or another install made it again
+                                // It's a directory, or another install created it again.
                                 sys::Errno::EEXIST => {}
                                 sys::Errno::EACCES => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES));
@@ -1517,7 +1533,7 @@ impl PackageFiles<'_> {
         };
         match copy(&subdir, &mut walker_) {
             Ok(()) => Ok(InstallResult::Success),
-            // `link_files_into` falls back to copyfile on this one.
+            // `link_files_into` falls back to copyfile for this error.
             Err(crate::Error::NotSupported) => Err(crate::Error::NotSupported),
             Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles)),
         }
@@ -1858,7 +1874,8 @@ impl PackageFiles<'_> {
             let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
-            // Workers already run what was pushed: keep loop errors, always reach `queue.wait()`.
+            // Workers are already running the tasks that were pushed, so remember any loop error
+            // and always reach `queue.wait()`.
             #[cfg(windows)]
             let mut loop_err: Option<crate::Error> = None;
 
@@ -1924,7 +1941,7 @@ impl PackageFiles<'_> {
                         _ => continue,
                     }
 
-                    // One unit of each buffer is for the NUL.
+                    // One unit of each buffer is reserved for the NUL terminator.
                     if entry.path.len() >= head1.len() - to_copy_into1_offset
                         || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
@@ -1987,7 +2004,7 @@ impl PackageFiles<'_> {
 
         match result {
             Ok(()) => Ok(InstallResult::Success),
-            // `link_files_into` falls back to copyfile on this one.
+            // `link_files_into` falls back to copyfile for this error.
             #[cfg(not(windows))]
             Err(err @ crate::Error::NotSameFileSystem) => Err(err),
             Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles)),
@@ -2021,7 +2038,7 @@ impl PackageFiles<'_> {
                         )?;
                     }
                     EntryKind::File => {
-                        // One byte is for the NUL.
+                        // One byte is reserved for the NUL terminator.
                         if entry.path.len() >= head2.len() - to_copy_into2_offset {
                             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         }
@@ -2089,10 +2106,12 @@ impl PackageFiles<'_> {
     }
 }
 
-/// What `move_aside` names begin with. What is left of one if bun dies stays until `bun prune`.
+/// The prefix of the names that `move_aside` creates. If Bun is killed, these folders stay until
+/// `bun prune`.
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
-/// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
+/// Renames `subpath`, if it exists, to a name in `destination_dir` that's derived from `random`.
+/// Can run on any thread.
 pub(crate) fn move_aside(
     destination_dir: &Dir,
     subpath: &ZStr,
@@ -2107,12 +2126,14 @@ pub(crate) fn move_aside(
     );
     match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
         Ok(()) => Some(old),
-        // overlayfs moves no directory of a lower layer. The new files must not join the old ones.
+        // overlayfs can't rename a directory from a lower layer. Delete it instead, so the new
+        // files don't mix with the old ones.
         Err(err) if err.get_errno() == sys::E::EXDEV => {
             let _ = destination_dir.delete_tree(subpath.as_bytes());
             None
         }
-        // It is not there, or it stays: what is in a mount point (EBUSY) is not bun's to delete.
+        // Either it doesn't exist or it has to stay. For example, the contents of a mount point
+        // (EBUSY) aren't Bun's to delete.
         Err(_) => None,
     }
 }
@@ -2126,14 +2147,16 @@ impl<'a> PackageInstall<'a> {
         ) else {
             return;
         };
-        // What is scheduled on a pool whose first worker the OS refuses never runs.
+        // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
+        // run.
         let pool = &PackageManager::get().thread_pool;
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
             return;
         }
-        // A large tree takes a while to delete. Under its random name another thread can do that.
+        // Deleting a large tree takes a while. Now that it has a random name, another thread can
+        // delete it.
         let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
             bun_fs::FileSystem::instance().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
@@ -2282,7 +2305,7 @@ impl<'a> PackageInstall<'a> {
             }
 
             let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
-            let mut offset: usize = res.written as usize;
+            let mut offset: usize = res.written;
             if dest_buf[offset - 1] != bun_paths::SEP_WINDOWS {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;
@@ -2391,7 +2414,7 @@ impl<'a> PackageInstall<'a> {
         resolution_tag: resolution::Tag,
     ) -> bool {
         match manager.get_preinstall_state(package_id) {
-            // no entry name until extraction records a tarball's integrity
+            // A tarball has no cache entry name until extraction records its integrity.
             _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
             _ => {
@@ -2490,7 +2513,8 @@ impl<'a> PackageInstall<'a> {
                     ),
                 ),
             ) {
-                // Not in the folder: as with a tarball that lacks what it bundles.
+                // Ignore the error if the folder doesn't have it, like for a tarball that's missing
+                // one of its bundled dependencies.
                 let _ = PackageInstall {
                     cache_dir_subpath: src,
                     destination_dir_subpath: dest,
@@ -2503,14 +2527,15 @@ impl<'a> PackageInstall<'a> {
 }
 
 impl PackageFiles<'_> {
-    /// Makes `staging` anew: under `Staging::Locked` an install that died may have left it.
+    /// Creates an empty `staging` folder. With `Staging::Locked`, an install that was killed may
+    /// have left one behind.
     fn make_staging_dir(
         destination_dir: &Dir,
         staging: &ZStr,
         method: Method,
         skip_delete: bool,
     ) -> sys::Maybe<()> {
-        // `init_install_dir` makes it, and the name is this install's own.
+        // `init_install_dir` creates it, and no other install uses this name.
         if cfg!(windows) {
             return Ok(());
         }
@@ -2536,7 +2561,7 @@ impl PackageFiles<'_> {
         sys::mkdirat(destination_dir, staging, 0o755)
     }
 
-    /// `owner` has the lockfile; a thread of the pool has none to give.
+    /// `owner` provides the lockfile. It's `None` on a thread pool thread.
     pub(crate) fn install(
         &mut self,
         staging_mode: Staging,
@@ -2602,7 +2627,8 @@ impl PackageFiles<'_> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        // A folder is hard linked, not cloned (an edit shows); its file system is not the cache's.
+        // A folder is hardlinked instead of cloned, so that edits to it show up in the copy. It
+        // also may not be on the same file system as the cache.
         let is_folder = resolution_tag == resolution::Tag::Folder;
         let skip_dirs: &[&OSPathSlice] = if is_folder {
             &[bun_paths::os_path_literal!("node_modules")]
@@ -2666,7 +2692,7 @@ fn walk_install_dir_windows(
             _ => continue,
         }
 
-        // One unit of each buffer is for the NUL.
+        // One unit of each buffer is reserved for the NUL terminator.
         if entry.path.len() >= head1.len() - dest_offset
             || entry.path.len() >= head2.len() - src_offset
         {
@@ -2684,7 +2710,7 @@ fn walk_install_dir_windows(
         let src = bun_core::WStr::from_buf(head2, src_len);
 
         if entry.kind == EntryKind::File {
-            // Its directory came first.
+            // The walker returned its parent directory first, so that directory already exists.
             per_file(dest, src, entry.path.as_slice())?;
             continue;
         }

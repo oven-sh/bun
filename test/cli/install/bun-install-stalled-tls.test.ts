@@ -40,7 +40,7 @@ async function silentServer() {
 
 // By default that is 5 minutes per attempt and 6 attempts, which looked like a hang: only --verbose mentioned the
 // retries, and only once the last one had failed.
-describe.concurrent("a retry after a timeout is announced at once", () => {
+describe.concurrent("a retry after a timeout is announced immediately", () => {
   async function install(registry: string, dependencies: Record<string, string>, ...flags: string[]) {
     using dir = tempDir("install-silent-host", {
       "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies }),

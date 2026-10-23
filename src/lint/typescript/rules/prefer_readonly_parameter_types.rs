@@ -14,15 +14,15 @@ pub struct PreferReadonlyParameterTypes {
 
 const SHOULD_BE_READONLY: Message = Message::new("shouldBeReadonly", "Parameter should be a read only type.");
 
-/// `actualParam.typeAnnotation`. An `AssignmentPattern` has none: the annotation is part of its `left`.
-/// tsgolint's `parameter.Type()` is the annotation of a parameter with a default too.
+/// `actualParam.typeAnnotation`. An `AssignmentPattern` has none because the annotation is part of its `left`.
+/// tsgolint's `parameter.Type()` also returns the annotation of a parameter with a default.
 fn type_annotation(param: Param<'_>, is_oxlint: bool) -> Option<TypeNode<'_>> {
     param.ty().filter(|_| is_oxlint || param.default().is_none())
 }
 
 fn get_parameter_type(param: Param<'_>, is_oxlint: bool) -> Type<'_> {
     if let Some(annotation) = type_annotation(param, is_oxlint) {
-        // From the annotation, which preserves the `aliasSymbol`.
+        // Get the type from the annotation, which preserves the `aliasSymbol`.
         return annotation.ts_node().get_type_from_type_node();
     }
     match param.default().is_some() || param.is_rest() {
@@ -41,8 +41,8 @@ fn property_has_private_identifier_name(property: TsSymbol<'_>) -> bool {
     }
 }
 
-/// tsgolint's `propertyIsReadonly`, with `checker.isReadonlySymbol`: by the symbol, where typescript-eslint asks every
-/// declaration.
+/// tsgolint's `propertyIsReadonly`, with `checker.isReadonlySymbol`. It checks the symbol, where typescript-eslint
+/// checks every declaration.
 fn property_is_readonly(property: TsSymbol<'_>) -> bool {
     let check_flags = property.check_flags();
     if check_flags.intersects(CheckFlags::READONLY | CheckFlags::SYNTHETIC_METHOD)
@@ -59,7 +59,7 @@ fn property_is_readonly(property: TsSymbol<'_>) -> bool {
         || property.has_flags(SymbolFlags::VARIABLE) && declaration.flags().intersects(NodeFlags::CONST | NodeFlags::USING)
 }
 
-/// tsgolint's `isTypeReadonlyRecurser` and what it calls, which are part of its rule.
+/// tsgolint's `isTypeReadonlyRecurser` and the functions it calls, which are part of its rule.
 struct Recurser<'o, 'a> {
     options: &'o ReadonlynessOptions,
     seen_types: IdSet<Type<'a>>,
@@ -70,7 +70,7 @@ impl<'a> Recurser<'_, 'a> {
         self.seen_types.contains(ty) || self.is_type_readonly_recurser(ty)
     }
 
-    /// `None`: neither an array nor a tuple.
+    /// `None` if the type is neither an array nor a tuple.
     fn is_type_readonly_array_or_tuple(&mut self, ty: Type<'a>) -> Option<bool> {
         if ty.is_array_type() {
             if ty.get_symbol().is_some_and(|symbol| symbol.escaped_name() == b"Array") {
@@ -79,7 +79,8 @@ impl<'a> Recurser<'_, 'a> {
         } else if !ty.tuple_target()?.readonly() {
             return Some(false);
         }
-        // tsgolint looks into a type argument that it has seen, and does not end for `type A = readonly A[]`.
+        // tsgolint descends into a type argument it has already seen, so it never terminates on
+        // `type A = readonly A[]`.
         Some(ty.get_type_arguments().iter().all(|type_arg| self.is_seen_or_readonly(type_arg)))
     }
 
@@ -129,7 +130,7 @@ impl<'a> Recurser<'_, 'a> {
         if !is_object_type(ty) {
             return true;
         }
-        // A type that is only a function.
+        // A type that's only a function.
         if !ty.get_call_signatures().is_empty() && ty.get_properties().is_empty() {
             return true;
         }
@@ -140,7 +141,8 @@ impl<'a> Recurser<'_, 'a> {
     }
 }
 
-/// tsgolint's `isLiteralOrTaggablePrimitiveLike`. Its `TypeFlagsLiteral` has `true` and `false`; `type.isLiteral()` has not.
+/// tsgolint's `isLiteralOrTaggablePrimitiveLike`. Its `TypeFlagsLiteral` includes `true` and `false`, but
+/// `type.isLiteral()` doesn't.
 fn is_literal_or_taggable_primitive_like(ty: Type<'_>) -> bool {
     ty.has_flags(TypeFlags::LITERAL)
         || ty.has_flags(TypeFlags::BIG_INT | TypeFlags::NUMBER | TypeFlags::STRING | TypeFlags::TEMPLATE_LITERAL)
@@ -178,7 +180,8 @@ fn is_type_branded_literal_like(ty: Type<'_>) -> bool {
 impl Rule for PreferReadonlyParameterTypes {
     const META: Meta = Meta::typescript("prefer-readonly-parameter-types", Kind::Suggestion).requires_types();
     const ON: On = On::new().funcs();
-    /// Whether a type is to be reported. All that can be reached from it is looked at, and parameters share types.
+    /// Caches whether a type should be reported. The check visits everything reachable from the type, and parameters
+    /// share types.
     type State<'a> = IdMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {
@@ -199,11 +202,11 @@ impl Rule for PreferReadonlyParameterTypes {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint does not look at accessors.
+        // tsgolint skips accessors.
         if is_oxlint && matches!(func.kind(), FnKind::Getter | FnKind::Setter) {
             return;
         }
-        // tsgolint's `isParameterProperty`: only a parameter of a constructor is one.
+        // tsgolint's `isParameterProperty`: only a constructor's parameter can be one.
         let has_parameter_properties = !is_oxlint || func.kind() == FnKind::Constructor;
         for param in func.params_with_this() {
             let is_parameter_property = has_parameter_properties && param.is_parameter_property();
@@ -227,12 +230,12 @@ impl Rule for PreferReadonlyParameterTypes {
                     }
             });
             if is_mutable {
-                // oxlint points at the decorators of what is no parameter property.
-                let place = match is_oxlint && !is_parameter_property {
+                // oxlint's span includes the decorators unless it's a parameter property.
+                let report_span = match is_oxlint && !is_parameter_property {
                     true => param.span(),
                     false => param.span_without_modifiers(),
                 };
-                cx.report(place, SHOULD_BE_READONLY);
+                cx.report(report_span, SHOULD_BE_READONLY);
             }
         }
     }

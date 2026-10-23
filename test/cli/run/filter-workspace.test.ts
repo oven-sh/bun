@@ -1,8 +1,18 @@
 import { spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, runBunInstall, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  makeTreeSync,
+  MAX_PATH_BYTES,
+  runBunInstall,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -839,6 +849,12 @@ describe("bun", () => {
 });
 
 describe("selectors", () => {
+  // A Windows command line is too short for a path longer than the path buffer.
+  test.skipIf(isWindows)("rejects a path longer than the path buffer", () => {
+    const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+    runInCwdFailure(graph_root, long, "present", /error: --filter "\.\/a.*" path is too long/);
+  });
+
   test("'foo...' runs foo and the workspaces it depends on", () => {
     runInCwdSuccess({
       cwd: graph_root,
@@ -1163,7 +1179,7 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
     // `dir/**` removes `dir` and everything below it
     { workspaces: ["packages/**", "!packages/legacy/**"], members: appAndLib },
     { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
-    // a path that is listed as is stays
+    // A path that's listed literally is kept.
     { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
   ];
   test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
@@ -1598,4 +1614,61 @@ test.concurrent.each([
   expect(stdout).toBe(`a${spelled}b c${spelled}d: hi\na${spelled}b c${spelled}d: Exited with code 0\n`);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// Windows paths can't be as long as MAX_PATH_BYTES.
+describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buffer", () => {
+  const workspace = {
+    "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    "packages/ok/package.json": JSON.stringify({ name: "ok", scripts: { present: "echo ok-ran" } }),
+  };
+
+  // Returns a directory below `parent` whose absolute path is exactly `length` bytes.
+  function makeDirectoryOfLength(parent: string, length: number): string {
+    let dir = parent;
+    while (Buffer.byteLength(dir) < length) {
+      // Unless this is the last component, reserve room for "/" and one more byte.
+      const left = length - Buffer.byteLength(dir) - 1;
+      const name = Buffer.alloc(left <= 255 ? left : Math.min(255, left - 2), "d").toString();
+      dir = join(dir, name);
+      mkdirSync(dir);
+    }
+    expect(Buffer.byteLength(dir)).toBe(length);
+    return dir;
+  }
+
+  async function runFilter(cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("reports a member whose package.json path is too long and still runs the other members", async () => {
+    using base = tempDir("filter-long-member", {});
+    const root = makeDirectoryOfLength(String(base), MAX_PATH_BYTES - 196);
+    makeTreeSync(root, workspace);
+    // The member directory's path fits in the buffer. Its package.json path is 13 bytes longer and doesn't.
+    const name = Buffer.alloc(MAX_PATH_BYTES - 6 - Buffer.byteLength(`${root}/packages/`), "x").toString();
+    mkdirSync(join(root, "packages", name));
+
+    const { stdout, stderr, exitCode } = await runFilter(root);
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toContain("ok present: ok-ran");
+    expect(exitCode).toBe(0);
+  });
+
+  test("finds the workspace root above a cwd whose own package.json path is too long", async () => {
+    using root = tempDir("filter-long-cwd", workspace);
+    const cwd = makeDirectoryOfLength(String(root), MAX_PATH_BYTES - "/package.json".length);
+
+    const { stdout, exitCode } = await runFilter(cwd);
+    expect(stdout).toContain("ok present: ok-ran");
+    expect(exitCode).toBe(0);
+  });
 });

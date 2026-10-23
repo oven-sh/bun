@@ -77,7 +77,7 @@ impl Parser<'_> {
         }
     }
 
-    /// `message` with ` at position P (line L column C)`.
+    /// `message` followed by ` at position P (line L column C)`.
     fn error_at(&self, message: &str) -> Vec<u8> {
         let at = self.at.min(self.text.len());
         let (mut line, mut line_start, mut i) = (1, 0, 0);
@@ -98,7 +98,7 @@ impl Parser<'_> {
         .into_bytes()
     }
 
-    /// `ReportUnexpectedToken` without a message of its own.
+    /// `ReportUnexpectedToken` called without a custom message.
     fn unexpected(&self) -> Vec<u8> {
         match self.peek() {
             Token::Eos => return b"Unexpected end of JSON input".to_vec(),
@@ -202,14 +202,14 @@ impl Parser<'_> {
                 self.at += 1;
             }
         }
-        let written: String = self.text[start..self.at]
+        let number_text: String = self.text[start..self.at]
             .iter()
             .map(|&c| c as u8 as char)
             .collect();
-        Ok(Json::Number(written.parse().unwrap_or(f64::NAN)))
+        Ok(Json::Number(number_text.parse().unwrap_or(f64::NAN)))
     }
 
-    /// After the opening quote.
+    /// Starts after the opening quote.
     fn string(&mut self) -> Parsed<Vec<u8>> {
         let start = self.at;
         let is_plain = |c: u16| c >= 0x20 && c != 0x22 && c != 0x5C;
@@ -274,14 +274,15 @@ impl Parser<'_> {
         }
     }
 
-    /// After the opening quote of a property name: the name, and the colon after it.
+    /// Starts after a property name's opening quote. Reads the name and the colon after it.
     fn property_name(&mut self) -> Parsed<Vec<u8>> {
         let name = self.string()?;
         self.expect_next(Token::Colon, "Expected ':' after property name in JSON")?;
         Ok(name)
     }
 
-    /// Like V8's `ParseJsonValue`, this keeps the containers it is inside of in a list, so nesting costs heap and not stack.
+    /// Like V8's `ParseJsonValue`, this keeps the enclosing containers in a list, so nesting uses heap instead of
+    /// stack.
     fn value(&mut self) -> Parsed<Json> {
         let mut open: Vec<Open> = Vec::new();
         loop {
@@ -358,7 +359,7 @@ impl Parser<'_> {
     }
 }
 
-/// `Err`: the message of the `SyntaxError`.
+/// `Err` holds the `SyntaxError`'s message.
 pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
     let mut units: Vec<u16> = Vec::with_capacity(text.len());
     for chunk in text.utf8_chunks() {

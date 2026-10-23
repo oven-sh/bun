@@ -44,8 +44,6 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
-    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
-    pub unreadable_config: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -86,7 +84,6 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
-            unreadable_config: None,
         }
     }
 }

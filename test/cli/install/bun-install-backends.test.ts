@@ -245,7 +245,7 @@ describe.skipIf(isWindows)("install backends on POSIX", () => {
       mkdirSync(installed, { recursive: true });
       writeFileSync(join(installed, "index.js"), "stale");
       writeFileSync(join(installed, "not-in-the-package"), "");
-      // Readable (and, where bun writes, writable) for `nobody` too.
+      // `nobody` can read it too, and can write where Bun writes.
       chmodSync(projectDir, 0o777);
       chmodSync(packageDir, 0o755);
       for (const file of Object.keys(packageFiles)) chmodSync(join(packageDir, file), 0o644);
@@ -431,7 +431,7 @@ describe("file: folder dependencies with the hoisted linker", () => {
         expect(await readdirSorted(pluginDir)).toEqual(["index.js", "node_modules", "package.json", "tool.tgz"]);
         expect(await readdirSorted(join(pluginDir, "node_modules"))).toEqual(["helper"]);
         expect(existsSync(join(projectDir, "node_modules", "tool", "package.json"))).toBe(true);
-        // Nothing is written into the folder the dependency was installed from.
+        // Nothing is written into the folder that the dependency was installed from.
         expect(await readdirSorted(join(String(dir), "plugin"))).toEqual(["index.js", "package.json", "tool.tgz"]);
       }
     },
@@ -604,8 +604,8 @@ describe("file: folder dependencies with the hoisted linker", () => {
     );
   }
 
-  // What says that a folder is installed is the folder: every file in node_modules is still a
-  // hard link of the file of that name, and neither side has a name the other lacks.
+  // The folder itself shows that it's installed: every file in node_modules is still a hard link to the file with the
+  // same name, and neither side has a file that the other doesn't.
   describe("a folder that has not changed is not installed again", () => {
     function project(name: string, spec: string) {
       const source = spec === "file:../lib" ? "lib" : "project/vendor/lib";

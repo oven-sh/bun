@@ -819,6 +819,55 @@ describe("HTMLRewriter", () => {
       await expect(second.text()).rejects.toThrow("inner boom");
     });
 
+    it.concurrent("an element can be modified while the output before it is being delivered", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            let release = null;
+            // The document arrives after both rewriters exist, so the first pipes its output straight into the second.
+            const wired = Promise.withResolvers();
+            const input = new ReadableStream({
+              async pull(controller) {
+                await wired.promise;
+                controller.enqueue(new TextEncoder().encode("<p>intro</p><b>one</b><p>tail</p>"));
+                controller.close();
+              },
+            });
+            const first = new HTMLRewriter().on("b", {
+              async element(el) {
+                await new Promise(resolve => {
+                  release = resolve;
+                  setImmediate(resolve);
+                });
+                el.setAttribute("seen", "1");
+              },
+            });
+            // The first rewriter's handler resumes before this one returns.
+            const second = new HTMLRewriter().on("p", {
+              async element() {
+                if (!release) return;
+                release();
+                release = null;
+                await 0;
+              },
+            });
+            const out = second.transform(first.transform(new Response(input)));
+            wired.resolve();
+            console.log(await out.text());
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('<p>intro</p><b seen="1">one</b><p>tail</p>\n');
+      expect(exitCode).toBe(0);
+    });
+
     // The resume path's own `handler_callback` sees a Fulfilled promise only
     // when a microtask-only handler follows a real-await one.
     it("a microtask-only handler after a suspending one", async () => {
@@ -1794,6 +1843,19 @@ describe("HTMLRewriter", () => {
       rw.on("p", { comments });
       return rw;
     }));
+
+  it("rejects a selector that is nested too deeply", async () => {
+    const nested = (open, depth) => open.repeat(depth) + "b" + ")".repeat(depth);
+    for (const open of [":not(", ":not(/*)*/", ":not(.a\\)", `:not([a=")"]`, `:not([a='\\')']`]) {
+      expect(() => new HTMLRewriter().on(nested(open, 10_000), {})).toThrow("Selector is nested too deeply.");
+    }
+    expect(() => new HTMLRewriter().on(nested(":not(", 32), {})).not.toThrow();
+    const selector = `b:not(p:nth-child(2)), ${Array(100).fill("p:nth-child(1)").join(", ")}, [a="${"(".repeat(100)}"]`;
+    const res = new HTMLRewriter()
+      .on(selector, { element: e => void e.remove() })
+      .transform(new Response("<b></b><i></i>"));
+    expect(await res.text()).toBe("<i></i>");
+  });
 
   it("selector tests", async () => {
     const checkSelector = async (selector, input, expected) => {
@@ -2933,6 +2995,25 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
   });
 });
 
+it("element.attributes[Symbol.iterator] is named [Symbol.iterator], and is writable, configurable and not enumerable", () => {
+  let descriptor;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el.attributes), Symbol.iterator);
+      },
+    })
+    .transform("<p a=b></p>");
+  const { value, ...attributes } = descriptor;
+  expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+    name: "[Symbol.iterator]",
+    length: 0,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
 describe("invalid arguments throw instead of returning an error value", () => {
   it("setAttribute with a forbidden character in the name rejects the body", async () => {
     const res = new HTMLRewriter()
@@ -3000,6 +3081,53 @@ describe("invalid arguments throw instead of returning an error value", () => {
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
   });
+});
+
+it("a missing argument is treated as undefined", () => {
+  const outcome = fn => {
+    try {
+      return { returned: fn() };
+    } catch (e) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  };
+  const missing = {};
+  const given = {};
+  const compare = (name, object, methods, ...first) => {
+    for (const method of methods) {
+      const label = `${name}.${method}(${first})`;
+      missing[label] = outcome(() => object[method](...first));
+      given[label] = outcome(() => object[method](...first, undefined));
+    }
+  };
+  let detached;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        detached = el;
+        compare("element", el, ["before", "after", "replace", "prepend", "append", "setInnerContent"]);
+        compare("element", el, ["getAttribute", "hasAttribute", "removeAttribute", "setAttribute", "onEndTag"]);
+        compare("element", el, ["setAttribute"], "a");
+        el.onEndTag(tag => compare("endTag", tag, ["before", "after"]));
+      },
+      text: chunk => compare("text", chunk, ["before", "after", "replace"]),
+      comments: comment => compare("comment", comment, ["before", "after", "replace"]),
+    })
+    .onDocument({ end: end => compare("end", end, ["append"]) })
+    .transform("<p>t<!--c--></p>");
+  compare("detached", detached, ["onEndTag"]);
+
+  expect(missing).toEqual(given);
+  expect(new Set(Object.keys(missing).map(label => label.split(".")[0]))).toEqual(
+    new Set(["element", "endTag", "text", "comment", "end", "detached"]),
+  );
+  expect(missing["element.before()"]).toEqual({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected string",
+  });
+  expect(missing["element.onEndTag()"]).toEqual({ name: "TypeError", code: undefined, message: "Expected a function" });
+  expect(missing["detached.onEndTag()"]).toEqual({ returned: null });
 });
 
 describe("tagName, endTag.name, and comment.text setters", () => {

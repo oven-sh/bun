@@ -44,10 +44,6 @@ const patterns = {
   nodeFallbacks: {
     paths: ["src/node-fallbacks/*.js"],
   },
-  /** `*.classes.ts` — input to generate-classes codegen */
-  zigGeneratedClasses: {
-    paths: ["src/**/*.classes.ts"],
-  },
   /** built-in modules bundled at build time */
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],

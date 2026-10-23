@@ -9,12 +9,12 @@ use bun_jsc::bindgen::JsLocal;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
 };
 use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
-use super::expect::{Expect, ExpectTypeOf};
+use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
@@ -404,8 +404,8 @@ pub(crate) mod Jest {
             b"setDefaultTimeout",
             jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
         );
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
-        module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
+        module.put(global_object, b"expect", js_Expect::get_constructor(global_object));
+        module.put(global_object, b"expectTypeOf", js_ExpectTypeOf::get_constructor(global_object));
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         create_mock_objects(global_object, module);
@@ -441,7 +441,7 @@ pub(crate) mod Jest {
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
+        module.put(global_object, b"expect", js_Expect::get_constructor(global_object));
 
         let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
@@ -544,12 +544,10 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
     let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
-    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
         return;
     };
-    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
-    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
+    let (dcb_ref, dcb_called) = (dcb.r#ref.get().as_deref(), dcb.called.get());
     let bound = match dcb_ref {
         Some(refdata) => refdata.phase,
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
@@ -641,7 +639,7 @@ pub(crate) mod on_unhandled_rejection {
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
-        jsc_vm.run_error_handler(rejection, exception_list);
+        bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }
 }
 

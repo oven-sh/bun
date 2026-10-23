@@ -1,5 +1,5 @@
-//! What the ports of oxlint's rules are written with: its `ast_util.rs` and `utils`, and the methods of `oxc_ast`, `oxc_codegen` and
-//! `oxc_semantic` that they call, on the handles of `bun_lint`.
+//! The helpers that the ports of oxlint's rules are written with: its `ast_util.rs` and `utils`, and the `oxc_ast`,
+//! `oxc_codegen` and `oxc_semantic` methods they call, ported to `bun_lint`'s AST handles.
 //! https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 
 #![forbid(unsafe_code)]

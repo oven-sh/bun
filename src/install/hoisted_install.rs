@@ -48,7 +48,8 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     }
 }
 
-/// Puts back the trees that `Lockfile::filter` replaced for the install pass; ends its progress.
+/// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
+/// bar.
 struct RestoreManager {
     manager: *mut PackageManager,
     trees: Vec<tree::Tree>,
@@ -151,14 +152,15 @@ fn run_tasks_until_done(
     closure.err.map_or(Ok(()), Err)
 }
 
-/// Has the pool link what waits for it, and what comes to wait meanwhile. Not from inside `run_tasks`.
+/// Has the thread pool link the waiting packages, including the ones that start waiting in the
+/// meantime. Must not be called from inside `run_tasks`.
 fn link_deferred(
     mgr: *mut PackageManager,
     installer: &mut PackageInstaller<'_>,
     log_level: package_manager::Options::LogLevel,
 ) -> crate::Result<()> {
     while let Some((links, events)) = installer.take_deferred_links() {
-        // What was started before goes on while the pool links.
+        // Tasks that were already started keep running while the pool links.
         let mut ran_tasks = Ok(());
         links.run(&mut |until| {
             if ran_tasks.is_ok() {
@@ -235,12 +237,13 @@ pub(crate) fn install_hoisted_packages(
         download_node = root_node.start(ProgressStrings::download(), 0);
         install_node = root_node.start(ProgressStrings::install(), hoisted_len);
         scripts_node = root_node.start(ProgressStrings::script(), 0);
-        // Stack locals of this frame: `_restore_manager` clears the pointers before it returns.
+        // These are stack locals of this frame. `_restore_manager` clears the pointers before the
+        // function returns.
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&raw mut scripts_node);
     }
 
-    // Declared after the nodes: it ends the progress while they are alive.
+    // Declared after the nodes, so that it ends the progress bar while they're still alive.
     let _restore_manager = RestoreManager {
         manager: mgr_ptr,
         trees: original_trees,
@@ -248,7 +251,8 @@ pub(crate) fn install_hoisted_packages(
         log_level,
     };
 
-    // A partial install (security scanner) runs ahead of the real one: it leaves the layout alone.
+    // A partial install (for the security scanner) runs before the real one, so it leaves the
+    // layout alone.
     let has_isolated_store = packages_to_install.is_none()
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
@@ -409,7 +413,8 @@ pub(crate) fn install_hoisted_packages(
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,
-                // Windows: the hardlink backend has one queue of its own. A batch keeps up to 64 directories open.
+                // Disabled on Windows, where the hardlink backend has its own queue. A batch keeps
+                // up to 64 directories open.
                 deferred: (cfg!(not(windows)) && !FileSystem::instance().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
                 node: &mut install_node,
@@ -553,7 +558,7 @@ pub(crate) fn install_hoisted_packages(
         // A tree never completes if one of its packages failed to download. Install everything
         // that was still waiting on it (force = true).
         installer.install_available_packages::<true>(log_level);
-        // Every package is linked; the scripts still to run need no lock.
+        // Every package is linked. The scripts that still have to run don't need the lock.
         installer.staging_lock = None;
         installer.tree_dir = None;
 

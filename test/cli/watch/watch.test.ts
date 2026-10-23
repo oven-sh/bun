@@ -758,3 +758,49 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     "/main.ts": [O_CLOEXEC],
   });
 });
+
+// `bun build --watch` composes an input file's sidecar source map. A tool
+// that writes `x.js` and then `x.js.map` changes the map after the rebuild
+// the `.js` write triggered, so the map is watched too.
+it("bun build --watch rebuilds when an input's sidecar source map changes", async () => {
+  const map = (source: string) =>
+    JSON.stringify({
+      version: 3,
+      sources: [source],
+      sourcesContent: ["export function f(): never {\n  throw new Error('MARK');\n}\n"],
+      names: [],
+      mappings: "AAAO,gBAAS,IAAU;AACxB,QAAM,IAAI,MAAM,MAAM;AACxB;",
+    });
+  using dir = tempDir("build-watch-input-sourcemap", {
+    "lib/lib.js": `export function f() {\n  throw new Error("MARK");\n}\n//# sourceMappingURL=lib.js.map\n`,
+    "lib/lib.js.map": map("../src/v1.ts"),
+    "entry.js": `import { f } from "./lib/lib.js";\nf();\n`,
+  });
+  const outMap = join(String(dir), "out/entry.js.map");
+  const sourcesOf = async () => {
+    try {
+      return JSON.parse(await Bun.file(outMap).text()).sources as string[];
+    } catch {
+      return null;
+    }
+  };
+  const waitForSources = async (expected: string[]) => {
+    while (true) {
+      const sources = await sourcesOf();
+      if (sources && Bun.deepEquals(sources, expected)) return;
+      await Bun.sleep(50);
+    }
+  };
+
+  await using bundler = spawn({
+    cmd: [bunExe(), "build", "--watch", "entry.js", "--outdir", "out", "--sourcemap=external"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  await waitForSources(["../src/v1.ts", "../entry.js"]);
+  await Bun.write(join(String(dir), "lib/lib.js.map"), map("../src/v2.ts"));
+  await waitForSources(["../src/v2.ts", "../entry.js"]);
+});

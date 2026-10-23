@@ -5623,6 +5623,10 @@ pub mod bv2_impl {
             // macro takes only one side (`linker.graph.ast` is a bitwise SoA
             // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
             // aliases, so this is the unique drop.
+            // `InputFile.input_source_map` is likewise global-heap, not arena.
+            for input_source_map in self.graph.input_files.items_input_source_map_mut() {
+                drop(input_source_map.take());
+            }
             {
                 macro_rules! take_ast_cols {
                     ($ast:expr) => {{
@@ -7871,6 +7875,18 @@ pub mod bv2_impl {
 
                     // Record which loader we used for this file
                     this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
+                    // A sidecar map changes with its file, often after it. Watch it too.
+                    if let Some(sidecar) = result.input_source_map_sidecar.take()
+                        && this.bun_watcher.is_some()
+                        && this.should_add_watcher(&sidecar)
+                    {
+                        let _ = this
+                            .bun_watcher_mut()
+                            .unwrap()
+                            .add_file_by_path_slow(&sidecar);
+                    }
+                    this.graph.input_files.items_input_source_map_mut()[result_source_index] =
+                        result.input_source_map.take();
 
                     bun_core::scoped_log!(
                         Bundle,

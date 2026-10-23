@@ -15,6 +15,7 @@ import {
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
+import { pathToFileURL } from "url";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -1109,6 +1110,63 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toMatch(/ModuleNotFound/);
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toEqual(null);
+  });
+
+  // The location of a pragma comment's argument had the comment's own offset
+  // added twice, so a warning about a pragma that was not in the file's first
+  // comment pointed somewhere past it.
+  test.concurrent("a pragma warning points at the pragma", async () => {
+    using dir = tempDir("build-api-pragma-location", {
+      "a.jsx": `// a first comment, so the pragma below is not at offset 0\n// @jsxRuntime bogus\nexport const x = <div />;\n`,
+      "b.jsx": `"some code";\n/* a block comment\n   @jsxRuntime fake */\nexport const x = <div />;\n`,
+    });
+    const logs = [];
+    for (const file of ["a.jsx", "b.jsx"]) {
+      const build = await Bun.build({ entrypoints: [join(String(dir), file)], external: ["*"] });
+      logs.push(
+        ...build.logs.map(log => [log.message, log.position?.line, log.position?.column, log.position?.length]),
+      );
+    }
+    expect(logs).toEqual([
+      [`Unsupported JSX runtime: "bogus"`, 2, 16, 5],
+      [`Unsupported JSX runtime: "fake"`, 3, 16, 4],
+    ]);
+  });
+
+  // A `file:` URL in a `sourceMappingURL` comment names the sidecar by absolute
+  // path. Its query is dropped, like the query of a relative sidecar path.
+  test.concurrent("an input source map named by a file: URL is composed", async () => {
+    const map = JSON.stringify({
+      version: 3,
+      sources: ["../src/lib.ts"],
+      sourcesContent: ["export function f(): never {\n  throw new Error('MARK');\n}\n"],
+      names: [],
+      mappings: "AAAO,gBAAS,IAAU;AACxB,QAAM,IAAI,MAAM,MAAM;AACxB;",
+    });
+    using dir = tempDir("build-api-file-url-input-map", {
+      "lib/lib.js.map": map,
+      "lib/localhost.js.map": map,
+      "entry.js": `import { f as a } from "./lib/lib.js";\nimport { f as b } from "./lib/localhost.js";\n[a, b][Date.now() % 1]();\n`,
+    });
+    const root = String(dir);
+    const fileUrl = pathToFileURL(join(root, "lib/lib.js.map")).href;
+    const localhostUrl = fileUrl.replace("file://", "file://localhost").replace("lib.js.map", "localhost.js.map");
+    writeFileSync(
+      join(root, "lib/lib.js"),
+      `export function f() {\n  throw new Error("MARK");\n}\n//# sourceMappingURL=${fileUrl}?v=1\n`,
+    );
+    writeFileSync(
+      join(root, "lib/localhost.js"),
+      `export function f() {\n  throw new Error("MARK");\n}\n//# sourceMappingURL=${localhostUrl}\n`,
+    );
+    const build = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      outdir: join(root, "out"),
+      sourcemap: "external",
+    });
+    expect(build.logs).toEqual([]);
+    const output = JSON.parse(await Bun.file(join(root, "out/entry.js.map")).text());
+    expect(output.sources).toEqual(["../src/lib.ts", "../src/lib.ts", "../entry.js"]);
   });
 
   test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {

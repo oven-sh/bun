@@ -6820,6 +6820,7 @@ impl VirtualMachine {
         };
 
         if let Some((mapping, display_url, external_code)) = resolved {
+            let names_original_file = display_url.is_some();
             if let Some(src) = display_url {
                 frames[top].source_url = src;
             }
@@ -6851,7 +6852,8 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() {
+            // No bundle lines under an original file's name and position.
+            if enable_source_code_preview.get() && code.slice().is_empty() && !names_original_file {
                 exception.collect_source_lines(error_instance, global);
             }
 

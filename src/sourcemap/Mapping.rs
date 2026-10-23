@@ -324,7 +324,7 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
+        if source_map.is_standalone_module_graph || is_url(name) {
             return Some(bun_core::String::clone_utf8(name));
         }
 
@@ -390,6 +390,9 @@ impl Lookup {
             }
 
             let name: &[u8] = &source_map.external_source_names[index];
+            if is_url(name) {
+                return None;
+            }
 
             let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is
@@ -407,6 +410,11 @@ impl Lookup {
 
         Some(Utf8Bytes::Owned(bytes))
     }
+}
+
+/// A `sources` entry such as `webpack://pkg/src/a.ts` names no file next to the bundle.
+fn is_url(name: &[u8]) -> bool {
+    crate::input_source_map::url_scheme(name).is_some() || name.starts_with(b"//")
 }
 
 impl Mapping {

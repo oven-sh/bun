@@ -46,7 +46,6 @@ using connectedSocket = await Bun.udpSocket({
 });
 
 expectType(connectedSocket.remoteAddress).is<Bun.SocketAddress>();
-expectType(connectedSocket[Symbol.dispose]()).is<void>();
 
 expectType(connectedSocket.send("Hello")).is<boolean>();
 expectType(connectedSocket.send(new Uint8Array([1, 2, 3]))).is<boolean>();
@@ -57,4 +56,5 @@ expectType(connectedSocket.setTTL(128)).is<number>();
 expectType(connectedSocket.setMulticastTTL(1)).is<number>();
 expectType(connectedSocket.setMulticastLoopback(false)).is<boolean>();
 
-connectedSocket.close();
+expectType(connectedSocket.close()).is<void>();
+expectType(connectedSocket[Symbol.dispose]()).is<void>();

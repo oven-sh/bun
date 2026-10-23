@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7929,6 +7929,96 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+  });
+
+  describe("supports", () => {
+    // Tokens after a nested block, in every raw `SupportsCondition` shape.
+    minify_test(
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}",
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (grid-template-columns:[a] 1fr [b]){a{color:red}}",
+      "@supports (grid-template-columns:[a] 1fr [b]){a{color:red}}",
+    );
+    minify_test("@supports (--x:{a} b){a{color:red}}", "@supports (--x:{a} b){a{color:red}}");
+    minify_test(
+      '@supports (mask:url("a.svg") no-repeat){a{color:red}}',
+      '@supports (mask:url("a.svg") no-repeat){a{color:red}}',
+    );
+    minify_test(
+      "@supports (transform:translate(1px) rotate(1deg)) and (color:rgb(0 0 0) x){a{color:red}}",
+      "@supports (transform:translate(1px) rotate(1deg)) and (color:rgb(0 0 0) x){a{color:red}}",
+    );
+    minify_test(
+      "@supports (color:rgb(0 0 0) x) or (transform:translate(1px) rotate(1deg)){a{color:red}}",
+      "@supports (color:rgb(0 0 0) x) or (transform:translate(1px) rotate(1deg)){a{color:red}}",
+    );
+    minify_test("@supports selector(a:has(b) c){a{color:red}}", "@supports selector(a:has(b) c){a{color:red}}");
+    minify_test("@supports selector(:is(a) > b){a{color:red}}", "@supports selector(:is(a) > b){a{color:red}}");
+    minify_test(
+      "@supports selector([a] b) and selector(:is(c) d){a{color:red}}",
+      "@supports selector([a] b) and selector(:is(c) d){a{color:red}}",
+    );
+    minify_test(
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}b{color:green}",
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}b{color:green}",
+    );
+    minify_test(
+      "@import url(x.css) supports(transform:translate(1px) rotate(1deg));",
+      '@import "x.css" supports(transform:translate(1px) rotate(1deg));',
+    );
+    minify_test(
+      "@import url(x.css) supports(grid-template-columns:[a] 1fr [b]);",
+      '@import "x.css" supports(grid-template-columns:[a] 1fr [b]);',
+    );
+    minify_test(
+      "@import url(x.css) supports(selector(a:has(b) c));",
+      '@import "x.css" supports(selector(a:has(b) c));',
+    );
+
+    // A raw condition is printed as written, up to its closing parenthesis.
+    minify_test("@supports selector(:is(a) ){a{color:red}}", "@supports selector(:is(a) ){a{color:red}}");
+    minify_test("@supports selector(:is(a) /* c */){a{color:red}}", "@supports selector(:is(a) /* c */){a{color:red}}");
+    minify_test(
+      "@import url(x.css) supports(transform:translate(1px) );",
+      '@import "x.css" supports(transform:translate(1px) );',
+    );
+
+    for (const source of [
+      "@supports (transform:translate(1px) ]){a{color:red}}",
+      "@supports (transform:translate(1px) }){a{color:red}}",
+      "@supports selector(a:has(b) ]){a{color:red}}",
+      "@import url(x.css) supports(transform:translate(1px) ]);",
+    ]) {
+      test(`ERROR: ${source}`, () => {
+        expect(() => minify_test_with_options(source, "")).toThrow("Unexpected token");
+      });
+    }
+
+    test("ERROR: @supports foo(bar) baz{a{color:red}}", () => {
+      expect(() => minify_test_with_options("@supports foo(bar) baz{a{color:red}}", "")).toThrow("Unexpected token");
+    });
+
+    test("bundles a stylesheet whose conditions have tokens after a function", async () => {
+      using dir = tempDir("css-supports-after-block", {
+        "entry.css": `
+          @import "./dep.css" supports(transform: translate(1px) rotate(1deg));
+          @supports (mask: url("a.svg") no-repeat) { .a { color: red } }
+          @supports selector(a:has(b) c) { .b { color: green } }
+        `,
+        "dep.css": ".dep { color: blue }",
+      });
+
+      // Unminified output starts each file with a path comment that depends on
+      // the cwd, so the exact text is compared on the minified bundle.
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")], minify: true });
+      expect(await result.outputs[0].text()).toBe(
+        "@supports (transform:translate(1px) rotate(1deg)){.dep{color:#00f}}" +
+          '@supports (mask: url("a.svg") no-repeat){.a{color:red}}' +
+          "@supports selector(a:has(b) c){.b{color:green}}\n",
+      );
+    });
   });
 
   describe("font-palette-values", () => {

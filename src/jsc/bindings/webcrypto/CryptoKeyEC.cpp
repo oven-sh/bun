@@ -160,7 +160,7 @@ ExceptionOr<JsonWebKey> CryptoKeyEC::exportJwk() const
         result.crv = P521;
         break;
     }
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
     if (!platformAddFieldElements(result))
         return Exception { OperationError };

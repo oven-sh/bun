@@ -5691,8 +5691,7 @@ impl<'a> Resolver<'a> {
         // Try using the main field(s) from "package.json"
         if let Some(pkg_json) = dir_info.package_json() {
             package_json = Some(std::ptr::from_ref(pkg_json));
-            if pkg_json.main_fields.count() > 0 {
-                let main_field_values = &pkg_json.main_fields;
+            if pkg_json.has_default_main_field() || !self.opts.main_fields_is_default {
                 // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
                 // borrow so the loop body can take `&mut self`. Backing
                 // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
@@ -5713,7 +5712,7 @@ impl<'a> Resolver<'a> {
 
                 for key in main_field_keys.iter() {
                     let key: &[u8] = key;
-                    let field_rel_path = match main_field_values.get(key) {
+                    let field_rel_path = match pkg_json.main_field(key) {
                         Some(v) => v,
                         None => {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -5758,7 +5757,7 @@ impl<'a> Resolver<'a> {
                         let mut auto_main_result = MatchResult::default();
                         let mut auto_main_found = false;
 
-                        if let Some(main_rel_path) = main_field_values.get(b"main".as_slice()) {
+                        if let Some(main_rel_path) = pkg_json.main_field(b"main") {
                             if !main_rel_path.is_empty() {
                                 auto_main_found = self
                                     .load_from_main_field(

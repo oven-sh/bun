@@ -157,7 +157,9 @@ function resolveBackend(opts: BundlerTestInput): "cli" | "api" {
     opts.bundleWarnings ||
     opts.env ||
     hasValidate ||
-    opts.define
+    opts.define ||
+    // Bun.build() has no main fields option: only `bun build --main-fields` sets the list.
+    opts.mainFields
     ? "cli"
     : "api";
 }
@@ -653,8 +655,8 @@ function expectBundled(
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new UnsupportedOptionError("unsupportedCSSFeatures not implemented in bun build");
   }
-  if (!ESBUILD && mainFields) {
-    throw new UnsupportedOptionError("mainFields not implemented in bun build");
+  if (!ESBUILD && mainFields && resolveBackend(opts) === "api") {
+    throw new UnsupportedOptionError("mainFields not implemented in Bun.build");
   }
   if (!ESBUILD && inject) {
     throw new UnsupportedOptionError("inject not implemented in bun build");
@@ -906,7 +908,7 @@ function expectBundled(
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
               keepNames && `--keep-names`,
-              // mainFields && `--main-fields=${mainFields}`,
+              mainFields && mainFields.map(field => `--main-fields=${field}`),
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",

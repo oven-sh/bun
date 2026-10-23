@@ -73,7 +73,6 @@
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
 "generic_body_not_generic:src/install/lockfile/printer/Yarn.rs" = 1
 "generic_body_not_generic:src/install/windows-shim/bun_shim_impl.rs" = 1
-"interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "safe_fn_returns_shared_mut:src/install/PackageManager.rs" = 2
 "safe_fn_returns_shared_mut:src/install/PackageManager/runTasks.rs" = 3
 "unused_pub:src/install/windows-shim/bun_shim_impl.rs" = 1

@@ -497,9 +497,8 @@ pub(crate) fn install_hoisted_packages(
             installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 
             // cache line is 64 bytes on ARM64 and x64
-            // PackageIDs are 4 bytes
-            // Hence, we can fit up to 64 / 4 = 16 package IDs in a cache line
-            const UNROLL_COUNT: usize = 64 / core::mem::size_of::<PackageID>();
+            // so 64 / 4 = 16 dependency IDs fit in one
+            const UNROLL_COUNT: usize = 64 / core::mem::size_of::<DependencyID>();
 
             while remaining.len() > UNROLL_COUNT {
                 let mut i: usize = 0;

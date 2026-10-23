@@ -9,7 +9,10 @@ use super::{
     StringBuffer, Tree, assert_no_uninitialized_padding, tree,
 };
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use crate::{
+    Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_dependency_id,
+    invalid_package_id,
+};
 use bun_io::Write as _;
 
 #[derive(Default)]
@@ -289,7 +292,7 @@ impl Buffers {
     ) -> crate::Result<DependencyID> {
         match package_id {
             0 => Ok(tree::ROOT_DEP_ID),
-            id if id == invalid_package_id => Ok(invalid_package_id),
+            id if id == invalid_package_id => Ok(invalid_dependency_id),
             _ => (self.resolutions.iter())
                 .position(|&pkg_id| pkg_id == package_id)
                 .map(|dep_id| dep_id as DependencyID)
@@ -372,8 +375,8 @@ pub(crate) fn load(
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
         // Each mention of a package is the next dependency that resolves to it.
-        let mut first: Vec<DependencyID> = vec![invalid_package_id; packages_len];
-        let mut next: Vec<DependencyID> = vec![invalid_package_id; this.resolutions.len()];
+        let mut first: Vec<DependencyID> = vec![invalid_dependency_id; packages_len];
+        let mut next: Vec<DependencyID> = vec![invalid_dependency_id; this.resolutions.len()];
         for (dependency_id, &package_id) in this.resolutions.iter().enumerate().rev() {
             if let Some(head) = first.get_mut(package_id as usize) {
                 next[dependency_id] = *head;
@@ -385,7 +388,7 @@ pub(crate) fn load(
                 *id = tree::ROOT_DEP_ID;
             } else if *id != invalid_package_id {
                 let head = (heads.get_mut(*id as usize))
-                    .filter(|head| **head != invalid_package_id)
+                    .filter(|head| **head != invalid_dependency_id)
                     .ok_or(crate::Error::LockfileIsMissingResolutionData)?;
                 *id = *head;
                 *head = next[*id as usize];

@@ -134,6 +134,15 @@ describe("css tests", () => {
     minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
   });
 
+  // `composes` is CSS modules syntax. With CSS modules off it is an unknown
+  // declaration, so any value is kept as tokens.
+  describe("composes without CSS modules", () => {
+    minify_test(".k { composes: g from url(./g.css) }", ".k{composes:g from url(./g.css)}");
+    minify_test(".k { composes: 12px }", ".k{composes:12px}");
+    minify_test('.k { composes: from "./g.css" }', '.k{composes:from "./g.css"}');
+    minify_test(".k { composes: var(--x) }", ".k{composes:var(--x)}");
+  });
+
   describe("pseudo-class edge case", () => {
     cssTest(
       indoc`[type="file"]::file-selector-button:-moz-any() {

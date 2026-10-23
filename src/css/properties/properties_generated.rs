@@ -3684,10 +3684,12 @@ impl Property {
                     return Ok(Property::Direction(c));
                 }
             }
-            PropertyId::Composes => {
+            // Not `options.css_modules`: it is a default in @keyframes and @container style().
+            PropertyId::Composes if input.flags.css_modules() => {
                 return css::generic::parse_with_options::<css_modules::Composes>(input, options)
                     .map(Property::Composes);
             }
+            PropertyId::Composes => {}
             PropertyId::MaskImage(pre) => {
                 if let Some(c) =
                     parse_value::<SmallList<css::css_values::image::Image, 1>>(input, options)

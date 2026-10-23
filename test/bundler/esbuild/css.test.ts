@@ -1,11 +1,21 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect } from "bun:test";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/css
+
+/** Each input file of the metafile, with its imports as `<kind> <path>`. */
+function metafileImports(api: { readFile(file: string): string }): Record<string, string[]> {
+  const inputs: Record<string, { imports: { kind: string; path: string }[] }> = JSON.parse(
+    api.readFile("/metafile.json"),
+  ).inputs;
+  return Object.fromEntries(
+    Object.entries(inputs).map(([file, input]) => [file, input.imports.map(record => `${record.kind} ${record.path}`)]),
+  );
+}
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
@@ -779,6 +789,357 @@ describe("bundler", () => {
         "/* styles.module.css */
         .button_-MSaAA {
           color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  // `composes` is CSS modules syntax. A stylesheet that is not a CSS module
+  // keeps the declaration as written and does not import the file it names.
+  itBundled("css/ComposesInPlainCSSIsNotAnImport", {
+    files: {
+      "/entry.css": `.k { composes: g from "./g.css" }`,
+      "/g.css": `.g { color: red }`,
+    },
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* entry.css */
+        .k {
+          composes: g from "./g.css";
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({ "entry.css": [] });
+    },
+  });
+
+  itBundled("css/ComposesInPlainCSSMissingFileBuilds", {
+    files: {
+      "/entry.css": /* css */ `
+        .k { composes: g from "./missing/g.css" }
+        .l { composes: g from "missing-package/g.css" }
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* entry.css */
+        .k {
+          composes: g from "./missing/g.css";
+        }
+
+        .l {
+          composes: g from "missing-package/g.css";
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css/ComposesInPlainCSSEveryPosition", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { composes: a b from "./x.css" }
+        .b { composes: a from global }
+        .c { composes: a b c }
+        .d { composes: a from "./x.css" !important }
+        .e .f { composes: a from "./x.css" }
+        .g { color: red; .h { composes: a from "./x.css" } }
+        @media print { .i { composes: a from "./x.css" } }
+        @page { composes: a from "./x.css" }
+        @keyframes j { from { composes: a from "./x.css" } }
+        @container style(composes: a from "./x.css") { .k { color: red } }
+      `,
+      "/x.css": `.a { color: blue }`,
+    },
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* entry.css */
+        .a {
+          composes: a b from "./x.css";
+        }
+
+        .b {
+          composes: a from global;
+        }
+
+        .c {
+          composes: a b c;
+        }
+
+        .d {
+          composes: a from "./x.css" !important;
+        }
+
+        .e .f {
+          composes: a from "./x.css";
+        }
+
+        .g {
+          color: red;
+        }
+
+        .g .h {
+          composes: a from "./x.css";
+        }
+
+        @media print {
+          .i {
+            composes: a from "./x.css";
+          }
+        }
+
+        @page {
+          composes: a from "./x.css";
+        }
+
+        @keyframes j {
+          from {
+            composes: a from "./x.css";
+          }
+        }
+
+        @container style(composes: a from "./x.css") {
+          .k {
+            color: red;
+          }
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({ "entry.css": [] });
+    },
+  });
+
+  // These values are not valid `composes` syntax. A CSS module rejects them.
+  itBundled("css/ComposesInPlainCSSAnyValue", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { composes: 12px }
+        .b { composes: from "./x.css" }
+        .c { composes: a from }
+        .d { composes: var(--x) }
+        .e { composes: a, b from "./x.css" }
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* entry.css */
+        .a {
+          composes: 12px;
+        }
+
+        .b {
+          composes: from "./x.css";
+        }
+
+        .c {
+          composes: a from;
+        }
+
+        .d {
+          composes: var(--x);
+        }
+
+        .e {
+          composes: a, b from "./x.css";
+        }
+        "
+      `);
+    },
+  });
+
+  // A `url()` after `from` is a `url()` token, as in any unknown declaration.
+  itBundled("css/ComposesInPlainCSSFromURLIsAURLToken", {
+    files: {
+      "/entry.css": /* css */ `
+        .k { composes: g from url(./g.png) }
+        .u { unknown-property: g from url(./g.png) }
+      `,
+      "/g.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* entry.css */
+        .k {
+          composes: g from url("data:image/png;base64,iVBORw0KGgo=");
+        }
+
+        .u {
+          unknown-property: g from url("data:image/png;base64,iVBORw0KGgo=");
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({ "entry.css": ["url-token g.png", "url-token g.png"], "g.png": [] });
+    },
+  });
+
+  itBundled("css/ComposesInPlainCSSWithAtImportOfTheSameFile", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./x.css";
+        .k { composes: a from "./x.css" }
+      `,
+      "/x.css": `.a { color: blue }`,
+    },
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* x.css */
+        .a {
+          color: #00f;
+        }
+
+        /* entry.css */
+        .k {
+          composes: a from "./x.css";
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({ "entry.css": ["import-rule x.css"], "x.css": [] });
+    },
+  });
+
+  // The same declaration in one build: an import in the CSS module, an
+  // unknown declaration in the plain stylesheet.
+  itBundled("css/ComposesInPlainCSSNextToCSSModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./plain.css";
+        import styles from "./styles.module.css";
+        console.log(styles);
+      `,
+      "/plain.css": /* css */ `
+        .plain {
+          composes: base from "./base.module.css";
+          composes: other from "./other.module.css";
+        }
+      `,
+      "/styles.module.css": /* css */ `
+        .button {
+          composes: base from "./base.module.css";
+          color: blue;
+        }
+      `,
+      "/base.module.css": `.base { font-size: 16px }`,
+      "/other.module.css": `.other { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          button: "base_1Cz41w button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* plain.css */
+        .plain {
+          composes: base from "./base.module.css";
+          composes: other from "./other.module.css";
+        }
+
+        /* base.module.css */
+        .base_1Cz41w {
+          font-size: 16px;
+        }
+
+        /* styles.module.css */
+        .button_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({
+        "entry.js": ["import-statement plain.css", "import-statement styles.module.css"],
+        "plain.css": [],
+        "styles.module.css": ["composes base.module.css"],
+        "base.module.css": [],
+      });
+    },
+  });
+
+  {
+    const resolved: string[] = [];
+    itBundled("css/ComposesInPlainCSSIsNotResolved", {
+      files: {
+        "/entry.css": `.k { composes: g from "./g.css" }`,
+        "/g.css": `.g { color: red }`,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          resolved.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle() {
+        expect(resolved.map(path => basename(path))).toEqual(["entry.css"]);
+      },
+    });
+  }
+
+  // A stylesheet that a plugin loads with the `css` loader is a CSS module
+  // only when its path ends in `.module.css`.
+  itBundled("css/ComposesInPluginLoadedCSSThatIsNotACSSModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./a.module.scss";
+        console.log(styles);
+      `,
+      "/a.module.scss": `.btn { composes: base from "./b.module.scss"; color: blue }`,
+      "/b.module.scss": `.base { font-size: 16px }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    metafile: true,
+    plugins(builder) {
+      builder.onLoad({ filter: /\.scss$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "css",
+      }));
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* a.module.scss */
+        .btn {
+          composes: base from "./b.module.scss";
+          color: #00f;
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({
+        "entry.js": ["import-statement a.module.scss"],
+        "a.module.scss": [],
+      });
+    },
+  });
+
+  // `bun build --no-bundle` parses a stylesheet with no import record list.
+  itBundled("css/ComposesInPlainCSSNoBundle", {
+    files: {
+      "/entry.css": `.k { composes: g from "./g.css" }`,
+    },
+    bundling: false,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toMatchInlineSnapshot(`
+        ".k {
+          composes: g from "./g.css";
         }
         "
       `);

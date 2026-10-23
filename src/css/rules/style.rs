@@ -201,37 +201,34 @@ impl<R> StyleRule<R> {
                     // The CSS modules `composes` property is handled specially, and omitted during printing.
                     // We need to add the classes it references to the list for the selectors in this rule.
                     if let Property::Composes(composes) = decl {
-                        if dest.is_nested() && dest.css_module.is_some() {
+                        // `Property::parse` makes this property only in a CSS module.
+                        debug_assert!(dest.css_module.is_some());
+                        if dest.is_nested() {
                             return dest.new_error(
                                 PrinterErrorKind::invalid_composes_nesting,
                                 Some(composes.cssparser_loc),
                             );
                         }
 
-                        if dest.css_module.is_some() {
-                            // `handle_composes` needs `&mut dest` while the
-                            // module also lives in `dest.css_module`. Move the
-                            // module out for the duration of the call, then put
-                            // it back before any `dest.new_error` early return.
-                            let mut cm = dest.css_module.take();
-                            let err = if let Some(css_module) = &mut cm {
-                                css_module
-                                    .handle_composes(
-                                        dest,
-                                        &self.selectors,
-                                        composes,
-                                        self.loc.source_index,
-                                    )
-                                    .err()
-                            } else {
-                                None
-                            };
-                            dest.css_module = cm;
-                            if let Some(error_kind) = err {
-                                return dest.new_error(error_kind, Some(composes.cssparser_loc));
-                            }
-                            continue;
+                        // Move the module out of `dest`: `handle_composes` also takes `&mut dest`.
+                        let mut cm = dest.css_module.take();
+                        let err = if let Some(css_module) = &mut cm {
+                            css_module
+                                .handle_composes(
+                                    dest,
+                                    &self.selectors,
+                                    composes,
+                                    self.loc.source_index,
+                                )
+                                .err()
+                        } else {
+                            None
+                        };
+                        dest.css_module = cm;
+                        if let Some(error_kind) = err {
+                            return dest.new_error(error_kind, Some(composes.cssparser_loc));
                         }
+                        continue;
                     }
 
                     dest.newline()?;

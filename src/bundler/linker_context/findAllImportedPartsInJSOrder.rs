@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
@@ -351,6 +351,12 @@ impl WalkPlan {
             if !owned.has_cycle || chunks[chunk_index].entry_bits().count() < 2 {
                 continue;
             }
+            // Such a chunk loads only with its owner, so no other order ever runs.
+            let flags = this.graph.meta.items_flags();
+            let mut files = owned.runs.iter().map(|run| run.source_index as usize);
+            if files.any(|file| flags[file].moved_out_of_entry_chunk) {
+                continue;
+            }
             let reads = reads.get_or_insert_with(|| LoadTimeReads::new(this));
             if !reads.is_broken_by(this, &owned.runs) {
                 continue;
@@ -603,18 +609,20 @@ impl LoadEffect {
 }
 
 #[derive(Clone, Copy)]
-enum Edge {
+pub(crate) enum Edge {
     /// `file` runs here, under the same load.
     Import(IndexInt),
     /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
     LoadNow(IndexInt),
     /// An `import()`, or a split `require()` in a part that only declares.
     LoadLater(IndexInt),
+    /// An `import` statement that loads a module that is not bundled and can have side effects.
+    External,
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
 /// A file runs where it is imported, not where its bindings are used: `part.dependencies` does not order what runs.
-fn for_each_edge(
+pub(crate) fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
     runs: bool,
@@ -645,7 +653,19 @@ fn for_each_edge(
         let part_index = part_index as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
-            if !record.source_index.is_valid() || !(record.kind == ImportKind::Stmt || runs_here) {
+            if !record.source_index.is_valid() {
+                if runs_here
+                    && record.kind == ImportKind::Stmt
+                    && !record.path.is_disabled
+                    && !record
+                        .flags
+                        .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
+                {
+                    each(part_index, Edge::External);
+                }
+                continue;
+            }
+            if !(record.kind == ImportKind::Stmt || runs_here) {
                 continue;
             }
             let other = record.source_index.get();
@@ -767,6 +787,7 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
                     },
                     Edge::LoadNow(other) => LoadFrame::Load(entry_id_of_file[other as usize]),
                     Edge::LoadLater(other) => LoadFrame::Later(entry_id_of_file[other as usize]),
+                    Edge::External => return,
                 });
             });
             stack[mark..].reverse();
@@ -982,7 +1003,7 @@ impl EntryWalk {
                 Edge::LoadNow(other) => {
                     import(part_index, other, plan.entry_id_of_file[other as usize])
                 }
-                Edge::LoadLater(_) => {}
+                Edge::LoadLater(_) | Edge::External => {}
             });
             if let Some(slot) = slot {
                 stack.push(WalkFrame::Place {

@@ -1887,6 +1887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             return;
         }
+        p.has_runtime_specifier = true;
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }

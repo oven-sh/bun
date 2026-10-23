@@ -84,3 +84,6 @@ const control = http.createServer((req, res) => {
 });
 const controlPort = await listen(control);
 console.log(relayPort, controlPort);
+
+// The test process is gone: do not outlive it.
+process.stdin.on("end", () => process.exit(0)).resume();

@@ -563,6 +563,10 @@ describe.concurrent("fetch-tls", () => {
       await using peer = Bun.spawn({
         cmd: [nodeExe()!, join(import.meta.dir, "fetch.tls.renegotiation-peer-fixture.mjs")],
         env: { ...bunEnv, SERVER_CERT: validTls.cert, SERVER_KEY: validTls.key },
+        // The runner does not kill the processes of a concurrent test that
+        // times out. The peer exits when this pipe closes, and the client
+        // ends with the peer.
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "inherit",
       });
@@ -610,13 +614,13 @@ describe.concurrent("fetch-tls", () => {
       timeout,
     );
 
-    // Observed: the request gets no answer, and the test times out. Its write
-    // parks while the renegotiation runs, and uSockets does not retry it when
-    // the renegotiation ends.
-    it.todo(
+    // The request's write parks while the renegotiation runs. uSockets has to
+    // retry it when the renegotiation ends, or the request gets no answer.
+    it.skipIf(!nodeExe())(
       "a request that reuses a pooled socket mid-renegotiation gets its answer",
       async () => {
-        const { stdout, exitCode } = await pickUpMidRenegotiation("await-second");
+        const { stdout, stderr, exitCode } = await pickUpMidRenegotiation("await-second");
+        expect(stderr).toBe("");
         expect(stdout).toEqual(["first ok", "held record type 22", "after the pooled pickup pong", "second ok"]);
         expect(exitCode).toBe(0);
       },

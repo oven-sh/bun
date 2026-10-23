@@ -2715,7 +2715,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            if self.chars.state != CharState::Normal {
+                            // An fd number starts a word. A tab is whitespace that does not end one, so `a<TAB>2>f` redirects fd 2.
+                            let after_whitespace = self.chars.prev.is_some_and(|prev| {
+                                !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev)
+                            });
+                            if self.chars.state != CharState::Normal
+                                || (self.word_is_open() && !after_whitespace)
+                            {
                                 break 'escaped;
                             }
                             let snapshot = self.make_snapshot();
@@ -2941,6 +2947,41 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
+    /// Whether a word is open: text is pending, or no `Delimit` follows the last part of a word.
+    fn word_is_open(&self) -> bool {
+        self.word_start != self.j
+            || self.tokens.last().is_some_and(|tok| match tok.tag() {
+                TokenTag::Var
+                | TokenTag::VarArgv
+                | TokenTag::Text
+                | TokenTag::SingleQuotedText
+                | TokenTag::DoubleQuotedText
+                | TokenTag::BraceBegin
+                | TokenTag::Comma
+                | TokenTag::BraceEnd
+                | TokenTag::CmdSubstEnd
+                | TokenTag::Asterisk
+                | TokenTag::DoubleAsterisk => true,
+
+                TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::Ampersand
+                | TokenTag::DoubleAmpersand
+                | TokenTag::Redirect
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::CmdSubstBegin
+                | TokenTag::CmdSubstQuoted
+                | TokenTag::OpenParen
+                | TokenTag::CloseParen
+                | TokenTag::JSObjRef
+                | TokenTag::DoubleBracketOpen
+                | TokenTag::DoubleBracketClose
+                | TokenTag::Delimit
+                | TokenTag::Eof => false,
+            })
+    }
+
     fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
         let start: u32 = self.word_start;
         let end: u32 = self.j;
@@ -2954,39 +2995,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if add_delimiter != AddDelimiter::No {
                 self.tokens.push(Token::Delimit);
             }
-        } else if add_delimiter == AddDelimiter::AfterWord
-            && !self.tokens.is_empty()
-            && match self.tokens[self.tokens.len() - 1].tag() {
-                TokenTag::Var
-                | TokenTag::VarArgv
-                | TokenTag::Text
-                | TokenTag::SingleQuotedText
-                | TokenTag::DoubleQuotedText
-                | TokenTag::BraceBegin
-                | TokenTag::Comma
-                | TokenTag::BraceEnd
-                | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
-
-                TokenTag::Pipe
-                | TokenTag::DoublePipe
-                | TokenTag::Ampersand
-                | TokenTag::DoubleAmpersand
-                | TokenTag::Redirect
-                | TokenTag::DoubleAsterisk
-                | TokenTag::Semicolon
-                | TokenTag::Newline
-                | TokenTag::CmdSubstBegin
-                | TokenTag::CmdSubstQuoted
-                | TokenTag::OpenParen
-                | TokenTag::CloseParen
-                | TokenTag::JSObjRef
-                | TokenTag::DoubleBracketOpen
-                | TokenTag::DoubleBracketClose
-                | TokenTag::Delimit
-                | TokenTag::Eof => false,
-            }
-        {
+        } else if add_delimiter == AddDelimiter::AfterWord && self.word_is_open() {
             self.tokens.push(Token::Delimit);
             self.delimit_quote = false;
         }
@@ -3012,6 +3021,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// Returns true if the operator is "double one": >> or <<
     /// Returns false if not doubled or invalid (e.g. <> ><)
+    /// `<<` is a here-document, which is an error.
     fn eat_simple_redirect_operator(&mut self, dir: RedirectDirection) -> bool {
         if let Some(peeked) = self.peek() {
             if peeked.escaped {
@@ -3028,6 +3038,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 c if c == u32::from(b'<') => {
                     if dir == RedirectDirection::In {
                         let _ = self.eat();
+                        self.add_error(b"Here-documents \"<<\" are not supported yet.");
                         return true;
                     }
                     return false;
@@ -3052,8 +3063,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if input.escaped {
                 return None;
             }
+            // Only fd 1 and 2 are written and only fd 0 is read: in `0>f`, `1<f` and `2<f` the digit is a word.
             match input.char {
-                c if c == u32::from(b'>') => {
+                c if c == u32::from(b'>') && !flags.stdin() => {
                     let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
                     if is_double {
@@ -3091,7 +3103,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     }
                     Some(flags)
                 }
-                c if c == u32::from(b'<') => {
+                c if c == u32::from(b'<') && flags.stdin() => {
+                    let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;

@@ -90,7 +90,6 @@ const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
 const ObjectPrototypeHasOwnProperty = uncurryThis(Object.prototype.hasOwnProperty);
 const ObjectPrototypePropertyIsEnumerable = uncurryThis(Object.prototype.propertyIsEnumerable);
-const ObjectPrototypeToString = uncurryThis(Object.prototype.toString);
 const ObjectSeal = Object.seal;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -2766,6 +2765,7 @@ function stripVTControlCharacters(str) {
 
 // utils
 const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
+const internalGetConstructorName = $newCppFunction("UtilInspect.cpp", "jsFunctionGetConstructorName", 1);
 function getPromiseDetails(promise) {
   const state = $peekPromiseStatus(promise);
   if (state !== 0) {
@@ -2808,14 +2808,6 @@ function previewEntries(val, isIterator = false) {
   if (isWeakMap(val)) return [];
   if (isWeakSet(val)) return [];
   else throw new Error("previewEntries(): Invalid object received");
-}
-function internalGetConstructorName(val) {
-  if (!val || typeof val !== "object") throw new Error("Invalid object");
-  const ctorName = val.constructor?.name;
-  if (ctorName) return ctorName;
-  const str = ObjectPrototypeToString(val);
-  const m = StringPrototypeMatch(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
-  return m ? m[1] : "Object";
 }
 
 export default {

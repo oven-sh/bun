@@ -1032,6 +1032,38 @@ test("duplicate FileHandle transferList entries throw DataCloneError and roll ba
   await fh.close();
 });
 
+// Node.js names the duplicate with V8's GetConstructorName, which reads data properties only.
+// The expected names are the output of Node.js v26.3.0.
+const throwingGetter = {
+  get() {
+    throw new Error("the constructor getter ran");
+  },
+};
+const duplicateNames: [label: string, key: PropertyKey, descriptor: PropertyDescriptor, name: string][] = [
+  ["a constructor getter that throws", "constructor", throwingGetter, "FileHandle"],
+  ["a constructor that is not a function", "constructor", { value: { name: "Spoof" } }, "FileHandle"],
+  ["a constructor of its own", "constructor", { value: function Fake() {} }, "FileHandle"],
+  ["a Symbol.toStringTag of its own", Symbol.toStringTag, { value: "Tagged" }, "Tagged"],
+];
+test.concurrent.each(duplicateNames)(
+  "the duplicate FileHandle message names a handle with %s",
+  async (_, key, descriptor, name) => {
+    using dir = tempDir("worker-fh-duplicate", { "x.txt": "hello" });
+    const file = join(String(dir), "x.txt");
+    const fh: any = await fs.promises.open(file, "r");
+    Object.defineProperty(fh, key, { ...descriptor, configurable: true });
+    try {
+      expect(() => new Worker(file, { workerData: { fh }, transferList: [fh, fh] } as any)).toThrow(
+        expect.objectContaining({ name: "DataCloneError", message: `Transfer list contains duplicate ${name}` }),
+      );
+    } finally {
+      // A debug build reads `constructor` when the handle emits "close".
+      delete fh[key];
+      await fh.close();
+    }
+  },
+);
+
 test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

@@ -486,10 +486,8 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
           // node (and the HTML spec) reject duplicate transferList entries;
           // without this the second kTransfer() would read the already
           // neutered fd (-1) and clobber the real marker.
-          throw new DOMException(
-            `Transfer list contains duplicate ${item.constructor?.name ?? "entry"}`,
-            "DataCloneError",
-          );
+          const getConstructorName = $newCppFunction("UtilInspect.cpp", "jsFunctionGetConstructorName", 1);
+          throw new DOMException(`Transfer list contains duplicate ${getConstructorName(item)}`, "DataCloneError");
         }
         const extraTransfers = item[kTransferList]?.();
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.

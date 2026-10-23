@@ -10,10 +10,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         name: &'a [u8],
     ) -> Result<FindSymbolResult, crate::Error> {
-        self.find_symbol_with_record_usage::<true>(loc, name)
+        self.find_symbol_impl::<true, true>(loc, name)
     }
 
+    /// With `RECORD_USAGE == false` the use counts stay untouched and a name
+    /// with no symbol gives `Ref::NONE`.
     pub(crate) fn find_symbol_with_record_usage<const RECORD_USAGE: bool>(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'a [u8],
+    ) -> Result<FindSymbolResult, crate::Error> {
+        self.find_symbol_impl::<RECORD_USAGE, RECORD_USAGE>(loc, name)
+    }
+
+    /// Like `find_symbol`, but the use counts stay untouched. A name with no
+    /// symbol still gets an unbound symbol.
+    pub(crate) fn find_symbol_without_usage(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'a [u8],
+    ) -> Result<FindSymbolResult, crate::Error> {
+        self.find_symbol_impl::<false, true>(loc, name)
+    }
+
+    fn find_symbol_impl<const RECORD_USAGE: bool, const DECLARE_UNBOUND: bool>(
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
@@ -104,7 +124,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Allocate an "unbound" symbol
             self.check_for_non_bmp_code_point(loc, name);
-            if !RECORD_USAGE {
+            if !DECLARE_UNBOUND {
                 return Ok(FindSymbolResult {
                     r#ref: Ref::NONE,
                     declare_loc: Some(loc),

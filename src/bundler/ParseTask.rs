@@ -2468,7 +2468,7 @@ pub mod parse_worker {
             ..Default::default()
         });
 
-        let target = (if task.source_index.get() == 1 {
+        let target = (if task.source_index.get() == 1 && topts.target_defaults_from_hashbang {
             target_from_hashbang(entry_contents)
         } else {
             None

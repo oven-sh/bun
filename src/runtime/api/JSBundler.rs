@@ -108,6 +108,8 @@ pub(crate) mod js_bundler {
 
     pub(crate) struct Config {
         pub(crate) target: Target,
+        /// `target` was not given: see `BundleOptions::target_defaults_from_hashbang`.
+        pub(crate) target_defaults_from_hashbang: bool,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
@@ -175,6 +177,7 @@ pub(crate) mod js_bundler {
         fn default() -> Self {
             Self {
                 target: Target::Browser,
+                target_defaults_from_hashbang: false,
                 entry_points: StringSet::default(),
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
@@ -560,6 +563,7 @@ pub(crate) mod js_bundler {
                 }
                 drop(slice);
             }
+            this.target_defaults_from_hashbang = !did_set_target;
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if let Some(array) = config.get_array(global_this, "plugins")? {

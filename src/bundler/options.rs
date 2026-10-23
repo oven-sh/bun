@@ -1245,6 +1245,9 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
+    /// No target was given (`--target`, `Bun.build({ target })`). The first entry point is then
+    /// parsed for bun when it starts with `#!/usr/bin/env bun`.
+    pub target_defaults_from_hashbang: bool,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
@@ -1497,6 +1500,7 @@ impl<'a> BundleOptions<'a> {
             output_format: self.output_format,
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
+            target_defaults_from_hashbang: self.target_defaults_from_hashbang,
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
@@ -1724,6 +1728,7 @@ impl<'a> BundleOptions<'a> {
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
+            target_defaults_from_hashbang: false,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),

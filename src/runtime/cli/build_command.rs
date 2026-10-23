@@ -126,6 +126,8 @@ impl BuildCommand {
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
+        this_transpiler.options.target_defaults_from_hashbang =
+            !ctx.bundler_options.has_explicit_target;
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),

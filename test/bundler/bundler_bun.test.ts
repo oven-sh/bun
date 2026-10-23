@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -347,5 +349,106 @@ error: Hello World`,
         },
       });
     }
+  }
+});
+
+// With no target, a `#!/usr/bin/env bun` entry point is built for bun. A target that is given
+// holds for every file, the entry point included.
+describe.concurrent("bundler hashbang entry with an explicit target", () => {
+  const hashbang = "#!/usr/bin/env bun";
+  const backends = ["api", "cli"] as const;
+  const targets = ["node", "browser"] as const;
+
+  /** Builds `cli.js` in `dir` into `dir/out/cli.js` and returns the build's errors and the output path. */
+  async function build(
+    backend: (typeof backends)[number],
+    dir: string,
+    target: (typeof targets)[number],
+    format: "esm" | "cjs" = "esm",
+  ): Promise<{ errors: string; output: string }> {
+    const output = join(dir, "out", "cli.js");
+    if (backend === "api") {
+      const result = await Bun.build({
+        entrypoints: [join(dir, "cli.js")],
+        outdir: join(dir, "out"),
+        target,
+        format,
+        throw: false,
+      });
+      return { errors: result.logs.map(log => log.message).join("\n"), output };
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "cli.js", "--outdir", "out", `--target=${target}`, `--format=${format}`],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { errors: stderr, output };
+  }
+
+  for (const backend of backends) {
+    // `bun build` is one process per test. One at a time keeps each of them far from the
+    // default timeout in a debug build.
+    const it = backend === "cli" ? test.serial : test;
+
+    for (const target of targets) {
+      // #25767: `// @bun` tells Bun that every file in the bundle was printed for it.
+      it(`${backend}: every file is built for target ${target}`, async () => {
+        using dir = tempDir("hashbang-explicit-target", {
+          "cli.js": `${hashbang}
+import { Shared } from "./shared.js";
+import { ReExported, symbols } from "./reexport.js";
+export const result = { oneClass: Shared === ReExported, symbols };
+`,
+          "shared.js": `export class Shared {}\n`,
+          "reexport.js": `import { Shared } from "./shared.js";
+export const ReExported = Shared;
+export const symbols = "✓ ✗ ⚠";
+`,
+        });
+        const { errors, output } = await build(backend, String(dir), target);
+        expect(errors).toBe("");
+        const text = await Bun.file(output).text();
+        expect(text).toStartWith(`${hashbang}\n`);
+        expect(text).not.toContain("// @bun");
+        expect(text.split("class Shared").length - 1).toBe(1);
+        expect((await import(output)).result).toEqual({ oneClass: true, symbols: "✓ ✗ ⚠" });
+      });
+
+      it(`${backend}: format cjs with target ${target} has no wrapper that only Bun calls`, async () => {
+        using dir = tempDir("hashbang-explicit-target", {
+          "cli.js": `${hashbang}\nmodule.exports = require("./dep.js");\n`,
+          "dep.js": `module.exports = "loaded";\n`,
+        });
+        const { errors, output } = await build(backend, String(dir), target, "cjs");
+        expect(errors).toBe("");
+        const text = await Bun.file(output).text();
+        expect(text).toStartWith(`${hashbang}\n`);
+        expect(text).not.toContain("@bun-cjs");
+        expect(text).not.toContain("(function(exports, require, module, __filename, __dirname)");
+        expect(require(output)).toBe("loaded");
+      });
+
+      it(`${backend}: with target ${target} a hashbang entry cannot import "bun"`, async () => {
+        using dir = tempDir("hashbang-explicit-target", {
+          "cli.js": `${hashbang}\nimport { semver } from "bun";\nconsole.log(typeof semver);\n`,
+        });
+        const { errors, output } = await build(backend, String(dir), target);
+        expect(errors).toContain('build cannot import Bun builtin: "bun"');
+        expect(await Bun.file(output).exists()).toBe(false);
+      });
+    }
+
+    // For node, `import.meta.main` becomes a use of a `require` that the bundle has to define.
+    it(`${backend}: a hashbang entry that reads import.meta.main loads with target node`, async () => {
+      using dir = tempDir("hashbang-explicit-target", {
+        "cli.js": `${hashbang}\nexport const isMain = import.meta.main;\n`,
+      });
+      const { errors, output } = await build(backend, String(dir), "node");
+      expect(errors).toBe("");
+      expect(typeof (await import(output)).isMain).toBe("boolean");
+    });
   }
 });

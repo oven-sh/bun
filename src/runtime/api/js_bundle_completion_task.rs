@@ -1018,6 +1018,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
         };
         transpiler.options.no_macros = config.no_macros;
+        transpiler.options.target_defaults_from_hashbang = config.target_defaults_from_hashbang;
         transpiler.options.loaders =
             options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
         transpiler

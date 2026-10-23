@@ -83,9 +83,6 @@ public:
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }
     bool isOtherSideClosedByRequest(uint8_t side) const { return state(1 - side) & ClosedByRequest; }
 
-    // Equality is by identity; used to reject "port posted through itself".
-    bool operator==(const MessagePortPipe& other) const { return this == &other; }
-
 private:
     MessagePortPipe() = default;
 

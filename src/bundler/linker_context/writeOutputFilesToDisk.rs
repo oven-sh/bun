@@ -21,8 +21,7 @@ use crate::output_file::{
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
 use bun_sys::{
-    FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
-    write_file_with_path_buffer,
+    FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, write_file_with_path_buffer,
 };
 
 use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
@@ -421,7 +420,6 @@ pub(crate) fn write_output_files_to_disk(
                             &mut pathbuf,
                             &WriteFileArgs {
                                 data: WriteFileData::Buffer { buffer: &bytecode },
-                                encoding: WriteFileEncoding::Buffer,
                                 mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
                                     0o755
                                 } else {
@@ -494,7 +492,6 @@ pub(crate) fn write_output_files_to_disk(
                 data: WriteFileData::Buffer {
                     buffer: &code_result.buffer,
                 },
-                encoding: WriteFileEncoding::Buffer,
                 mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
                     0o755
                 } else {

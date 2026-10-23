@@ -17,7 +17,6 @@ interface NativeCall {
 
 interface WrapperCall {
   type: NativeCallType;
-  wrap_kind: "new-function";
   symbol_target: string;
   symbol_generated: string;
   display_name: string;
@@ -157,7 +156,6 @@ export function registerNativeCall(
   if (create_fn_len != null) {
     wrapperCalls.push({
       type: call_type,
-      wrap_kind: "new-function",
       symbol_target: symbol,
       symbol_generated: "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_"),
       display_name: callBaseName(symbol),
@@ -206,28 +204,25 @@ export function getJS2NativeCPP() {
     );
 
   const wrapperCallStrings = wrapperCalls.map(x => {
-    if (x.wrap_kind === "new-function") {
-      return [
-        (x.type === "rust" &&
-          externs.push(
-            `BUN_DECLARE_HOST_FUNCTION(${symbol({
-              type: "rust",
-              symbol: x.symbol_target,
-              filename: x.filename,
-            })});`,
-          ),
-        "") || "",
-        `static JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
-        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${symbol({
-          type: x.type,
-          symbol: x.symbol_target,
+    return [
+      (x.type === "rust" &&
+        externs.push(
+          `BUN_DECLARE_HOST_FUNCTION(${symbol({
+            type: "rust",
+            symbol: x.symbol_target,
+            filename: x.filename,
+          })});`,
+        ),
+      "") || "",
+      `static JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+      `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${symbol({
+        type: x.type,
+        symbol: x.symbol_target,
 
-          filename: x.filename,
-        })});`,
-        `}`,
-      ].join("\n");
-    }
-    throw new Error(`Unknown wrap kind ${x.wrap_kind}`);
+        filename: x.filename,
+      })});`,
+      `}`,
+    ].join("\n");
   });
 
   return [
@@ -239,7 +234,7 @@ export function getJS2NativeCPP() {
     "using namespace Bun;",
     "using namespace JSC;",
     "using namespace WebCore;" + "\n",
-    // One out-of-line JSFunction::create for all the `new-function` wrappers below.
+    // One out-of-line JSFunction::create for all the `js2native_wrap_*` wrappers below.
     `static NEVER_INLINE JSC::JSValue js2nativeNewFunction(Zig::GlobalObject* globalObject, unsigned length, ASCIILiteral name, JSC::NativeFunction function) {`,
     `  return JSC::JSFunction::create(globalObject->vm(), globalObject, length, name, function, JSC::ImplementationVisibility::Public);`,
     `}` + "\n",
@@ -384,7 +379,7 @@ export function getJS2NativeRust() {
     ``,
     `#[allow(dead_code, unreachable_pub, unused)]`,
     `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,
-    `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
+    `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};`,
     ``,
     ...thunks,
     `// exported symbols: ${seen.size}`,

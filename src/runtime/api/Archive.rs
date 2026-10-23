@@ -724,7 +724,6 @@ impl ExtractContext {
             &mut (),
             libarchive::ExtractOptions {
                 depth_to_skip: 0,
-                close_handles: true,
                 log: false,
                 npm: false,
                 skip_symlinks: false,

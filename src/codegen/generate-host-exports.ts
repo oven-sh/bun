@@ -207,12 +207,7 @@ const errors: string[] = [];
 const seenSymbols = new Map<string, string>();
 
 for (const { dir, crate } of scanRoots) {
-  const files = readdirRecursive(dir).filter(
-    f =>
-      f.endsWith(".rs") &&
-      !f.includes(`${path.sep}bindings${path.sep}`) && // C++-side .rs vendor stubs
-      !f.endsWith("generated_host_exports.rs"),
-  );
+  const files = readdirRecursive(dir).filter(f => f.endsWith(".rs") && !f.endsWith("generated_host_exports.rs"));
   for (const file of files) {
     const src = readFileSync(file, "utf8");
     if (!src.includes("HOST_EXPORT(")) continue;

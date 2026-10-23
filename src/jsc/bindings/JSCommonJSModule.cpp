@@ -928,13 +928,6 @@ public:
     {
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCommonJSModulePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
@@ -942,6 +935,7 @@ public:
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
     }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCommonJSModulePrototype, JSCommonJSModulePrototype::Base);
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 

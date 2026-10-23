@@ -768,12 +768,6 @@ public:
         return prototype;
     }
     DECLARE_INFO;
-    template<typename CellType, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSModuleGraphPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         auto* structure = createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
@@ -788,6 +782,7 @@ private:
     }
     void finishCreation(VM&, JSGlobalObject*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSModuleGraphPrototype, JSModuleGraphPrototype::Base);
 
 static const HashTableValue JSModuleGraphPrototypeTableValues[] = {
     { "import"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_import, 1 } },

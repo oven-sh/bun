@@ -18,6 +18,7 @@ import grpc from "@grpc/grpc-js";
 import { Client, Server, ServerCredentials } from "@grpc/grpc-js/build/src";
 import { ConnectivityState } from "@grpc/grpc-js/build/src/connectivity-state";
 import { afterAll, beforeAll, describe, it } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import assert from "node:assert";
 
 const clientInsecureCreds = grpc.credentials.createInsecure();
@@ -43,18 +44,30 @@ describe("Client", () => {
     server.tryShutdown(done);
   });
 
-  it("should call the waitForReady callback only once, when channel connectivity state is READY", done => {
-    const deadline = Date.now() + 100;
+  it("should call the waitForReady callback only once, when channel connectivity state is READY", async () => {
+    // The channel arms a deadline timer while it connects and must clear it
+    // when it reaches READY. The deadline only has to outlast the connect:
+    // upstream uses 100 ms, which a sanitizer or debug build cannot meet (the
+    // first connect takes about 1 s on a debug build). Wait for READY first,
+    // then for the deadline to pass, and only then count the calls.
+    const deadline = Date.now() + (isASAN || isDebug ? 2000 : 100);
+    const ready = Promise.withResolvers<void>();
     let calledTimes = 0;
     client.waitForReady(deadline, err => {
-      assert.ifError(err);
-      assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
       calledTimes += 1;
+      try {
+        assert.ifError(err);
+        assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
+        ready.resolve();
+      } catch (e) {
+        ready.reject(e);
+      }
     });
-    setTimeout(() => {
-      assert.equal(calledTimes, 1);
-      done();
-    }, deadline - Date.now());
+    await ready.promise;
+    // A deadline timer that was not cleared expires at `deadline`. Timers run
+    // in expiry order, so sleeping past the deadline runs it first.
+    await Bun.sleep(deadline - Date.now() + 1);
+    assert.equal(calledTimes, 1);
   });
 });
 

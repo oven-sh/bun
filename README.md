@@ -76,7 +76,7 @@ To upgrade to the latest version of Bun, run:
 bun upgrade
 ```
 
-Bun automatically releases a canary build on every commit to `main`. To upgrade to the latest canary build, run:
+Bun automatically releases a canary build on every commit to the `main` branch. To upgrade to the latest canary build, run:
 
 ```sh
 bun upgrade --canary

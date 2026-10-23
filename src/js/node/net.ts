@@ -1587,8 +1587,10 @@ function onconnection(err, clientHandle) {
   // Use the server's normalized fields so the per-socket flag agrees with the
   // native listener: node's tlsConnectionListener passes `this.requestCert`
   // (`=== true`-normalized), not the raw option.
-  _socket._requestCert = self._requestCert;
-  _socket._rejectUnauthorized = self._rejectUnauthorized;
+  if (typeof _socket[bunTlsSymbol] === "function") {
+    _socket._requestCert = self._requestCert;
+    _socket._rejectUnauthorized = self._rejectUnauthorized;
+  }
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 
@@ -2315,7 +2317,7 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(destroyNT, this, ex);
       return this;
     }
-    this.servername = options.servername;
+    if (typeof this[bunTlsSymbol] === "function") this.servername = options.servername;
     if (socket) {
       connection = socket;
     }

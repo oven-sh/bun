@@ -1935,6 +1935,11 @@ function kConnectDispatch(self, req, opts) {
   req.dispatching = true;
   const promise = doConnect(self._handle, opts);
   req.dispatching = false;
+  // A handle that refuses the connect dials nothing: doConnect returns the errno.
+  if (typeof promise === "number") {
+    traceConnectEnd(req);
+    return promise;
+  }
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
@@ -2320,7 +2325,7 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
-      doConnect(this._handle, {
+      const opened = doConnect(this._handle, {
         data: this,
         fd: fd,
         ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
@@ -2328,7 +2333,13 @@ Socket.prototype.connect = function connect(...args) {
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
         pauseOnConnect,
-      }).catch(error => {
+      });
+      // libuv opens an fd only on a handle that has none.
+      if (typeof opened === "number") {
+        this.destroy(new ErrnoException(opened, "open"));
+        return this;
+      }
+      opened.catch(error => {
         if (!this.destroyed) {
           this.emit("error", error);
           this.emit("close", true);
@@ -3371,6 +3382,8 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
       addressType,
     );
 
+    // A handle that still owns a socket is bound already: libuv reports the EINVAL of its bind(2).
+    if (ownsSocket(self._handle)) err = uv().UV_EINVAL;
     err = checkBindError(err, localPort, self._handle);
     if (err) {
       const ex = new ExceptionWithHostPort(err, "bind", localAddress, localPort);
@@ -3425,9 +3438,20 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
   }
 
   if (err) {
-    const ex = new ExceptionWithHostPort(err, "connect", address, port);
+    const ex = new ExceptionWithHostPort(err, "connect", address, port, boundAddress(self._handle));
     self.destroy(ex);
   }
+}
+
+// Whether a native handle owns a socket: one that is connecting, connected, or not closed yet.
+function ownsSocket(handle) {
+  return handle != null && handle.readyState !== -1;
+}
+
+// The "- Local (ip:port)" detail: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1161-L1170
+function boundAddress(handle) {
+  const address = handle?.localAddress;
+  if (address) return address + ":" + handle.localPort;
 }
 
 function internalConnectMultiple(context, canceled?) {
@@ -3455,6 +3479,11 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
+    // Node closes this socket with no event and dials on: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1201-L1203
+    if (ownsSocket(self._handle)) {
+      self.destroy(context.errors[context.errors.length - 1]);
+      return;
+    }
     self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));
   }
 
@@ -3482,6 +3511,8 @@ function internalConnectMultiple(context, canceled?) {
       addressType,
     );
 
+    // As in internalConnect.
+    if (ownsSocket(self._handle)) err = uv().UV_EINVAL;
     err = checkBindError(err, localPort, self._handle);
     if (err) {
       ArrayPrototypePush.$call(context.errors, new ExceptionWithHostPort(err, "bind", localAddress, localPort));
@@ -3520,7 +3551,7 @@ function internalConnectMultiple(context, canceled?) {
   err = kConnectTcp(self, addressType, req, address, port);
 
   if (err) {
-    const ex = new ExceptionWithHostPort(err, "connect", address, port);
+    const ex = new ExceptionWithHostPort(err, "connect", address, port, boundAddress(self._handle));
     ArrayPrototypePush.$call(context.errors, ex);
 
     self.emit("connectionAttemptFailed", address, port, addressType, ex);

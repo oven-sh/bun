@@ -518,7 +518,7 @@ describe("net.Socket write", () => {
     }),
   );
 
-  it("should allow reconnecting after end()", async () => {
+  it("should allow reconnecting after end(), once the socket emitted 'close'", async () => {
     const server = new Server(socket => socket.end());
     const port = await new Promise<number>(resolve => {
       server.once("listening", () => resolve((server.address() as import("node:net").AddressInfo).port));
@@ -534,7 +534,9 @@ describe("net.Socket write", () => {
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            // The handle owns its socket until then: a connect() before it is EISCONN.
+            socket.once("close", resolve);
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");

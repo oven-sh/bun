@@ -1886,6 +1886,17 @@ pub(crate) struct ComponentParser {
     pub(crate) from: Option<RelativeComponentParser>,
 }
 
+/// Whether a relative color's `from` origin converts to `T`: a `light-dark()`
+/// needs both halves; `currentColor` and system colors never convert.
+fn light_dark_origin_convertible<T: Colorspace>(from: &CssColor) -> bool {
+    match from {
+        CssColor::LightDark { light, dark } => {
+            light_dark_origin_convertible::<T>(light) && light_dark_origin_convertible::<T>(dark)
+        }
+        _ => T::try_from_css_color(from).is_some(),
+    }
+}
+
 impl ComponentParser {
     pub(crate) fn new(allow_none: bool) -> ComponentParser {
         ComponentParser {
@@ -1928,11 +1939,25 @@ impl ComponentParser {
         F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
     {
         if let CssColor::LightDark { light, dark } = from {
-            let state = input.state();
-            let light = self.parse_from::<T, C, F>(*light, input, func)?;
-            input.reset(&state);
-            let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
-            return Ok(C::light_dark_owned(light, dark));
+            // Fail before parsing the component range: otherwise the light
+            // half parses the whole alpha token list first, so a dark half that
+            // cannot convert makes a nested relative color O(n^5) instead of
+            // failing fast. The outcome (an unparsed token list) is unchanged.
+            if !light_dark_origin_convertible::<T>(&light)
+                || !light_dark_origin_convertible::<T>(&dark)
+            {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
+            input.enter_light_dark_origin()?;
+            let result = (|| -> CssResult<C> {
+                let state = input.state();
+                let light = self.parse_from::<T, C, F>(*light, input, func)?;
+                input.reset(&state);
+                let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
+                Ok(C::light_dark_owned(light, dark))
+            })();
+            input.exit_light_dark_origin();
+            return result;
         }
 
         let new_from = match T::try_from_css_color(&from) {

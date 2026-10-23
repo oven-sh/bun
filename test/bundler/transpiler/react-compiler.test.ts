@@ -5405,7 +5405,7 @@ test("react-compiler keeps the value and the order of member updates in a callba
     "cell.now[key]++",
     "cell.now[note(key)]++",
     "(cell.now[note(key)] += 2)",
-    "--hold(cell.now).b",
+    "(--hold(cell.now).b)",
     "(hold(box).a -= 1)",
     "box.a++",
     "box.a",

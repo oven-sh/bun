@@ -1505,6 +1505,36 @@ ${temp_dir}`
     });
   });
 
+  describe(":", () => {
+    TestBuilder.command`:`.runAsTest("exits 0 and writes nothing");
+    TestBuilder.command`: a b c`.runAsTest("ignores its arguments");
+    TestBuilder.command`false || :`.runAsTest("after ||");
+    TestBuilder.command`false ||:`.runAsTest("after || without a space");
+    TestBuilder.command`if :; then echo yes; fi`.stdout("yes\n").runAsTest("as an if condition");
+    TestBuilder.command`N=$(false || :) && echo ok`
+      .stdout("ok\n")
+      .stderr("")
+      .runAsTest("leaves stderr empty inside a command substitution");
+
+    TestBuilder.command`: $(touch expanded.txt)`.fileEquals("expanded.txt", "").runAsTest("expands its arguments");
+
+    TestBuilder.command`: > out.txt`
+      .file("out.txt", "old")
+      .fileEquals("out.txt", "")
+      .runAsTest("truncates the file of an output redirect");
+
+    TestBuilder.command`: < missing.txt`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr_contains("missing.txt")
+      .runAsTest("fails when its redirect fails");
+
+    TestBuilder.command`: > $EMPTY`
+      .exitCode(1)
+      .stderr("bun: ambiguous redirect: at `:`\n")
+      .runAsTest("is named in a redirect error");
+  });
+
   /**
    *
    */

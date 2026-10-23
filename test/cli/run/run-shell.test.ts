@@ -37,6 +37,24 @@ describe.concurrent("run-shell", () => {
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
+
+  test.each([":", "false || :"])('--shell=bun runs the package.json script "%s"', async script => {
+    using dir = tempDir("run-shell-colon", {
+      "package.json": JSON.stringify({ scripts: { sample: script } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "sample"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: `$ ${script}\n`, exitCode: 0 });
+  });
 });
 
 test.skipIf(isWindows)(

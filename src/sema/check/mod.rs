@@ -1019,6 +1019,7 @@ impl<'s> Program<'s> {
             reported_unreachable_nodes: Vec::new(),
             renamed_binding_elements_in_types: Vec::new(),
             unvisited_exprs: Vec::new(),
+            import_types_with_arguments: Vec::new(),
             checked_with_contextual_type: Vec::new(),
             contextual_signatures_at_check: Vec::new(),
             call_resolution_errors: None,
@@ -1938,6 +1939,8 @@ pub struct Checker<'p, 's> {
     /// (`checkVariableLikeDeclaration`). Such an expression is checked only if the type of a
     /// declaration is computed from it.
     unvisited_exprs: Vec<(u32, ExprId)>,
+    /// The import types with type arguments that `checkSourceFile` has visited. See `never_check_deferred_types`.
+    import_types_with_arguments: Vec<TypeNodeId>,
     /// The initializers in the parameters of functions without a body that `getTypeFromBindingElement`
     /// has checked. `checkExpressionWithContextualType` doesn't store a type, and with a type parameter in scope nothing
     /// else does either.

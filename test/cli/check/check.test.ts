@@ -16664,6 +16664,54 @@ declare const i9: P7<number> & { z: 1 }; i9.m();
       expect(exitCode).toBe(1);
     });
 
+    test("what's in a type literal or a function type in the type arguments of an import type is only checked on demand", async () => {
+      using dir = project({
+        "w.ts": `export interface W<T> { w: T }
+export interface V<T extends string> { v: T }
+`,
+        "a.ts": `// Resolved with the import type.
+export declare const a1: import("./w").W<A1>;
+export declare const a2: import("./w").W<A2[] | [A3] | Array<A4> | keyof A5 | A6["a"] | \`\${A7}\`>;
+export declare const a3: import("./w").W<A8 extends 1 ? 2 : 3>;
+export declare const a4: import("./w").W<import("./w").W<A9>>;
+export declare const a5: import("./w").W<import("./missing").T | Array<string, number>>;
+// Resolved on demand.
+export declare const b1: import("./w").W<{ a: B1; b(): B2; (): B3; [key: string]: B4 }>;
+export declare const b2: import("./w").W<((a: B5) => B6) | (new () => B7)>;
+export declare const b3: import("./w").W<import("./w").W<{ a: B8 }>[]>;
+export declare const b4: import("./w").W<{ a: import("./missing").T; b: Array<string, number> }>;
+export declare const c1: import("./w").W<{ a: C1; b: C2; c: { d: C3 } }>;
+c1.w.a;
+export declare const c2: import("./w").W<(a: C4) => C5>;
+c2.w(1);
+export declare const c3: import("./w").V<{ a: C6 }>;
+// A type reference's type arguments are visited.
+export declare const d1: Array<{ a: D1 }>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,42): error TS2304: Cannot find name 'A1'.
+        a.ts(3,42): error TS2304: Cannot find name 'A2'.
+        a.ts(3,50): error TS2304: Cannot find name 'A3'.
+        a.ts(3,62): error TS2304: Cannot find name 'A4'.
+        a.ts(3,74): error TS2304: Cannot find name 'A5'.
+        a.ts(3,79): error TS2304: Cannot find name 'A6'.
+        a.ts(3,92): error TS2304: Cannot find name 'A7'.
+        a.ts(4,42): error TS2304: Cannot find name 'A8'.
+        a.ts(5,58): error TS2304: Cannot find name 'A9'.
+        a.ts(6,49): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(6,66): error TS2314: Generic type 'Array<T>' requires 1 type argument(s).
+        a.ts(12,47): error TS2304: Cannot find name 'C1'.
+        a.ts(14,46): error TS2304: Cannot find name 'C4'.
+        a.ts(14,53): error TS2304: Cannot find name 'C5'.
+        a.ts(16,42): error TS2344: Type '{ a: C6; }' does not satisfy the constraint 'string'.
+        a.ts(16,47): error TS2304: Cannot find name 'C6'.
+        a.ts(18,37): error TS2304: Cannot find name 'D1'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

@@ -59,6 +59,7 @@ impl<'s> Checker<'_, 's> {
         self.is_deferred_node.clear();
         self.renamed_binding_elements_in_types.clear();
         self.unvisited_exprs.clear();
+        self.import_types_with_arguments.clear();
         let hir = self.hir(file);
         // `parseDeclaration`, `parseClassElement`: outside a declaration file only a `declare`
         // sets `NodeFlagsAmbient`.
@@ -137,6 +138,9 @@ impl<'s> Checker<'_, 's> {
         }
         self.never_check_with_bodies(file);
         self.never_check_specifier_expressions(file);
+        for node in std::mem::take(&mut self.import_types_with_arguments) {
+            self.never_check_deferred_types(file, self.hir(file).node(node));
+        }
     }
 
     /// True if `pos` is in a range given to `never_check`.
@@ -1240,6 +1244,8 @@ impl<'s> Checker<'_, 's> {
             TypeNodeKind::Import { spec, args, .. } => {
                 if spec.is_none() {
                     self.check_type_nodes(file, args);
+                } else if !args.is_empty() {
+                    self.import_types_with_arguments.push(node);
                 }
                 self.check_type_reference_or_import(file, node)
             }

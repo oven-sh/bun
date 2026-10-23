@@ -345,6 +345,24 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `node` is an import type, or it's below the type arguments of one, which `checkImportType` doesn't visit.
+    /// `getTypeFromTypeNode` resolves them, and reports what's wrong with them, down to the type literals and function
+    /// types. What's in those is resolved when a query needs it.
+    pub(super) fn never_check_deferred_types(&mut self, file: FileId, node: Node) {
+        let hir = self.hir(file);
+        if let NodeData::Type(t) = hir.data(node)
+            && matches!(hir[t].kind, TypeNodeKind::Object(_) | TypeNodeKind::Fn(_))
+        {
+            // 2344 is reported at the type argument.
+            let range = (hir[t].pos + 1, self.end_of_type_node(file, t));
+            return self.never_check_unless_visited_by_query(file, node, range);
+        }
+        hir.for_each_child(node, &mut |child| {
+            self.never_check_deferred_types(file, child);
+            false
+        });
+    }
+
     /// The ranges of the outermost expressions, type nodes and declared names below `node` whose type is stored.
     fn ranges_visited_by_queries(
         &mut self,

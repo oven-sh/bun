@@ -1957,8 +1957,7 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// The env's global, not one cached at creation: `bun test --isolate`
-    /// retargets the env when the creating file's global is swapped out.
+    /// Read through the env, which `bun test --isolate` retargets; never cached.
     fn global(&self) -> &JSGlobalObject {
         // SAFETY: the work holds a ref on its env.
         unsafe { &*self.env.get() }.to_js()

@@ -427,6 +427,22 @@ function cancelPendingWriteNT(self) {
   const reason = self.encrypted ? "Canceled because of SSL destruction" : undefined;
   callback(new ErrnoException(uv().UV_ECANCELED, "write", reason));
 }
+// The 'end' of a clean close reports the handshake that it cut short (onConnectEnd), and that destroy() cancels the
+// write that waited for the handshake. So the write fails behind the 'end', and only if the 'end' destroyed nothing.
+function endReportsHandshake(self) {
+  return (
+    !self.destroyed &&
+    !self._hadError &&
+    self.secureConnecting &&
+    self.listenerCount(kReadError) === 0 &&
+    self.listenerCount("end", onConnectEnd) > 0
+  );
+}
+function failWriteBehindEndNT(self, pendingWrite) {
+  if (self[kwriteCallback] !== pendingWrite || self.destroyed) return;
+  self[kwriteCallback] = null;
+  pendingWrite($ERR_SOCKET_CLOSED());
+}
 // Node's errnoException(status, 'write') for the negative errno $write returns.
 function writeErrnoException(negErrno) {
   let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
@@ -1780,6 +1796,7 @@ const SocketHandlers2 = {
     // (mirrors SocketEmitEndNT).
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
+      if (endReportsHandshake(self)) return void process.nextTick(failWriteBehindEndNT, self, pendingWrite);
       self[kwriteCallback] = null;
       pendingWrite($ERR_SOCKET_CLOSED());
     }

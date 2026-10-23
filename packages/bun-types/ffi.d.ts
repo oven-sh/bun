@@ -479,9 +479,9 @@ declare module "bun:ffi" {
      * @example
      * From JavaScript:
      * ```ts
-     * import { dlopen, CString } from "bun:ffi"
+     * import { dlopen, CString, suffix } from "bun:ffi"
      *
-     * const lib = dlopen('z', {
+     * const lib = dlopen(`z.${suffix}`, {
      *    version: {
      *      returns: "ptr",
      *   }

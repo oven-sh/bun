@@ -1662,7 +1662,7 @@ export class ArrayType extends Type {
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(
       !(withoutModifiers(element) instanceof RangeType),
-      "a range reports the name of its argument, which an element does not have",
+      "the converter of a range takes no context, which is what names an element",
     );
     refuseOutsideArgument(element);
     assert(
@@ -2068,7 +2068,7 @@ export class UnionType extends NamedType {
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
       assert(
         !(type instanceof RangeType),
-        `${name}: a range reports the name of its argument, which a union does not know`,
+        `${name}: the converter of a range takes no context, which is what names an alternative`,
       );
     }
     const chosen = new Set([...this.alternativesByKind.values()].flat());
@@ -2152,7 +2152,7 @@ export interface SignatureOptions {
   throws?: boolean;
   /** The function returns a promise: what the body or the conversion of an argument throws rejects one, and nothing is thrown. */
   rejects?: boolean;
-  /** A call with fewer arguments throws `ERR_MISSING_ARGS`. Without it nothing counts them: one that was not passed is `undefined`. */
+  /** A call with fewer arguments throws `ERR_MISSING_ARGS`. Defaults to 0: an argument that was not passed is `undefined`. */
   requiredArguments?: number;
   /** Path of the Rust function. Defaults to the module's path plus the export's name in snake_case. */
   rustPath?: string;
@@ -2181,14 +2181,14 @@ export class Signature {
   readonly capability: Capability;
   readonly throws: boolean;
   readonly rejects: boolean;
-  readonly requiredArguments: number | undefined;
+  readonly requiredArguments: number;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
   /** `hasThisValue`: the body is also handed its own JS object. */
   constructor(options: SignatureOptions, hasThisValue = false) {
     this.length = options.length;
     this.rejects = options.rejects ?? false;
-    this.requiredArguments = options.requiredArguments;
+    this.requiredArguments = options.requiredArguments ?? 0;
     const { args = {}, expected = {} } = options;
     this.args = Object.entries(args).map(([name, type]) => ({
       name,
@@ -2243,20 +2243,21 @@ export class Signature {
     refuseOutsideArgument(this.returns);
     assert(!this.rejects || this.returns.holdsJSValue, "rejects: the result is a promise");
     assert(
-      this.requiredArguments === undefined ||
-        (Number.isInteger(this.requiredArguments) &&
-          this.requiredArguments >= 1 &&
-          this.requiredArguments <= this.args.length),
+      Number.isInteger(this.requiredArguments) &&
+        this.requiredArguments >= 0 &&
+        this.requiredArguments <= this.args.length,
       `requiredArguments: ${this.requiredArguments} is not a count of the arguments`,
     );
+    for (const { name, type } of this.args.slice(0, this.requiredArguments))
+      assert(!isIfPassed(type), `${name}: .ifPassed is never absent in one of the requiredArguments`);
     assert(
       !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
       'returning a JS value takes capability: "heap" or "js"',
     );
   }
-  /** The arguments up to the last that is not optional: what a caller writes at least. */
+  /** The arguments up to the last that is not optional, and the `requiredArguments`: what a caller writes at least. */
   get requiredCount(): number {
-    return this.args.findLastIndex(arg => !arg.type.isOptional) + 1;
+    return Math.max(this.args.findLastIndex(arg => !arg.type.isOptional) + 1, this.requiredArguments);
   }
 }
 
@@ -2278,7 +2279,7 @@ function refuseOutsideArgument(type: Type, name?: string): void {
   assert(!refusal, name ? `${name}: ${refusal}` : (refusal ?? ""));
 }
 
-/** The converter of a range takes the name and no context. */
+/** The converter of a range takes no context. */
 function refuseExpectedOfRange(name: string, type: Type): void {
   assert(!(withoutModifiers(type) instanceof RangeType), `expected: ${name} is a range, which has its own errors`);
 }

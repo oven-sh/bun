@@ -293,7 +293,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   isPassed: $bindgen("bindgen_test.bind.ts", "isPassed"),
   isPassedAfterRequired: $bindgen("bindgen_test.bind.ts", "isPassedAfterRequired"),
   requiredPair: $bindgen("bindgen_test.bind.ts", "requiredPair"),
-  requiredOfOverloads: $bindgen("bindgen_test.bind.ts", "requiredOfOverloads"),
+  requiredOverloaded: $bindgen("bindgen_test.bind.ts", "requiredOverloaded"),
   lengthWithValue: $bindgen("bindgen_test.bind.ts", "lengthWithValue"),
   counterWithValue: $bindgen("bindgen_test.bind.ts", "counterWithValue"),
   keptString: $bindgen("bindgen_test.bind.ts", "keptString"),

@@ -205,8 +205,7 @@ function layoutAssert(cppType: string, type: Type): string {
 
 function humanReadableEnumeration(type: EnumerationType): string {
   const quoted = type.spellings.map(([canonical]) => asciiLiteral(`"${canonical}"`).slice(1, -3));
-  if (quoted.length <= 2) return quoted.join(" or ");
-  return `${quoted.slice(0, -1).join(", ")}, or ${quoted.at(-1)}`;
+  return new Intl.ListFormat("en", { type: "disjunction" }).format(quoted);
 }
 
 /** Value-initialization zeroes a struct whose constructor is implicit, and these hold the buffers of string views. */
@@ -1187,7 +1186,7 @@ const cppLeadingOfFunction = (fn: FunctionDefinition) => [
 
 /** `requiredArguments`. As in Node, the message names every one of them, however many the call has. */
 function cppThrowIfArgumentsMissing(signature: Signature): string {
-  const names = signature.args.slice(0, signature.requiredArguments ?? 0).map(arg => `"${arg.name}"`);
+  const names = signature.args.slice(0, signature.requiredArguments).map(arg => `"${arg.name}"`);
   if (names.length === 0) return "";
   const message = `The ${new Intl.ListFormat("en").format(names)} argument${names.length > 1 ? "s" : ""} must be specified`;
   return `    if (callFrame->argumentCount() < ${names.length}) [[unlikely]]
@@ -1997,7 +1996,10 @@ ${indent(
 
 export function dts(files: readonly SchemaFile[]): string {
   const parameters = (signature: Signature) => {
-    const lastRequired = signature.args.findLastIndex(arg => !arg.type.takesUndefined);
+    const lastRequired = Math.max(
+      signature.args.findLastIndex(arg => !arg.type.takesUndefined),
+      signature.requiredArguments - 1,
+    );
     return signature.args
       .map((arg, i) =>
         arg.type instanceof VariadicType

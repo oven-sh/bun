@@ -175,9 +175,10 @@ throws and what the conversion of an argument throws become the reason of a reje
 
 An argument that was not passed is `undefined`, so `f()` and `f(undefined)` are the same call and the type of the
 argument reports it. With `requiredArguments: 1`, a call that has fewer arguments than that throws `ERR_MISSING_ARGS`
-before any is converted, as WebIDL asks of a Web API: `fetch()`, `URL.revokeObjectURL()`. The message names them as
-Node's does, `The "url" argument must be specified`, by the first signature of overloads. It also goes on a method
-and on `construct`.
+before any is converted, as WebIDL asks of a Web API: `URL.revokeObjectURL()`, and `fetch()`, which has `rejects`
+and so rejects with it. The message is Node's, `The "url" argument must be specified`. It names all the
+`requiredArguments`, however many the call has, as the first signature of overloads calls them. TypeScript and
+`.length` count them as required. The key also goes on a method and on `construct`.
 
 ### Overloads
 
@@ -253,6 +254,9 @@ One JS type has one name; a modifier picks the Rust form. The last four are name
 types: each is called what it is exported as, and has to be exported. It is used by
 schemas of the crate it is generated into. A member or an alternative also names a C++
 field, so one that is a C++ keyword is refused: a member takes a `rustName`.
+
+An array is what `Array.isArray` says is one, `Array.prototype` too, except a proxy of an array: that is an object
+like any other. Only a dictionary refuses the proxy along with the array.
 
 Only the promise calls a reaction, with the context it was given, so nothing tests that argument.
 `b.promisePtr` is the `*mut T` that `JSValue::then` was given. `b.nativePromiseContext` is what `take` of the cell

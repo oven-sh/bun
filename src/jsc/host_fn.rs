@@ -125,11 +125,9 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
     );
 }
 
-// ──────────────────────── codegen-thunk dispatch helpers ────────────────────────
+// ──────────────────────── safe codegen-thunk entry points ────────────────────────
 //
 // The thunks of `generate-host-exports.ts` and `generate-jssink.ts` call these.
-
-// ──────────────────────── safe codegen-thunk entry points ────────────────────────
 
 /// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>`.
 #[track_caller]

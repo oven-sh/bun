@@ -113,7 +113,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.namespace({ f: { [key]: true } })).toThrow(`f: a function of a namespace has no ${key}`);
   }
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
-  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow("a range reports the name of its argument");
+  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow("the converter of a range takes no context");
   const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
   expect(() => b.array(stringOrBuffer)).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.dictionary({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
@@ -170,10 +170,14 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     ".ifPassed is not for overloads",
   );
   expect(() => b.fn({ returns: b.i32, rejects: true })).toThrow("rejects: the result is a promise");
-  for (const requiredArguments of [0, 2, 0.5])
+  for (const requiredArguments of [-1, 2, 0.5])
     expect(() => b.fn({ args: { a: b.i32 }, requiredArguments })).toThrow(
       `requiredArguments: ${requiredArguments} is not a count of the arguments`,
     );
+  expect(() => b.fn({ args: { a: b.any.ifPassed }, requiredArguments: 1 })).toThrow(
+    "a: .ifPassed is never absent in one of the requiredArguments",
+  );
+  expect(b.fn({ args: { a: b.i32.optional, b: b.i32.optional }, requiredArguments: 1 }).length).toBe(1);
   expect(() => b.overloads({ args: { a: b.i32 }, requiredArguments: 1 }, { args: { a: b.string } })).toThrow(
     "every overload gives requiredArguments the same value",
   );
@@ -910,9 +914,9 @@ describe("functions", () => {
     expect(() => bindgen.requiredPair(1, undefined)).toThrow("b must be a number");
     expect(bindgen.requiredPair(1, 2)).toBe("two numbers 1 2");
 
-    expect(() => bindgen.requiredOfOverloads()).toThrow(missing('"text"'));
-    expect(() => bindgen.requiredOfOverloads("a")).toThrow("upper must be a boolean");
-    expect(bindgen.requiredOfOverloads(1)).toBe("number 1");
+    expect(() => bindgen.requiredOverloaded()).toThrow(missing('"text"'));
+    expect(() => bindgen.requiredOverloaded("a")).toThrow("upper must be a boolean");
+    expect(bindgen.requiredOverloaded(1)).toBe("number 1");
 
     const rejected = bindgen.requiredFiniteLater();
     expect(rejected).toBeInstanceOf(Promise);

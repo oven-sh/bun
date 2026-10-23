@@ -439,7 +439,7 @@ export const requiredPair = b.fn({
   requiredArguments: 2,
   rustPath: "crate::bindgen_test::overloaded_two_numbers",
 });
-export const requiredOfOverloads = b.overloads(
+export const requiredOverloaded = b.overloads(
   {
     args: { text: b.string.utf8, upper: b.bool },
     returns: b.string.utf8,

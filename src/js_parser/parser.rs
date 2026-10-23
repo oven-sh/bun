@@ -211,6 +211,11 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
+        /// Fold `typeof require` to `"function"` without bundling. Only sound
+        /// when the output binds `require` (target bun binds it from
+        /// `import.meta`); bundling is covered by `Options.bundle`.
+        pub typeof_require_is_function: bool,
+
         pub replace_exports: ReplaceableExportMap,
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
@@ -298,6 +303,7 @@ pub mod Runtime {
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
+                typeof_require_is_function: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
                 code_coverage: false,
@@ -381,6 +387,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                self.typeof_require_is_function,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 

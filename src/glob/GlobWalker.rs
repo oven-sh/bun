@@ -785,6 +785,57 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         !self.walker.followed_links.is_empty()
     }
 
+    /// Whether a followed link whose open failed is a match, or the error that the walk returns.
+    #[cold]
+    #[inline(never)]
+    fn unopened_link(
+        &mut self,
+        open_err: SysError,
+        path: &ZStr,
+        entry_name: &[u8],
+        active: &ComponentSet,
+    ) -> Maybe<bool> {
+        let cwd_fd = self.cwd_fd;
+        let walker = &mut *self.walker;
+        let open_errno = open_err.get_errno();
+        // The error of the open, or of the stat when that one shows why the link is broken.
+        let mut err = open_err;
+        // Not on Windows: many Win32 codes are EUNKNOWN there, and `statat` takes no absolute path.
+        if !is_broken_link(open_errno) && cfg!(not(windows)) {
+            // The open gives EMFILE for every link when no descriptor is left. A stat needs none.
+            match A::statat(cwd_fd, path) {
+                Ok(target) if S::ISDIR(target.st_mode as u32) => {
+                    let mut add_dir = false;
+                    let below = walker.eval_dir(active, entry_name, &mut add_dir);
+                    // The walk does not list a directory again that it is already below.
+                    let listed = below.count() != 0
+                        && (walker.followed_links.is_empty() || {
+                            walker.resolve_pending_followed_links(cwd_fd);
+                            !walker.is_followed_link_cycle(&FollowedLink::Target(target))
+                        });
+                    if !listed {
+                        return Ok(add_dir && !walker.only_files);
+                    }
+                    // Without the permission to list the directory, the link stays a broken link.
+                    if !matches!(open_errno, E::EACCES | E::EPERM) {
+                        return Err(err);
+                    }
+                }
+                Ok(_) => return Ok(walker.eval_file(active, entry_name)),
+                Err(stat_err) => match stat_err.get_errno() {
+                    // As ENOTDIR from the open: evaluated as a file.
+                    E::ENOTDIR => return Ok(walker.eval_file(active, entry_name)),
+                    errno if is_broken_link(errno) => err = stat_err,
+                    _ => {}
+                },
+            }
+        }
+        if walker.error_on_broken_symlinks {
+            return Err(err);
+        }
+        Ok(!walker.only_files && walker.eval_file(active, entry_name))
+    }
+
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
         'outer: loop {
             // Note: reshaped for borrowck — take/replace iter_state where needed.
@@ -896,15 +947,23 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
-                                            return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                &err,
-                                                symlink_full_path_z,
-                                            )));
-                                        }
-                                        if !self.walker.only_files
-                                            && self.walker.eval_file(&active, entry_name)
-                                        {
+                                        let matches = match self.unopened_link(
+                                            err,
+                                            symlink_full_path_z,
+                                            entry_name,
+                                            &active,
+                                        ) {
+                                            Err(err) => {
+                                                return Ok(Err(self
+                                                    .walker
+                                                    .handle_sys_err_with_path(
+                                                        &err,
+                                                        symlink_full_path_z,
+                                                    )));
+                                            }
+                                            Ok(matches) => matches,
+                                        };
+                                        if matches {
                                             match self.walker.prepare_matched_path_symlink(
                                                 symlink_full_path_z.as_bytes(),
                                             )? {
@@ -2261,6 +2320,11 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Free functions
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// The errnos of a link that the walk handles as broken.
+fn is_broken_link(errno: E) -> bool {
+    matches!(errno, E::ENOENT | E::ELOOP | E::ENAMETOOLONG)
+}
 
 pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];

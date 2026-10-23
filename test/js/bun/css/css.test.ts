@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -4713,7 +4713,7 @@ describe("css tests", () => {
     );
     minify_test(
       ".foo { background: -webkit-linear-gradient(bottom, yellow, blue); }",
-      ".foo{background:-webkit-linear-gradient(#ff0,#00f)}",
+      ".foo{background:-webkit-linear-gradient(bottom,#ff0,#00f)}",
     );
     minify_test(
       ".foo { background: -webkit-linear-gradient(top right, red, white, blue) }",
@@ -4725,7 +4725,7 @@ describe("css tests", () => {
     );
     minify_test(
       ".foo { background: -moz-linear-gradient(bottom, yellow, blue); }",
-      ".foo{background:-moz-linear-gradient(#ff0,#00f)}",
+      ".foo{background:-moz-linear-gradient(bottom,#ff0,#00f)}",
     );
     minify_test(
       ".foo { background: -moz-linear-gradient(top right, red, white, blue) }",
@@ -4737,12 +4737,284 @@ describe("css tests", () => {
     );
     minify_test(
       ".foo { background: -o-linear-gradient(bottom, yellow, blue); }",
-      ".foo{background:-o-linear-gradient(#ff0,#00f)}",
+      ".foo{background:-o-linear-gradient(bottom,#ff0,#00f)}",
     );
     minify_test(
       ".foo { background: -o-linear-gradient(top right, red, white, blue) }",
       ".foo{background:-o-linear-gradient(top right,red,#fff,#00f)}",
     );
+
+    // The prefixed functions use the 2011 syntax (css3-images-20110217). A keyword names the
+    // side the gradient starts from, `0deg` points right, and the default direction is `top`.
+    // So only `top` can be left out. Every other direction prints as written.
+    const legacyDirections = [
+      ["", ""],
+      ["top", ""],
+      ["bottom", "bottom"],
+      ["left", "left"],
+      ["0deg", "0deg"],
+      ["180deg", "180deg"],
+      // Every prefixed name gets the rows above. The first name also gets the rows below.
+      ["right", "right"],
+      ["top left", "top left"],
+      ["left top", "top left"],
+      ["bottom right", "bottom right"],
+      ["0", "0deg"],
+      ["90deg", "90deg"],
+      ["270deg", "270deg"],
+      ["-90deg", "-90deg"],
+      ["45deg", "45deg"],
+      ["360deg", "360deg"],
+      ["540deg", "540deg"],
+      [".5turn", ".5turn"],
+      ["200grad", "200grad"],
+      ["3.1415927rad", "180deg"],
+      ["calc(90deg + 90deg)", "180deg"],
+    ];
+    for (const name of [
+      "-webkit-linear-gradient",
+      "-moz-linear-gradient",
+      "-o-linear-gradient",
+      "-webkit-repeating-linear-gradient",
+      "-moz-repeating-linear-gradient",
+      "-o-repeating-linear-gradient",
+    ]) {
+      const directions = name === "-webkit-linear-gradient" ? legacyDirections : legacyDirections.slice(0, 6);
+      for (const [written, printed] of directions) {
+        const source = `.foo { background: ${name}(${written && written + ", "}red 10%, blue 90%) }`;
+        minify_test(source, `.foo{background:${name}(${printed && printed + ","}red 10%,#00f 90%)}`);
+        cssTest(source, `.foo { background: ${name}(${printed && printed + ", "}red 10%, #00f 90%); }`);
+      }
+    }
+    minify_test(
+      ".foo { background: -webkit-linear-gradient(top, blue 10px, yellow 20px); }",
+      ".foo{background:-webkit-linear-gradient(#00f 10px,#ff0 20px)}",
+    );
+    minify_test(
+      ".foo { background: -webkit-linear-gradient(bottom, blue 10px, yellow 20px); }",
+      ".foo{background:-webkit-linear-gradient(bottom,#00f 10px,#ff0 20px)}",
+    );
+    // A prefixed fallback in front of the standard function keeps its own direction.
+    cssTest(
+      ".foo { background: -webkit-linear-gradient(bottom, red, blue); background: linear-gradient(to top, red, blue) }",
+      ".foo { background: -webkit-linear-gradient(bottom, red, #00f); background: linear-gradient(to top, red, #00f); }",
+    );
+    // A gradient with no direction is equal to `top`, and to no other direction.
+    minify_test(
+      ".a { background: -webkit-linear-gradient(red, blue) } .b { background: -webkit-linear-gradient(top, red, blue) }",
+      ".a,.b{background:-webkit-linear-gradient(red,#00f)}",
+    );
+    minify_test(
+      ".a { background: -webkit-linear-gradient(red, blue) } .b { background: -webkit-linear-gradient(bottom, red, blue) }",
+      ".a{background:-webkit-linear-gradient(red,#00f)}.b{background:-webkit-linear-gradient(bottom,red,#00f)}",
+    );
+
+    // A prefixed copy of a standard gradient gets its direction in the 2011 syntax: the
+    // opposite side, or `90deg` minus the angle. Most vectors are from autoprefixer, by way
+    // of parcel-bundler/lightningcss#936. A default direction prints as no direction.
+    for (const [standard, legacy, printed = standard] of [
+      ["", ""],
+      ["to bottom", "", ""],
+      ["180deg", "", ""],
+      [".5turn", "", ""],
+      ["to top", "bottom"],
+      ["to right", "left"],
+      ["to left", "right"],
+      ["to top left", "bottom right"],
+      ["to left bottom", "top right", "to bottom left"],
+      ["to top right", "bottom left"],
+      ["0deg", "90deg"],
+      ["0", "90deg", "0deg"],
+      ["90deg", "0deg"],
+      ["45deg", "45deg"],
+      ["270deg", "180deg"],
+      ["-90deg", "180deg"],
+      ["540deg", "270deg"],
+      ["350.5deg", "99.5deg"],
+      ["-130deg", "220deg"],
+      ["89.9deg", ".1deg"],
+      ["1grad", "89.1deg"],
+      ["1rad", "32.704deg"],
+      [".3turn", "342deg"],
+      // Too large for an exact `450 - a` in an f32.
+      ["1e30deg", "330deg", "1e+30deg"],
+      // `359.9996deg` rounds to `360deg`, which is `0deg`.
+      ["90.0004deg", "0deg"],
+    ]) {
+      prefix_test(
+        `.foo { background-image: linear-gradient(${standard && standard + ", "}red, blue) }`,
+        `.foo {
+          background-image: -webkit-linear-gradient(${legacy && legacy + ", "}red, #00f);
+          background-image: -moz-linear-gradient(${legacy && legacy + ", "}red, #00f);
+          background-image: -o-linear-gradient(${legacy && legacy + ", "}red, #00f);
+          background-image: linear-gradient(${printed && printed + ", "}red, #00f);
+        }`,
+        { chrome: 20 << 16, firefox: 10 << 16, opera: 12 << 16 },
+      );
+    }
+    prefix_test(
+      `.foo { background-image: repeating-linear-gradient(to right, red, blue 20px) }`,
+      `.foo {
+        background-image: -webkit-repeating-linear-gradient(left, red, #00f 20px);
+        background-image: -moz-repeating-linear-gradient(left, red, #00f 20px);
+        background-image: -o-repeating-linear-gradient(left, red, #00f 20px);
+        background-image: repeating-linear-gradient(to right, red, #00f 20px);
+      }`,
+      { chrome: 20 << 16, firefox: 10 << 16, opera: 12 << 16 },
+    );
+    prefix_test(
+      `.foo { border-image-source: linear-gradient(to right, red, blue) }`,
+      `.foo {
+        border-image-source: -webkit-linear-gradient(left, red, #00f);
+        border-image-source: linear-gradient(to right, red, #00f);
+      }`,
+      { chrome: 15 << 16 },
+    );
+    // Chrome 8 also gets a `-webkit-gradient()` when the direction is a side, a corner, or
+    // one of `0deg`, `90deg`, `180deg` and `270deg`. Any other standard angle gets none.
+    for (const [standard, points, legacy, printed = standard] of [
+      ["", "0 0, 0 100%", ""],
+      ["to right", "0 0, 100% 0", "left"],
+      ["to top", "0 100%, 0 0", "bottom"],
+      ["to left", "100% 0, 0 0", "right"],
+      ["to left bottom", "100% 0, 0 100%", "top right", "to bottom left"],
+      ["to top right", "0 100%, 100% 0", "bottom left"],
+      ["90deg", "0 0, 100% 0", "0deg"],
+      ["45deg", "", "45deg"],
+      ["-90deg", "", "180deg"],
+      ["360deg", "", "90deg"],
+      ["450deg", "", "0deg"],
+      ["1turn", "", "90deg"],
+    ]) {
+      prefix_test(
+        `.foo { background-image: linear-gradient(${standard && standard + ", "}red, blue) }`,
+        `.foo {
+          ${points && `background-image: -webkit-gradient(linear, ${points}, from(red), to(#00f));`}
+          background-image: -webkit-linear-gradient(${legacy && legacy + ", "}red, #00f);
+          background-image: linear-gradient(${printed && printed + ", "}red, #00f);
+        }`,
+        { chrome: 8 << 16 },
+      );
+    }
+    // A gradient that is already prefixed gets the points that its own syntax names.
+    for (const [legacy, points, printed = legacy] of [
+      ["", "0 0, 0 100%"],
+      ["top", "0 0, 0 100%", ""],
+      ["bottom", "0 100%, 0 0"],
+      ["left", "0 0, 100% 0"],
+      ["right", "100% 0, 0 0"],
+      ["top left", "0 0, 100% 100%"],
+      ["bottom right", "100% 100%, 0 0"],
+      ["0deg", "0 0, 100% 0"],
+      ["90deg", "0 100%, 0 0"],
+      ["180deg", "100% 0, 0 0"],
+      ["270deg", "0 0, 0 100%"],
+      ["360deg", "0 0, 100% 0"],
+      ["-90deg", "0 0, 0 100%"],
+      ["90.0004deg", "0 100%, 0 0"],
+      ["45deg", ""],
+    ]) {
+      prefix_test(
+        `.foo { background-image: -webkit-linear-gradient(${legacy && legacy + ", "}red, blue) }`,
+        `.foo {
+          ${points && `background-image: -webkit-gradient(linear, ${points}, from(red), to(#00f));`}
+          background-image: -webkit-linear-gradient(${printed && printed + ", "}red, #00f);
+        }`,
+        { chrome: 8 << 16 },
+      );
+    }
+    // Under the default targets of `bun build`, a layer that needs a prefix puts that prefix
+    // on every layer of its list. These rows pin the direction of such a copy. They do not
+    // say that the copy should exist.
+    const defaultTargets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    prefix_test(
+      `.foo { background-image: linear-gradient(red, blue), image-set("a.png" 1x) }`,
+      `.foo {
+        background-image: -webkit-linear-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+        background-image: linear-gradient(red, #00f), image-set("a.png" 1x);
+      }`,
+      defaultTargets,
+    );
+    prefix_test(
+      `.foo { background-image: linear-gradient(to right, red, blue), image-set("a.png" 1x) }`,
+      `.foo {
+        background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
+        background-image: linear-gradient(to right, red, #00f), image-set("a.png" 1x);
+      }`,
+      defaultTargets,
+    );
+    prefix_test(
+      `.foo { background-image: -moz-linear-gradient(bottom, red, blue), -webkit-linear-gradient(left, yellow, green) }`,
+      `.foo {
+        background-image: -webkit-linear-gradient(bottom, red, #00f), -webkit-linear-gradient(left, #ff0, green);
+        background-image: -moz-linear-gradient(bottom, red, #00f), -moz-linear-gradient(left, #ff0, green);
+      }`,
+      defaultTargets,
+    );
+    prefix_test(
+      `.foo { background: -webkit-linear-gradient(left, red, blue), linear-gradient(to right, yellow, green) }`,
+      `.foo {
+        background: -webkit-linear-gradient(left, red, #00f), -webkit-linear-gradient(left, #ff0, green);
+        background: -webkit-linear-gradient(left, red, #00f), linear-gradient(to right, #ff0, green);
+      }`,
+      defaultTargets,
+    );
+
+    test("bun build keeps the direction of a prefixed linear gradient", async () => {
+      const image = `"data:image/png;base64,AA=="`;
+      using dir = tempDir("css-prefixed-linear-gradient", {
+        "angle.css": "a{background:-webkit-linear-gradient(90deg,red,blue)}",
+        "top.css": "a{background:-webkit-linear-gradient(top,red,blue)}",
+        "bottom.css": "a{background:-webkit-linear-gradient(bottom,red,blue)}",
+        "left.css": "a{background:-moz-linear-gradient(left,red,blue)}",
+        "layers.css": `a{background-image:linear-gradient(to right,red,blue),image-set(${image} 1x)}`,
+      });
+      const names = ["angle", "top", "bottom", "left", "layers"];
+      async function build(...flags: string[]) {
+        const outdir = join(String(dir), "out" + flags.join(""));
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", ...names.map(name => name + ".css"), "--outdir=" + outdir, ...flags],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const css: Record<string, string> = {};
+        for (const name of exitCode === 0 ? names : []) {
+          const text = await Bun.file(join(outdir, name + ".css")).text();
+          css[name] = text
+            .replace(/\/\*.*?\*\/\n/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        }
+        return { css, stderr, exitCode };
+      }
+      const [pretty, minified] = await Promise.all([build(), build("--minify")]);
+      expect(pretty).toEqual({
+        css: {
+          angle: "a { background: -webkit-linear-gradient(90deg, red, #00f); }",
+          top: "a { background: -webkit-linear-gradient(red, #00f); }",
+          bottom: "a { background: -webkit-linear-gradient(bottom, red, #00f); }",
+          left: "a { background: -moz-linear-gradient(left, red, #00f); }",
+          layers: `a { background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url(${image}) 1x); background-image: linear-gradient(to right, red, #00f), image-set(${image} 1x); }`,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(minified).toEqual({
+        css: {
+          angle: "a{background:-webkit-linear-gradient(90deg,red,#00f)}",
+          top: "a{background:-webkit-linear-gradient(red,#00f)}",
+          bottom: "a{background:-webkit-linear-gradient(bottom,red,#00f)}",
+          left: "a{background:-moz-linear-gradient(left,red,#00f)}",
+          layers: `a{background-image:-webkit-linear-gradient(left,red,#00f),-webkit-image-set(url(${image.slice(1, -1)}) 1x);background-image:linear-gradient(90deg,red,#00f),image-set(${image} 1x)}`,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     minify_test(
       ".foo { background: -webkit-gradient(linear, left top, left bottom, from(blue), to(yellow)) }",
       ".foo{background:-webkit-gradient(linear,0 0,0 100%,from(#00f),to(#ff0))}",

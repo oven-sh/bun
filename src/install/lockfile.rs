@@ -2544,7 +2544,8 @@ impl Lockfile {
 
     /// See `Scratch::refreshing`.
     pub(crate) fn mark_refreshing(&mut self, id: DependencyID) {
-        let rows = self.buffers.dependencies.len();
+        // The capacity, so that it grows only when the dependency buffer does.
+        let rows = self.buffers.dependencies.capacity();
         let refreshing = &mut self.scratch.refreshing;
         if refreshing.bit_length() < rows {
             bun_core::handle_oom(refreshing.resize(rows, false));
@@ -2554,9 +2555,9 @@ impl Lockfile {
 
     #[inline]
     pub(crate) fn is_refreshing(&self, id: DependencyID) -> bool {
-        self.scratch
-            .refreshing
-            .is_set_allow_out_of_bound(id as usize, false)
+        let refreshing = &self.scratch.refreshing;
+        // Inline, so that a run that refreshes nothing stops at this test.
+        (id as usize) < refreshing.bit_length() && refreshing.is_set(id as usize)
     }
 
     /// The resolve has an answer for `id`. Returns false if `id` was not being refreshed.
@@ -2603,6 +2604,26 @@ impl Lockfile {
                     kept.push(package_id);
                 }
             }
+        }
+        kept
+    }
+
+    /// The package.json entries among `Scratch::refreshing`, each as its workspace (`None` is the root) and the name hash of its key.
+    pub(crate) fn entries_kept_without_refresh(
+        &self,
+    ) -> Vec<(Option<PackageNameHash>, PackageNameHash)> {
+        let mut kept = Vec::new();
+        let mut rows = self.scratch.refreshing.iterator::<true, true>();
+        while let Some(row) = rows.next() {
+            let Some(owner) = self.get_parent_pkg_of_dependency(row as DependencyID) else {
+                continue;
+            };
+            let workspace = match self.packages.items_resolution()[owner as usize].tag {
+                ResolutionTag::Root => None,
+                ResolutionTag::Workspace => Some(self.packages.items_name_hash()[owner as usize]),
+                _ => continue,
+            };
+            kept.push((workspace, self.buffers.dependencies[row].name_hash));
         }
         kept
     }

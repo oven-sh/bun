@@ -726,7 +726,8 @@ pub fn install_with_manager(
         manager.verify_resolutions(log_level);
 
         let mut moved_by_overrides: Vec<PackageID> = Vec::new();
-        let synced = super::package_json_write_back::edit_after_resolve(manager)?;
+        let kept = lockfile_before_clean.entries_kept_without_refresh();
+        let synced = super::package_json_write_back::edit_after_resolve(manager, &kept)?;
         if synced.links {
             // Removes the registry packages that were resolved for rows that now link a workspace.
             manager.lockfile.mark_loaded_packages()?;
@@ -2318,6 +2319,8 @@ fn refresh_children_of_named(
         let pkg_res = lockfile.packages.items_resolution();
         latest_rows
             .iter()
+            // A dependency that got no answer is resolved like one that has no package.
+            .filter(|&&dep_id| !lockfile.is_refreshing(dep_id))
             .map(|&dep_id| resolutions[dep_id as usize])
             .filter(|&id| {
                 (id as usize) < pkg_res.len()
@@ -2491,13 +2494,10 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                         version.try_npm().is_some_and(|npm| {
                             // Under another name the row follows an `npm:` alias, not the rule.
                             npm.name.slice(buf) == names[package_id as usize].slice(buf)
-                                // An empty range and `*` resolve to `latest`, even if that is a
-                                // prerelease, which no range accepts.
-                                && !npm.version.is_empty()
-                                && !crate::npm::is_any_version_range(version.literal.slice(buf))
-                                && !npm.version.satisfies(
+                                && !crate::npm::accepts_locked(
+                                    &npm.version,
+                                    version.literal.slice(buf),
                                     resolutions[package_id as usize].npm().version,
-                                    buf,
                                     buf,
                                 )
                         })
@@ -2516,10 +2516,12 @@ fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: Packa
         version.try_npm().is_some_and(|npm| {
             let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
             npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
-                // `*` and an empty range resolve to `latest`, which can be a prerelease.
-                && (npm.version.is_empty()
-                    || crate::npm::is_any_version_range(version.literal.slice(buf))
-                    || npm.version.satisfies(resolved.version, buf, buf))
+                && crate::npm::accepts_locked(
+                    &npm.version,
+                    version.literal.slice(buf),
+                    resolved.version,
+                    buf,
+                )
         })
     })
 }

@@ -2081,6 +2081,16 @@ pub(crate) fn is_any_version_range(literal: &[u8]) -> bool {
     literal == b"*" || literal.ends_with(b"@*")
 }
 
+/// Returns true if `range`, which a dependency writes as `literal`, accepts a locked `version`. An empty range and `*` resolve to `latest`, even if that is a prerelease, which no range accepts.
+pub(crate) fn accepts_locked(
+    range: &Semver::query::Group,
+    literal: &[u8],
+    version: Semver::Version,
+    buf: &[u8],
+) -> bool {
+    range.is_empty() || is_any_version_range(literal) || range.satisfies(version, buf, buf)
+}
+
 impl PackageManifest {
     pub(crate) fn find_for_dependency(
         &self,

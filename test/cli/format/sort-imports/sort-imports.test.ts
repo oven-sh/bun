@@ -105,6 +105,30 @@ describe.concurrent("import sorting", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // The plugin compares two hexadecimal module names by `parseInt(text, 16)`, and as text if both are the same number.
+  // `names` is in the order that Prettier 3.9.10 prints with the plugin on Node.js, whatever order they come in.
+  test("with @trivago's plugin, hexadecimal module names sort by the double nearest to their value", async () => {
+    const names = [
+      // Each of these is a double. As text, they are in another order.
+      ...["0x9", "0x10", "0X1f", "0x020", "0xFF", "0x100", "0x1fffffffffffff", "0x020000000000000"],
+      // `...10` is halfway between two doubles and is the lower one. `...11` is above halfway, so it is the upper one,
+      // which `...20` is exactly.
+      ...["0x200000000000010", "0x0200000000000011", "0x0200000000000020", "0x200000000000011"],
+      // The same with more digits than 64 bits hold.
+      ...["0x200000000000010000000", "0x0200000000000010000001", "0x0200000000000020000000", "0x200000000000010000001"],
+    ];
+    const imports = (order: number[]) => order.map(at => `import m${at} from "${names[at]}";\n`).join("");
+    const inOrder = names.map((_, at) => at);
+    const files = { ".prettierrc.json": JSON.stringify(tools.trivago({ importOrder: [] })[1]) };
+    // In a.js every two have changed places, in b.js all are backwards.
+    const result = await format(
+      { ...files, "a.js": imports(inOrder.map(at => at ^ 1)), "b.js": imports(inOrder.toReversed()) },
+      ["a.js", "b.js"],
+    );
+    expect(result.files).toEqual([imports(inOrder), imports(inOrder)]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("is off without an option that enables it", async () => {
     const result = await format({ ".prettierrc.json": `{ "semi": true }`, "a.ts": unsorted }, ["a.ts"]);
     expect(result.files).toEqual([unsorted]);

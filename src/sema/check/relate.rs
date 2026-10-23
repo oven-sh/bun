@@ -8205,46 +8205,7 @@ pub(super) fn for_each_property<'a>(prop: &'a Prop, callback: &mut impl FnMut(&'
 
 /// `isValidNumberString(s, false)`: `Number(s)` is a finite number.
 fn is_valid_number_string(s: &[u8]) -> bool {
-    !s.is_empty() && number_from_string(s).is_finite()
-}
-
-/// `jsnum.FromString`: `Number(s)`.
-pub(super) fn number_from_string(s: &[u8]) -> f64 {
-    let Ok(s) = std::str::from_utf8(s) else {
-        return f64::NAN;
-    };
-    // `isStrWhiteSpace`: NEL is white space to Rust but not to JavaScript, and the byte order mark
-    // is the other way around.
-    let s = s.trim_matches(|c: char| c.is_whitespace() && c != '\u{85}' || c == '\u{feff}');
-    match s {
-        "" => return 0.0,
-        "Infinity" | "+Infinity" => return f64::INFINITY,
-        "-Infinity" => return f64::NEG_INFINITY,
-        _ => {}
-    }
-    if let Some(digits) = s.get(2..)
-        && s.as_bytes()[0] == b'0'
-    {
-        let radix: u32 = match s.as_bytes()[1] | 0x20 {
-            b'x' => 16,
-            b'o' => 8,
-            b'b' => 2,
-            _ => 0,
-        };
-        if radix != 0 {
-            let value = digits.chars().try_fold(0f64, |value, c| {
-                c.to_digit(radix)
-                    .map(|digit| value * f64::from(radix) + f64::from(digit))
-            });
-            return value.filter(|_| !digits.is_empty()).unwrap_or(f64::NAN);
-        }
-    }
-    // `parse_f64` accepts other spellings of infinity and of NaN.
-    let unsigned = s.strip_prefix(['-', '+']).unwrap_or(s);
-    if !unsigned.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
-        return f64::NAN;
-    }
-    bun_core::fmt::parse_f64(s.as_bytes()).unwrap_or(f64::NAN)
+    !s.is_empty() && bun_core::fmt::js_string_to_number(s).is_finite()
 }
 
 /// `isValidBigIntString(s, false)`: with an `n` appended, `s` scans as a bigint literal without

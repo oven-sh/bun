@@ -1,5 +1,15 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isRoot, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  isLinux,
+  isRoot,
+  isWindows,
+  tempDir,
+} from "harness";
 import {
   chmodSync,
   existsSync,
@@ -4468,6 +4478,87 @@ export {};
         a.ts(74,16): error TS2322: Type '"b" | 2' is not assignable to type 'never'.
           Type '"b"' is not assignable to type 'never'."
       `);
+    });
+
+    // TypeScript looks for the member whose value is `+text`, the nearest double. 2^57 + 17 is above halfway between
+    // `Below` and `Nearest`. b.ts has no error: each string there spells the number of the member that is asked for.
+    test("a string that spells a hexadecimal, octal or binary number infers the enum member of the nearest double", async () => {
+      const numbers = integersThatNeedRounding().filter(
+        ([text, exact]) => !text.includes("_") && exact > 0n && Number.isFinite(Number(exact)),
+      );
+      using dir = project({
+        "a.ts": `
+enum E { Below = 144115188075855872, Nearest = 144115188075855904 }
+declare function member<T extends E>(text: \`\${T}\` | (string & {})): T;
+const hex: never = member("0x200000000000011");
+const octal: never = member("0o10000000000000000021");
+const binary: never = member("0b1000000000000000000000000000000000000000000000000000010001");
+export {};
+`,
+        "b.ts":
+          numbers
+            .flatMap(([text, exact], i) => [
+              `enum E${i} { Nearest = ${Number(exact)}, Other = -1 }`,
+              `declare function member${i}<T extends E${i}>(text: \`\${T}\` | (string & {})): T;`,
+              `const nearest${i}: E${i}.Nearest = member${i}("${text}");`,
+            ])
+            .join("\n") + "\nexport {};\n",
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,7): error TS2322: Type 'E.Nearest' is not assignable to type 'never'.
+        a.ts(5,7): error TS2322: Type 'E.Nearest' is not assignable to type 'never'.
+        a.ts(6,7): error TS2322: Type 'E.Nearest' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // What TypeScript 7.0.2 reports for each text: whether `${number}` matches it, and the member of `E` whose value is
+    // `Number(text)`, or `E` if there is none.
+    test("a string is a number for `${number}` and for an enum member when `Number(text)` says so", async () => {
+      const rows: [texts: string[], isNumber: boolean, member: string][] = [
+        [["1", "1.", "+1", "1e0", "1E+0", "001", "1.0", "0.1e1", "100e-2"], true, "E.One"],
+        // JavaScript's white space at either end.
+        [[" 1 ", "\\t1\\n", "\\v1\\f", "\\uFEFF1", "1\\u2028", "\\u00A01\\u3000"], true, "E.One"],
+        [[".5", "0.5e0"], true, "E.Half"],
+        [["0x10", "0X10", "0o20", "0O20", "0b10000", "0B10000", " 0x10 ", "16.0"], true, "E.Sixteen"],
+        // A zero in front doesn't make it octal.
+        [["020", "0020.0", "2e1"], true, "E.Twenty"],
+        [["0", "-0", "+0", "0x0", "0.0", "0e5", "1e-400", " ", "\\n"], true, "E.Zero"],
+        // `Number("")` is 0, but `${number}` doesn't match the empty string.
+        [[""], false, "E.Zero"],
+        // Rounded to the nearest double, and to the even one of two.
+        [["12345678901234567890"], true, "E.Big"],
+        [["9007199254740993"], true, "E.Even"],
+        [["-1", "08", "0x" + Buffer.alloc(255, "f").toString()], true, "E"],
+        [["1e", "1e+", ".", "+.", "+-1", "--1", "12px", "1_000", "1n", "1 1", "1,5", "\\u0661"], false, "E"],
+        // U+0085, U+180E and U+200B aren't white space. Neither is half of a surrogate pair, which isn't UTF-8 either.
+        [["\\u00851", "1\\u0085", "\\u180E1", "\\u200B1", "\\uD8001", "1\\uD800", "1\\0"], false, "E"],
+        // A prefix takes no sign, and needs digits of its radix and nothing else after it.
+        [["0x", "0o", "0b", "0xg", "0o8", "0b2", "0x1g", "0x20000000000001g", "0x 1", "0x1.8", "0x_1"], false, "E"],
+        [["-0x10", "+0x10", "0x+10", "0x-10", "00x10", "0b1e1", "0x1p4", "0x1_0"], false, "E"],
+        // `${number}` doesn't match what isn't finite.
+        [["Infinity", "+Infinity", " Infinity ", "1e309", "0x" + Buffer.alloc(256, "f").toString()], false, "E.Most"],
+        [["-Infinity", "-1e309"], false, "E.Least"],
+        [["infinity", "INFINITY", "inf", "Inf", "-inf", "NaN", "nan", "Infinityx"], false, "E"],
+      ];
+      using dir = project({
+        "a.ts": [
+          "enum E { Zero = 0, Half = 0.5, One = 1, Sixteen = 16, Twenty = 20, Even = 9007199254740992,",
+          "  Big = 12345678901234567000, Most = Infinity, Least = -Infinity }",
+          "type IsNumber<S extends string> = S extends `${number}` ? true : false;",
+          "declare function both<S extends string, T extends E>(a: S, b: `${T}` | (string & {})): [IsNumber<S>, T];",
+          ...rows.flatMap(([texts]) => texts).map((text, i) => `const r${i}: never = both("${text}", "${text}");`),
+          "export {};",
+        ].join("\n"),
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual(
+        rows
+          .flatMap(([texts, isNumber, member]) => texts.map(() => `[${isNumber}, ${member}]`))
+          .map((type, i) => `a.ts(${i + 5},7): error TS2322: Type '${type}' is not assignable to type 'never'.`),
+      );
+      expect(exitCode).toBe(1);
     });
 
     test("checks assignments, operators and exhaustiveness on unions and intersections of mixed kinds", async () => {

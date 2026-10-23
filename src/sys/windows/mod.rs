@@ -2039,6 +2039,7 @@ pub fn GetEnvironmentVariableW(
     Ok(rc)
 }
 
+pub(crate) mod console_stdin;
 pub mod env;
 
 // ──────────────────────────────────────────────────────────────────────────

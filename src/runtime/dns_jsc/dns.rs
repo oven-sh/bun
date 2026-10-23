@@ -4741,25 +4741,29 @@ impl Resolver {
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
     #[cfg(not(windows))]
-    pub(crate) fn on_dns_poll(&self, poll: &mut FilePoll) {
+    pub(crate) unsafe fn on_dns_poll(&self, poll: *mut FilePoll) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
+        // SAFETY: `poll` is live (caller contract).
+        let fd = unsafe { (*poll).fd.native() };
         let Some(channel) = self.channel.get() else {
             self.polls.with_mut(|p| {
-                let _ = p.remove(&poll.fd.native());
+                let _ = p.remove(&fd);
             });
-            poll.deinit();
+            // SAFETY: `poll` is live, and its map entry is gone, so this is its last use.
+            unsafe { (*poll).deinit() };
             return;
         };
 
         let _guard = self.ref_guard();
 
+        // SAFETY: `poll` is live; both borrows end before `process` runs.
+        let (readable, writable) = unsafe { ((*poll).is_readable(), (*poll).is_writable()) };
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
-        unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
-        }
+        unsafe { (*channel).process(fd, readable, writable) };
 
         // c-ares detaches a query only *after* its callback returns, so
         // `request_completed` may have seen it still counted; re-check now.

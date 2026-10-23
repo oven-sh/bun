@@ -137,6 +137,32 @@ impl JSValue {
         let _ = scope.assert_no_exception_except_termination();
     }
 
+    /// The `ctx` of the one [`then`](Self::then)`(ctx, resolve, reject)`
+    /// registration that waits for the async function running now, found up
+    /// its await chain (`Bun__thenContextAwaitingRunningAsyncFunction` in
+    /// `AsyncStackTrace.h` has the rules). The pointer is the one `then` was
+    /// given: the caller has to know that it is still alive.
+    pub fn then_ctx_awaiting_running_async_function<T>(
+        global: &JSGlobalObject,
+        resolve: host_fn::JSHostFn,
+        reject: host_fn::JSHostFn,
+    ) -> Option<core::ptr::NonNull<T>> {
+        unsafe extern "C" {
+            // safe: `JSGlobalObject` is an opaque handle; the fn-ptrs are
+            // by-value and only compared.
+            safe fn Bun__thenContextAwaitingRunningAsyncFunction(
+                global: &JSGlobalObject,
+                resolve: host_fn::JSHostFn,
+                reject: host_fn::JSHostFn,
+            ) -> JSValue;
+        }
+        let ctx = Bun__thenContextAwaitingRunningAsyncFunction(global, resolve, reject);
+        if !ctx.is_number() {
+            return None;
+        }
+        core::ptr::NonNull::new(ctx.as_promise_ptr::<T>())
+    }
+
     /// Like [`then`] but the context is a `JSValue` (not a raw pointer encoded
     /// as a JS number). Wraps in a `TopExceptionScope` and surfaces only
     /// termination; every current call site discards the error, so this returns `()`.

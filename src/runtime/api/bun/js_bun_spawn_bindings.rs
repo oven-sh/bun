@@ -1828,19 +1828,23 @@ fn spawn_maybe_sync(
         }
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
+        // The isolated loop runs no JavaScript and none of the runner's timers, so the caller and
+        // its deadline stay the same for the whole wait.
+        let bun_test_deadline_of_caller: Timespec = if jsc_vm.is_main_thread
+            && let Some(runner) = crate::test_runner::jest::Jest::runner()
+        {
+            // The test runner and its deadlines belong to the main thread.
+            runner.get_active_timeout(cx.global())
+        } else {
+            Timespec::EPOCH
+        };
         let mut bun_test_fired = false;
 
         while subprocess.compute_has_pending_activity() {
-            // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if jsc_vm.is_main_thread
-                && let Some(runner) = crate::test_runner::jest::Jest::runner()
-            {
-                // The test runner and its deadlines belong to the main thread.
-                runner.get_active_timeout()
             } else {
-                Timespec::EPOCH
+                bun_test_deadline_of_caller
             };
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 

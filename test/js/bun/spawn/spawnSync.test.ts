@@ -333,9 +333,11 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
 });
 
 // In `bun test`, the deadline of a test ends a spawnSync wait: the child is sent its kill signal and its pipes are
-// closed. When no test callback is on the stack, as after an `await`, the runner does not know which test of a group
-// of concurrent tests called spawnSync, so the wait ends at the latest deadline of the tests that are running. "No
-// timeout" ranked below every deadline there, and the timeout of one test ended the child of a test that has none.
+// closed. After an `await` no test callback is on the stack. The runner then finds the test that called spawnSync from
+// the await chain of the async function that is running: the promise at the end of that chain is the one the test
+// callback returned. A caller with no such chain (a timer callback, a promise that two tests await) can belong to any
+// test of a group of concurrent tests. Its wait ends at the latest deadline of the tests that are running, and a
+// running test with no timeout means no deadline.
 //
 // One case at a time on debug and ASAN builds: their processes start slowly. Five cases at once took 3.7 s of the 5 s
 // each has on a debug build.
@@ -369,7 +371,7 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
       // Its parent waits in spawnSync, so nothing can tell it that a deadline has passed: it runs for a fixed time.
       "child.js": `Bun.sleepSync(Number(process.argv[2]));`,
       "group.test.ts": /* ts */ `
-        import { expect, test } from "bun:test";
+        import { beforeEach, describe, expect, test } from "bun:test";
 
         // The sync functions of node:child_process throw when the child does not exit with 0.
         function returns(fn: () => unknown) {
@@ -382,7 +384,7 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
         }
         ${entryPoints[entryPoint]}
 
-        // 300 ms is past every 100 ms timeout below, and 4000 ms is past every timeout.
+        // 300 ms is past every 100 ms timeout below, and 4000 ms is past every timeout that ends a child.
         function waitForChild(ms: 300 | 4000) {
           const finished = childRanToItsEnd([process.execPath, "child.js", String(ms)]);
           console.log(finished ? "the child finished" : "the child was ended early");
@@ -489,43 +491,236 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
     });
   });
 
-  it("the latest timeout ends the child when every test that runs has one", async () => {
-    const group = await runGroup(`
-      test.concurrent("times out first", async () => {
-        await never;
-      }, 100);
+  it.each(Object.keys(entryPoints) as (keyof typeof entryPoints)[])(
+    "%s: a test is ended at its own timeout, whatever the timeouts of the tests beside it",
+    async entryPoint => {
+      const group = await runGroup(
+        `
+          const { promise: childEnded, resolve } = Promise.withResolvers<void>();
+          const untilTheChildEnded = async () => {
+            await childEnded;
+          };
 
-      test.concurrent("times out last", async () => {
-        await immediate();
+          test.concurrent("has no timeout", untilTheChildEnded, 0);
+          test.concurrent("has an infinite timeout", untilTheChildEnded, Infinity);
+          test.concurrent("has a later timeout", untilTheChildEnded, 60_000);
+
+          test.concurrent("times out", async () => {
+            await immediate();
+            waitForChild(4000);
+            resolve();
+          }, 500);
+        `,
+        { entryPoint },
+      );
+
+      expect(group).toEqual({
+        child: ["the child was ended early"],
+        tests: [
+          "has a later timeout: pass",
+          "has an infinite timeout: pass",
+          "has no timeout: pass",
+          "times out: fail",
+        ],
+        exitCode: 1,
+      });
+    },
+  );
+
+  it("a test is ended at its own timeout when an async function that it awaits calls spawnSync", async () => {
+    const group = await runGroup(`
+      const { promise: childEnded, resolve } = Promise.withResolvers<void>();
+
+      async function inner() {
+        await undefined;
         waitForChild(4000);
-      }, 300);
+      }
+      async function outer() {
+        await inner();
+      }
+
+      test.concurrent("has a later timeout", async () => {
+        await childEnded;
+      }, 60_000);
+
+      test.concurrent("times out", async () => {
+        await immediate();
+        await outer();
+        resolve();
+      }, 500);
     `);
 
     expect(group).toEqual({
       child: ["the child was ended early"],
-      tests: ["times out first: fail", "times out last: fail"],
+      tests: ["has a later timeout: pass", "times out: fail"],
       exitCode: 1,
     });
   });
 
-  // Its deadline is not set before it starts. That is not "no timeout".
-  it("a test that has not started does not keep the child of a test that times out", async () => {
-    const group = await runGroup(
-      `
-        test.concurrent("times out", async () => {
-          await immediate();
-          waitForChild(4000);
-        }, 300);
+  // Once the test is over, its deadline is not the deadline of what it still runs.
+  it("a test that is ended at its timeout and calls spawnSync again waits for the tests that still run", async () => {
+    const group = await runGroup(`
+      const { promise: childrenEnded, resolve } = Promise.withResolvers<void>();
 
-        test.concurrent("has not started", () => {}, 0);
-      `,
-      { args: ["--max-concurrency", "1"] },
-    );
+      test.concurrent("has a later timeout", async () => {
+        await childrenEnded;
+      }, 60_000);
+
+      test.concurrent("times out", async () => {
+        await immediate();
+        waitForChild(4000);
+        waitForChild(300);
+        resolve();
+      }, 500);
+    `);
 
     expect(group).toEqual({
-      child: ["the child was ended early"],
-      tests: ["has not started: pass", "times out: fail"],
+      child: ["the child was ended early", "the child finished"],
+      tests: ["has a later timeout: pass", "times out: fail"],
       exitCode: 1,
+    });
+  });
+
+  // The runner drains the microtasks that a callback queued while that callback is still the one on the stack.
+  it("a test that resumes under the callback of a sibling is not ended at the timeout of that sibling", async () => {
+    const group = await runGroup(`
+      const { promise: siblingStarted, resolve } = Promise.withResolvers<void>();
+
+      test.concurrent("has no timeout", async () => {
+        await siblingStarted;
+        expect(waitForChild(300)).toBe(true);
+      }, 0);
+
+      test.concurrent("times out", async () => {
+        resolve();
+        await never;
+      }, 100);
+    `);
+
+    expect(group).toEqual({
+      child: ["the child finished"],
+      tests: ["has no timeout: pass", "times out: fail"],
+      exitCode: 1,
+    });
+  });
+
+  it("the timeout of a sibling does not end the child of a hook with no timeout", async () => {
+    const group = await runGroup(`
+      describe("with a hook", () => {
+        beforeEach(async () => {
+          await immediate();
+          expect(waitForChild(300)).toBe(true);
+        }, 0);
+
+        test.concurrent("its hook has no timeout", () => {});
+      });
+
+      test.concurrent("times out", async () => {
+        await never;
+      }, 100);
+    `);
+
+    expect(group).toEqual({
+      child: ["the child finished"],
+      tests: ["times out: fail", "with a hook > its hook has no timeout: pass"],
+      exitCode: 1,
+    });
+  });
+
+  // Two tests wait for the promise, so its await chain names neither of them.
+  it("the timeout of a sibling does not end a child that it and a test with no timeout both await", async () => {
+    const group = await runGroup(`
+      let shared: Promise<boolean> | undefined;
+      const sharedChild = () =>
+        (shared ??= (async () => {
+          await immediate();
+          return waitForChild(300);
+        })());
+
+      test.concurrent("has no timeout", async () => {
+        expect(await sharedChild()).toBe(true);
+      }, 0);
+
+      test.concurrent("times out", async () => {
+        await sharedChild();
+        await never;
+      }, 100);
+    `);
+
+    expect(group).toEqual({
+      child: ["the child finished"],
+      tests: ["has no timeout: pass", "times out: fail"],
+      exitCode: 1,
+    });
+  });
+
+  // The callback of an immediate is not in the await chain of any test.
+  describe("when the caller has no await chain", () => {
+    it("the timeout of a sibling does not end the child while a test with no timeout runs", async () => {
+      const group = await runGroup(`
+        test.concurrent("times out", async () => {
+          await never;
+        }, 100);
+
+        test.concurrent("has no timeout", async () => {
+          const finished = await new Promise<boolean>(resolve => setImmediate(() => resolve(waitForChild(300))));
+          expect(finished).toBe(true);
+        }, 0);
+      `);
+
+      expect(group).toEqual({
+        child: ["the child finished"],
+        tests: ["has no timeout: pass", "times out: fail"],
+        exitCode: 1,
+      });
+    });
+
+    it("the latest timeout ends the child when every test that runs has one", async () => {
+      const group = await runGroup(`
+        test.concurrent("times out first", async () => {
+          await new Promise<void>(resolve =>
+            setImmediate(() => {
+              waitForChild(4000);
+              resolve();
+            }),
+          );
+        }, 100);
+
+        test.concurrent("times out last", async () => {
+          await never;
+        }, 300);
+      `);
+
+      expect(group).toEqual({
+        child: ["the child was ended early"],
+        tests: ["times out first: fail", "times out last: fail"],
+        exitCode: 1,
+      });
+    });
+
+    // Its deadline is not set before it starts. That is not "no timeout".
+    it("a test that has not started does not keep the child of a test that times out", async () => {
+      const group = await runGroup(
+        `
+          test.concurrent("times out", async () => {
+            await new Promise<void>(resolve =>
+              setImmediate(() => {
+                waitForChild(4000);
+                resolve();
+              }),
+            );
+          }, 300);
+
+          test.concurrent("has not started", () => {}, 0);
+        `,
+        { args: ["--max-concurrency", "1"] },
+      );
+
+      expect(group).toEqual({
+        child: ["the child was ended early"],
+        tests: ["has not started: pass", "times out: fail"],
+        exitCode: 1,
+      });
     });
   });
 

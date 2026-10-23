@@ -445,6 +445,20 @@ impl Execution {
         &mut self,
         data: &RefDataValue,
     ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
+        let (group_index, seq_abs) = self.current_and_valid_sequence_index(data)?;
+        // Disjoint split-borrow of `self.groups` and `self.sequences`.
+        Some((
+            NonNull::from(&mut self.sequences[seq_abs]),
+            NonNull::from(&mut self.groups[group_index]),
+        ))
+    }
+
+    /// The indexes into `self.groups` and `self.sequences` of the sequence that `data` names,
+    /// when the entry that `data` names is still the active entry of that sequence.
+    pub(crate) fn current_and_valid_sequence_index(
+        &self,
+        data: &RefDataValue,
+    ) -> Option<(usize, usize)> {
         let _g = group_begin!();
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
@@ -470,14 +484,13 @@ impl Execution {
             group_log::log(format_args!("runOneCompleted: the data did not know the group"));
             return None;
         }
-        // Disjoint split-borrow of `self.groups` and `self.sequences`.
-        let group = &mut self.groups[*group_index];
+        let group = &self.groups[*group_index];
         let seq_abs = group.sequence_start + entry_data.sequence_index;
         if seq_abs >= group.sequence_end {
             group_log::log(format_args!("runOneCompleted: the data did not know the sequence"));
             return None;
         }
-        let sequence = &mut self.sequences[seq_abs];
+        let sequence = &self.sequences[seq_abs];
         if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
             group_log::log(format_args!(
                 "runOneCompleted: the data is for a previous repeat count (outdated)",
@@ -495,7 +508,7 @@ impl Execution {
             return None;
         }
         group_log::log(format_args!("runOneCompleted: the data is valid and current"));
-        Some((NonNull::from(sequence), NonNull::from(group)))
+        Some((*group_index, seq_abs))
     }
 
     /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into

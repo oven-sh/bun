@@ -153,11 +153,17 @@ pub(crate) struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
-    pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
+    pub(crate) fn get_active_timeout(&self, global: &JSGlobalObject) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
         // Per-entry deadline, not the (only-advances-sooner) file timer.
+        // After an `await` the await chain names the caller, also when it resumes
+        // while the callback of another entry is on the stack.
+        if let Some(entry) = self.bun_test_root.running_entry_awaiting_current_code(global) {
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+            return unsafe { entry.as_ref() }.timespec;
+        }
         // `on_stack_entry` pins the caller when still synchronously on stack;
         // else take the latest running entry so a sibling never terminates early.
         if let Some(entry) = active_file.execution.on_stack_entry.get() {

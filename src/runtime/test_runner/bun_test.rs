@@ -563,6 +563,47 @@ impl BunTestRoot {
         self.active_file.clone()
     }
 
+    /// The running entry whose callback waits for the async function running now: the promise the
+    /// callback returned is at the end of that function's await chain. `None` when no `await`
+    /// resumed the running code, when its await chain does not end at one callback, and when the
+    /// runner no longer waits for that callback (its entry timed out or failed with the promise
+    /// pending, or it belongs to the collection phase or to another file).
+    pub(crate) fn running_entry_awaiting_current_code(
+        &self,
+        global: &JSGlobalObject,
+    ) -> Option<NonNull<ExecutionEntry>> {
+        if self.pending_then_refs.borrow().is_empty() {
+            return None;
+        }
+        let refdata = JSValue::then_ctx_awaiting_running_async_function::<RefData>(
+            global,
+            Bun__TestScope__Describe2__bunTestThen,
+            Bun__TestScope__Describe2__bunTestCatch,
+        )?;
+        if !self
+            .pending_then_refs
+            .borrow()
+            .contains(&refdata.as_ptr().cast_const())
+        {
+            return None;
+        }
+        // SAFETY: `pending_then_refs` lists the `RefData` whose +1 a pending reaction still holds.
+        let refdata = unsafe { refdata.as_ref() };
+        let active_file = self.active_file.as_ref()?;
+        if !core::ptr::eq(refdata.buntest_weak.as_ptr(), Rc::as_ptr(active_file))
+            || active_file.phase != Phase::Execution
+        {
+            return None;
+        }
+        let execution = &active_file.execution;
+        let (_, sequence_index) = execution.current_and_valid_sequence_index(&refdata.phase)?;
+        let sequence = &execution.sequences[sequence_index];
+        if !sequence.executing {
+            return None;
+        }
+        sequence.active_entry
+    }
+
     pub(crate) fn on_before_print(&self) {
         if let Some(active_file) = &self.active_file {
             // Do NOT go through `<BunTestCell as Deref>` here. Two of the three

@@ -3,15 +3,8 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
-    macro(Archive) \
     macro(FFI) \
-    macro(FetchSession) \
-    macro(Image) \
     macro(markdown) \
-    macro(S3Client) \
-    macro(Terminal) \
-    macro(Transpiler) \
-    macro(ValkeyClient) \
     macro(argv) \
     macro(cron) \
     macro(cwd) \
@@ -29,7 +22,6 @@
     macro(color) \
     macro(connect) \
     macro(createParsedShellScript) \
-    macro(createShellInterpreter) \
     macro(file) \
     macro(jest) \
     macro(listen) \

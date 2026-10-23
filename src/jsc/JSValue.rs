@@ -917,7 +917,7 @@ impl JSValue {
     /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
     /// sound because JSC's conservative stack scanner keeps the cell alive
     /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// `#[JsClass]` payload is pinned at a stable address inside the GC cell
+    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
     /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
     /// for as long as the caller holds `self`.
     ///
@@ -944,7 +944,7 @@ impl JSValue {
     }
 
     /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
+    /// for payloads that are intrusively refcounted: lets the caller
     /// take its own ref (`RefPtr::from_this`) or dispatch into a
     /// `ThisPtr`-taking entry point. Same frame-scoped validity.
     #[inline]
@@ -2248,25 +2248,6 @@ impl JSValue {
     /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
     pub fn to_number(self, global: &JSGlobalObject) -> JsResult<f64> {
         host_fn::from_js_host_call_generic(global, || Bun__JSValue__toNumber(self, global))
-    }
-
-    /// `JSValue.toPortNumber` — Node `validatePort` semantics:
-    /// numeric, non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
-    pub fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
-        if self.is_number() {
-            let double = self.to_number(global)?;
-            if double.is_nan() {
-                return Err(crate::ErrorCode::SOCKET_BAD_PORT
-                    .throw(global, format_args!("Invalid port number")));
-            }
-            let port = self.to_int64();
-            if (0..=65535).contains(&port) {
-                return Ok(port.max(0) as u16);
-            }
-            return Err(crate::ErrorCode::SOCKET_BAD_PORT
-                .throw(global, format_args!("Port number out of range: {port}")));
-        }
-        Err(crate::ErrorCode::SOCKET_BAD_PORT.throw(global, format_args!("Invalid port number")))
     }
 
     /// `JSValue.coerce(f64)` — fast-path doubles, else `ToNumber`.

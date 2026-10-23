@@ -1109,7 +1109,7 @@ mod _async_tasks {
         args::Cp<'static>,
     );
     impl_fs_argument!(
-        args::FdVectorIo,
+        args::Writev,
         args::FTruncate,
         args::Write<'static>,
         args::Fchown,
@@ -1132,6 +1132,18 @@ mod _async_tasks {
             if let args::ReadBuffer::PinnedBuffer(buffer) = &mut self.buffer {
                 buffer.write_back(bytes_read as usize);
             }
+        }
+    }
+    // SAFETY: same as `impl_fs_argument!`.
+    unsafe impl ThreadIsolatedArg for args::Readv {}
+    impl FsArgument for args::Readv {
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::Readv::from_js(ctx, arguments)
+        }
+        #[inline]
+        fn write_back(&mut self, bytes_read: u64) {
+            self.buffers.write_back(bytes_read as usize);
         }
     }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
@@ -2032,26 +2044,13 @@ mod _async_tasks {
                     let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
-                        if IS_SHELL {
-                            // Shell always forces copy (overwrite allowed).
-                            // `Copyfile::force` is `COPYFILE_FICLONE_FORCE`, and
-                            // `copy_single_file_sync` has an ENOSYS guard for
-                            // `is_force_clone()` on Windows (see the comment at
-                            // the top of that branch), so passing `FORCE` would
-                            // make every shell `cp file dest` fail with ENOSYS.
-                            // Mode `0` yields the intended behaviour:
-                            // `shouldnt_overwrite()`
-                            // is false and `CopyFileW` overwrites.
-                            constants::Copyfile::from_raw(0)
-                        } else {
-                            constants::Copyfile::from_raw(
-                                if args.flags.error_on_exist || !args.flags.force {
-                                    constants::COPYFILE_EXCL
-                                } else {
-                                    0i32
-                                },
-                            )
-                        },
+                        constants::Copyfile::from_raw(
+                            if args.flags.error_on_exist || !args.flags.force {
+                                constants::COPYFILE_EXCL
+                            } else {
+                                0i32
+                            },
+                        ),
                         Some(attributes),
                         &this.args,
                     );
@@ -2096,7 +2095,6 @@ mod _async_tasks {
                     );
                     if let Err(e) = &r {
                         if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.on_copy(src, dest);
                             this.finish_concurrently(Ok(()));
                             return;
                         }
@@ -2854,17 +2852,16 @@ pub(crate) mod args {
         }
     }
 
-    /// Shared layout for `fs.writev` / `fs.readv` arguments. One concrete
-    /// struct; we re-export both
+    /// Shared layout for `fs.writev` / `fs.readv` arguments. We re-export both
     /// names as type aliases so every `args::Writev` / `args::Readv` caller
     /// (UVFSRequest params, `readv`/`writev`/`preadv_inner`/`pwritev_inner`,
     /// uv dispatch arms) is untouched.
-    pub(crate) struct FdVectorIo {
+    pub(crate) struct FdVectorIo<const READ: bool> {
         pub(crate) fd: FD,
         pub(crate) buffers: VectorArrayBuffer,
         pub(crate) position: Option<u64>, // u52
     }
-    impl FdVectorIo {
+    impl<const READ: bool> FdVectorIo<READ> {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
@@ -2878,6 +2875,7 @@ pub(crate) mod args {
                 // The iovec pointers outlive this call on the async path; root
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
+                READ,
             )?;
             let position: Option<u64> = arguments
                 .next_eat()
@@ -2890,8 +2888,8 @@ pub(crate) mod args {
             })
         }
     }
-    pub(crate) type Writev = FdVectorIo;
-    pub(crate) type Readv = FdVectorIo;
+    pub(crate) type Writev = FdVectorIo<false>;
+    pub(crate) type Readv = FdVectorIo<true>;
 
     pub(crate) struct FTruncate {
         pub(crate) fd: FD,
@@ -3812,7 +3810,12 @@ pub(crate) mod args {
             } else {
                 Flavor::Sync
             };
-            let buffer =
+            let buffer = if flavor == Flavor::Async && bv.js_type().is_array_buffer_like() {
+                // Bytes that can be freed while pinned are copied below, once `offset` and `length` say which ones.
+                StringOrBuffer::PinnedBuffer(
+                    PinnedArrayBuffer::root(ctx, bv).ok_or_else(|| ctx.throw_out_of_memory())?,
+                )
+            } else {
                 StringOrBuffer::from_js_maybe_async(ctx, bv, flavor, StringObjects::Allow)?
                     .ok_or_else(|| {
                         ctx.throw_invalid_argument_type_value(
@@ -3820,7 +3823,8 @@ pub(crate) mod args {
                             b"string or TypedArray",
                             bv,
                         )
-                    })?;
+                    })?
+            };
             if bv.is_string() && !bv.is_string_literal() {
                 return Err(ctx.throw_invalid_argument_type_value(
                     b"buffer",
@@ -3942,6 +3946,13 @@ pub(crate) mod args {
                             }
                         }
                     }
+                }
+            }
+            if let StringOrBuffer::PinnedBuffer(pinned) = &mut args.buffer {
+                pinned.narrow(args.offset as usize, args.length as usize);
+                args.offset = 0;
+                if !pinned.copy_if_freeable_while_pinned(ctx) {
+                    return Err(ctx.throw_out_of_memory());
                 }
             }
             Ok(args)
@@ -7714,6 +7725,13 @@ impl NodeFS {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };
+
+            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
+            // end like that too.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+                return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
+            }
 
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {

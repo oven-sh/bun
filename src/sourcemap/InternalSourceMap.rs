@@ -63,11 +63,13 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
-//!     [16..24]  unused                   -- `--compile` embeds a blob for the Bun of another version to read
+//!     [16..20]  unused
+//!     [20..24]  object_brace_count: u32  -- 0 from an older Bun: the high half of its u64 line count
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
-//!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
+//!     [stream_offset..]  Window[sync_count]
+//!     [..total_len-stream_tail_pad]  ObjectBrace[object_brace_count] -- see `Builder::mark_object_brace`
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
 //!
@@ -132,6 +134,16 @@ pub struct SyncEntry {
 
 const _: () = assert!(size_of::<SyncEntry>() == 24);
 
+/// A mapping that `Builder::mark_object_brace` marked.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ObjectBrace {
+    pub generated: LineColumnOffset,
+    pub original: LineColumnOffset,
+}
+
+const _: () = assert!(size_of::<ObjectBrace>() == 16);
+
 impl SyncEntry {
     #[inline]
     fn less_or_equal(self, line: i32, col: i32) -> bool {
@@ -181,6 +193,21 @@ impl InternalSourceMap {
         // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
         // assumed) so we read unaligned.
         unsafe { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
+    }
+
+    #[inline]
+    fn object_brace_count(self) -> u32 {
+        // SAFETY: blob is at least HEADER_SIZE bytes.
+        unsafe { u32::from_ne_bytes(*self.data.add(20).cast::<[u8; 4]>()) }
+    }
+
+    fn object_braces(&self) -> &[[u8; size_of::<ObjectBrace>()]] {
+        let stream = self.stream();
+        let len = self.object_brace_count() as usize * size_of::<ObjectBrace>();
+        match stream.len().checked_sub(len + STREAM_TAIL_PAD) {
+            Some(start) => stream[start..][..len].as_chunks().0,
+            None => &[],
+        }
     }
 
     #[inline]
@@ -653,6 +680,14 @@ impl InternalSourceMap {
         }
     }
 
+    pub fn for_each_object_brace(self, mut each: impl FnMut(ObjectBrace)) {
+        for bytes in self.object_braces() {
+            // SAFETY: `ObjectBrace` is #[repr(C)] POD, four i32s, and `bytes` has its size. The
+            // blob is byte-addressed, so read unaligned.
+            each(unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<ObjectBrace>()) });
+        }
+    }
+
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
     /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
@@ -741,6 +776,7 @@ pub struct Builder {
     pending_original_line: [i32; SYNC_INTERVAL],
     pending_original_column: [i32; SYNC_INTERVAL],
     finalized: Option<MutableString>,
+    object_braces: Vec<ObjectBrace>,
 }
 
 impl Default for Builder {
@@ -758,6 +794,7 @@ impl Default for Builder {
             pending_original_line: [0; SYNC_INTERVAL],
             pending_original_column: [0; SYNC_INTERVAL],
             finalized: None,
+            object_braces: Vec::new(),
         }
     }
 }
@@ -799,6 +836,21 @@ impl Builder {
         if self.pending_n as usize == SYNC_INTERVAL {
             self.flush_window();
         }
+    }
+
+    /// Marks `last`, the last mapping. The printer does at a brace of an object literal, which is
+    /// code. A block's is not, and coverage sees the same character.
+    pub(crate) fn mark_object_brace(&mut self, last: &SourceMapState) {
+        self.object_braces.push(ObjectBrace {
+            generated: LineColumnOffset {
+                lines: Ordinal(self.generated_line),
+                columns: Ordinal(last.generated_column),
+            },
+            original: LineColumnOffset {
+                lines: Ordinal(last.original_line),
+                columns: Ordinal(last.original_column),
+            },
+        });
     }
 
     fn flush_window(&mut self) {
@@ -1022,19 +1074,27 @@ impl Builder {
 
             let sync_bytes = self.sync_entries.len() * size_of::<SyncEntry>();
             let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
-            let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
+            let object_braces_offset = stream_offset as usize + self.win_stream.len();
+            let object_braces_bytes = self.object_braces.len() * size_of::<ObjectBrace>();
+            let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..24] zero-filled,
-            // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // Every byte in [0..total) is written below: [0..20] zero-filled,
+            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
+            // [object_braces_offset..total-STREAM_TAIL_PAD] object braces memcpy,
             // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
             // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
             // no uninit bytes are exposed by set_len.
             // SAFETY: every byte in [0..total) is written below (see comment above).
             let blob = unsafe { out.list.writable_slice_exact(total) };
 
-            blob[0..24].fill(0);
+            blob[0..20].fill(0);
+            blob[20..24].copy_from_slice(
+                &u32::try_from(self.object_braces.len())
+                    .expect("int cast")
+                    .to_ne_bytes(),
+            );
             blob[24..28].copy_from_slice(
                 &u32::try_from(self.sync_entries.len())
                     .expect("int cast")
@@ -1051,6 +1111,15 @@ impl Builder {
             }
             blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
                 .copy_from_slice(&self.win_stream);
+            // SAFETY: ObjectBrace is #[repr(C)] POD with no padding (size==16, 4×4-byte fields);
+            // reinterpreting as bytes is sound.
+            let src = unsafe {
+                core::slice::from_raw_parts(
+                    self.object_braces.as_ptr().cast::<u8>(),
+                    object_braces_bytes,
+                )
+            };
+            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(src);
             blob[total - STREAM_TAIL_PAD..total].fill(0);
 
             self.win_stream = Vec::new();

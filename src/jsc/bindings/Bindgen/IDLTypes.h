@@ -3,6 +3,7 @@
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
+#include <JavaScriptCore/ArgList.h>
 #include <concepts>
 #include <cstddef>
 #include <span>
@@ -20,7 +21,13 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     // Storage in a sequence is explicitly unsupported, as this would create a
     // `Vector<JSValue>`, whose contents are invisible to the GC.
     using SequenceStorageType = void;
+    using NullableType = JSC::JSValue;
+    using NullableInnerParameterType = JSC::JSValue;
+    static JSC::JSValue nullValue() { return {}; }
 };
+
+// An argument and every one after it, read in place from the call frame.
+struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
 
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
@@ -28,6 +35,10 @@ struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 // Treats all falsy values as null.
 template<typename IDL>
 struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
+
+// Treats undefined, null and "" as null.
+template<typename IDL>
+struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
 
 enum class AllowBigInt : bool {
     No,
@@ -125,9 +136,10 @@ struct IDLBytes : WebCore::IDLType<Sink> {
 
 // A BufferSource as the `JSValue` itself. See IDLRawAny.
 template<bool allowShared>
-struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
-    using SequenceStorageType = void;
-};
+struct IDLRawBufferSource : IDLRawAny {};
+
+// A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
+struct IDLRawCallable : IDLRawAny {};
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>
@@ -138,7 +150,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     static JSClass* nullValue() { return nullptr; }
 };
 
-// An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
+// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;

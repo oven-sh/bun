@@ -13,30 +13,16 @@ import tls from "node:tls";
 const perl = Bun.which("perl");
 const usocketsDir = join(import.meta.dirname, "../../../packages/bun-usockets");
 
-// The generator's exclusions, mirrored: its TrustCor pattern (currently 0 entries) and its %distrusted_labels list.
-const distrusted = new Set([
-  "emSign Root CA - G1",
-  "emSign ECC Root CA - G3",
-  "emSign Root CA - C1",
-  "emSign ECC Root CA - C3",
-]);
-const isExcluded = (label: string) => /TrustCor/.test(label) || distrusted.has(label);
-
 // End-to-end: the bundled store must contain exactly the roots NSS marks as
-// server-auth TRUSTED_DELEGATOR, less the generator's exclusions. Catches future generator/sync regressions.
-test("tls.rootCertificates contains every SERVER_AUTH TRUSTED_DELEGATOR from certdata.txt the generator keeps", () => {
+// server-auth TRUSTED_DELEGATOR. Catches future generator/sync regressions.
+test("tls.rootCertificates contains every SERVER_AUTH TRUSTED_DELEGATOR from certdata.txt", () => {
   const certdata = readFileSync(join(usocketsDir, "certdata.txt"), "utf8");
   const expected = certdata.match(/^CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR$/gm)?.length;
   expect(expected).toBeGreaterThan(0);
 
-  // Count the excluded labels among those server-auth roots (a trust object's CKA_LABEL precedes its trust lines).
-  let label = "";
-  let excluded = 0;
-  for (const line of certdata.split("\n")) {
-    const m = /^CKA_LABEL UTF8 "(.*)"$/.exec(line);
-    if (m) label = m[1];
-    else if (line === "CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR" && isExcluded(label)) excluded++;
-  }
+  // Mirror the generator's hard-coded TrustCor exclusion (currently 0 entries).
+  const labels = [...certdata.matchAll(/^CKA_LABEL UTF8 "(.*)"$/gm)].map(m => m[1]);
+  const excluded = new Set(labels.filter(l => /TrustCor/.test(l))).size;
 
   expect(tls.rootCertificates.length).toBe(expected! - excluded);
 
@@ -149,41 +135,4 @@ test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-obje
   expect(blob.readUInt32LE(0)).toBe(2);
   const end = blob.readUInt32LE(4 + 4 * 2);
   expect(blob.length).toBe(4 + 4 * 3 + end);
-});
-
-test.skipIf(!perl)("generate-root-certs.pl leaves out a root on its distrusted list", () => {
-  const script = readFileSync(join(usocketsDir, "generate-root-certs.pl"), "utf8");
-  const serverAuth = [
-    `CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR`,
-    `CKA_TRUST_EMAIL_PROTECTION CK_TRUST CKT_NSS_MUST_VERIFY_TRUST`,
-    `CKA_TRUST_STEP_UP_APPROVED CK_BBOOL CK_FALSE`,
-  ].join("\n");
-
-  const certdata = joinObjects(
-    `# Minimal certdata.txt fixture\nCVS_ID "fixture"`,
-    certObject("DirectTrustRoot"),
-    trustObject("DirectTrustRoot", String.raw`\001\002\003\004`, serverAuth),
-    certObject("emSign Root CA - G1"),
-    trustObject("emSign Root CA - G1", String.raw`\005\006\007\010`, serverAuth),
-    // A label that only starts like a listed one is not on the list.
-    certObject("emSign Root CA - G10"),
-    trustObject("emSign Root CA - G10", String.raw`\011\012\013\014`, serverAuth),
-  );
-
-  using dir = tempDir("root-certs-distrusted", {
-    "generate-root-certs.pl": script,
-    "certdata.txt": certdata,
-  });
-
-  execFileSync(perl!, ["generate-root-certs.pl", "root_certs"], {
-    cwd: String(dir),
-    env: bunEnv,
-    encoding: "utf8",
-  });
-
-  const listed = readFileSync(join(String(dir), "root_certs.txt"), "utf8")
-    .split("\n")
-    .filter(l => l && !l.startsWith("#"));
-  expect(listed).toEqual(["DirectTrustRoot", "emSign Root CA - G10"]);
-  expect(readFileSync(join(String(dir), "root_certs.der")).readUInt32LE(0)).toBe(2);
 });

@@ -7,8 +7,8 @@ import {
   BufferSourceType,
   type BytesOptions,
   BytesType,
+  CallableType,
   type ClassOptions,
-  ClassRefType,
   ClassType,
   type DictionaryOptions,
   DictionaryType,
@@ -47,6 +47,9 @@ export const string = new StringType();
 /** The JS value itself, as a `JsLocal<'a>`. */
 export const any = new AnyType();
 
+/** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
+export const callable = new CallableType();
+
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
@@ -56,15 +59,12 @@ export const bytes = (options: BytesOptions) => new BytesType(options);
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(
   "Bun::Bindgen::IDLBlobRef",
-  "Blob",
+  "globalThis.Blob",
   "bun_jsc::webcore_types::Blob",
   "Bindgen/IDLConvertBlob.h",
-  [{ cpp: "WebCore::JSBlob" }],
-  "detached Blobs",
+  [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
+  null,
 );
-
-/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct it wraps. */
-export const classRef = (name: string) => new ClassRefType(name);
 
 const null_ = new UnitType("null");
 

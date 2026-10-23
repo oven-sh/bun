@@ -33,6 +33,8 @@
 
 #include <lsquic.h>
 #include <lsxpack_header.h>
+
+_Static_assert(sizeof(lsxpack_strlen_t) == 4, "LSXPACK_MAX_STRLEN must be UINT32_MAX, as in the objects this links");
 #include <openssl/ssl.h>
 #include <hdr/hdr_histogram.h>
 

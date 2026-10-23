@@ -398,6 +398,8 @@ export function runSetupFunction(
     if ($peekPromiseStatus(setupResult) === 1) {
       setupResult = $peekPromiseSettledValue(setupResult);
     } else {
+      // A pending Promise subclass can start its work in then(), as `Bun.$` does. `$then` alone never calls it.
+      if ($peekPromiseStatus(setupResult) === 0) setupResult = Promise.$resolve(setupResult);
       return setupResult.$then(() => {
         let selfPromises;
         if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {

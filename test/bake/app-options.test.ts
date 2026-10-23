@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
 // of another type must throw ERR_INVALID_ARG_TYPE from Bun.serve, before any
@@ -377,5 +379,43 @@ test.concurrent("Bun.serve({ app }) reports an unsupported app router file", asy
   expect(stderr).toContain('error: "app/loading.ts" is not a valid route\n');
   expect(stderr).toContain('Bun Bake currently does not support "loading" files\n');
   expect(stdout).toBe("200 page\n");
+  expect(exitCode).toBe(0);
+});
+
+// A Promise subclass can start its work in then(), as Bun.$ and a Bun.SQL query do. Bun.serve waits on what
+// `await` waits on for a pending promise that setup() returns, so it calls that then(). The fixture value
+// starts itself on the next turn of the event loop when nothing called its then(), and counts that in
+// `notAwaited`.
+test.concurrent("Bun.serve({ app }) plugin setup() awaits a pending Promise subclass through its then()", async () => {
+  const fixtures = pathToFileURL(join(import.meta.dir, "../js/bun/test/fixtures/returned-thenable.ts")).href;
+  using dir = tempDir("bake-app-plugin-setup-promise-subclass", {
+    "server.ts": `export function render() { return new Response("ok"); }`,
+    "routes/index.ts": `export default () => new Response("ok");`,
+    "fixture.ts": `
+      import { LazyPromise, notAwaited } from ${JSON.stringify(fixtures)};
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      let worked = false;
+      let waited;
+      const plugins = [
+        { name: "lazy-setup", setup: () => new LazyPromise(resolve => setImmediate(() => resolve((worked = true)))) },
+        // The next setup() runs when the promise that the first setup() returned has settled.
+        { name: "next", setup: () => void (waited = worked) },
+      ];
+      await Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] }, plugins } }).stop(true);
+      console.log(JSON.stringify({ waited, thenCalls: LazyPromise.thenCalls, notAwaited: notAwaited.count }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ waited: true, thenCalls: 1, notAwaited: 0 });
   expect(exitCode).toBe(0);
 });

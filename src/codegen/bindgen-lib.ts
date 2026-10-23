@@ -60,6 +60,7 @@ export { objectType as object } from "./bindgen-lib-internal.ts";
 
 /** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
 export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
@@ -106,7 +107,6 @@ export const union = (alternatives: Record<string, Type>) => new UnionType(alter
 
 /** A JS class whose state is the Rust struct at `options.rustPath`, stored inside the wrapper object. */
 const class_ = (options: ClassOptions) => new ClassType(options);
-export { class_ as class };
 
 /** The class being declared, in its own signatures: a `JsWrapper<'a, Self>`. */
 export { selfType as self } from "./bindgen-lib-internal.ts";

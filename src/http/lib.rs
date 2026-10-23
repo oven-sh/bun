@@ -973,7 +973,7 @@ use bun_uws as uws;
 use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
-use crate::internal_state::{RequestStage, ResponseStage, Stage};
+use crate::internal_state::{ReadEnd, RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
@@ -1484,15 +1484,51 @@ fn print_response(response: &picohttp::Response<'_>) {
     Output::flush();
 }
 
+/// Whether a close-delimited body completes only at the peer's FIN. Limited to the kernel whose
+/// errno order was measured: on Linux a reset that follows the peer's FIN leaves EPIPE, and only
+/// a reset with no FIN leaves ECONNRESET. Elsewhere every end of the connection completes such a
+/// body.
+pub(crate) const STRICT_READ_END: bool = cfg!(any(target_os = "linux", target_os = "android"));
+
+/// Whether `errno`, a uSockets close code, says that the connection was cut before the peer's
+/// stream ended. Up to `FastShutdown` a close code is this side's own close, and EPIPE is the
+/// reset that followed the peer's FIN.
+pub(crate) fn is_cut(errno: i32) -> bool {
+    errno > uws::CloseKind::FastShutdown as i32 && errno != bun_sys::E::EPIPE as i32
+}
+
+/// One write to the socket that carries a request. Returns what `socket.write` returns.
+///
+/// A plain-TCP `send()` that fails with ECONNRESET takes the reset out of the kernel, so the
+/// read side can no longer report it: `took_error` keeps that for `HTTPClient::on_close`.
+/// ECONNRESET only: a send can also fail with a timeout or an abort after the peer's FIN
+/// arrived, and the body is whole then. A TLS connection that had a send rejected keeps the
+/// old rule (`Handler::read_end`).
+fn write_once<const IS_SSL: bool>(
+    socket: HttpSocket<IS_SSL>,
+    data: &[u8],
+    took_error: &mut bool,
+) -> i32 {
+    if IS_SSL || !STRICT_READ_END {
+        return socket.write(data);
+    }
+    let (written, fatal_errno) = socket.write_check_error(data);
+    if fatal_errno == bun_sys::E::ECONNRESET as i32 {
+        *took_error = true;
+    }
+    written
+}
+
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
 fn write_to_socket<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
     data: &[u8],
+    took_error: &mut bool,
 ) -> crate::Result<usize> {
     let mut remaining = data;
     let mut total_written: usize = 0;
     while !remaining.is_empty() {
-        let amount = socket.write(remaining);
+        let amount = write_once::<IS_SSL>(socket, remaining, took_error);
         if amount < 0 {
             return Err(crate::Error::WriteFailed);
         }
@@ -1511,8 +1547,9 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
     buffer: &mut bun_io::StreamBuffer,
     data: &[u8],
+    took_error: &mut bool,
 ) -> crate::Result<usize> {
-    let amount = write_to_socket::<IS_SSL>(socket, data)?;
+    let amount = write_to_socket::<IS_SSL>(socket, data, took_error)?;
     if amount < data.len() {
         let _ = buffer.write(&data[amount..]);
     }
@@ -2246,7 +2283,28 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::BodyChunk
     }
 
-    pub(crate) fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+    /// `read_end` as it counts for the body of this request.
+    fn body_read_end(&self, read_end: ReadEnd) -> ReadEnd {
+        // An upgraded connection is a byte stream with no body to cut. On a unix socket
+        // ECONNRESET only says that the peer closed with input unread, whole answer or not.
+        // Behind a CONNECT tunnel the socket ends with the proxy's teardown, not the origin's.
+        if self.flags.upgrade_state == HTTPUpgradeState::Upgraded
+            || !self.unix_socket_path.is_empty()
+            || self.proxy_tunnel.is_some()
+        {
+            return ReadEnd::Fin;
+        }
+        if self.state.flags.write_took_error {
+            return ReadEnd::Error;
+        }
+        read_end
+    }
+
+    pub(crate) fn on_close<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+        read_end: ReadEnd,
+    ) {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
         // the socket is closed, we need to unregister the abort tracker
         self.unregister_abort_tracker();
@@ -2255,6 +2313,8 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::Aborted);
             return;
         }
+        // Before the tunnel goes: a tunnelled body is exempt.
+        let read_end = self.body_read_end(read_end);
         self.close_proxy_tunnel(true);
         let in_progress = self.is_in_progress();
         if self.state.flags.is_redirect_pending {
@@ -2264,7 +2324,10 @@ impl<'a> HTTPClient<'a> {
             self.do_redirect::<IS_SSL>(ctx, socket);
             return;
         }
-        if in_progress && self.state.is_body_complete_on_close() {
+        // A close-delimited body ends at the peer's FIN (RFC 9112 section 8): a reset leaves
+        // it incomplete. undici completes it (`onHttpSocketError` in client-h1.js,
+        // nodejs/undici#784), so Node's fetch resolves with the part that arrived.
+        if in_progress && self.state.is_body_complete_on_close(read_end) {
             if let Err(err) = self.state.finalize_body_on_eof() {
                 self.fail(err);
                 return;
@@ -3153,7 +3216,8 @@ impl<'a> HTTPClient<'a> {
         if socket.is_closed() || socket.is_shutdown() {
             return Err(crate::Error::ConnectionClosed);
         }
-        let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
+        let amount =
+            write_to_socket::<IS_SSL>(socket, to_send, &mut self.state.flags.write_took_error)?;
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
@@ -3271,7 +3335,11 @@ impl<'a> HTTPClient<'a> {
 
         let to_send_len = buffer.slice().len();
         if to_send_len > 0 {
-            let amount = write_to_socket::<IS_SSL>(socket, buffer.slice())?;
+            let amount = write_to_socket::<IS_SSL>(
+                socket,
+                buffer.slice(),
+                &mut self.state.flags.write_took_error,
+            )?;
             self.state.request_sent_len += amount;
             buffer.cursor += amount;
             if amount < to_send_len {
@@ -3290,7 +3358,12 @@ impl<'a> HTTPClient<'a> {
         // ok we flushed all pending data so we can reset the backpressure
         if !data.is_empty() {
             // no backpressure everything was sended so we can just try to send
-            let sent = write_to_socket_with_buffer_fallback::<IS_SSL>(socket, buffer, data)?;
+            let sent = write_to_socket_with_buffer_fallback::<IS_SSL>(
+                socket,
+                buffer,
+                data,
+                &mut self.state.flags.write_took_error,
+            )?;
             self.state.request_sent_len += sent;
             // if we didn't send all the data we have backpressure
             return Ok(sent < data.len());
@@ -3507,9 +3580,14 @@ impl<'a> HTTPClient<'a> {
 
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
-                        let to_send = self.request_body();
+                        // The field, not `request_body()`: the write borrows the latch beside it.
+                        let to_send = self.state.request_body.slice();
                         if !to_send.is_empty() {
-                            let sent = match write_to_socket::<IS_SSL>(socket, to_send) {
+                            let sent = match write_to_socket::<IS_SSL>(
+                                socket,
+                                to_send,
+                                &mut self.state.flags.write_took_error,
+                            ) {
                                 Ok(s) => s,
                                 Err(err) => {
                                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -4247,7 +4325,11 @@ impl<'a> HTTPClient<'a> {
             || self.proxy_tunnel.is_some()
             || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
             || !self.signals.is_receive_paused()
-            || socket.is_closed_or_has_error()
+            || socket.is_closed()
+            || socket.is_shutdown()
+            // Under the rule, not SO_ERROR: reading it takes a pending reset out of the kernel,
+            // and the `recv()` after the pause then returns 0 like a FIN.
+            || (!STRICT_READ_END && socket.get_error() != 0)
         {
             return;
         }

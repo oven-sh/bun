@@ -1,9 +1,11 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
+import { truncateSync } from "node:fs";
 import { createServer } from "node:http";
-import { createServer as createNetServer } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import {
   brotliCompressSync,
   deflateRawSync,
@@ -14,6 +16,7 @@ import {
   zstdCompressSync,
 } from "node:zlib";
 import path from "path";
+import { upgradeHeaders } from "./websocket.helpers";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
 const html = path.join(import.meta.dir, "fixture.html");
@@ -678,6 +681,50 @@ describe("corrupt compressed responses", () => {
       });
     }
 
+    // A reset is not the FIN. On Linux the body read then fails with ECONNRESET. A stream that is short no
+    // longer fails with the error of its decoder. A stream that reached an end of its own is cut too: the
+    // server resets before the second gzip member, or the second zstd frame, leaves.
+    const cutByReset: [name: string, encoding: string, payload: Buffer][] = [
+      ...Object.entries(codecs).map(([encoding, [half]]): [string, string, Buffer] => [
+        `${encoding}: truncated stream`,
+        encoding,
+        half,
+      ]),
+      ["gzip: the first of two members, whole", "gzip", gzipSync(plain)],
+      ["zstd: the first of two frames, whole", "zstd", zstdCompressSync(plain)],
+    ];
+    for (const [name, encoding, payload] of cutByReset) {
+      it(`${name}, then a reset: the body read rejects with ECONNRESET`, async () => {
+        const sockets: import("node:net").Socket[] = [];
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.once("data", () => {
+            sockets.push(sock);
+            const head = `HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nConnection: close\r\n\r\n`;
+            sock.write(Buffer.concat([Buffer.from(head), payload]));
+          });
+        });
+        const port = await listen(srv);
+        try {
+          // The client has the head when fetch() resolves, and the payload came with the head.
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          for (const sock of sockets) sock.resetAndDestroy();
+          const read = await res.arrayBuffer().then(
+            body => ({ resolved: body.byteLength }),
+            (error: Error & { code?: string }) => ({ rejected: error.constructor.name, code: error.code }),
+          );
+          expect({ status: res.status, read }).toEqual({
+            status: 200,
+            // fetch() has this rule on Linux and Android. Elsewhere the read only has to settle.
+            read: isLinux ? { rejected: "TypeError", code: "ECONNRESET" } : expect.anything(),
+          });
+        } finally {
+          for (const sock of sockets) sock.destroy();
+          srv.close();
+        }
+      });
+    }
+
     it("identity: uncompressed close-delimited body is delivered intact", async () => {
       const body = Buffer.alloc(4096, "x");
       const srv = createNetServer(sock => {
@@ -725,6 +772,723 @@ describe("corrupt compressed responses", () => {
     } finally {
       srv.close();
     }
+  });
+});
+
+// RFC 9112 section 8: a response with no Content-Length and no chunked framing ends when the server closes
+// the connection. A reset is not that close, so the body it cuts short fails with ECONNRESET. Node's fetch
+// resolves such a body with the part that arrived.
+describe("close-delimited body: a reset is not the end of the body", () => {
+  type NetSocket = import("node:net").Socket;
+  const HEAD = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
+  const trusted = { tls: { ca: tlsCert.cert } };
+
+  // A promise as a value to compare: what it resolved with, or the class and the code of its error.
+  const settled = (promise: Promise<unknown>) =>
+    promise.then(
+      value => ({ resolved: value }),
+      (error: Error & { code?: string }) => ({ rejected: error.constructor.name, code: error.code }),
+    );
+  // The rule is compiled for Linux and Android. Elsewhere every close still ends such a body, so there the
+  // read of a cut body only has to settle.
+  const cut = isLinux ? { rejected: "TypeError", code: "ECONNRESET" } : expect.anything();
+  // fetch() and the read of the body, for a server that resets on its own. Off Linux that reset can take the
+  // head with it (Windows drops what the client has yet to read), so there the exchange only has to settle.
+  const exchange = (response: Promise<Response>) =>
+    settled(response.then(async res => ({ status: res.status, text: await settled(res.text()) })));
+  const cutExchange = isLinux ? { resolved: { status: 200, text: cut } } : expect.anything();
+  // What an exchange delivered: the text of the body, or "rejected" when fetch() or the read rejected.
+  const delivered = (outcome: any): string => outcome.resolved?.text?.resolved ?? "rejected";
+  // A framed answer with no body.
+  const EMPTY = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+  // A raw server. `respond` runs once for each connection, when the request head is in: `request` is the
+  // head and the bytes of the body that came with it.
+  async function serve(
+    respond: (socket: NetSocket, request: string) => void,
+    { tls, unix }: { tls?: import("node:tls").TlsOptions; unix?: string } = {},
+  ) {
+    const sockets = new Set<NetSocket>();
+    const onConnection = (socket: NetSocket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      let request = "";
+      const onData = (data: Buffer) => {
+        request += data.toString("latin1");
+        if (!request.includes("\r\n\r\n")) return;
+        socket.off("data", onData);
+        respond(socket, request);
+      };
+      socket.on("data", onData);
+    };
+    const server = tls
+      ? createTlsServer({ ...tlsCert, ...tls }, onConnection)
+      : createNetServer({ allowHalfOpen: true }, onConnection);
+    await once(unix ? server.listen(unix) : server.listen(0, "127.0.0.1"), "listening");
+    const port = unix ? 0 : (server.address() as import("node:net").AddressInfo).port;
+    return {
+      port,
+      url: unix ? "http://localhost/" : `${tls ? "https" : "http"}://127.0.0.1:${port}/`,
+      // Resets every open connection: the client gets no FIN.
+      reset() {
+        for (const socket of sockets) if (!socket.destroyed) socket.resetAndDestroy();
+      },
+      // close() alone waits for the connections that are still open.
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+  }
+
+  // TLS has no call that resets a connection, or that ends it without a close_notify: a TCP relay in front
+  // of the TLS server does both. With `bareFin` the close_notify of the origin does not reach the client and
+  // its FIN does. With "then reset" the relay also leaves the upload unread from the answer on, so its close
+  // after that FIN resets. With `alertThenReset` the close_notify reaches the client, the upload stays unread
+  // too, and a reset takes the place of the FIN. All three need a TLS 1.2 origin, where the type of a record
+  // is readable. With `tunnel` the relay is a CONNECT proxy: it answers the CONNECT of the client first.
+  async function relayTo(
+    origin: { port: number },
+    { bareFin, alertThenReset, tunnel }: { bareFin?: true | "then reset"; alertThenReset?: true; tunnel?: true } = {},
+  ) {
+    const clients = new Set<NetSocket>();
+    let tunnels = 0;
+    const relay = createNetServer(client => {
+      const upstream = connect(origin.port, "127.0.0.1");
+      clients.add(client);
+      client.on("error", () => {});
+      upstream.on("error", () => {});
+      client.on("close", () => {
+        clients.delete(client);
+        upstream.destroy();
+      });
+      // The client sends nothing after its CONNECT until the answer to it is in.
+      let connectHead = tunnel ? "" : undefined;
+      client.on("data", data => {
+        if (connectHead === undefined) return void upstream.write(data);
+        connectHead += data.toString("latin1");
+        if (!connectHead.includes("\r\n\r\n")) return;
+        connectHead = undefined;
+        tunnels++;
+        client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      });
+      let records = Buffer.alloc(0);
+      // For `alertThenReset`: the records that the kernel has yet to take, and whether the origin has ended.
+      let unflushed = 0;
+      let originEnded = false;
+      const resetWhenFlushed = () => {
+        if (originEnded && unflushed === 0 && !client.destroyed) client.resetAndDestroy();
+      };
+      upstream.on("data", (data: Buffer) => {
+        if (!bareFin && !alertThenReset) return void client.write(data);
+        records = Buffer.concat([records, data]);
+        // A record: its type (1 byte), a version (2), a length (2), then that many bytes.
+        while (records.length >= 5 && records.length >= 5 + records.readUInt16BE(3)) {
+          const record = records.subarray(0, 5 + records.readUInt16BE(3));
+          records = records.subarray(record.length);
+          if (record[0] === 21 && bareFin) continue; // an alert: the close_notify
+          // Application data: the answer.
+          if (record[0] === 23 && (bareFin === "then reset" || alertThenReset)) client.pause();
+          if (!alertThenReset) {
+            client.write(record);
+            continue;
+          }
+          unflushed++;
+          client.write(record, () => {
+            unflushed--;
+            resetWhenFlushed();
+          });
+        }
+      });
+      // Every byte of the origin is in by now, and the end() of `client` sends its FIN after them.
+      upstream.on("end", () => {
+        originEnded = true;
+        if (alertThenReset) resetWhenFlushed();
+        else if (bareFin === "then reset") client.end(() => client.destroy());
+        else if (bareFin) client.end();
+      });
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    const { port } = relay.address() as import("node:net").AddressInfo;
+    return {
+      url: `https://127.0.0.1:${port}/`,
+      // For the `proxy` option of fetch(), with `tunnel`.
+      proxy: `http://127.0.0.1:${port}`,
+      // The CONNECT requests that the relay answered.
+      get tunnels() {
+        return tunnels;
+      },
+      // Resets every client: no close_notify and no FIN.
+      reset() {
+        for (const client of clients) if (!client.destroyed) client.resetAndDestroy();
+      },
+      async [Symbol.asyncDispose]() {
+        for (const client of clients) client.destroy();
+        relay.close();
+      },
+    };
+  }
+
+  // A file for a Bun.file upload: 4 MiB, which is more than the socket takes while the server does not read.
+  // It is a file of holes, so that no data goes to the disk.
+  function uploadFile() {
+    const dir = tempDir("fetch-cut-upload", { upload: "" });
+    const file = path.join(String(dir), "upload");
+    truncateSync(file, 4 * 1024 * 1024);
+    return { file, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  // A request body that keeps coming, one chunk for each turn of the event loop, until the request is over.
+  function endlessUpload() {
+    let open = true;
+    const chunk = new Uint8Array(64 * 1024).fill(117);
+    const body = new ReadableStream({
+      async pull(controller) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (open) controller.enqueue(chunk);
+      },
+      cancel() {
+        open = false;
+      },
+    });
+    return { body, [Symbol.dispose]: () => void (open = false) };
+  }
+
+  // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option. The HTTP client sees
+  // an assignment to process.env and not a delete, so this restores with an assignment too.
+  function withoutNoProxy() {
+    const saved = [process.env.NO_PROXY, process.env.no_proxy];
+    process.env.NO_PROXY = process.env.no_proxy = "";
+    return {
+      [Symbol.dispose]() {
+        process.env.NO_PROXY = saved[0] ?? "";
+        process.env.no_proxy = saved[1] ?? "";
+      },
+    };
+  }
+
+  describe.each([
+    ["HTTP/1.1 with Connection: close", HEAD],
+    ["HTTP/1.0", "HTTP/1.0 200 OK\r\n\r\n"],
+    ["HTTP/1.1 with no Connection: close and no length", "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"],
+  ])("%s", (_, head) => {
+    // Each test resets the connection when fetch() has resolved: the client has the head and "half" by then.
+    const serveHalf = () => serve(socket => void socket.write(head + "half"));
+
+    it("fetch() resolves with the head, then text() rejects", async () => {
+      await using server = await serveHalf();
+      const res = await fetch(server.url);
+      server.reset();
+      expect({ status: res.status, text: await settled(res.text()) }).toEqual({ status: 200, text: cut });
+    });
+
+    it("a stream reader gets the chunk that arrived, then rejects", async () => {
+      await using server = await serveHalf();
+      const reader = (await fetch(server.url)).body!.getReader();
+      const first = await reader.read();
+      server.reset();
+      expect({ first: Buffer.from(first.value!).toString(), next: await settled(reader.read()) }).toEqual({
+        first: "half",
+        next: cut,
+      });
+    });
+
+    it("Bun.write() rejects", async () => {
+      await using server = await serveHalf();
+      using dir = tempDir("fetch-cut-body", {});
+      const res = await fetch(server.url);
+      server.reset();
+      expect(await settled(Bun.write(path.join(String(dir), "body"), res))).toEqual(cut);
+    });
+  });
+
+  it("the head, part of the body and the reset at once: fetch() resolves, then the read rejects", async () => {
+    await using server = await serve(socket => void socket.write(HEAD + "half", () => socket.resetAndDestroy()));
+    expect(await exchange(fetch(server.url))).toEqual(cutExchange);
+  });
+
+  // The accepted break. A reset is not the end of the body, and fetch() cannot know that every byte of the
+  // answer arrived. So the read also fails for a server that closes with a reset after a whole reply, with
+  // nothing of the request left unread. Node's fetch resolves both of these.
+  it.each([
+    ["a whole reply", "the whole body"],
+    ["a reply with no body", ""],
+  ])("the accepted break: %s, then a reset with no FIN: the read rejects", async (_, body) => {
+    await using server = await serve(socket => void socket.write(HEAD + body, () => socket.resetAndDestroy()));
+    expect(await exchange(fetch(server.url))).toEqual(cutExchange);
+  });
+
+  it("a slow reader: 4 MiB, then the reset, and only then the read", async () => {
+    const answer = Buffer.concat([Buffer.from(HEAD), Buffer.alloc(4 * 1024 * 1024, "x")]);
+    // The reset comes when the kernel has taken the whole body, or at the latest when the client has the
+    // head: a kernel that does not buffer 4 MiB for a reader that stopped must not hang the test.
+    await using server = await serve(socket => void socket.write(answer, () => server.reset()));
+    const res = await fetch(server.url);
+    server.reset();
+    const length = await settled(res.arrayBuffer().then(body => body.byteLength));
+    expect({ status: res.status, length }).toEqual({ status: 200, length: cut });
+  });
+
+  // The order that decides for a slow reader: the reset is pending when fetch() stops reading, which it does
+  // when 256 KiB of the body wait for a reader. The first part of the body stays below that mark. The part
+  // that crosses it and the reset then come in one turn of the server, so the client meets that order in
+  // most runs. fetch-syscall-fault.test.ts has it in every run, for builds with fault injection.
+  // Linux only: the order exists only under the rule, and the steps depend on when this client stops reading.
+  it.skipIf(!isLinux)(
+    "a slow reader: the part that crosses the pause mark and the reset at once: every run rejects",
+    async () => {
+      const first = Buffer.concat([Buffer.from(HEAD), Buffer.alloc(256 * 1024 - 1024, "x")]);
+      const outcomes: unknown[] = [];
+      for (let run = 0; run < 10; run++) {
+        const firstWritten = Promise.withResolvers<NetSocket>();
+        await using server = await serve((socket, request) => {
+          if (request.startsWith("GET /turn ")) return void socket.end(EMPTY);
+          // Or the kernel can hold the second part back until the client acknowledges the first one, and the
+          // reset then drops it.
+          socket.setNoDelay(true);
+          socket.write(first, () => firstWritten.resolve(socket));
+        });
+        // A request that starts now, when it is over: the HTTP thread of the client has taken what the other
+        // connection had for it before.
+        const turn = async () => void (await (await fetch(server.url + "turn")).arrayBuffer());
+        const res = await fetch(server.url);
+        const socket = await firstWritten.promise;
+        await turn();
+        socket.write(Buffer.alloc(2048, "y"));
+        socket.resetAndDestroy();
+        await turn();
+        outcomes.push({ status: res.status, length: await settled(res.arrayBuffer().then(body => body.byteLength)) });
+      }
+      expect(outcomes).toEqual(Array(10).fill({ status: 200, length: cut }));
+    },
+  );
+
+  it("a streamed upload in flight: every run rejects", async () => {
+    await using server = await serve(socket => {
+      socket.pause(); // the upload stays unread
+      socket.write(HEAD + "half", () => socket.resetAndDestroy());
+    });
+    const outcomes: unknown[] = [];
+    // The call of the client that meets the reset differs from run to run: a recv(), or the send() of a chunk.
+    for (let run = 0; run < 30; run++) {
+      using upload = endlessUpload();
+      outcomes.push(await exchange(fetch(server.url, { method: "POST", body: upload.body, duplex: "half" })));
+    }
+    expect(outcomes).toEqual(Array(30).fill(cutExchange));
+  });
+
+  // A Bun.file upload over http goes out with sendfile(). A sendfile() that fails rejects fetch() with its
+  // own errno, so this upload is outside the rule: the error is not always ECONNRESET. One of the two calls
+  // meets the reset in every run, so no run delivers the cut body.
+  it("a Bun.file upload in flight: no run delivers the cut body", async () => {
+    using upload = uploadFile();
+    await using server = await serve(socket => {
+      socket.pause(); // the upload stays unread
+      socket.write(HEAD + "half", () => socket.resetAndDestroy());
+    });
+    const outcomes: string[] = [];
+    for (let run = 0; run < 10; run++) {
+      const body = Bun.file(upload.file);
+      outcomes.push(delivered(await exchange(fetch(server.url, { method: "POST", body }))));
+    }
+    expect(outcomes).toEqual(Array(10).fill(isLinux ? "rejected" : expect.anything()));
+  });
+
+  it("https: fetch() resolves with the head, then text() rejects", async () => {
+    await using origin = await serve(socket => void socket.write(HEAD + "half"), { tls: {} });
+    await using relay = await relayTo(origin);
+    const res = await fetch(relay.url, trusted);
+    relay.reset();
+    expect({ status: res.status, text: await settled(res.text()) }).toEqual({ status: 200, text: cut });
+  });
+
+  it("https: a reset after the server read the whole upload", async () => {
+    const upload = Buffer.alloc(1024 * 1024, "u");
+    await using origin = await serve(
+      (socket, request) => {
+        let read = request.length - request.indexOf("\r\n\r\n") - 4;
+        const answerWhenWhole = () => void (read === upload.length && socket.write(HEAD + "half"));
+        socket.on("data", data => {
+          read += data.length;
+          answerWhenWhole();
+        });
+        answerWhenWhole();
+      },
+      { tls: {} },
+    );
+    await using relay = await relayTo(origin);
+    const res = await fetch(relay.url, { ...trusted, method: "POST", body: upload });
+    relay.reset();
+    expect({ status: res.status, text: await settled(res.text()) }).toEqual({ status: 200, text: cut });
+  });
+
+  // A TLS connection that had a send() rejected keeps the old rule: its close does not say how the read side
+  // ended. So a run in which a send() of the upload meets the reset first still resolves with the part that
+  // arrived, as before. Every other run rejects.
+  it.each([
+    ["does not read", (socket: NetSocket) => void socket.pause()],
+    ["reads", (socket: NetSocket) => void socket.resume()],
+  ])(
+    "https, a streamed upload in flight that the server %s: a run rejects, or ends as before",
+    async (_, takeUpload) => {
+      await using origin = await serve(
+        socket => {
+          takeUpload(socket);
+          socket.write(HEAD + "half");
+        },
+        { tls: {} },
+      );
+      await using relay = await relayTo(origin);
+      const unexpected: unknown[] = [];
+      for (let run = 0; run < 10; run++) {
+        using upload = endlessUpload();
+        const res = await fetch(relay.url, { ...trusted, method: "POST", body: upload.body, duplex: "half" });
+        relay.reset();
+        const text = (await settled(res.text())) as { resolved?: string; code?: string };
+        const asTheRuleSays = text.code === "ECONNRESET";
+        const asBefore = text.resolved === "half";
+        if (res.status !== 200 || (isLinux && !asTheRuleSays && !asBefore))
+          unexpected.push({ status: res.status, text });
+      }
+      expect(unexpected).toEqual([]);
+    },
+  );
+
+  // fetch() sends an idempotent request again when a connection from the keep-alive pool closes before the
+  // response began. A reset in the body is not that close: the request went out once, and the read rejects.
+  it.each([
+    ["part of the body", "half"],
+    ["the head and no byte of the body", ""],
+  ])("a connection from the keep-alive pool, reset after %s: the request is not sent again", async (_, part) => {
+    // "<connection>:<path>" for each request head, in the order in which the server got them.
+    const seen: string[] = [];
+    const sockets = new Set<NetSocket>();
+    let connections = 0;
+    let cutSocket: NetSocket | undefined;
+    const server = createNetServer(socket => {
+      const id = ++connections;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      let buffered = "";
+      socket.on("data", data => {
+        buffered += data.toString("latin1");
+        for (let end; (end = buffered.indexOf("\r\n\r\n")) !== -1;) {
+          const requestPath = buffered.slice(0, end).split(" ")[1];
+          buffered = buffered.slice(end + 4);
+          seen.push(`${id}:${requestPath}`);
+          if (requestPath !== "/cut") {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+          } else if (!cutSocket) {
+            cutSocket = socket;
+            socket.write("HTTP/1.1 200 OK\r\n\r\n" + part);
+          } else {
+            // A second /cut, which must not come. It ends with a FIN, so the read settles and `seen` shows it.
+            socket.end("HTTP/1.1 200 OK\r\n\r\n" + part);
+          }
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+      const warm = await (await fetch(base + "/warm")).text();
+      const res = await fetch(base + "/cut");
+      cutSocket!.resetAndDestroy();
+      const text = await settled(res.text());
+      const after = await (await fetch(base + "/after")).text();
+      expect({ warm, status: res.status, text, after, seen }).toEqual({
+        warm: "ok",
+        status: 200,
+        text: cut,
+        after: "ok",
+        // /cut went out once, on the connection of /warm. The other connection is the one of /after.
+        seen: ["1:/warm", "1:/cut", "2:/after"],
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+
+  it("an unread cut body is no unhandled rejection, and a late text() rejects at once", async () => {
+    const script = /* js */ `
+      import { once } from "node:events";
+      import { createServer } from "node:net";
+
+      const sockets = [];
+      const server = createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(${JSON.stringify(HEAD + "half")});
+          sockets.push(socket);
+        });
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+      const settled = promise =>
+        promise.then(
+          text => "resolved " + text,
+          error => error.constructor.name + " " + error.code,
+        );
+
+      const unread = await fetch(url);
+      const watched = await fetch(url);
+      // In the order of the requests: when the second read has settled, the client has seen the first reset too.
+      for (const socket of sockets) socket.resetAndDestroy();
+      const watchedRead = await settled(watched.text());
+      // An unhandled rejection ends the process in one of these turns.
+      for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
+      const late = unread.text();
+      const lateIs = Bun.peek.status(late);
+      console.log(JSON.stringify({ status: unread.status, watched: watchedRead, lateIs, late: await settled(late) }));
+      server.close();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let result: unknown = stdout;
+    try {
+      result = JSON.parse(stdout);
+    } catch {}
+    expect({ result, stderr, exitCode }).toEqual({
+      result: isLinux
+        ? { status: 200, watched: "TypeError ECONNRESET", lateIs: "rejected", late: "TypeError ECONNRESET" }
+        : expect.objectContaining({ status: 200 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `return new Response(upstream.body)`: the proxy must not turn the cut into a complete chunked message.
+  it("a Bun.serve proxy of a cut body reports it, and does not terminate its own body as complete", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import net from "node:net";
+        // The upstream resets only once "chunk-a" has provably reached the
+        // client of the proxy.
+        const chunkReachedClient = Promise.withResolvers();
+        const upstream = net.createServer(socket => {
+          socket.on("error", () => {});
+          socket.once("data", () => {
+            socket.write("HTTP/1.1 200 OK\\r\\nConnection: close\\r\\n\\r\\nchunk-a");
+            chunkReachedClient.promise.then(() => socket.resetAndDestroy());
+          });
+        });
+        await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+        const server = Bun.serve({
+          port: 0,
+          development: false,
+          async fetch() {
+            const res = await fetch("http://127.0.0.1:" + upstream.address().port + "/");
+            return new Response(res.body);
+          },
+        });
+        const wire = await new Promise(resolve => {
+          const chunks = [];
+          const sock = net.connect(server.port, "127.0.0.1", () => {
+            sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+          });
+          sock.on("data", d => {
+            chunks.push(d);
+            if (Buffer.concat(chunks).includes("chunk-a")) chunkReachedClient.resolve();
+          });
+          sock.on("error", () => {});
+          sock.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+        });
+        console.log(JSON.stringify({
+          statusLine: wire.split("\\r\\n")[0],
+          cleanChunkedTerminator: wire.endsWith("0\\r\\n\\r\\n"),
+          body: wire.split("\\r\\n\\r\\n").slice(1).join("\\r\\n\\r\\n"),
+        }));
+        server.stop(true);
+        upstream.close();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
+      result: isLinux
+        ? { statusLine: "HTTP/1.1 200 OK", cleanChunkedTerminator: false, body: "7\r\nchunk-a\r\n" }
+        : // Either end of the body is right here: the request only has to finish.
+          expect.objectContaining({ statusLine: "HTTP/1.1 200 OK" }),
+      exitCode: 0,
+    });
+    // The failure must still reach the operator.
+    if (isLinux) expect(stderr).toContain("ECONNRESET");
+  });
+
+  // These pass with and without the rule: they pin the ends of a connection that still complete the body.
+  describe("still the end of the body", () => {
+    const WHOLE = "the whole body";
+    const whole = { resolved: WHOLE };
+    // The answer, a FIN (on TLS after a close_notify), and a close with the upload unread: that close resets.
+    const endThenReset = (socket: NetSocket) => {
+      socket.pause();
+      socket.end(HEAD + WHOLE, () => socket.destroy());
+    };
+    // Uploads that such a server does not read. What the client meets first differs from run to run: the
+    // end of the stream, the reset, or a send() that fails with EPIPE.
+    async function uploads(runs: number, bytes: number, url: string, init: BunFetchRequestInit = {}) {
+      const body = Buffer.alloc(bytes, "u");
+      const outcomes: unknown[] = [];
+      for (let run = 0; run < runs; run++) {
+        outcomes.push(await settled(fetch(url, { ...init, method: "POST", body }).then(res => res.text())));
+      }
+      return outcomes;
+    }
+
+    it("a FIN", async () => {
+      await using server = await serve(socket => void socket.end(HEAD + WHOLE));
+      expect(await settled(fetch(server.url).then(res => res.text()))).toEqual(whole);
+    });
+
+    // The next three and the unix socket one are not for Windows: it drops what the client has yet to read
+    // when the reset arrives, and that can be the answer (fetch.tls.test.ts skips "reads a response that the
+    // server sent before it reset the upload" for this).
+    it.skipIf(isWindows)("a FIN, then a reset", async () => {
+      await using server = await serve(endThenReset);
+      expect(await uploads(10, 4 * 1024 * 1024, server.url)).toEqual(Array(10).fill(whole));
+    });
+
+    // A Bun.file upload is outside the rule (see "a Bun.file upload in flight" above): a sendfile() that
+    // meets the reset rejects fetch(), as it did before the rule. No run resolves with less than the whole
+    // body.
+    it.skipIf(isWindows)("a FIN, then a reset, with a Bun.file upload in flight: never a short body", async () => {
+      using upload = uploadFile();
+      await using server = await serve(endThenReset);
+      const outcomes: string[] = [];
+      for (let run = 0; run < 10; run++) {
+        const body = Bun.file(upload.file);
+        outcomes.push(delivered(await exchange(fetch(server.url, { method: "POST", body }))));
+      }
+      expect(outcomes.filter(body => body !== WHOLE && body !== "rejected")).toEqual([]);
+    });
+
+    it.skipIf(isWindows)("https: a close_notify, then a reset", async () => {
+      await using server = await serve(endThenReset, { tls: {} });
+      expect(await uploads(6, 4 * 1024 * 1024, server.url, trusted)).toEqual(Array(6).fill(whole));
+    });
+
+    // The close_notify of the origin ended its stream. Here the reset that follows it comes with no FIN, so
+    // a send() of the upload can fail with ECONNRESET before the client reads the close_notify. The body is
+    // whole all the same.
+    it.skipIf(isWindows)("https: a close_notify, then a reset with no FIN", async () => {
+      await using origin = await serve(socket => void socket.end(HEAD + WHOLE), { tls: { maxVersion: "TLSv1.2" } });
+      await using relay = await relayTo(origin, { alertThenReset: true });
+      expect(await uploads(6, 8 * 1024 * 1024, relay.url, trusted)).toEqual(Array(6).fill(whole));
+    });
+
+    it.skipIf(isWindows)("https: a FIN with no close_notify, then a reset", async () => {
+      await using origin = await serve(socket => void socket.end(HEAD + WHOLE), { tls: { maxVersion: "TLSv1.2" } });
+      await using relay = await relayTo(origin, { bareFin: "then reset" });
+      expect(await uploads(4, 8 * 1024 * 1024, relay.url, trusted)).toEqual(Array(4).fill(whole));
+    });
+
+    it("https: a FIN with no close_notify", async () => {
+      await using origin = await serve(socket => void socket.end(HEAD + WHOLE), { tls: { maxVersion: "TLSv1.2" } });
+      await using relay = await relayTo(origin, { bareFin: true });
+      expect(await settled(fetch(relay.url, trusted).then(res => res.text()))).toEqual(whole);
+    });
+
+    // A raw node:net server on a socket path, like the ones in fetch.unix.test.ts. On a unix socket a reset
+    // only says that the peer closed with input unread: it comes for a whole answer too.
+    it.skipIf(isWindows)("over a unix socket: the answer, an end, then a close with the upload unread", async () => {
+      using dir = tempDir("fetch-cut-unix", {});
+      const unix = path.join(String(dir), "server.sock");
+      await using server = await serve(endThenReset, { unix });
+      expect(await uploads(10, 8 * 1024 * 1024, server.url, { unix })).toEqual(Array(10).fill(whole));
+    });
+
+    // With no end() the client gets a reset after the answer in every run: the upload is unread.
+    it.skipIf(isWindows)("over a unix socket: the answer, then a close with the upload unread and no end", async () => {
+      using dir = tempDir("fetch-cut-unix", {});
+      const unix = path.join(String(dir), "server.sock");
+      await using server = await serve(
+        socket => {
+          socket.pause();
+          socket.write(HEAD + WHOLE, () => socket.destroy());
+        },
+        { unix },
+      );
+      expect(await uploads(10, 8 * 1024 * 1024, server.url, { unix })).toEqual(Array(10).fill(whole));
+    });
+
+    // Behind a CONNECT proxy the connection of the client ends with the teardown of the proxy, whatever the
+    // origin did. The rule does not apply to a body that comes through such a tunnel: a reset ends it.
+    it("through a CONNECT proxy: the whole answer, then the reset of the proxy", async () => {
+      // The origin leaves its connection open after the answer, so the reset of the proxy is the end.
+      await using origin = await serve(socket => void socket.write(HEAD + WHOLE), { tls: {} });
+      await using proxy = await relayTo(origin, { tunnel: true });
+      using _ = withoutNoProxy();
+      const res = await fetch(origin.url, { ...trusted, proxy: proxy.proxy });
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      proxy.reset();
+      expect({
+        status: res.status,
+        tunnels: proxy.tunnels,
+        first: Buffer.from(first.value!).toString(),
+        next: await settled(reader.read()),
+      }).toEqual({ status: 200, tunnels: 1, first: WHOLE, next: { resolved: { done: true, value: undefined } } });
+    });
+
+    it("a reset of a 101-upgraded stream: done is true", async () => {
+      await using server = await serve(
+        socket =>
+          void socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nfirst",
+          ),
+      );
+      const ended = Promise.withResolvers<void>();
+      const res = await fetch(server.url, {
+        method: "GET",
+        headers: upgradeHeaders(),
+        // The upload side of the stream stays open until the read side has ended.
+        async *body() {
+          await ended.promise;
+        },
+      });
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      server.reset();
+      const next = await settled(reader.read());
+      ended.resolve();
+      expect({ status: res.status, first: Buffer.from(first.value!).toString(), next }).toEqual({
+        status: 101,
+        first: "first",
+        next: { resolved: { done: true, value: undefined } },
+      });
+    });
+
+    it("chunked: a reset after the last chunk, before the CRLF that ends the trailers", async () => {
+      await using server = await serve(
+        socket => void socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n0\r\n"),
+      );
+      const res = await fetch(server.url);
+      server.reset();
+      expect(await settled(res.text())).toEqual({ resolved: "Hello" });
+    });
+
+    it("gzip with a Content-Length: a reset after the last byte, before a reader decodes the body", async () => {
+      // One libdeflate call inflates a gzip body of this size, so the client holds it whole and undecoded
+      // until a reader attaches.
+      const plain = Buffer.alloc(1024 * 1024, "The quick brown fox jumps over the lazy dog. ");
+      const wire = gzipSync(plain);
+      const head = `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${wire.length}\r\n\r\n`;
+      await using server = await serve(socket => void socket.write(Buffer.concat([Buffer.from(head), wire])));
+      const res = await fetch(server.url);
+      server.reset();
+      // A few turns of the event loop let the client meet the reset before a reader attaches. The body is
+      // whole in either order.
+      for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
+      const body = Buffer.from(await res.arrayBuffer());
+      expect({ length: body.length, same: body.equals(plain) }).toEqual({ length: plain.length, same: true });
+    });
   });
 });
 

@@ -825,26 +825,28 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
-            let mut full_line = &source.contents[data.line_start..data.line_end];
+            let contents: &[u8] = &source.contents;
+            let offset = clamp_error_offset(contents, r.loc);
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets; the gate keeps the original shape (no left trim for
             // an error in the last 80 bytes) so `write_format`'s caret aligns.
-            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
-                .saturating_sub(data.line_start)
-                .min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
-                let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
-                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
-                    lo -= 1;
+            let full_line = match scan_line_end(contents, offset) {
+                Some(line_end) => &contents[data.line_start..line_end],
+                None => {
+                    let mut lo = offset.saturating_sub(EXCERPT_BEFORE).max(data.line_start);
+                    let mut hi = offset + EXCERPT_AFTER;
+                    // A character boundary is at most 3 bytes away in well-formed UTF-8.
+                    let lo_limit = lo.saturating_sub(3).max(data.line_start);
+                    let hi_limit = (hi + 3).min(contents.len());
+                    while lo > lo_limit && !bun_core::strings::is_utf8_char_boundary(contents[lo]) {
+                        lo -= 1;
+                    }
+                    while hi < hi_limit && !bun_core::strings::is_utf8_char_boundary(contents[hi]) {
+                        hi += 1;
+                    }
+                    &contents[lo..hi]
                 }
-                while hi < full_line.len()
-                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
-                {
-                    hi += 1;
-                }
-                full_line = &full_line[lo..hi];
-            }
+            };
 
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
@@ -1553,6 +1555,7 @@ impl Log {
     /// [`range_data`], but with the line/column computed through this log's
     /// [`LineColumnTracker`] so successive diagnostics against the same
     /// source resume the previous scan instead of restarting from byte 0.
+    #[inline(never)]
     fn tracked_range_data(
         &mut self,
         source: Option<&Source>,
@@ -2481,7 +2484,6 @@ impl Default for Source {
 #[derive(Copy, Clone, Debug)]
 struct ErrorPosition {
     pub(crate) line_start: usize,
-    pub(crate) line_end: usize,
     pub(crate) column_count: usize,
     pub(crate) line_count: usize,
 }
@@ -2512,12 +2514,11 @@ impl ErrorPositionState {
     /// Consume the codepoints of `contents[from..to]`, updating line/column
     /// exactly the way `Source::init_error_position` always has (`\r` resets
     /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
-    /// are line breaks). Returns `true` if a line break was crossed.
-    fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
+    /// are line breaks).
+    fn advance(&mut self, contents: &[u8], from: usize, to: usize) {
         use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(&contents[from..to]);
         let mut iter = Cursor::default();
-        let mut crossed_line_break = false;
 
         while iter_.next(&mut iter) {
             match iter.c {
@@ -2528,21 +2529,18 @@ impl ErrorPositionState {
                     if self.prev_code_point != ('\r' as i32) {
                         self.line_count += 1;
                     }
-                    crossed_line_break = true;
                 }
                 0x0D => {
                     // '\r'
                     self.column_number = 0;
                     self.line_start = from + iter.width as usize + iter.i as usize;
                     self.line_count += 1;
-                    crossed_line_break = true;
                 }
                 0x2028 | 0x2029 => {
                     // These take three bytes to encode in UTF-8
                     self.line_start = from + iter.width as usize + iter.i as usize;
                     self.line_count += 1;
                     self.column_number = 1;
-                    crossed_line_break = true;
                 }
                 _ => {
                     // Columns count UTF-16 code units (JSC/V8 stack traces, the
@@ -2553,39 +2551,48 @@ impl ErrorPositionState {
 
             self.prev_code_point = iter.c;
         }
-
-        crossed_line_break
     }
 
-    fn to_error_position(self, line_end: usize) -> ErrorPosition {
+    fn to_error_position(self) -> ErrorPosition {
         ErrorPosition {
             line_start: if self.line_start > 0 {
                 self.line_start - 1
             } else {
                 self.line_start
             },
-            line_end,
             line_count: self.line_count,
             column_count: self.column_number,
         }
     }
 }
 
+/// Bytes of a long line that a diagnostic's `line_text` keeps before and after its position.
+const EXCERPT_BEFORE: usize = 40;
+const EXCERPT_AFTER: usize = 80;
+
 /// Byte offset of the line break at or after `offset` (the end of the line
 /// containing `offset`), or the end of the file if this is the last line.
-fn scan_line_end(contents: &[u8], offset: usize) -> usize {
-    use bun_core::strings::{CodepointIterator, Cursor};
-    let iter_ = CodepointIterator::init(&contents[offset..]);
-    let mut iter = Cursor::default();
-
-    while iter_.next(&mut iter) {
-        match iter.c {
-            0x0D | 0x0A | 0x2028 | 0x2029 => return offset + iter.i as usize,
-            _ => {}
+/// `None` if that is more than [`EXCERPT_AFTER`] bytes after `offset`: the search stops there.
+fn scan_line_end(contents: &[u8], offset: usize) -> Option<usize> {
+    let last_start = offset + EXCERPT_AFTER;
+    // U+2028 and U+2029 are E2 80 A8 and E2 80 A9 in UTF-8.
+    let window = &contents[offset..contents.len().min(last_start + 3)];
+    let mut at = 0;
+    while let Some(found) = bun_core::strings::index_of_any(&window[at..], b"\r\n\xE2") {
+        at += found;
+        if at > EXCERPT_AFTER {
+            break;
         }
+        if matches!(
+            window[at..],
+            [b'\r' | b'\n', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]
+        ) {
+            return Some(offset + at);
+        }
+        at += 1;
     }
 
-    contents.len()
+    (contents.len() <= last_start).then_some(contents.len())
 }
 
 /// Clamp a diagnostic `Loc` into `contents` the way `init_error_position`
@@ -2620,7 +2627,6 @@ pub struct LineColumnTracker {
 struct ScanCursor {
     offset: usize,
     state: ErrorPositionState,
-    line_end: Option<usize>,
 }
 
 impl LineColumnTracker {
@@ -2661,21 +2667,10 @@ impl LineColumnTracker {
         };
         let cursor = &mut self.cursors[index];
 
-        if cursor.state.advance(contents, cursor.offset, offset) {
-            cursor.line_end = None;
-        }
+        cursor.state.advance(contents, cursor.offset, offset);
         cursor.offset = offset;
 
-        let line_end = match cursor.line_end {
-            Some(line_end) => line_end,
-            None => {
-                let line_end = scan_line_end(contents, offset);
-                cursor.line_end = Some(line_end);
-                line_end
-            }
-        };
-
-        cursor.state.to_error_position(line_end)
+        cursor.state.to_error_position()
     }
 }
 
@@ -2700,7 +2695,7 @@ impl Source {
         if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
             return Ok(());
         }
-        // Without a position: finding the line of one would scan the oversized source.
+        // Without a position: the error is about the whole source, not a place in it.
         log.add_error_fmt(
             Some(self),
             Loc::EMPTY,
@@ -2831,9 +2826,7 @@ impl Source {
 
         let mut state = ErrorPositionState::default();
         state.advance(contents, 0, offset);
-
-        // Scan to the end of the line (or end of file if this is the last line)
-        state.to_error_position(scan_line_end(contents, offset))
+        state.to_error_position()
     }
 
     /// Byte offset of 1-based (`line`, `col`) in `source_contents`, resuming the
@@ -3450,16 +3443,10 @@ mod line_column_tracker_tests {
             assert_eq!(
                 (
                     expected.line_start,
-                    expected.line_end,
                     expected.line_count,
                     expected.column_count
                 ),
-                (
-                    got.line_start,
-                    got.line_end,
-                    got.line_count,
-                    got.column_count
-                ),
+                (got.line_start, got.line_count, got.column_count),
                 "forward scan diverged at offset {offset} of {contents:?}"
             );
         }
@@ -3476,16 +3463,10 @@ mod line_column_tracker_tests {
             assert_eq!(
                 (
                     expected.line_start,
-                    expected.line_end,
                     expected.line_count,
                     expected.column_count
                 ),
-                (
-                    got.line_start,
-                    got.line_end,
-                    got.line_count,
-                    got.column_count
-                ),
+                (got.line_start, got.line_count, got.column_count),
                 "mixed-order scan diverged at offset {offset} of {contents:?}"
             );
         }
@@ -3543,16 +3524,10 @@ mod line_column_tracker_tests {
             assert_eq!(
                 (
                     expected.line_start,
-                    expected.line_end,
                     expected.line_count,
                     expected.column_count
                 ),
-                (
-                    got.line_start,
-                    got.line_end,
-                    got.line_count,
-                    got.column_count
-                ),
+                (got.line_start, got.line_count, got.column_count),
                 "interleaved scan diverged at offset {offset}"
             );
         }
@@ -3581,16 +3556,10 @@ mod line_column_tracker_tests {
             assert_eq!(
                 (
                     expected.line_start,
-                    expected.line_end,
                     expected.line_count,
                     expected.column_count
                 ),
-                (
-                    got.line_start,
-                    got.line_end,
-                    got.line_count,
-                    got.column_count
-                ),
+                (got.line_start, got.line_count, got.column_count),
                 "diverged at offset {offset} of {:?}",
                 bstr::BStr::new(source.contents())
             );
@@ -3613,5 +3582,116 @@ mod line_column_tracker_tests {
         let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
         let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
         assert_eq!(bmp_pos.column_count, 19);
+    }
+
+    #[test]
+    fn scan_line_end_stops_with_the_excerpt() {
+        let offset = 10;
+        let last = offset + EXCERPT_AFTER;
+        let mut contents = vec![b'x'; 200];
+        assert_eq!(scan_line_end(&contents, offset), None);
+
+        // A line break on the last byte of the excerpt is the end of the line.
+        contents[last] = b'\n';
+        assert_eq!(scan_line_end(&contents, offset), Some(last));
+        contents[last..last + 3].copy_from_slice("\u{2029}".as_bytes());
+        assert_eq!(scan_line_end(&contents, offset), Some(last));
+        // One byte later it is past the excerpt.
+        contents[last..last + 4].copy_from_slice(b"x\r\nx");
+        assert_eq!(scan_line_end(&contents, offset), None);
+
+        // The end of the file counts the same way.
+        assert_eq!(scan_line_end(&contents[..last], offset), Some(last));
+        assert_eq!(scan_line_end(&contents[..last + 1], offset), None);
+
+        // U+2026 and a cut U+2028 start with the same byte as a line separator.
+        contents[offset..offset + 5].copy_from_slice(b"\xE2\x80\xA6\xE2\x80");
+        contents[offset + 5] = b'\r';
+        assert_eq!(scan_line_end(&contents, offset), Some(offset + 5));
+        assert_eq!(
+            scan_line_end(&contents[..offset + 5], offset),
+            Some(offset + 5)
+        );
+    }
+
+    fn line_text(contents: &[u8], offset: usize) -> Vec<u8> {
+        let source = Source::init_path_string(b"excerpt-test.js" as &[u8], contents);
+        let range = Range {
+            loc: usize2loc(offset),
+            len: 0,
+        };
+        let location = Location::init_or_null(Some(&source), range).unwrap();
+        location.line_text.unwrap().into_owned()
+    }
+
+    #[test]
+    fn line_text_is_the_line_or_an_excerpt_of_it() {
+        let x = |n: usize| vec![b'x'; n];
+        let line = |n: usize, rest: &[u8]| [&x(n)[..], rest].concat();
+
+        // The line ends 80 bytes after the error: all of it. One byte more: the first 80.
+        assert_eq!(line_text(&line(80, b"\nz"), 0), x(80));
+        assert_eq!(line_text(&line(81, b"\nz"), 0), x(80));
+        assert_eq!(line_text(&line(80, "\u{2028}z".as_bytes()), 0), x(80));
+        assert_eq!(line_text(&line(79, b"\r\nz"), 0), x(79));
+        assert_eq!(line_text(&x(80), 0), x(80));
+        assert_eq!(line_text(&x(81), 0), x(80));
+
+        // The cut after the error moves up to the end of a character.
+        assert_eq!(
+            line_text(&line(79, "\u{00E9}yyyyyyyyyy\nz".as_bytes()), 0),
+            line(79, "\u{00E9}".as_bytes())
+        );
+        assert_eq!(
+            line_text(&line(78, "\u{1F600}yyyyyyyyyy\nz".as_bytes()), 0),
+            line(78, "\u{1F600}".as_bytes())
+        );
+
+        // The cut before the error moves down to the start of a character.
+        let accents = [&"\u{00E9}".repeat(25).into_bytes()[..], &x(130)[..]].concat();
+        assert_eq!(line_text(&accents, 81), accents[40..161]);
+
+        // A cut moves 3 bytes at most, in bytes that start no character.
+        assert_eq!(
+            line_text(&line(78, b"\x80\x80\x80\x80\x80\x80yy\nz"), 0),
+            line(78, b"\x80\x80\x80\x80\x80")
+        );
+        let run = [&x(10)[..], &[0x80; 60], &x(130)[..]].concat();
+        assert_eq!(line_text(&run, 100), run[57..180]);
+
+        // A line that is not the first one starts after its line break.
+        let second = [&b"ab\n"[..], &x(200)[..]].concat();
+        assert_eq!(line_text(&second, 3), x(80));
+        assert_eq!(line_text(&second, 23), x(100));
+        assert_eq!(line_text(&second, 122), x(120));
+        assert_eq!(line_text(&second, 123), x(200));
+        let second = [&b"ab\r\n"[..], &x(200)[..]].concat();
+        assert_eq!(line_text(&second, 4), x(80));
+        // The byte before a line that follows U+2028 is the last byte of the separator.
+        let second = ["ab\u{2028}".as_bytes(), &x(200)[..]].concat();
+        assert_eq!(line_text(&second, 5), [&b"\xA8"[..], &x(80)[..]].concat());
+    }
+
+    #[test]
+    fn line_text_is_in_bounds_when_the_tracker_takes_a_source_for_another() {
+        // `bun install` reads each package.json into one buffer, at one path.
+        let path: &[u8] = b"package.json";
+        let mut tracker = LineColumnTracker::default();
+        let mut locate = |buffer: &[u8], offset: usize| {
+            let source = Source::init_path_string(path, buffer);
+            let range = Range {
+                loc: usize2loc(offset),
+                len: 0,
+            };
+            Location::init_or_null_tracked(Some(&source), range, &mut tracker).unwrap()
+        };
+
+        let mut buffer = [&b"line one\nline two\n"[..], &[b'x'; 112]].concat();
+        assert_eq!(locate(&buffer, 12).line, 2);
+
+        // The next file has the same length and one line. The tracker still has line two.
+        buffer.fill(b'y');
+        let excerpt = locate(&buffer, 125).line_text.unwrap();
+        assert!(buffer.ends_with(&excerpt), "{} bytes", excerpt.len());
     }
 }

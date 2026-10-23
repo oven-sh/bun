@@ -1292,6 +1292,37 @@ describe("@types/bun integration test", () => {
           message:
             "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
         },
+        // lib.dom's SubtleCrypto constructor has no supports().
+        {
+          code: 2339,
+          line: "crypto.ts:50:25",
+          message: "Property 'supports' does not exist on type '{ new (): SubtleCrypto; prototype: SubtleCrypto; }'.",
+        },
+        {
+          code: 2339,
+          line: "crypto.ts:51:14",
+          message: "Property 'supports' does not exist on type '{ new (): SubtleCrypto; prototype: SubtleCrypto; }'.",
+        },
+        {
+          code: 2339,
+          line: "crypto.ts:52:14",
+          message: "Property 'supports' does not exist on type '{ new (): SubtleCrypto; prototype: SubtleCrypto; }'.",
+        },
+        {
+          code: 2339,
+          line: "crypto.ts:53:14",
+          message: "Property 'supports' does not exist on type '{ new (): SubtleCrypto; prototype: SubtleCrypto; }'.",
+        },
+        {
+          code: 2339,
+          line: "crypto.ts:54:14",
+          message: "Property 'supports' does not exist on type '{ new (): SubtleCrypto; prototype: SubtleCrypto; }'.",
+        },
+        {
+          code: 2339,
+          line: "crypto.ts:55:14",
+          message: "Property 'supports' does not exist on type '{ new (): SubtleCrypto; prototype: SubtleCrypto; }'.",
+        },
         {
           code: 2769,
           line: "fetch.ts:25:32",
@@ -1399,6 +1430,19 @@ describe("@types/bun integration test", () => {
           code: 2345,
           line: "streams.ts:64:111",
           message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+        },
+        // lib.dom's ReadableStream constructor has no from().
+        {
+          code: 2339,
+          line: "streams.ts:70:27",
+          message:
+            "Property 'from' does not exist on type '{ new (underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>; new <R = any>(underlyingSource: UnderlyingDefaultSource<...>, strategy?: QueuingStrategy<...> | undefined): ReadableStream<...>; new <R = any>(underlyingSource?: Un...'.",
+        },
+        {
+          code: 2339,
+          line: "streams.ts:71:27",
+          message:
+            "Property 'from' does not exist on type '{ new (underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>; new <R = any>(underlyingSource: UnderlyingDefaultSource<...>, strategy?: QueuingStrategy<...> | undefined): ReadableStream<...>; new <R = any>(underlyingSource?: Un...'.",
         },
         {
           code: 2353,

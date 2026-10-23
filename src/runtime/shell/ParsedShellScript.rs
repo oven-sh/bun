@@ -4,8 +4,8 @@ use core::sync::atomic::Ordering;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
-    JsClass as _, JsResult, MarkedArgumentBuffer,
+    JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsClass as _,
+    JsResult, MarkedArgumentBuffer,
 };
 
 use super::env_map::EnvMap;
@@ -150,26 +150,27 @@ fn env_bytes(global: &JSGlobalObject, name: &str, str: &BunString) -> JsResult<B
     Ok(bytes.into_boxed_slice())
 }
 
-/// `jsc.MarkedArgumentBuffer.wrap` generates a host-fn shim that allocates a
-/// `MarkedArgumentBuffer` on the C++ stack and forwards to the impl.
-pub(crate) const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
-    bun_jsc::marked_argument_buffer_wrap!(create_parsed_shell_script_impl);
+pub(crate) fn create_parsed_shell_script<'a>(
+    cx: &mut JsScope<'a>,
+    strings: JsLocal<'a>,
+    template_args: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    MarkedArgumentBuffer::new(|buf| {
+        create_parsed_shell_script_impl(global, strings.to_js(), template_args.to_js(), buf)
+    })
+}
 
 fn create_parsed_shell_script_impl(
     global: &JSGlobalObject,
-    callframe: &CallFrame,
+    string_args: JSValue,
+    template_args_js: JSValue,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
     // Box<ShellArgs> drops automatically on every early `return`/`?` below,
     // so no scopeguard is needed.
     let mut shargs: Box<ShellArgs> = ShellArgs::init();
 
-    let arguments = callframe.arguments();
-    if arguments.len() < 2 {
-        return Err(global.throw_not_enough_arguments("Bun.$", 2, arguments.len()));
-    }
-    let string_args = arguments[0];
-    let template_args_js = arguments[1];
     let mut template_args = template_args_js.array_iterator(global)?;
 
     // PERF: a stack-fallback allocation may be worth it — profile if hot.

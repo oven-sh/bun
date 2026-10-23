@@ -24,7 +24,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $rust("postgres.rs", "createBinding") as PostgresDotZig;
+} = $bindgen("postgres.bind.ts", "binding") as PostgresDotZig;
 
 // 1 to 4 are the commands whose tag counts the rows written.
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];

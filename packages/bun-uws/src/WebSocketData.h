@@ -40,6 +40,8 @@ private:
     bool hasTimedOut = false;
     /* send() returned BACKPRESSURE and the drain handler hasn't run with an empty buffer since */
     bool needsDrainEvent = false;
+    /* A handler is running, and consume() has more of the same read to parse once it returns */
+    bool hasUnparsedBytes = false;
     
     enum CompressionStatus : char {
         DISABLED,

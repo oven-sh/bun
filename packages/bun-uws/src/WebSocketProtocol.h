@@ -45,7 +45,8 @@ enum class WebSocketFailureKind : int {
     MessageTooBig,
     UnsupportedPayloadLength,
     InvalidCompressedData,
-    OutOfMemory
+    OutOfMemory,
+    NestedRead
 };
 
 /* Reason for failing a connection (RFC 6455 7.1.7) */
@@ -72,6 +73,8 @@ inline constexpr WebSocketFailure FAIL_TOO_BIG_MESSAGE{WebSocketFailureKind::Mes
 inline constexpr WebSocketFailure FAIL_UNSUPPORTED_LENGTH{WebSocketFailureKind::UnsupportedPayloadLength, 1009, "Received too big message"};
 /* Allocating a buffer for the peer's message failed. See WebSocket::failOutOfMemory(). */
 inline constexpr WebSocketFailure FAIL_OUT_OF_MEMORY{WebSocketFailureKind::OutOfMemory, 1011, "Received message that does not fit in memory"};
+/* See WebSocketData::hasUnparsedBytes */
+inline constexpr WebSocketFailure FAIL_NESTED_READ{WebSocketFailureKind::NestedRead, 1011, "WebSocket handler ran the event loop with received frames left to parse"};
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,
@@ -342,24 +345,30 @@ protected:
         }
 
         if (payLength + MESSAGE_HEADER <= length) {
+            /* Finish this frame's state before handleFragment: a handler that ticks the event loop (bun:test's
+             * `.rejects`, a macro) reads this socket's next frame through this parser before it returns (#45805). */
+            OpCode opCode = wState->state.opCode[wState->state.opStack];
+            bool fin = isFin(src);
+            if (fin) {
+                wState->state.opStack--;
+            }
+            wState->state.spillLength = 0;
+            Impl::setHasUnparsedBytes(wState, user, payLength + MESSAGE_HEADER < length);
+
             if (isServer) {
                 unmaskImpreciseCopyMask(src + MESSAGE_HEADER, (unsigned int) payLength);
-                if (Impl::handleFragment(src + MESSAGE_HEADER - 4, payLength, 0, wState->state.opCode[wState->state.opStack], isFin(src), wState, user)) {
+                if (Impl::handleFragment(src + MESSAGE_HEADER - 4, payLength, 0, opCode, fin, wState, user)) {
                     return true;
                 }
             } else {
-                if (Impl::handleFragment(src + MESSAGE_HEADER, payLength, 0, wState->state.opCode[wState->state.opStack], isFin(src), wState, user)) {
+                if (Impl::handleFragment(src + MESSAGE_HEADER, payLength, 0, opCode, fin, wState, user)) {
                     return true;
                 }
-            }
-
-            if (isFin(src)) {
-                wState->state.opStack--;
             }
 
             src += payLength + MESSAGE_HEADER;
             length -= (unsigned int) (payLength + MESSAGE_HEADER);
-            wState->state.spillLength = 0;
+            Impl::setHasUnparsedBytes(wState, user, false);
             return false;
         } else {
             wState->state.spillLength = 0;
@@ -395,17 +404,23 @@ protected:
                 }
             }
 
-            if (Impl::handleFragment(src, wState->remainingBytes, 0, wState->state.opCode[wState->state.opStack], wState->state.lastFin, wState, user)) {
+            /* Finish this frame's state before handleFragment, as in consumeMessage */
+            unsigned int remainingBytes = wState->remainingBytes;
+            OpCode opCode = wState->state.opCode[wState->state.opStack];
+            bool fin = wState->state.lastFin;
+            if (fin) {
+                wState->state.opStack--;
+            }
+            wState->state.wantsHead = true;
+            Impl::setHasUnparsedBytes(wState, user, remainingBytes < length);
+
+            if (Impl::handleFragment(src, remainingBytes, 0, opCode, fin, wState, user)) {
                 return false;
             }
 
-            if (wState->state.lastFin) {
-                wState->state.opStack--;
-            }
-
-            src += wState->remainingBytes;
-            length -= wState->remainingBytes;
-            wState->state.wantsHead = true;
+            src += remainingBytes;
+            length -= remainingBytes;
+            Impl::setHasUnparsedBytes(wState, user, false);
             return true;
         } else {
             if (isServer) {

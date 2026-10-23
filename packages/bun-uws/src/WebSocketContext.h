@@ -73,6 +73,10 @@ private:
         return true;
     }
 
+    static void setHasUnparsedBytes(WebSocketState<isServer> */*wState*/, void *s, bool hasUnparsedBytes) {
+        ((WebSocketData *) us_socket_ext((us_socket_t *) s))->hasUnparsedBytes = hasUnparsedBytes;
+    }
+
     /* noinline: called from a dozen cold branches in the parser */
     __attribute__((noinline)) static void failConnection(WebSocketState<isServer> */*wState*/, void *s, const WebSocketFailure &failure, unsigned int detail = 0) {
         ((WebSocket<SSL, isServer, USERDATA> *) s)->failConnection(failure, detail);
@@ -221,6 +225,11 @@ private:
                         return true;
                     }
 
+                    /* The handler can read this socket's next frame (see consumeMessage). Move the message out so that
+                     * frame isn't appended to it. */
+                    ReceiveBuffer message;
+                    message.swap(webSocketData->fragmentBuffer);
+
                     /* Emit message and check for shutdown or close */
                     if (webSocketContextData->messageHandler) {
                         webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
@@ -229,8 +238,11 @@ private:
                         }
                     }
 
-                    /* If we shutdown or closed, this will be taken care of elsewhere */
-                    webSocketData->fragmentBuffer.clear();
+                    /* Keep the allocation for the next message, unless the handler read the start of one */
+                    if (!webSocketData->fragmentBuffer.length()) {
+                        message.clear();
+                        message.swap(webSocketData->fragmentBuffer);
+                    }
                 }
             }
         } else {
@@ -267,32 +279,37 @@ private:
                 webSocketData->controlTipLength += (unsigned int) length;
 
                 if (!remainingBytes && fin) {
-                    char *controlBuffer = (char *) webSocketData->fragmentBuffer.data() + webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength;
+                    /* Move the tip out before the handlers run, like the message above */
+                    size_t messageLength = webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength;
+                    ReceiveBuffer controlBuffer;
+                    if (!controlBuffer.tryAppend(webSocketData->fragmentBuffer.data() + messageLength, webSocketData->controlTipLength)) {
+                        return failOutOfMemory(s);
+                    }
+                    webSocketData->fragmentBuffer.truncate(messageLength);
+                    webSocketData->controlTipLength = 0;
+                    std::string_view controlTip(controlBuffer.data(), controlBuffer.length());
+
                     if (opCode == CLOSE) {
-                        handleCloseFrame(webSocket, controlBuffer, webSocketData->controlTipLength);
+                        handleCloseFrame(webSocket, controlBuffer.data(), controlBuffer.length());
                         return true;
                     } else {
                         if (opCode == PING) {
-                            sendAutomaticPong(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
+                            sendAutomaticPong(webSocket, controlTip);
                             if (webSocketContextData->pingHandler) {
-                                webSocketContextData->pingHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
+                                webSocketContextData->pingHandler(webSocket, controlTip);
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
                                 }
                             }
                         } else if (opCode == PONG) {
                             if (webSocketContextData->pongHandler) {
-                                webSocketContextData->pongHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
+                                webSocketContextData->pongHandler(webSocket, controlTip);
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
                                 }
                             }
                         }
                     }
-
-                    /* Same here, we do not care for any particular smart allocation scheme */
-                    webSocketData->fragmentBuffer.truncate(webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength);
-                    webSocketData->controlTipLength = 0;
                 }
             }
         }
@@ -342,6 +359,12 @@ private:
         /* When in websocket shutdown mode, we do not care for ANY message, whether responding close frame or not.
          * We only care for the TCP FIN really, not emitting any message after closing is key */
         if (webSocketData->isShuttingDown) {
+            return s;
+        }
+
+        /* This read overwrote the bytes the outer consume() has left to parse: the loop has one receive buffer */
+        if (webSocketData->hasUnparsedBytes) {
+            failConnection(webSocketData, s, FAIL_NESTED_READ);
             return s;
         }
 

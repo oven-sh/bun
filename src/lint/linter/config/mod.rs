@@ -57,7 +57,6 @@ mod for_eslint;
 mod ignore_lines;
 mod merge;
 mod number_of_rules;
-mod oxlint_fields;
 mod oxlint_options;
 mod presets;
 mod rc;

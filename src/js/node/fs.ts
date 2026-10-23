@@ -27,6 +27,10 @@ const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared")
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
 
+// Captured at load, like Node's primordials: _toUnixTimestamp must not call a replaced Date.now or getTime.
+const DateNow = Date.now;
+const DatePrototypeGetTime = Date.prototype.getTime;
+
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path.
 function wrapFsCallback(callback) {
@@ -1006,16 +1010,17 @@ function _toUnixTimestamp(time: any, name = "time") {
   if (typeof time === "string" && +time == time) {
     return +time;
   }
+  // NumberIsFinite in Node. $isFinite is the global isFinite, which converts its argument first.
   // @ts-ignore
-  if ($isFinite(time)) {
+  if (typeof time === "number" && $isFinite(time)) {
     if (time < 0) {
-      return Date.now() / 1000;
+      return DateNow() / 1000;
     }
     return time;
   }
   if (isDate(time)) {
     // Convert to 123.456 UNIX timestamp
-    return time.getTime() / 1000;
+    return DatePrototypeGetTime.$call(time) / 1000;
   }
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }

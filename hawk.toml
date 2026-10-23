@@ -455,14 +455,6 @@ reason = "external code table: weak-ref type numbering shared with JSC"
 [[override]]
 lint = "hawk::dead_public"
 crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsError"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
 item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorType"
 kind = "enum_variant"
 level = "expect"
@@ -507,94 +499,6 @@ item = "bake::dev_server::serialized_failure::ErrorKind::JsAggregate"
 kind = "enum_variant"
 level = "expect"
 reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::string_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::name_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::number_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::boolean_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::handle_scope_mismatch"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::callback_scope_mismatch"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::bigint_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::date_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::arraybuffer_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::detachable_arraybuffer_expected"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "napi::napi_body::NapiStatus::would_deadlock"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: public N-API C ABI status values"
 
 [[override]]
 lint = "hawk::dead_public"

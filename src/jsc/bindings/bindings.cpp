@@ -5185,19 +5185,13 @@ enum class BuiltinNamesMap : uint8_t {
     body,
     data,
     toString,
-    redirect,
     inspectCustom,
     highWaterMark,
     path,
     stream,
-    asyncIterator,
-    name,
     message,
     error,
-    defaultKeyword,
     encoding,
-    fatal,
-    ignoreBOM,
     type,
     signal,
     cmd,
@@ -5236,9 +5230,6 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     case BuiltinNamesMap::toString: {
         return vm.propertyNames->toString;
     }
-    case BuiltinNamesMap::redirect: {
-        return clientData->builtinNames().redirectPublicName();
-    }
     case BuiltinNamesMap::inspectCustom: {
         return clientData->builtinNames().inspectCustomPublicName();
     }
@@ -5251,29 +5242,14 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     case BuiltinNamesMap::stream: {
         return clientData->builtinNames().streamPublicName();
     }
-    case BuiltinNamesMap::asyncIterator: {
-        return vm.propertyNames->asyncIteratorSymbol;
-    }
-    case BuiltinNamesMap::name: {
-        return vm.propertyNames->name;
-    }
     case BuiltinNamesMap::message: {
         return vm.propertyNames->message;
     }
     case BuiltinNamesMap::error: {
         return vm.propertyNames->error;
     }
-    case BuiltinNamesMap::defaultKeyword: {
-        return vm.propertyNames->defaultKeyword;
-    }
     case BuiltinNamesMap::encoding: {
         return clientData->builtinNames().encodingPublicName();
-    }
-    case BuiltinNamesMap::fatal: {
-        return clientData->builtinNames().fatalPublicName();
-    }
-    case BuiltinNamesMap::ignoreBOM: {
-        return clientData->builtinNames().ignoreBOMPublicName();
     }
     case BuiltinNamesMap::type: {
         return vm.propertyNames->type;

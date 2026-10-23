@@ -123,8 +123,6 @@ JSPerformanceMeasure::JSPerformanceMeasure(Structure* structure, JSDOMGlobalObje
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceMeasure>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSPerformanceMeasure::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSPerformanceMeasurePrototype::createStructure(vm, &globalObject, JSPerformanceEntry::prototype(vm, globalObject));

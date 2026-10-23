@@ -563,19 +563,6 @@ impl<'a> ImportScanner<'a> {
                                     }));
                             }
                         }
-
-                        if record!()
-                            .flags
-                            .contains(import_record::Flags::WAS_ORIGINALLY_REQUIRE)
-                        {
-                            let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
-                            symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                                namespace_ref,
-                                alias: js_ast::StoreStr::EMPTY,
-                                import_record_index: st.import_record_index,
-                                was_originally_property_access: false,
-                            }));
-                        }
                     }
 
                     p.import_records_for_current_part

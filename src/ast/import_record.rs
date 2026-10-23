@@ -70,6 +70,7 @@ bitflags::bitflags! {
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 
+        /// An `import * as` that the parser made from a `require()`: the linker skips `__toESM` for it.
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
         /// A split `require()` (code splitting, target bun): the target is a chunk

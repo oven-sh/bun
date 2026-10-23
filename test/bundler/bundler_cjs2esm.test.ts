@@ -360,7 +360,8 @@ describe("bundler", () => {
     },
     onAfterBundle: api => {
       const code = api.readFile("out.js");
-      expect(code).toContain("__toESM(");
+      expect(code).not.toContain("__toESM(");
+      expect(code).toContain("require_react()");
     },
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
@@ -628,7 +629,8 @@ describe("bundler", () => {
   });
   // The re-exported file turns out to be CommonJS (its exports are not
   // statically known), so the linker keeps the converted file a CommonJS
-  // wrapper around `module.exports = require()`.
+  // wrapper around `module.exports = require()`. The assignment hands over
+  // the `module.exports` of the target, not a copy of it.
   itBundled("cjs2esm/ReactSpecificUnwrappingTargetIsCommonJS", {
     files: {
       "/entry.js": /* js */ `
@@ -650,7 +652,7 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     run: {
-      stdout: "side effect\n19.0.0 object 19.0.0 function 19.0.0 object",
+      stdout: "side effect\n19.0.0 function 19.0.0 undefined 19.0.0 function",
     },
   });
   // Same when the re-exported file is external: the wrapper assigns the
@@ -2619,5 +2621,204 @@ describe("bundler", () => {
     run: {
       stdout: "var\nmain",
     },
+  });
+
+  // `require()` of a package on the CommonJS unwrap list, and each `require()`
+  // in a file of such a package, is an `import * as` in ESM output. When the
+  // file that it names keeps its `__commonJS` wrapper, the value is the call
+  // of that wrapper, which is `module.exports`: not a `__toESM` copy with
+  // getters and a `default` key. https://github.com/oven-sh/bun/issues/12463
+  //
+  // The shapes of a package on the list: `exports.x = ...` lifted to ES module
+  // exports, an index that is only `module.exports = require()`, the two
+  // branches of react/index.js, and a file that keeps its wrapper (development
+  // React assigns `exports` in a function).
+  const unwrappedReactPackageJson = {
+    "/node_modules/react/package.json": /* json */ `
+      { "name": "react", "version": "19.0.0", "main": "index.js" }
+    `,
+  };
+  const unwrappedReactBody = /* js */ `
+    exports.version = "19.0.0";
+    exports.count = 1;
+    exports.useEffect = function () { return "effect"; };
+    exports.read = function () { return exports.count + ":" + exports.version; };
+  `;
+  const unwrappedReactBodyInAFunction = `(function () {${unwrappedReactBody}})();`;
+  const unwrappedReactTargets = {
+    Lifted: { "/node_modules/react/index.js": unwrappedReactBody },
+    Redirect: {
+      "/node_modules/react/index.js": `module.exports = require("./impl.js");`,
+      "/node_modules/react/impl.js": unwrappedReactBody,
+    },
+    DevelopmentRedirect: {
+      "/node_modules/react/index.js": /* js */ `
+        if (process.env.NODE_ENV === "production") {
+          module.exports = require("./production.js");
+        } else {
+          module.exports = require("./development.js");
+        }
+      `,
+      "/node_modules/react/production.js": unwrappedReactBody,
+      "/node_modules/react/development.js": unwrappedReactBodyInAFunction,
+    },
+    Wrapped: { "/node_modules/react/index.js": unwrappedReactBodyInAFunction },
+  };
+  // The files of a shape that keep their wrapper.
+  const unwrappedReactWrappers = {
+    DevelopmentRedirect: ["/node_modules/react/index.js", "/node_modules/react/development.js"],
+    Wrapped: ["/node_modules/react/index.js"],
+  };
+  for (const name of ["DevelopmentRedirect", "Wrapped"] as const) {
+    itBundled(`cjs2esm/UnwrappedRequireOf${name}PackageIsModuleExports`, {
+      files: {
+        "/entry.js": /* js */ `
+          const React = require("react");
+          const count = Object.getOwnPropertyDescriptor(React, "count");
+          console.log(React.version, React.read(), "default" in React, typeof React.default, typeof count.get, React === require("react"));
+        `,
+        ...unwrappedReactPackageJson,
+        ...unwrappedReactTargets[name],
+      },
+      cjs2esm: { unhandled: unwrappedReactWrappers[name] },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("__toESM(");
+      },
+      run: { stdout: "19.0.0 1:19.0.0 false undefined undefined true" },
+    });
+  }
+  // A default import and an interop helper get that object, so a write through them lands.
+  for (const name of ["Lifted", "Redirect", "DevelopmentRedirect", "Wrapped"] as const) {
+    itBundled(`cjs2esm/UnwrappedRequireOf${name}PackageWriteThroughDefaultImport`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import React from "react";
+          import { viaHelper } from "./helper.js";
+          React.useLayoutEffect = React.useEffect;
+          viaHelper.default.other = "patched";
+          console.log(React.useLayoutEffect === React.useEffect, React.other, "default" in React);
+        `,
+        "/helper.js": /* js */ `
+          function interop(mod) { return mod && mod.__esModule ? mod : { default: mod }; }
+          exports.viaHelper = interop(require("react"));
+        `,
+        ...unwrappedReactPackageJson,
+        ...unwrappedReactTargets[name],
+      },
+      // Each shape keeps a wrapper here: the default import is held as a value.
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("__commonJS(");
+      },
+      run: { stdout: "true patched false" },
+    });
+  }
+  // A package that can be lifted keeps its wrapper when a default import of it is held as a value.
+  for (const name of ["Lifted", "Redirect"] as const) {
+    itBundled(`cjs2esm/UnwrappedRequireOf${name}PackageWrappedAgain`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import React from "react";
+          import { viaRequire } from "./sibling.js";
+          globalThis.held = React;
+          const count = Object.getOwnPropertyDescriptor(viaRequire, "count");
+          console.log("default" in viaRequire, typeof count.get, viaRequire === React);
+        `,
+        "/sibling.js": `exports.viaRequire = require("react");`,
+        ...unwrappedReactPackageJson,
+        ...unwrappedReactTargets[name],
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("__commonJS(");
+      },
+      run: { stdout: "false undefined true" },
+    });
+  }
+  // Each `require()` in a file of a package on the list is unwrapped, whatever it names.
+  itBundled("cjs2esm/UnwrappedRequireInsideAListedPackageIsModuleExports", {
+    files: {
+      "/entry.js": `console.log(require("react").probe());`,
+      ...unwrappedReactPackageJson,
+      "/node_modules/react/index.js": /* js */ `
+        var assign = require("unlisted");
+        var text = require("./text.js");
+        var flag = require("./flag.js");
+        var nothing = require("./nothing.js");
+        exports.probe = function () {
+          return [typeof assign, assign({}, { a: 1 }).a, assign === require("unlisted"), typeof text, text, flag, String(nothing)].join(" ");
+        };
+      `,
+      "/node_modules/react/text.js": `module.exports = "text";`,
+      "/node_modules/react/flag.js": `module.exports = true;`,
+      "/node_modules/react/nothing.js": `module.exports = null;`,
+      "/node_modules/unlisted/package.json": `{ "name": "unlisted", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/unlisted/index.js": /* js */ `
+        module.exports = function assign(target, source) {
+          for (var key in source) target[key] = source[key];
+          return target;
+        };
+      `,
+    },
+    run: { stdout: "function 1 true string text true null" },
+  });
+  // A TypeScript file loses an import that it does not use as a value. A `require()` is not
+  // an import: the package runs, as a package that is not on the list does.
+  itBundled("cjs2esm/UnwrappedRequireUnusedInTypeScriptStillRuns", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const Unused = require("react");
+        import TypeOnly = require("scheduler");
+        let version: typeof TypeOnly.version = "entry";
+        console.log(version);
+      `,
+      ...unwrappedReactPackageJson,
+      "/node_modules/react/index.js": `console.log("react"); exports.version = "19.0.0";`,
+      "/node_modules/scheduler/package.json": `{ "name": "scheduler", "version": "0.25.0", "main": "index.js" }`,
+      "/node_modules/scheduler/index.js": `console.log("scheduler"); exports.version = "0.25.0";`,
+    },
+    run: { stdout: "react\nscheduler\nentry" },
+  });
+  // The entry point of a bundle of react/index.js exports that `module.exports`.
+  itBundled("cjs2esm/UnwrappedRequireOfWrappedPackageAsEntryPoint", {
+    files: { ...unwrappedReactPackageJson, ...unwrappedReactTargets.DevelopmentRedirect },
+    entryPointsRaw: ["./node_modules/react/index.js"],
+    outdir: "/out",
+    entryNaming: "react.[ext]",
+    runtimeFiles: {
+      "/entry.js": /* js */ `
+        const compiled = await import("./out/react.js");
+        console.log(compiled.default.version, "default" in compiled.default);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/react.js").toContain("var require_development = __commonJS(");
+      api.expectFile("/out/react.js").not.toContain("__toESM(");
+    },
+    run: { file: "/entry.js", stdout: "19.0.0 false" },
+  });
+  // The script of an HTML entry point gets the same value.
+  itBundled("cjs2esm/UnwrappedRequireOfWrappedPackageFromHTMLEntryPoint", {
+    files: {
+      "/index.html": `<!doctype html><html><body><script type="module" src="./app.js"></script></body></html>`,
+      "/app.js": /* js */ `
+        import { legacy } from "./legacy.cjs";
+        globalThis.result = legacy();
+      `,
+      "/legacy.cjs": /* js */ `
+        const React = require("react");
+        exports.legacy = () => [React.version, React.read(), "default" in React, typeof React.default].join();
+      `,
+      ...unwrappedReactPackageJson,
+      ...unwrappedReactTargets.Wrapped,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    runtimeFiles: {
+      "/run.mjs": /* js */ `
+        const html = await Bun.file(import.meta.dir + "/out/index.html").text();
+        await import("./out/" + html.match(/src="\\.\\/(.*?\\.js)"/)[1]);
+        console.log(globalThis.result);
+      `,
+    },
+    run: { file: "/run.mjs", stdout: "19.0.0,1:19.0.0,false,undefined" },
   });
 });

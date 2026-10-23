@@ -40,6 +40,20 @@ fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
 }
 
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
+/// The length of `s` in UTF-16 code units, which is what Node's `.length` compares. `u16` slices
+/// already are in code units; a `u8` slice is UTF-8, where a multibyte sequence is one code unit
+/// (two for the four-byte ones).
+fn code_unit_len_t<T: PathCharCwd>(s: &[T]) -> usize {
+    if core::mem::size_of::<T>() != 1 {
+        return s.len();
+    }
+    s.iter()
+        .map(|c| c.as_u32())
+        .filter(|&b| b & 0xC0 != 0x80)
+        .map(|b| if b >= 0xF0 { 2 } else { 1 })
+        .sum()
+}
+
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
@@ -1955,6 +1969,8 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         }
         matches_all_of_smallest = i == smallest_length;
     }
+    // Node compares UTF-16 code units; `smallest_length` counts bytes when `T` is `u8`.
+    let smallest_is_two = code_unit_len_t(&buf[to_start..to_start + smallest_length]) == 2;
 
     // We found a mismatch before the first common path separator was seen, so
     // return the original `to`.
@@ -1969,7 +1985,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
                 return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
             }
-            if smallest_length == 2 {
+            if smallest_is_two {
                 // We get here if `from` is the device root.
                 // For example: from='C:\'; to='C:\foo'
                 return Ok(&buf[to_start + smallest_length..to_orig_len]);
@@ -1980,10 +1996,11 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
                 // We get here if `to` is the exact base path for `from`.
                 // For example: from='C:\foo\bar'; to='C:\foo'
                 last_common_sep = Some(smallest_length);
-            } else if smallest_length == 2 {
+            } else if smallest_is_two {
                 // We get here if `to` is the device root.
                 // For example: from='C:\foo\bar'; to='C:\'
-                last_common_sep = Some(3);
+                // (`smallest_length + 1` is 3 unless the device root has multibyte characters.)
+                last_common_sep = Some(smallest_length + 1);
             }
         }
         if last_common_sep.is_none() {
@@ -2594,7 +2611,8 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
 
     let len = resolved_len;
-    if len <= 2 {
+    // Node compares UTF-16 code units; `len` counts bytes when `T` is `u8`.
+    if code_unit_len_t(&buf[0..len]) <= 2 {
         buf[0..path.len()].copy_from_slice(path);
         buf[path.len()] = T::default();
         return Ok(&buf[0..path.len()]);

@@ -340,6 +340,47 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
   });
 });
 
+describe("constructor objects", () => {
+  const constructors: [string, Function][] = [
+    ["Cookie", Bun.Cookie],
+    ["CookieMap", Bun.CookieMap],
+  ];
+
+  test.each(constructors)("Bun.%s inherits from Function.prototype", (name, Constructor) => {
+    expect(Object.getPrototypeOf(Constructor)).toBe(Function.prototype);
+    expect(Constructor).toBeInstanceOf(Function);
+    expect({
+      bind: Constructor.bind,
+      call: Constructor.call,
+      apply: Constructor.apply,
+    }).toEqual({
+      bind: Function.prototype.bind,
+      call: Function.prototype.call,
+      apply: Function.prototype.apply,
+    });
+    expect(String(Constructor)).toBe(`function ${name}() { [native code] }`);
+  });
+
+  test("a subclass inherits the Function.prototype methods", () => {
+    class SessionCookie extends Bun.Cookie {}
+    class Jar extends Bun.CookieMap {}
+    expect(SessionCookie.bind).toBe(Function.prototype.bind);
+    expect(Jar.bind).toBe(Function.prototype.bind);
+  });
+
+  test("a bound constructor constructs", () => {
+    const IdCookie = Bun.Cookie.bind(null, "id");
+    const cookie = new IdCookie("1");
+    expect(cookie).toBeInstanceOf(Bun.Cookie);
+    expect(cookie.serialize()).toBe("id=1; Path=/; SameSite=Lax");
+
+    const PresetMap = Bun.CookieMap.bind(null, "a=1");
+    const map = new PresetMap();
+    expect(map).toBeInstanceOf(Bun.CookieMap);
+    expect(map.toJSON()).toEqual({ a: "1" });
+  });
+});
+
 describe("Cookie name field is immutable", () => {
   test("can create a Cookie", () => {
     const cookie = new Bun.Cookie("name", "value");

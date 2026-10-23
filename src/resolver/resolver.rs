@@ -1632,9 +1632,12 @@ impl<'a> Resolver<'a> {
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators,
                 );
-                if let Some(v) = tsconfig.use_define_for_class_fields {
-                    result.flags.set_use_define_for_class_fields(v);
-                }
+                result
+                    .flags
+                    .set_use_define_for_class_fields(tsconfig.use_define_for_class_fields());
+                result
+                    .flags
+                    .set_strict_null_checks(tsconfig.strict_null_checks());
             }
 
             // Probe the listing in one `entries_mutex` critical section: a
@@ -6647,8 +6650,19 @@ impl<'a> Resolver<'a> {
                 let mc = unsafe { &mut *merged_config };
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                mc.experimental_decorators =
+                    mc.experimental_decorators || parent_config.experimental_decorators;
                 if let Some(v) = parent_config.use_define_for_class_fields {
                     mc.use_define_for_class_fields = Some(v);
+                }
+                if let Some(v) = parent_config.target_has_class_fields {
+                    mc.target_has_class_fields = Some(v);
+                }
+                if let Some(v) = parent_config.strict {
+                    mc.strict = Some(v);
+                }
+                if let Some(v) = parent_config.strict_null_checks {
+                    mc.strict_null_checks = Some(v);
                 }
                 if !parent_config.base_url.is_empty() {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);

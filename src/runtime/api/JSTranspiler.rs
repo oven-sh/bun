@@ -740,9 +740,8 @@ impl TransformTask {
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
-            use_define_for_class_fields: tsconfig
-                .and_then(|ts| ts.use_define_for_class_fields)
-                .unwrap_or(true),
+            use_define_for_class_fields: tsconfig.is_none_or(|ts| ts.use_define_for_class_fields()),
+            strict_null_checks: tsconfig.is_none_or(|ts| ts.strict_null_checks()),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_fd_ptr: None,
             inject_jest_globals: false,
@@ -1205,8 +1204,11 @@ impl JSTranspiler {
             use_define_for_class_fields: config
                 .tsconfig
                 .as_deref()
-                .and_then(|ts| ts.use_define_for_class_fields)
-                .unwrap_or(true),
+                .is_none_or(|ts| ts.use_define_for_class_fields()),
+            strict_null_checks: config
+                .tsconfig
+                .as_deref()
+                .is_none_or(|ts| ts.strict_null_checks()),
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,

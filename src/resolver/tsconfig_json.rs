@@ -161,8 +161,11 @@ pub struct TSConfigJSON {
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    /// `None` = unset (keeps native [[Define]] class-field semantics).
-    pub use_define_for_class_fields: Option<bool>,
+    pub(crate) use_define_for_class_fields: Option<bool>,
+    /// `target` is ES2022 or later.
+    pub(crate) target_has_class_fields: Option<bool>,
+    pub(crate) strict: Option<bool>,
+    pub(crate) strict_null_checks: Option<bool>,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +182,9 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            target_has_class_fields: None,
+            strict: None,
+            strict_null_checks: None,
         }
     }
 }
@@ -211,6 +217,18 @@ impl TSConfigJSON {
             bun_core::scoped_log!(alloc, "new(TSConfigJSON) = {:p}", boxed.as_ref());
         }
         boxed
+    }
+
+    /// Effective `useDefineForClassFields`. As in TypeScript 6, `target` is the latest standard unless it's set.
+    pub fn use_define_for_class_fields(&self) -> bool {
+        self.use_define_for_class_fields
+            .or(self.target_has_class_fields)
+            .unwrap_or(true)
+    }
+
+    /// Effective `strictNullChecks`. As in TypeScript 6, `strict` is on unless it's set to `false`.
+    pub fn strict_null_checks(&self) -> bool {
+        self.strict_null_checks.or(self.strict).unwrap_or(true)
     }
 
     // Logs under `.alloc` then frees.
@@ -375,6 +393,9 @@ impl TSConfigJSON {
             let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
             let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
             let mut use_define_for_class_fields_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut target_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut strict_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut strict_null_checks_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
@@ -397,6 +418,11 @@ impl TSConfigJSON {
                         }
                         b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
                             use_define_for_class_fields_v = Some(value)
+                        }
+                        b"target" if target_v.is_none() => target_v = Some(value),
+                        b"strict" if strict_v.is_none() => strict_v = Some(value),
+                        b"strictNullChecks" if strict_null_checks_v.is_none() => {
+                            strict_null_checks_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
                             jsx_factory_v = Some((value, loc))
@@ -445,6 +471,36 @@ impl TSConfigJSON {
             // Parse "useDefineForClassFields"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_for_class_fields_v {
                 result.use_define_for_class_fields = Some(val);
+            }
+
+            // Parse "target"
+            if let Some((target, len)) = target_v
+                .and_then(|it| it.as_str())
+                .and_then(strings::ascii_lowercase_buf::<6>)
+            {
+                result.target_has_class_fields = Some(!matches!(
+                    &target[..len],
+                    b"es3"
+                        | b"es5"
+                        | b"es6"
+                        | b"es2015"
+                        | b"es2016"
+                        | b"es2017"
+                        | b"es2018"
+                        | b"es2019"
+                        | b"es2020"
+                        | b"es2021"
+                ));
+            }
+
+            // Parse "strict"
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = strict_v {
+                result.strict = Some(val);
+            }
+
+            // Parse "strictNullChecks"
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = strict_null_checks_v {
+                result.strict_null_checks = Some(val);
             }
 
             // Parse "jsxFactory"

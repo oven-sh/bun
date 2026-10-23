@@ -105,8 +105,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
                 is_constructor,
-                has_decorators: opts.ts_decorators.len() > 0
-                    || (opts.has_class_decorators && is_constructor),
 
                 // Only allow omitting the body if we're parsing TypeScript class
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED && opts.is_class,

@@ -919,6 +919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = p.load_name_from_ref(private.ref_);
                 let result = p.find_symbol(e_.index.loc, name).expect("unreachable");
                 private.ref_ = result.r#ref;
+                p.private_name_uses += 1;
 
                 // Unlike regular identifiers, there are no unbound private identifiers
                 let kind: js_ast::symbol::Kind =
@@ -2816,6 +2817,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
+        let temps_before = p.temp_refs_to_declare.len();
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
@@ -2856,6 +2858,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 == 0
         {
             e_.class_name = None;
+        }
+
+        if TYPESCRIPT {
+            *e = p.declare_class_expr_temps(expr, temps_before);
         }
     }
 }

@@ -1836,6 +1836,7 @@ impl Data {
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
                     inner_class_ref: el.inner_class_ref,
+                    decorators_use_private_name: el.decorators_use_private_name,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))
             }

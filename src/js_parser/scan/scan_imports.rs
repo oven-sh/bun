@@ -25,6 +25,66 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 }
 
 impl<'a> ImportScanner<'a> {
+    /// True if `st` is an `import a = b.c` that nothing uses. Then `b` has one use fewer.
+    fn is_unused_ts_import_equals<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+        &mut self,
+        p: &mut P<'_, TYPESCRIPT, SCAN_ONLY>,
+        st: &S::Local,
+    ) -> bool {
+        if !st.origin.is_ts_import_equals() || st.is_export || st.decls.len_u32() == 0 {
+            return false;
+        }
+        let decl = &st.decls.slice()[0];
+
+        // Skip to the underlying reference
+        let mut value: Option<Expr> = decl.value;
+        while let Some(js_ast::ExprData::EDot(dot)) = value.map(|it| it.data) {
+            value = Some(dot.target);
+        }
+
+        // Is this an identifier reference and not a require() call?
+        let value_ref = match value.map(|it| it.data) {
+            Some(js_ast::ExprData::EIdentifier(id)) => id.ref_,
+            Some(js_ast::ExprData::EImportIdentifier(id)) => id.ref_,
+            _ => return false,
+        };
+        // Is this import statement unused?
+        if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data
+            && p.symbols[b_id.r#ref.inner_index() as usize].use_count_estimate == 0
+        {
+            p.ignore_usage(value_ref);
+            self.removed_import_equals = true;
+            return true;
+        }
+        self.kept_import_equals = true;
+        false
+    }
+
+    /// The part of `scan` to repeat after it removed an `import a = b.c`, which may have been the last use of an
+    /// `import b = d.e`.
+    pub(crate) fn scan_for_unused_ts_import_equals<
+        const TYPESCRIPT: bool,
+        const SCAN_ONLY: bool,
+    >(
+        p: &mut P<'_, TYPESCRIPT, SCAN_ONLY>,
+        stmts: &'a mut [Stmt],
+    ) -> ImportScanner<'a> {
+        let mut scanner = ImportScanner::default();
+        let mut stmts_end: usize = 0;
+        for i in 0..stmts.len() {
+            let stmt = stmts[i];
+            if let js_ast::StmtData::SLocal(st) = stmt.data
+                && scanner.is_unused_ts_import_equals(p, &st)
+            {
+                continue;
+            }
+            stmts[stmts_end] = stmt;
+            stmts_end += 1;
+        }
+        scanner.stmts = &mut stmts[0..stmts_end];
+        scanner
+    }
+
     // Only the parser P is handled here — the bundler scans imports via its own
     // path and does not go through this function.
     pub(crate) fn scan<
@@ -659,38 +719,8 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if st.origin.is_ts_import_equals() && !st.is_export && st.decls.len_u32() > 0 {
-                        let decl = &st.decls.slice()[0];
-
-                        // Skip to the underlying reference
-                        let mut value: Option<Expr> = decl.value;
-                        if decl.value.is_some() {
-                            while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
-                                value = Some(dot.target);
-                            }
-                        }
-
-                        // Is this an identifier reference and not a require() call?
-                        if let Some(val) = value {
-                            if let js_ast::ExprData::EIdentifier(id) = val.data {
-                                // Is this import statement unused?
-                                if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
-                                    let b_id_ref = b_id.r#ref;
-                                    if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
-                                        == 0
-                                    {
-                                        p.ignore_usage(id.ref_);
-
-                                        scanner.removed_import_equals = true;
-                                        continue;
-                                    } else {
-                                        scanner.kept_import_equals = true;
-                                    }
-                                } else {
-                                    scanner.kept_import_equals = true;
-                                }
-                            }
-                        }
+                    if scanner.is_unused_ts_import_equals(p, &st) {
+                        continue;
                     }
                 }
                 js_ast::StmtData::SExportDefault(mut st) => {

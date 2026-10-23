@@ -16,6 +16,7 @@ mod check_source_file;
 pub mod commit;
 mod context;
 mod decl;
+pub mod decorator_metadata;
 mod decorators;
 mod enclosing_declaration;
 pub mod errors;

@@ -1,4 +1,7 @@
 import "reflect-metadata";
+import { longLimit } from "../../cli/children";
+import { canCompareWithTypeScript, differencesFromTypeScript } from "./decorator-differential";
+import { cases } from "./decorator-metadata-cases";
 
 describe("decorator metadata", () => {
   test("type serialization", () => {
@@ -226,10 +229,10 @@ describe("decorator metadata", () => {
     expect(received[24]).toBe(Object);
     expect(received[25]).toBe(void 0);
     expect(received[26]).toBe(void 0);
-    expect(received[27]).toBe(String);
-    expect(received[28]).toBe(String);
-    expect(received[29]).toBe(String);
-    expect(received[30]).toBe(String);
+    expect(received[27]).toBe(Object);
+    expect(received[28]).toBe(Object);
+    expect(received[29]).toBe(Object);
+    expect(received[30]).toBe(Object);
     expect(received[31]).toBe(Object);
     expect(received[32]).toBe(Object);
     expect(received[33]).toBe(String);
@@ -238,10 +241,10 @@ describe("decorator metadata", () => {
     expect(received[36]).toBe(Object);
     expect(received[37]).toBe(String);
     expect(received[38]).toBe(String);
-    expect(received[39]).toBe(String);
-    expect(received[40]).toBe(String);
-    expect(received[41]).toBe(String);
-    expect(received[42]).toBe(String);
+    expect(received[39]).toBe(Object);
+    expect(received[40]).toBe(Object);
+    expect(received[41]).toBe(Object);
+    expect(received[42]).toBe(Object);
     expect(received[43]).toBe(Object);
     expect(received[44]).toBe(Object);
     expect(received[45]).toBe(Object);
@@ -256,10 +259,10 @@ describe("decorator metadata", () => {
     expect(received[54]).toBe(Object);
     expect(received[55]).toBe(Swag);
     expect(received[56]).toBe(Swag);
-    expect(received[57]).toBe(Swag);
-    expect(received[58]).toBe(Swag);
-    expect(received[59]).toBe(Swag);
-    expect(received[60]).toBe(Swag);
+    expect(received[57]).toBe(Object);
+    expect(received[58]).toBe(Object);
+    expect(received[59]).toBe(Object);
+    expect(received[60]).toBe(Object);
     expect(received[61]).toBe(Object);
     expect(received[62]).toBe(Object);
     expect(received[63]).toBe(Object);
@@ -268,10 +271,10 @@ describe("decorator metadata", () => {
     expect(received[66]).toBe(Object);
     expect(received[67]).toBe(void 0);
     expect(received[68]).toBe(void 0);
-    expect(received[69]).toBe(Swag);
-    expect(received[70]).toBe(Swag);
-    expect(received[71]).toBe(Swag);
-    expect(received[72]).toBe(Swag);
+    expect(received[69]).toBe(Object);
+    expect(received[70]).toBe(Object);
+    expect(received[71]).toBe(Object);
+    expect(received[72]).toBe(Object);
     expect(received[73]).toBe(Object);
     expect(received[74]).toBe(Object);
     expect(received[75]).toBe(Swag);
@@ -543,4 +546,15 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
   });
+});
+
+// Bun compiles one file at a time, so it has to emit what `ts.transpileModule` does: the file is the whole program.
+describe.concurrent.each([true, false])("same metadata as TypeScript, strictNullChecks: %p", strictNullChecks => {
+  test.skipIf(!canCompareWithTypeScript)(
+    "every case",
+    async () => {
+      expect(await differencesFromTypeScript(cases, { strictNullChecks })).toEqual([]);
+    },
+    longLimit,
+  );
 });

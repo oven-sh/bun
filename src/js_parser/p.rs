@@ -26,7 +26,8 @@ use crate::{
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    TransposeState, TypeNameDeclaration, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -430,6 +431,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_exported_inside_namespace: RefRefMap,
     pub(crate) local_type_names: StringBoolMap,
 
+    /// With `emitDecoratorMetadata`: what declares each name that means a type or a namespace
+    /// somewhere in the file, other than a class and an import of a value. See
+    /// `type_reference_kind`.
+    pub(crate) type_names: StringHashMap<TypeNameDeclaration>,
+    /// The type checker's answers for this file, once one was needed. Sorted by position.
+    pub(crate) checked_type_references: Option<Vec<js_ast::ts::CheckedTypeReference>>,
+
     // This is the reference to the generated function argument for the namespace,
     // which is different than the reference to the namespace itself:
     //
@@ -652,6 +660,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// reads the class through `inner_class_ref`. A write to the name targets
     /// the class's own binding, which throws as the immutable binding does.
     pub(crate) decorated_class_names: List<'a, (Ref, Ref)>,
+
+    /// How many times the visit pass has come across `x.#name` or `#name in x`.
+    pub(crate) private_name_uses: u32,
+    /// See [`G::Class::decorators_use_private_name`], for the class being visited.
+    pub(crate) decorators_use_private_name: bool,
 
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
@@ -2123,6 +2136,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn record_assignment(&mut self, ref_: Ref) {
         let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
         self.symbols[root.inner_index() as usize].set_has_been_assigned_to(true);
+    }
+
+    /// See `type_names`.
+    pub(crate) fn declare_type_name(&mut self, name: &'a [u8], declaration: TypeNameDeclaration) {
+        if !self.options.features.emit_decorator_metadata {
+            return;
+        }
+        let declaration = match self.type_names.get(name) {
+            Some(_) => TypeNameDeclaration::Other,
+            None => declaration,
+        };
+        self.type_names.put(name, declaration).expect("oom");
     }
 
     /// See `Symbol::import_used_as_value`.
@@ -7227,767 +7252,6 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
-        use js_ast::g::PropertyKind;
-        match stmtorexpr {
-            js_ast::StmtOrExpr::Stmt(stmt) => {
-                // Every call site is the visitStmt s_class branch. `StoreRef` gives us
-                // safe `Deref`/`DerefMut` into the arena-owned `S::Class`; each access
-                // below materialises a fresh short-lived borrow, so the `&mut self`
-                // helper calls in between never overlap an outstanding `&mut G::Class`.
-                let mut s_class: bun_ast::StoreRef<S::Class> = stmt.data.s_class().unwrap();
-
-                // Standard decorator lowering path (for both JS and TS files)
-                if s_class.class.should_lower_standard_decorators {
-                    // `lower_standard_decorators_stmt` takes an out-param Vec; wrap to
-                    // keep this function's slice contract.
-                    let mut out = BumpVec::<Stmt>::new_in(self.arena);
-                    self.lower_standard_decorators_stmt(stmt, &mut out);
-                    return out.into_bump_slice_mut();
-                }
-
-                if !TYPESCRIPT {
-                    if !s_class.class.has_decorators {
-                        return self.arena.alloc_slice_copy(&[stmt]);
-                    }
-                }
-                let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
-
-                let mut static_decorators = BumpVec::<Stmt>::new_in(self.arena);
-                let mut instance_decorators = BumpVec::<Stmt>::new_in(self.arena);
-                let mut instance_members = BumpVec::<Stmt>::new_in(self.arena);
-                let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
-                let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
-
-                for prop in s_class.class.properties.slice_mut().iter_mut() {
-                    // merge parameter decorators with method decorators
-                    if prop.flags.contains(Flags::Property::IsMethod) {
-                        if let Some(prop_value) = prop.value {
-                            match prop_value.data {
-                                js_ast::ExprData::EFunction(func) => {
-                                    let is_constructor = matches!(prop.key, Some(k) if matches!(k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
-
-                                    if is_constructor {
-                                        constructor_function = Some(func);
-                                    }
-
-                                    // arena-owned `StoreSlice<Arg>` valid for parser 'a.
-                                    for (i, arg) in func.func.args.iter().enumerate() {
-                                        for arg_decorator in arg.ts_decorators.slice() {
-                                            let arg0 = self.new_expr(
-                                                E::Number::new(i as f64),
-                                                arg_decorator.loc,
-                                            );
-                                            let args = self
-                                                .arena
-                                                .alloc_slice_copy(&[arg0, *arg_decorator]);
-                                            let args = ExprNodeList::from_arena_slice(args);
-                                            let call = self.call_runtime(
-                                                arg_decorator.loc,
-                                                b"__legacyDecorateParamTS",
-                                                args,
-                                            );
-                                            let decorators = if is_constructor {
-                                                // `prop` borrows the (separate) properties arena
-                                                // slice, not the `S::Class` allocation, so this
-                                                // fresh `DerefMut` does not alias it.
-                                                &mut s_class.class.ts_decorators
-                                            } else {
-                                                &mut prop.ts_decorators
-                                            };
-                                            decorators.push(call);
-                                        }
-                                    }
-                                }
-                                // The visit pass skipped this method after a stack overflow.
-                                js_ast::ExprData::EMissing(_)
-                                    if self.reported_stack_overflow.get() => {}
-                                _ => unreachable!(),
-                            }
-                        }
-                    }
-
-                    // TODO: prop.kind == .declare and prop.value == null
-
-                    if prop.ts_decorators.len_u32() > 0 {
-                        let descriptor_key = prop.key.expect("infallible: prop has key");
-                        let loc = descriptor_key.loc;
-
-                        // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
-                        // the if statement.
-                        let descriptor_kind: Expr =
-                            if !prop.flags.contains(Flags::Property::IsMethod) {
-                                self.new_expr(E::Undefined {}, loc)
-                            } else {
-                                self.new_expr(E::Null {}, loc)
-                            };
-
-                        let class_name = s_class.class.class_name.unwrap();
-                        let class_ref = class_name.ref_;
-                        let target: Expr = if prop.flags.contains(Flags::Property::IsStatic) {
-                            self.record_usage(class_ref);
-                            self.new_expr(E::Identifier::init(class_ref), class_name.loc)
-                        } else {
-                            let inner =
-                                self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                            self.new_expr(
-                                E::Dot {
-                                    target: inner,
-                                    name: b"prototype".into(),
-                                    name_loc: loc,
-                                    ..Default::default()
-                                },
-                                loc,
-                            )
-                        };
-
-                        let mut array = BumpVec::<Expr>::new_in(self.arena);
-
-                        if self.options.features.emit_decorator_metadata {
-                            self.emit_decorator_metadata_for_prop(prop, &mut array, loc);
-                        }
-
-                        let mut full = BumpVec::<Expr>::with_capacity_in(
-                            prop.ts_decorators.len_u32() as usize + array.len(),
-                            self.arena,
-                        );
-                        full.extend_from_slice(prop.ts_decorators.slice());
-                        full.extend_from_slice(&array);
-                        let full_items = ExprNodeList::from_bump_vec(full);
-                        let array_expr = self.new_expr(
-                            E::Array {
-                                items: full_items,
-                                ..Default::default()
-                            },
-                            loc,
-                        );
-                        let args_slice = self.arena.alloc_slice_copy(&[
-                            array_expr,
-                            target,
-                            descriptor_key,
-                            descriptor_kind,
-                        ]);
-                        let args = ExprNodeList::from_arena_slice(args_slice);
-
-                        let decorator = self.call_runtime(
-                            prop.key.expect("infallible: prop has key").loc,
-                            b"__legacyDecorateClassTS",
-                            args,
-                        );
-                        let decorator_stmt = self.s(
-                            S::SExpr {
-                                value: decorator,
-                                ..Default::default()
-                            },
-                            decorator.loc,
-                        );
-
-                        if prop.flags.contains(Flags::Property::IsStatic) {
-                            static_decorators.push(decorator_stmt);
-                        } else {
-                            instance_decorators.push(decorator_stmt);
-                        }
-                    }
-
-                    if prop.kind != PropertyKind::ClassStaticBlock
-                        && !prop.flags.contains(Flags::Property::IsMethod)
-                        && !matches!(
-                            prop.key.map(|k| k.data),
-                            Some(js_ast::ExprData::EPrivateIdentifier(_))
-                        )
-                        && prop.ts_decorators.len_u32() > 0
-                    {
-                        // remove decorated fields without initializers to avoid assigning undefined.
-                        let Some(initializer) = prop.initializer else {
-                            continue;
-                        };
-
-                        let mut target: Expr;
-                        if prop.flags.contains(Flags::Property::IsStatic) {
-                            let class_name = s_class.class.class_name.unwrap();
-                            let class_ref = class_name.ref_;
-                            self.record_usage(class_ref);
-                            target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                        } else {
-                            target = self.new_expr(
-                                E::This {},
-                                prop.key.expect("infallible: prop has key").loc,
-                            );
-                        }
-
-                        let key = prop.key.expect("infallible: prop has key");
-                        target = match &key.data {
-                            js_ast::ExprData::EString(s)
-                                if s.is_utf8()
-                                    && !prop.flags.contains(Flags::Property::IsComputed) =>
-                            {
-                                self.new_expr(
-                                    E::Dot {
-                                        target,
-                                        name: s.data,
-                                        name_loc: key.loc,
-                                        ..Default::default()
-                                    },
-                                    key.loc,
-                                )
-                            }
-                            _ => self.new_expr(
-                                E::Index {
-                                    target,
-                                    index: key,
-                                    optional_chain: None,
-                                    is_import_property_use: false,
-                                },
-                                key.loc,
-                            ),
-                        };
-
-                        // remove fields with decorators from class body. Move static members outside of class.
-                        if prop.flags.contains(Flags::Property::IsStatic) {
-                            static_members.push(Stmt::assign(target, initializer));
-                        } else {
-                            instance_members.push(Stmt::assign(target, initializer));
-                        }
-                        continue;
-                    }
-
-                    // The old backing slice is overwritten right after this loop, so
-                    // `take` is fine here (Property: Default).
-                    class_properties.push(core::mem::take(prop));
-                }
-
-                s_class.class.properties =
-                    bun_ast::StoreSlice::new_mut(class_properties.into_bump_slice_mut());
-
-                if !instance_members.is_empty() {
-                    if let Some(mut cf) = constructor_function {
-                        // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
-                        let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        // statements coming from class body inserted after super call or beginning of constructor.
-                        let mut super_index: Option<usize> = None;
-                        for (index, item) in old_stmts.iter().enumerate() {
-                            if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
-                            {
-                                continue;
-                            }
-                            super_index = Some(index);
-                            break;
-                        }
-
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
-                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
-                            old_stmts.len() + instance_members.len(),
-                            self.arena,
-                        );
-                        constructor_stmts.extend_from_slice(&old_stmts[..i]);
-                        constructor_stmts.extend_from_slice(&instance_members);
-                        constructor_stmts.extend_from_slice(&old_stmts[i..]);
-
-                        cf.func.body.stmts =
-                            bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
-                    } else {
-                        // Rebuild the property list with the new entry at index 0
-                        // (Property is not Clone).
-                        let old_props: bun_ast::StoreSlice<G::Property> = s_class.class.properties;
-                        let old_len = old_props.len();
-                        let mut properties =
-                            BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
-                        let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.arena);
-
-                        if s_class.class.extends.is_some() {
-                            let target = self.new_expr(E::Super {}, stmt.loc);
-                            let arguments_ref =
-                                self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str);
-                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
-
-                            let spread_inner =
-                                self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
-                            let super_ = self.new_expr(
-                                E::Spread {
-                                    value: spread_inner,
-                                },
-                                stmt.loc,
-                            );
-                            let args = ExprNodeList::init_one(super_);
-
-                            let call_value = self.new_expr(
-                                E::Call {
-                                    target,
-                                    args,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            constructor_stmts.push(self.s(
-                                S::SExpr {
-                                    value: call_value,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                        }
-
-                        constructor_stmts.extend_from_slice(&instance_members);
-
-                        let key_expr =
-                            self.new_expr(E::EString::from_static(b"constructor"), stmt.loc);
-                        let value_expr = self.new_expr(
-                            E::Function {
-                                func: G::Fn {
-                                    name: None,
-                                    open_parens_loc: bun_ast::Loc::EMPTY,
-                                    args: bun_ast::StoreSlice::EMPTY,
-                                    body: G::FnBody {
-                                        loc: stmt.loc,
-                                        stmts: bun_ast::StoreSlice::new_mut(
-                                            constructor_stmts.into_bump_slice_mut(),
-                                        ),
-                                    },
-                                    flags: Flags::FUNCTION_NONE,
-                                    ..Default::default()
-                                },
-                            },
-                            stmt.loc,
-                        );
-                        properties.push(G::Property {
-                            flags: Flags::Property::IsMethod.into(),
-                            key: Some(key_expr),
-                            value: Some(value_expr),
-                            ..Default::default()
-                        });
-                        for old in old_props.slice_mut().iter_mut() {
-                            properties.push(core::mem::take(old));
-                        }
-
-                        s_class.class.properties =
-                            bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
-                    }
-
-                    // TODO: make sure "super()" comes before instance field initializers
-                    // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
-                }
-
-                let mut stmts_count: usize =
-                    1 + static_members.len() + instance_decorators.len() + static_decorators.len();
-                if s_class.class.ts_decorators.len_u32() > 0 {
-                    stmts_count += 1;
-                }
-                let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
-                stmts.push(stmt);
-                stmts.extend_from_slice(&static_members);
-                stmts.extend_from_slice(&instance_decorators);
-                stmts.extend_from_slice(&static_decorators);
-                if s_class.class.ts_decorators.len_u32() > 0 {
-                    let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
-
-                    if self.options.features.emit_decorator_metadata {
-                        if let Some(cf) = constructor_function {
-                            // design:paramtypes
-                            let constructor_args: &[G::Arg] = cf.func.args.slice();
-                            let args1 = if !constructor_args.is_empty() {
-                                let param_array = self
-                                    .arena
-                                    .alloc_slice_fill_default::<Expr>(constructor_args.len());
-                                for (i, ca) in constructor_args.iter().enumerate() {
-                                    param_array[i] = self
-                                        .serialize_metadata(ca.ts_metadata.clone())
-                                        .expect("unreachable");
-                                }
-                                let items = ExprNodeList::from_arena_slice(param_array);
-                                self.new_expr(
-                                    E::Array {
-                                        items,
-                                        ..Default::default()
-                                    },
-                                    bun_ast::Loc::EMPTY,
-                                )
-                            } else {
-                                self.new_expr(
-                                    E::Array {
-                                        items: bun_alloc::AstAlloc::vec(),
-                                        ..Default::default()
-                                    },
-                                    bun_ast::Loc::EMPTY,
-                                )
-                            };
-                            let label = self.new_expr(
-                                E::EString::from_static(b"design:paramtypes"),
-                                bun_ast::Loc::EMPTY,
-                            );
-                            let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
-                            let args = ExprNodeList::from_arena_slice(args_slice);
-                            array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
-                        }
-                    }
-
-                    let class_name = s_class.class.class_name.unwrap();
-                    let class_ref = class_name.ref_;
-                    let array_items = ExprNodeList::move_from_list(array);
-                    let array_expr = self.new_expr(
-                        E::Array {
-                            items: array_items,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    );
-                    let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                    let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
-                    let args = ExprNodeList::from_arena_slice(args_slice);
-
-                    let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                    let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
-                    stmts.push(Stmt::assign(lhs, rhs));
-
-                    self.record_usage(class_ref);
-                    self.record_usage(class_ref);
-                }
-                stmts.into_bump_slice_mut()
-            }
-            js_ast::StmtOrExpr::Expr(expr) => self.arena.alloc_slice_copy(&[self.s(
-                S::SExpr {
-                    value: expr,
-                    ..Default::default()
-                },
-                expr.loc,
-            )]),
-        }
-    }
-
-    // Helper extracted from lower_class to keep that fn readable; condenses
-    // the per-kind metadata switch.
-    #[cold]
-    #[inline(never)]
-    fn emit_decorator_metadata_for_prop(
-        &mut self,
-        prop: &G::Property,
-        array: &mut BumpVec<'a, Expr>,
-        loc: bun_ast::Loc,
-    ) {
-        use js_ast::g::PropertyKind;
-
-        // The visit pass skipped this method after a stack overflow.
-        if self.reported_stack_overflow.get() && prop.value.is_some_and(|value| value.is_missing())
-        {
-            return;
-        }
-
-        // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
-        // pulled out of the per-arm code to cut a ~3x repetition.
-        macro_rules! push_metadata {
-            ($label:expr, $value:expr) => {{
-                let label = self.new_expr(E::EString::from_static($label), bun_ast::Loc::EMPTY);
-                let value = $value;
-                let args = self.arena.alloc_slice_copy(&[label, value]);
-                let args = ExprNodeList::from_arena_slice(args);
-                array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
-            }};
-        }
-
-        match prop.kind {
-            PropertyKind::Normal | PropertyKind::Abstract => {
-                {
-                    // design:type
-                    let v = self
-                        .serialize_metadata(prop.ts_metadata.clone())
-                        .expect("unreachable");
-                    push_metadata!(b"design:type", v);
-                }
-                // design:paramtypes and design:returntype if method
-                if prop.flags.contains(Flags::Property::IsMethod) {
-                    if let Some(prop_value) = prop.value {
-                        let func = prop_value
-                            .data
-                            .e_function()
-                            .expect("infallible: variant checked");
-                        // arena-owned `StoreSlice<Arg>` valid for parser 'a.
-                        let method_args: &[G::Arg] = func.func.args.slice();
-                        {
-                            let args_array = self
-                                .arena
-                                .alloc_slice_fill_default::<Expr>(method_args.len());
-                            for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
-                                *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
-                                    .expect("unreachable");
-                            }
-                            let items = ExprNodeList::from_arena_slice(args_array);
-                            let arr = self.new_expr(
-                                E::Array {
-                                    items,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            );
-                            push_metadata!(b"design:paramtypes", arr);
-                        }
-                        {
-                            let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
-                                .expect("unreachable");
-                            push_metadata!(b"design:returntype", v);
-                        }
-                    }
-                }
-            }
-            PropertyKind::Get => {
-                if prop.flags.contains(Flags::Property::IsMethod) {
-                    // typescript sets design:type to the return value & design:paramtypes to [].
-                    if let Some(prop_value) = prop.value {
-                        let func = prop_value
-                            .data
-                            .e_function()
-                            .expect("infallible: variant checked");
-                        {
-                            let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
-                                .expect("unreachable");
-                            push_metadata!(b"design:type", v);
-                        }
-                        {
-                            let arr = self.new_expr(
-                                E::Array {
-                                    items: bun_alloc::AstAlloc::vec(),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            );
-                            push_metadata!(b"design:paramtypes", arr);
-                        }
-                    }
-                }
-            }
-            PropertyKind::Set => {
-                if prop.flags.contains(Flags::Property::IsMethod) {
-                    // typescript sets design:type to the return value & design:paramtypes to [arg].
-                    // note that typescript does not allow you to put a decorator on both the getter and the setter.
-                    // if you do anyway, bun will set design:type and design:paramtypes twice, so it's fine.
-                    if let Some(prop_value) = prop.value {
-                        let func = prop_value
-                            .data
-                            .e_function()
-                            .expect("infallible: variant checked");
-                        // arena-owned `StoreSlice<Arg>` valid for parser 'a.
-                        let method_args: &[G::Arg] = func.func.args.slice();
-                        {
-                            let args_array = self
-                                .arena
-                                .alloc_slice_fill_default::<Expr>(method_args.len());
-                            for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
-                                *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
-                                    .expect("unreachable");
-                            }
-                            let items = ExprNodeList::from_arena_slice(args_array);
-                            let arr = self.new_expr(
-                                E::Array {
-                                    items,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            );
-                            push_metadata!(b"design:paramtypes", arr);
-                        }
-                        if !method_args.is_empty() {
-                            let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
-                                .expect("unreachable");
-                            push_metadata!(b"design:type", v);
-                        }
-                    }
-                }
-            }
-            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
-            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
-        }
-    }
-
-    fn serialize_metadata(
-        &mut self,
-        ts_metadata: bun_ast::ts::Metadata,
-    ) -> Result<Expr, crate::Error> {
-        use bun_ast::ts::Metadata as M;
-        // Local: `find_symbol` for a builtin name as an E::Identifier expr.
-        macro_rules! ident {
-            ($name:expr) => {{
-                let r = self
-                    .find_symbol(bun_ast::Loc::EMPTY, $name)
-                    .expect("unreachable")
-                    .r#ref;
-                self.new_expr(E::Identifier::init(r), bun_ast::Loc::EMPTY)
-            }};
-        }
-        Ok(match ts_metadata {
-            M::MNone | M::MAny | M::MUnknown | M::MObject => ident!(b"Object"),
-            M::MNever | M::MUndefined | M::MNull | M::MVoid => {
-                self.new_expr(E::Undefined {}, bun_ast::Loc::EMPTY)
-            }
-            M::MString => ident!(b"String"),
-            M::MNumber => ident!(b"Number"),
-            M::MFunction => ident!(b"Function"),
-            M::MBoolean => ident!(b"Boolean"),
-            M::MArray => ident!(b"Array"),
-            M::MBigint => {
-                let e = ident!(b"BigInt");
-                self.maybe_defined_helper(e)?
-            }
-            M::MSymbol => {
-                let e = ident!(b"Symbol");
-                self.maybe_defined_helper(e)?
-            }
-            M::MPromise => ident!(b"Promise"),
-            M::MIdentifier(ref_) => {
-                self.record_usage(ref_);
-                let e = if self.is_import_item.contains_key(&ref_) {
-                    self.note_import_use(ref_, IdentifierOpts::new());
-                    self.new_expr(
-                        E::ImportIdentifier {
-                            ref_,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )
-                } else {
-                    self.new_expr(E::Identifier::init(ref_), bun_ast::Loc::EMPTY)
-                };
-                return self.maybe_defined_helper(e);
-            }
-            M::MDot(refs) => {
-                debug_assert!(refs.len() >= 2);
-                // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
-
-                macro_rules! ref_name {
-                    ($r:expr) => {
-                        E::Str::new(self.load_name_from_ref($r))
-                    };
-                }
-
-                let mut dots = self.new_expr(
-                    E::Dot {
-                        name: ref_name!(refs[refs.len() - 1]),
-                        name_loc: bun_ast::Loc::EMPTY,
-                        target: Expr::default(), // patched below
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-
-                // `StoreRef<Expr>` (safe `Deref`/`DerefMut`) tracks the arena slot
-                // being patched, so the chain walk stays in safe code per hop.
-                let mut current_expr = js_ast::StoreRef::from_bump(
-                    &mut dots
-                        .data
-                        .e_dot_mut()
-                        .expect("infallible: variant checked")
-                        .target,
-                );
-                let mut i: usize = refs.len() - 2;
-                while i > 0 {
-                    *current_expr = self.new_expr(
-                        E::Dot {
-                            name: ref_name!(refs[i]),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: Expr::default(),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                    let next = js_ast::StoreRef::from_bump(
-                        &mut current_expr
-                            .data
-                            .e_dot_mut()
-                            .expect("infallible: variant checked")
-                            .target,
-                    );
-                    current_expr = next;
-                    i -= 1;
-                }
-
-                if self.is_import_item.contains_key(&refs[0]) {
-                    *current_expr = self.new_expr(
-                        E::ImportIdentifier {
-                            ref_: refs[0],
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                } else {
-                    *current_expr =
-                        self.new_expr(E::Identifier::init(refs[0]), bun_ast::Loc::EMPTY);
-                }
-
-                let dot_identifier = *current_expr;
-                let mut current_dot = dots;
-
-                let right0 = self.check_if_defined_helper(current_dot)?;
-                let mut maybe_defined_dots = self.new_expr(
-                    E::Binary {
-                        op: js_ast::OpCode::BinLogicalOr,
-                        right: right0,
-                        left: Expr::default(), // patched below
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-
-                if i < refs.len() - 2 {
-                    current_dot = current_dot
-                        .data
-                        .e_dot()
-                        .expect("infallible: variant checked")
-                        .target;
-                }
-                current_expr = js_ast::StoreRef::from_bump(
-                    &mut maybe_defined_dots
-                        .data
-                        .e_binary_mut()
-                        .expect("infallible: variant checked")
-                        .left,
-                );
-
-                while i < refs.len() - 2 {
-                    let right_n = self.check_if_defined_helper(current_dot)?;
-                    *current_expr = self.new_expr(
-                        E::Binary {
-                            op: js_ast::OpCode::BinLogicalOr,
-                            right: right_n,
-                            left: Expr::default(),
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                    let next = js_ast::StoreRef::from_bump(
-                        &mut current_expr
-                            .data
-                            .e_binary_mut()
-                            .expect("infallible: variant checked")
-                            .left,
-                    );
-                    current_expr = next;
-                    i += 1;
-                    if i < refs.len() - 2 {
-                        current_dot = current_dot
-                            .data
-                            .e_dot()
-                            .expect("infallible: variant checked")
-                            .target;
-                    }
-                }
-
-                *current_expr = self.check_if_defined_helper(dot_identifier)?;
-
-                let yes = ident!(b"Object");
-                let root = self.new_expr(
-                    E::If {
-                        yes,
-                        no: dots,
-                        test: maybe_defined_dots,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-
-                return Ok(root);
-            }
-        })
-    }
-
     #[cold]
     #[inline(never)]
     pub(crate) fn wrap_identifier_namespace(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
@@ -8882,146 +8146,69 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
-            loop {
-                let mut kept_import_equals = false;
-                let mut removed_import_equals = false;
-
-                let begin = parts_end;
-                // Potentially remove some statements, then filter out parts to remove any
-                // with no statements
-                for idx in begin..parts.len() {
-                    // A shallow bitwise copy leaves `parts[idx]` intact so the outer
-                    // multi-pass loop (which restarts at `begin = parts_end`) re-scans
-                    // real data on the next iteration. `mem::take` would zero the slot
-                    // and degrade this to a single pass, so use `ptr::read`; the
-                    // duplicate is non-owning (paired with `ptr::write`/`forget`
-                    // below to avoid double-drop of arena-backed Vec fields).
-                    // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
-                    // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
-                    // a valid non-owning duplicate.
-                    let mut part = core::mem::ManuallyDrop::new(unsafe {
-                        core::ptr::read(&raw const parts[idx])
-                    });
-                    self.import_records_for_current_part.clear();
-                    self.declared_symbols.clear_retaining_capacity();
-
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
-                        self,
-                        part.stmts.slice_mut(),
-                        wrap_mode != WrapMode::None,
-                        None,
-                    ) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            // `part` is a bitwise duplicate of `parts[idx]` held in
-                            // `ManuallyDrop`; let it fall out of scope so the source
-                            // slot keeps sole ownership.
-                            return Err(e);
-                        }
-                    };
-                    kept_import_equals = kept_import_equals || result.kept_import_equals;
-                    removed_import_equals = removed_import_equals || result.removed_import_equals;
-
-                    part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
-                    if !part.stmts.is_empty() {
-                        if self.module_scope().contains_direct_eval
-                            && part.declared_symbols.len() > 0
-                        {
-                            // If this file contains a direct call to "eval()", all parts that
-                            // declare top-level symbols must be kept since the eval'd code may
-                            // reference those symbols.
-                            part.can_be_removed_if_unused = false;
-                        }
-                        if part.declared_symbols.len() == 0 {
-                            // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
-                            // (via `ptr::read` above); the old `declared_symbols`
-                            // is still owned by that slot. Overwrite without running
-                            // Drop, which would double-free the original.
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.declared_symbols,
-                                    self.declared_symbols.clone().expect("unreachable"),
-                                );
-                            }
-                        } else {
-                            part.declared_symbols
-                                .append_list(&self.declared_symbols)
-                                .expect("unreachable");
-                        }
-
-                        if part.import_record_indices.is_empty() {
-                            // Bump-arena slice; Vec::from_bump_slice marks origin
-                            // Borrowed so Drop is a no-op (arena ownership).
-                            // The *old* value is a bitwise duplicate of
-                            // `parts[idx].import_record_indices` and may be Owned —
-                            // overwrite without running Drop, which would double-free the original.
-                            // SAFETY: bitwise duplicate field — overwrite without
-                            // running Drop (see `declared_symbols` above).
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.import_record_indices,
-                                    Vec::from_arena_slice(arena.alloc_slice_copy(
-                                        self.import_records_for_current_part.as_slice(),
-                                    )),
-                                );
-                            }
-                        } else {
-                            part.import_record_indices
-                                .append_slice(self.import_records_for_current_part.as_slice());
-                        }
-
-                        // Wipe the source slot's heap-backed maps so a multi-pass
-                        // re-scan of `idx` never aliases the compacted survivor.
-                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
-                        unsafe {
-                            let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*src).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // SAFETY: bitwise overwrite — the old slot value is intentionally not
-                        // dropped (its fields are arena-owned, so abandoning it does not leak).
-                        unsafe {
-                            core::ptr::write(
-                                parts.as_mut_ptr().add(parts_end),
-                                core::mem::ManuallyDrop::into_inner(part),
-                            )
-                        };
-                        parts_end += 1;
-                    } else {
-                        // Filtered out; free the global-heap maps and clear the
-                        // alias in `parts[idx]` so a re-scan never sees freed handles.
-                        drop(core::mem::take(&mut part.symbol_uses));
-                        drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
-                        unsafe {
-                            let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*slot).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
-                    }
-                }
-
-                // We need to iterate multiple times if an import-equals statement was
-                // removed and there are more import-equals statements that may be removed
-                if !kept_import_equals || !removed_import_equals {
-                    break;
-                }
-            }
+            let mut kept_import_equals = false;
+            let mut removed_import_equals = false;
 
             // leave the first part in there for namespace export when bundling
-            // `truncate` would drop slots that may alias kept parts (the loop
-            // above did `ptr::read` without clearing the source), so use
-            // `set_len`, which runs no destructors.
-            // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
-            // (arena-/process-lifetime).
-            unsafe { parts.set_len(parts_end) };
+            let begin = parts_end;
+            // Potentially remove some statements, then filter out parts to remove any
+            // with no statements
+            for idx in begin..parts.len() {
+                let mut part = core::mem::take(&mut parts[idx]);
+                self.import_records_for_current_part.clear();
+                self.declared_symbols.clear_retaining_capacity();
+
+                let result = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
+                    self,
+                    part.stmts.slice_mut(),
+                    wrap_mode != WrapMode::None,
+                    None,
+                )?;
+                kept_import_equals = kept_import_equals || result.kept_import_equals;
+                removed_import_equals = removed_import_equals || result.removed_import_equals;
+
+                part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
+                if part.stmts.is_empty() {
+                    continue;
+                }
+                if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
+                    // If this file contains a direct call to "eval()", all parts that
+                    // declare top-level symbols must be kept since the eval'd code may
+                    // reference those symbols.
+                    part.can_be_removed_if_unused = false;
+                }
+                part.declared_symbols
+                    .append_list(&self.declared_symbols)
+                    .expect("unreachable");
+                part.import_record_indices
+                    .append_slice(self.import_records_for_current_part.as_slice());
+                parts[parts_end] = part;
+                parts_end += 1;
+            }
+            parts.truncate(parts_end);
+
+            // We need to iterate multiple times if an import-equals statement was
+            // removed and there are more import-equals statements that may be removed.
+            // Only that check can run twice on a statement.
+            while kept_import_equals && removed_import_equals {
+                kept_import_equals = false;
+                removed_import_equals = false;
+                parts_end = begin;
+                for idx in begin..parts.len() {
+                    let result = ImportScanner::scan_for_unused_ts_import_equals(
+                        self,
+                        parts[idx].stmts.slice_mut(),
+                    );
+                    kept_import_equals = kept_import_equals || result.kept_import_equals;
+                    removed_import_equals = removed_import_equals || result.removed_import_equals;
+                    parts[idx].stmts = bun_ast::StoreSlice::new_mut(result.stmts);
+                    if !parts[idx].stmts.is_empty() {
+                        parts.swap(parts_end, idx);
+                        parts_end += 1;
+                    }
+                }
+                parts.truncate(parts_end);
+            }
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
@@ -9763,6 +8950,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),
+            type_names: StringHashMap::default(),
+            checked_type_references: None,
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),
@@ -9801,6 +8990,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
             decorated_class_names: BumpVec::new_in(arena),
+            private_name_uses: 0,
+            decorators_use_private_name: false,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

@@ -22,7 +22,7 @@ pub(super) struct DecoratorSpan {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    fn class_of_decorated(
+    pub(super) fn class_of_decorated(
         &self,
         file: FileId,
         owner: DecoratorOwner,

@@ -854,6 +854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
+                        let temps_before = p.temp_refs_to_declare.len();
                         let _ =
                             p.visit_class(s2_loc, &mut class.class, data.default_name.ref_, false);
 
@@ -911,7 +912,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
                         // (variable declarations) before the class statement.
-                        let class_stmts = p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy));
+                        let class_stmts = p.lower_class(s2_copy, temps_before);
 
                         // Find the s_class statement in the returned list
                         let mut class_stmt_idx: usize = 0;
@@ -1147,6 +1148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.in_deleted_export = true;
         }
 
+        let temps_before = p.temp_refs_to_declare.len();
         let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
         p.in_deleted_export = original_in_deleted;
 
@@ -1157,7 +1159,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Lower class field syntax for browsers that don't support it
-        let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
+        let lowered = p.lower_class(*stmt, temps_before);
 
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it

@@ -235,6 +235,8 @@ pub mod Runtime {
         pub unwrap_commonjs_to_esm: bool,
 
         pub emit_decorator_metadata: bool,
+        /// `strictNullChecks` in tsconfig.json. With `emit_decorator_metadata`, `T | null` is `Object` and not `T`.
+        pub strict_null_checks: bool,
         pub standard_decorators: bool,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
@@ -305,6 +307,7 @@ pub mod Runtime {
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
                 emit_decorator_metadata: false,
+                strict_null_checks: true,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,
@@ -362,7 +365,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 18] = [
+            let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -378,6 +381,7 @@ pub mod Runtime {
                 self.code_coverage,
                 self.commonjs_at_runtime,
                 self.emit_decorator_metadata,
+                self.strict_null_checks,
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
@@ -1192,6 +1196,15 @@ impl bun_collections::pool::ObjectPoolType for StringVoidMap {
 bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
 
 pub(crate) type StringBoolMap = StringHashMap<bool>;
+
+/// What declares a name in `P::type_names`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypeNameDeclaration {
+    /// One `import type`, and nothing else.
+    TypeOnlyImport,
+    /// An interface, a type alias, a type parameter, an enum, a namespace, `import a = b` or `declare class`.
+    Other,
+}
 pub(crate) type RefMap = HashMap<Ref, ()>;
 pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 
@@ -1258,7 +1271,6 @@ pub struct FnOrArrowDataParse {
     pub(crate) is_typescript_declare: bool,
 
     pub(crate) has_argument_decorators: bool,
-    pub(crate) has_decorators: bool,
 
     pub(crate) is_return_disallowed: bool,
     pub(crate) is_this_disallowed: bool,
@@ -1285,7 +1297,6 @@ impl Default for FnOrArrowDataParse {
             is_constructor: false,
             is_typescript_declare: false,
             has_argument_decorators: false,
-            has_decorators: false,
             is_return_disallowed: false,
             is_this_disallowed: false,
             arrow_arg_errors: DeferredArrowArgErrors::default(),
@@ -1374,7 +1385,6 @@ pub struct PropertyOpts {
     pub(crate) is_ts_abstract: bool,
     pub(crate) ts_decorators: ExprNodeList,
     pub(crate) has_argument_decorators: bool,
-    pub(crate) has_class_decorators: bool,
 }
 
 impl Default for PropertyOpts {
@@ -1390,7 +1400,6 @@ impl Default for PropertyOpts {
             is_ts_abstract: false,
             ts_decorators: bun_alloc::AstAlloc::vec(),
             has_argument_decorators: false,
-            has_class_decorators: false,
         }
     }
 }

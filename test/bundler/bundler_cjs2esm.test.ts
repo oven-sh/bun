@@ -2393,7 +2393,7 @@ describe("bundler", () => {
       stdout: '{"zeta":1,"alpha":2} object 1',
     },
   });
-  // `emitDecoratorMetadata` passes the import itself to `Reflect.metadata`.
+  // `emitDecoratorMetadata` passes the import itself to `Reflect.metadata` if it's a function.
   itBundled("cjs2esm/DefaultImportHeldByDecoratorMetadata", {
     files: {
       "/entry.ts": /* ts */ `
@@ -2404,8 +2404,7 @@ describe("bundler", () => {
         class A {
           @dec prop: Lib;
         }
-        Object.defineProperty(seen[0], "x", { value: 65 });
-        console.log(Lib.x, Lib.sum());
+        console.log(seen[0] === Object, Lib.x, Lib.sum());
       `,
       "/tsconfig.json": /* json */ `
         { "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
@@ -2413,7 +2412,7 @@ describe("bundler", () => {
       ...objectOperationTargets,
     },
     cjs2esm: { unhandled: ["/lib.cjs"] },
-    run: { stdout: "65 67" },
+    run: { stdout: "true 1 3" },
   });
   // The shape of react-dom/index.js. The wrapped file assigns the namespace
   // object of "./main", as in 1.4.0, and every read goes through that object.

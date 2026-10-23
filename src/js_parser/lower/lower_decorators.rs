@@ -104,27 +104,52 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
-/// Puts `inserted` in `constructor` right after a top-level `super()`
-/// statement returns, which is after the last instance field.
-fn insert_after_super<'a>(
-    constructor: &mut Property,
+fn insert_stmts<'a>(
+    body: &mut js_ast::StmtNodeList,
+    index: usize,
     inserted: &[Stmt],
     arena: &'a bun_alloc::Arena,
 ) {
-    let func = match &mut constructor.value.as_mut().unwrap().data {
-        js_ast::ExprData::EFunction(f) => &mut **f,
-        _ => unreachable!(),
-    };
-    let body: &[Stmt] = func.func.body.stmts.slice();
-    let after_super = body
-        .iter()
-        .position(|stmt| stmt.is_super_call())
-        .map_or(0, |i| i + 1);
-    let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(body.len() + inserted.len(), arena);
-    stmts.extend_from_slice(&body[..after_super]);
+    let old: &[Stmt] = body.slice();
+    let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(old.len() + inserted.len(), arena);
+    stmts.extend_from_slice(&old[..index]);
     stmts.extend_from_slice(inserted);
-    stmts.extend_from_slice(&body[after_super..]);
-    func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+    stmts.extend_from_slice(&old[index..]);
+    *body = bun_ast::StoreSlice::from_bump(stmts);
+}
+
+fn insert_after_super_in<'a>(
+    body: &mut js_ast::StmtNodeList,
+    inserted: &[Stmt],
+    arena: &'a bun_alloc::Arena,
+) -> bool {
+    for i in 0..body.len() {
+        let stmt = body.slice()[i];
+        if stmt.is_super_call() {
+            insert_stmts(body, i + 1, inserted, arena);
+            return true;
+        }
+        if let js_ast::StmtData::STry(mut s_try) = stmt.data
+            && insert_after_super_in(&mut s_try.body, inserted, arena)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Puts `inserted` in `constructor` right after its `super()` statement
+/// returns, which is after the last instance field. As in TypeScript, the
+/// statement is a top-level one or in a `try` block that is.
+pub(crate) fn insert_after_super<'a>(
+    constructor: &mut G::Fn,
+    inserted: &[Stmt],
+    arena: &'a bun_alloc::Arena,
+) {
+    let body = &mut constructor.body.stmts;
+    if !insert_after_super_in(body, inserted, arena) {
+        insert_stmts(body, 0, inserted, arena);
+    }
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -134,7 +159,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// recordUsage + E.Identifier in one call.
     #[inline]
-    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
+    pub(crate) fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
         self.new_expr(
             E::Identifier {
@@ -161,7 +186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// recordUsage + Expr.assign.
-    fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
+    pub(crate) fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
         Expr::assign(self.use_ref(ref_, l), value)
     }
 
@@ -181,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `static { a; b; }`
-    fn make_static_block(&mut self, exprs: &[Expr], l: bun_ast::Loc) -> Property {
+    pub(crate) fn make_static_block(&mut self, exprs: &[Expr], l: bun_ast::Loc) -> Property {
         let stmts = self.effect_stmts(exprs, l);
         let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts.into_bump_slice_mut());
         let sb = self.arena.alloc(G::ClassStaticBlock {
@@ -540,8 +565,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Drain receiver-capture temporaries created past `baseline` into a
-    /// single `var` declaration statement; `None` if none were created.
-    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+    /// single declaration statement; `None` if none were created.
+    pub(crate) fn drain_capture_temp_decls(
+        &mut self,
+        baseline: usize,
+        kind: js_ast::s::Kind,
+        loc: bun_ast::Loc,
+    ) -> Option<Stmt> {
         let total = self.temp_refs_to_declare.len();
         if total == baseline {
             return None;
@@ -559,6 +589,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare.truncate(baseline);
         Some(self.s(
             S::Local {
+                kind,
                 decls: DeclList::from_bump_vec(capture_decls),
                 ..Default::default()
             },
@@ -578,7 +609,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         temps_before: usize,
         body_loc: bun_ast::Loc,
     ) -> js_ast::StmtNodeList {
-        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
+        let kind = js_ast::s::Kind::KVar;
+        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, kind, body_loc) else {
             return stmts;
         };
         let old_stmts = stmts.slice();
@@ -800,43 +832,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return value;
         }
 
-        // `((_C) => value)()` gives each evaluation its own binding. Neither
-        // position allows `await` or `yield`, which an arrow would break.
-        let binding = self.b(
-            B::Identifier {
-                r#ref: class.inner_class_ref,
-            },
-            expr.loc,
-        );
-        let args = js_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([G::Arg {
-            binding,
-            ..Default::default()
-        }]));
-        let body = self.s(S::Return { value: Some(value) }, expr.loc);
+        self.with_own_bindings(value, &[class.inner_class_ref])
+    }
+
+    /// `((a, b) => value)()` gives each evaluation of `value` its own
+    /// `bindings`. For a parameter default or a field initializer: neither
+    /// allows `await` or `yield`, which an arrow would break.
+    pub(crate) fn with_own_bindings(&mut self, value: Expr, bindings: &[Ref]) -> Expr {
+        let mut args = BumpVec::<G::Arg>::with_capacity_in(bindings.len(), self.arena);
+        for &r#ref in bindings {
+            args.push(G::Arg {
+                binding: self.b(B::Identifier { r#ref }, value.loc),
+                ..Default::default()
+            });
+        }
+        let body = self.s(S::Return { value: Some(value) }, value.loc);
         let target = self.new_expr(
             E::Arrow {
-                args,
+                args: js_ast::StoreSlice::from_bump(args),
                 body: G::FnBody {
-                    loc: expr.loc,
+                    loc: value.loc,
                     stmts: self.arena.alloc_slice_copy(&[body]).into(),
                 },
                 prefer_expr: true,
                 ..Default::default()
             },
-            expr.loc,
+            value.loc,
         );
         self.new_expr(
             E::Call {
                 target,
                 ..Default::default()
             },
-            expr.loc,
+            value.loc,
         )
     }
 
     /// Both run once per call or instance, and the nearest statement list is
     /// outside the function or class they belong to.
-    fn is_param_default_or_field_initializer(&self) -> bool {
+    pub(crate) fn is_param_default_or_field_initializer(&self) -> bool {
         let mut scope = self.current_scope_ref();
         loop {
             match scope.kind {
@@ -1335,7 +1369,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match constructor {
                 Some(constructor) => {
                     let stmts = p.effect_stmts(&constructor_effects, loc);
-                    insert_after_super(&mut members[constructor], &stmts, p.arena);
+                    let value = members[constructor].value.as_mut().unwrap();
+                    let js_ast::ExprData::EFunction(function) = &mut value.data else {
+                        unreachable!()
+                    };
+                    insert_after_super(&mut function.func, &stmts, p.arena);
                 }
                 None => {
                     new_constructor =
@@ -1373,14 +1411,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
 
         LoweredClass {
-            temps: p.drain_capture_temp_decls(temps_before, loc),
+            temps: p.drain_capture_temp_decls(temps_before, js_ast::s::Kind::KVar, loc),
             inner_binding,
             class_decorators: class_decorators_result,
         }
     }
 
-    /// A temporary the `var` next to the class declares.
-    fn declared_temp(&mut self, name: &'a [u8]) -> Ref {
+    /// A temporary the declaration next to the class declares.
+    pub(crate) fn declared_temp(&mut self, name: &'a [u8]) -> Ref {
         let ref_ = self.generate_temp_var(name);
         self.temp_refs_to_declare.push(TempRef { r#ref: ref_ });
         ref_
@@ -1644,7 +1682,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(E::Function { func }, loc)
     }
 
-    fn expr_stmt(&mut self, value: Expr, loc: bun_ast::Loc) -> Stmt {
+    pub(crate) fn expr_stmt(&mut self, value: Expr, loc: bun_ast::Loc) -> Stmt {
         self.s(
             S::SExpr {
                 value,
@@ -1654,7 +1692,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    fn effect_stmts(&mut self, effects: &[Expr], loc: bun_ast::Loc) -> BumpVec<'a, Stmt> {
+    pub(crate) fn effect_stmts(
+        &mut self,
+        effects: &[Expr],
+        loc: bun_ast::Loc,
+    ) -> BumpVec<'a, Stmt> {
         let mut stmts = BumpVec::<Stmt>::with_capacity_in(effects.len(), self.arena);
         for effect in effects {
             stmts.push(self.s(
@@ -1669,7 +1711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `constructor() { super(...arguments); effects }`
-    fn new_constructor(
+    pub(crate) fn new_constructor(
         &mut self,
         is_derived: bool,
         effects: &[Expr],

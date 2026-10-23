@@ -14,7 +14,7 @@ use js_lexer::T;
 use crate::parser::fs;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
-    StatementScope, StmtList,
+    StatementScope, StmtList, TypeNameDeclaration,
 };
 use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
@@ -1048,8 +1048,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
+                // "export default @decorator class Foo {}" is a declaration, the only kind of
+                // class that TypeScript's experimental decorators apply to.
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
+                    || (p.lexer.token == T::TAt && !p.options.features.standard_decorators)
                     || p.lexer.is_contextual_keyword(b"interface")
                 {
                     let mut _opts = ParseStatementOptions {
@@ -1593,6 +1596,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         );
                                     } else {
                                         // "import type foo from 'bar';" (foo may be "from")
+                                        p.declare_type_name(
+                                            name,
+                                            TypeNameDeclaration::TypeOnlyImport,
+                                        );
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
@@ -1604,6 +1611,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type * as foo from 'bar';"
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
+                                p.declare_type_name(
+                                    p.lexer.identifier,
+                                    TypeNameDeclaration::TypeOnlyImport,
+                                );
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
@@ -1613,7 +1624,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             T::TOpenBrace => {
                                 // "import type {foo} from 'bar';"
-                                let _ = p.parse_import_clause()?;
+                                for item in p.parse_import_clause()?.items.iter() {
+                                    p.declare_type_name(
+                                        item.original_name.slice(),
+                                        TypeNameDeclaration::TypeOnlyImport,
+                                    );
+                                }
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;

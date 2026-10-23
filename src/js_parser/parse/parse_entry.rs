@@ -294,6 +294,7 @@ impl<'a> Options<'a> {
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
                 emit_decorator_metadata: f.emit_decorator_metadata,
+                strict_null_checks: f.strict_null_checks,
                 standard_decorators: f.standard_decorators,
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 runtime_transpiler_cache: None,

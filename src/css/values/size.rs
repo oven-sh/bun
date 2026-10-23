@@ -5,6 +5,7 @@ use bun_alloc::Arena;
 /// A generic value that represents a value with two components, e.g. a border radius.
 ///
 /// When serialized, only a single component will be written if both are equal.
+#[derive(PartialEq, Eq)]
 pub struct Size2D<T> {
     pub(crate) a: T,
     pub(crate) b: T,
@@ -72,12 +73,6 @@ where
     fn val_eql(lhs: &T, rhs: &T) -> bool {
         // f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
         lhs == rhs
-    }
-
-    #[inline]
-    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // Note: compares lhs.a against rhs.b only (not a/a && b/b).
-        lhs.a == rhs.b
     }
 }
 

@@ -2491,6 +2491,33 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
+    /// Drops what the cache has for `dir` and for every directory below it, by its path or by
+    /// the path that its symbolic links lead to. The next lookup of each one reads its
+    /// "package.json" and "tsconfig.json" again and inherits from its parent again.
+    /// [`bust_dir_cache`](Self::bust_dir_cache) drops one directory: the directories below it
+    /// keep what they copied from it. Only the listing of `dir` is read again. Returns how many
+    /// directories it dropped.
+    pub fn bust_dir_cache_tree(&mut self, dir: &[u8]) -> usize {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        let dir = strings::without_trailing_slash_windows_path(dir);
+        Self::assert_valid_cache_key(dir);
+        let _ = self.fs_mut().fs.bust_entries_cache(dir);
+        // A fill writes its slot under this lock, not under the map's.
+        let _lock = self.mutex.lock_guard();
+        let dropped = self.dir_cache_mut().remove_where(|info| {
+            is_parent_or_equal(dir, info.abs_path) != ParentEqual::Unrelated
+                || (!info.abs_real_path.is_empty()
+                    && is_parent_or_equal(dir, info.abs_real_path) != ParentEqual::Unrelated)
+        });
+        bun_core::scoped_log!(
+            ResolverDev,
+            "Bust tree {} = {}",
+            bstr::BStr::new(dir),
+            dropped
+        );
+        dropped
+    }
+
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(
@@ -6553,7 +6580,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends.
-    fn load_tsconfig(
+    pub(crate) fn load_tsconfig(
         &mut self,
         tsconfigpath: &[u8],
         fd: FD,
@@ -6595,15 +6622,18 @@ impl<'a> Resolver<'a> {
             // `Deref` instead of three open-coded raw-ptr derefs.
             let mut current =
                 bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
+            // The chain ends at a file that cannot be taken. The result still depends on it.
+            let mut unread_link: Option<Box<[u8]>> = None;
             while !current.extends.is_empty() {
                 let ts_dir_name = Dirname::dirname(&current.abs_path);
                 // `extends` comes from the config file and can be any length.
-                let parsed = match ResolvePath::join_abs_string_buf_checked(
+                let joined: Option<&[u8]> = ResolvePath::join_abs_string_buf_checked(
                     ts_dir_name,
                     bufs!(tsconfig_path_abs),
                     &[ts_dir_name, &current.extends],
                     bun_paths::Platform::AUTO,
-                ) {
+                );
+                let parsed = match joined {
                     Some(abs_path) => self
                         .parse_tsconfig(abs_path, FD::INVALID)
                         .map_err(|err| (err, abs_path)),
@@ -6612,6 +6642,7 @@ impl<'a> Resolver<'a> {
                         &current.extends[..],
                     )),
                 };
+                let was_read = parsed.is_ok();
                 let parent_config_maybe: Option<*mut TSConfigJSON> = match parsed {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err((err, shown_path)) => {
@@ -6624,7 +6655,7 @@ impl<'a> Resolver<'a> {
                                 bun_core::fmt::quote(shown_path)
                             ),
                         );
-                        break;
+                        None
                     }
                 };
                 if let Some(parent_config) = parent_config_maybe {
@@ -6633,9 +6664,27 @@ impl<'a> Resolver<'a> {
                         core::ptr::NonNull::new(parent_config).expect("heap alloc"),
                     );
                 } else {
+                    // A bare specifier names a package, which is not read: no file is expected
+                    // at the path that the join gives.
+                    if was_read || !bun_paths::is_package_path(&current.extends) {
+                        unread_link = joined.map(Box::from);
+                    }
                     break;
                 }
             }
+
+            let extends_chain: Box<[Box<[u8]>]> =
+                if parent_configs.len() > 1 || unread_link.is_some() {
+                    parent_configs
+                        .const_slice()
+                        .iter()
+                        // SAFETY: see loop-wide note above.
+                        .map(|&config| Box::<[u8]>::from(&*unsafe { &*config }.abs_path))
+                        .chain(unread_link)
+                        .collect()
+                } else {
+                    Box::default()
+                };
 
             let merged_config = parent_configs.pop().unwrap();
             // starting from the base config (end of the list)
@@ -6690,7 +6739,9 @@ impl<'a> Resolver<'a> {
             }
             // SAFETY: from `parse_tsconfig` (heap::into_raw) above; the walk is over, so this
             // is the only pointer to it.
-            return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
+            let mut merged_config = unsafe { bun_core::heap::take(merged_config) };
+            merged_config.extends_chain = extends_chain;
+            return Ok(Some(merged_config));
         }
         Ok(None)
     }

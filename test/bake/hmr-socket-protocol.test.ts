@@ -19,9 +19,15 @@
 //   - "s" with topic `M` arms a timer. Its handler left the fired timer marked
 //     active, so closing the socket removed it from the timer heap a second time:
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
+//
+// The last two tests are for a frame that the server owes: a page loads again
+// when it gets the version frame ("V") a second time, and that is how the
+// server takes a page to what a "tsconfig.json" gives now.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -494,5 +500,173 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
 
     const res = await fetch(`http://127.0.0.1:${port}/fallback`);
     expect(await res.text(), dev.stderr()).toBe("fallback");
+  },
+);
+
+/** The script of the page at `path`, as the server serves it now. */
+async function scriptOfPage(port: number, path = "/") {
+  const html = await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
+  const src = html.match(/src="([^"]+\.js)"/)?.[1];
+  expect(src, html).toBeString();
+  return await (await fetch(`http://127.0.0.1:${port}${src}`)).text();
+}
+
+/** Connects a new socket, and resolves once the server sent it `count` version frames. */
+async function versionFramesOfNewSocket(port: number, count: number) {
+  let frames = 0;
+  const done = Promise.withResolvers<number>();
+  using hmr = await connectHmr(
+    port,
+    id => {
+      if (id === "V" && ++frames === count) done.resolve(frames);
+    },
+    err => done.reject(err),
+  );
+  return await done.promise;
+}
+
+test.concurrent("a tsconfig.json that gives the resolver something new sends the version frame again", async () => {
+  const aliasTo = (target: string, strict: boolean) =>
+    JSON.stringify({ compilerOptions: { strict, paths: { "@/which": [target] } } });
+  using dir = tempDir("hmr-socket-config", {
+    "index.html": indexHtml,
+    "other.html": indexHtml,
+    "entry.ts": `import { which } from "@/which";\nconsole.log(which);`,
+    "server.ts": /* ts */ `
+      import index from "./index.html";
+      import other from "./other.html";
+      const server = Bun.serve({
+        port: 0,
+        development: { hmr: true, console: false },
+        routes: { "/": index, "/other": other },
+      });
+      console.log("PORT=" + server.port);
+    `,
+    "tsconfig.json": aliasTo("./one.ts", false),
+    "one.ts": `export const which = "one";`,
+    "two.ts": `export const which = "two";`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = watchDevServer(proc);
+  const port = await dev.port;
+
+  const keys: string[] = [];
+  let frame = Promise.withResolvers<void>();
+  using hmr = await connectHmr(
+    port,
+    (id, body) => {
+      if (id !== "V") return;
+      keys.push(new TextDecoder().decode(body));
+      frame.resolve();
+    },
+    err => frame.reject(err),
+  );
+  async function versionFrame() {
+    await frame.promise;
+    frame = Promise.withResolvers<void>();
+  }
+
+  // Every socket gets the frame when it connects. This one also gets the hot updates.
+  await versionFrame();
+  hmr.ws.send("she");
+  expect(await scriptOfPage(port)).toContain(`"one"`);
+  expect(await scriptOfPage(port, "/other")).toContain(`"one"`);
+
+  // The resolver does not read "strict". The server takes the saves in order, so a frame
+  // for the first one would be there before the frame for the second one.
+  const tsconfig = join(String(dir), "tsconfig.json");
+  writeFileSync(tsconfig, aliasTo("./one.ts", true));
+  writeFileSync(tsconfig, aliasTo("./two.ts", true));
+  await versionFrame();
+  // No route is bundled again yet, so a page that connects now was served before the change.
+  expect(await versionFramesOfNewSocket(port, 2), dev.stderr()).toBe(2);
+  expect(await scriptOfPage(port)).toContain(`"two"`);
+  expect(await scriptOfPage(port, "/other")).toContain(`"two"`);
+
+  writeFileSync(tsconfig, aliasTo("./two.ts", false));
+  writeFileSync(tsconfig, aliasTo("./one.ts", false));
+  await versionFrame();
+  // Until a page asks for its route, no page has modules to patch: a save of a module
+  // sends no hot update. One would come before the frame of the save that follows it.
+  const framesBefore = hmr.received.length;
+  writeFileSync(join(String(dir), "entry.ts"), `import { which } from "@/which";\nconsole.log(which, "saved");`);
+  writeFileSync(tsconfig, aliasTo("./two.ts", true));
+  await versionFrame();
+  expect(hmr.received.slice(framesBefore)).toEqual(["V"]);
+  const script = await scriptOfPage(port);
+  expect(script).toContain(`"two"`);
+  expect(script).toContain(`"saved"`);
+
+  // The key is the one of the first frame: a page takes another key for another server.
+  expect(keys).toEqual([keys[0], keys[0], keys[0], keys[0]]);
+});
+
+// The resolver fills a directory once for each path to it, and the same "tsconfig.json" can
+// give each path something else: below "node_modules" its "extends" is not read.
+test.concurrent.skipIf(isWindows)(
+  "a workspace package behind a link gets the version frame again only when its tsconfig.json gives something new",
+  async () => {
+    const factory = (name: string) => JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: name } });
+    const entry = (saves: number) => `import { ui } from "@repo/ui";\nconsole.log(ui, ${saves});`;
+    using dir = tempDir("hmr-socket-workspace", {
+      "index.html": indexHtml,
+      "entry.ts": entry(0),
+      "server.ts": serverTs,
+      "tsconfig.base.json": factory("one"),
+      "packages/ui/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json" }),
+      "packages/ui/package.json": JSON.stringify({ name: "@repo/ui", main: "./index.ts" }),
+      "packages/ui/index.ts": `export { ui } from "./button";`,
+      "packages/ui/button.tsx": `const one = () => "one";\nconst two = () => "two";\nexport const ui = <div />;`,
+      "node_modules/@repo/.keep": "",
+    });
+    symlinkSync("../../packages/ui", join(String(dir), "node_modules", "@repo", "ui"), "dir");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = watchDevServer(proc);
+    const port = await dev.port;
+
+    // Resolves for a version frame, and for the hot update that has `awaited` in its modules.
+    let awaited = "";
+    let frame = Promise.withResolvers<void>();
+    using hmr = await connectHmr(
+      port,
+      (id, body) => {
+        if (id === "V" || (id === "u" && new TextDecoder().decode(body).includes(awaited))) frame.resolve();
+      },
+      err => frame.reject(err),
+    );
+    async function nextFrame() {
+      await frame.promise;
+      frame = Promise.withResolvers<void>();
+    }
+    const versionFrames = () => hmr.received.filter(id => id === "V").length;
+    await nextFrame();
+    hmr.ws.send("she");
+    expect(await scriptOfPage(port)).toContain(`one("div"`);
+
+    // With no configuration file edited, a save of a module is a hot update. A version
+    // frame for the bundle of the page, or of the first save, would come before the hot
+    // update of the second save.
+    for (const saves of [1, 2]) {
+      awaited = `ui, ${saves})`;
+      writeFileSync(join(String(dir), "entry.ts"), entry(saves));
+      await nextFrame();
+    }
+    expect(versionFrames(), dev.stderr()).toBe(1);
+
+    writeFileSync(join(String(dir), "tsconfig.base.json"), factory("two"));
+    while (versionFrames() < 2) await nextFrame();
+    expect(await scriptOfPage(port)).toContain(`two("div"`);
   },
 );

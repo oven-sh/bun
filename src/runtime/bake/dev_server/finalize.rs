@@ -112,6 +112,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         );
     }
 
+    dev.config_files.pages_outdated = false;
     dev.start_next_bundle_if_present();
 
     // If the call above started another bundle, its cleanup releases the batch.

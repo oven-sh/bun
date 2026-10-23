@@ -145,6 +145,11 @@ pub struct TSConfigJSON {
     pub(crate) base_url_for_paths: Box<[u8]>,
 
     pub(crate) extends: Box<[u8]>,
+    /// Every file the `extends` merge went to, in the order it went: the configuration file of
+    /// the directory first, and last a file it could not take, when the chain ends at a path
+    /// to one. Empty for a file that extends nothing, whose only file is `abs_path`. After a
+    /// merge `abs_path` is the last file that was read, so this is the record of the others.
+    pub(crate) extends_chain: Box<[Box<[u8]>]>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
@@ -172,6 +177,7 @@ impl Default for TSConfigJSON {
             base_url: Box::default(),
             base_url_for_paths: Box::default(),
             extends: Box::default(),
+            extends_chain: Box::default(),
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
@@ -224,6 +230,52 @@ impl TSConfigJSON {
 
     pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    /// A fingerprint of what the resolver and the transpiler take from this configuration, and
+    /// of the files that it extends. Never 0.
+    pub(crate) fn fingerprint(&self) -> u64 {
+        // A new field is either hashed here or named as one that changes no module.
+        let TSConfigJSON {
+            abs_path: _,
+            extends: _,
+            extends_chain,
+            base_url,
+            base_url_for_paths,
+            paths,
+            jsx,
+            jsx_flags,
+            preserve_imports_not_used_as_values,
+            emit_decorator_metadata,
+            experimental_decorators,
+            use_define_for_class_fields,
+        } = self;
+        let mut hasher = bun_wyhash::Wyhash::init(0);
+        // A path has no NUL, so the end of each string is in the hash.
+        let mut string = |bytes: &[u8]| {
+            hasher.update(bytes);
+            hasher.update(&[0]);
+        };
+        // With the same options from another file, that file is the one to watch.
+        extends_chain.iter().for_each(|path| string(path));
+        string(b"");
+        string(base_url);
+        string(base_url_for_paths);
+        for (pattern, targets) in paths.keys().iter().zip(paths.values()) {
+            string(pattern);
+            targets.iter().for_each(|target| string(target));
+            string(b"");
+        }
+        jsx.hash_for_runtime_transpiler(&mut hasher);
+        let tri_state = |value: &Option<bool>| value.map_or(2, u8::from);
+        hasher.update(&[
+            jsx_flags.as_u8(),
+            tri_state(preserve_imports_not_used_as_values),
+            u8::from(*emit_decorator_metadata),
+            u8::from(*experimental_decorators),
+            tri_state(use_define_for_class_fields),
+        ]);
+        hasher.final_().max(1)
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {

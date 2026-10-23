@@ -47,10 +47,12 @@ impl HmrSocket {
         // via the BackRef accessor (lifetime-detached from `&self`) so we can
         // assign `self.underlying` below while `dev` is still live.
         let dev = unsafe { self.dev() };
-        let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
-        header[0] = MessageId::Version.char();
-        header[1..].copy_from_slice(&dev.configuration_hash_key);
+        let header = dev.version_frame();
         let send_status = ws.send(&header, Opcode::Binary, false, true);
+        if dev.config_files.pages_outdated {
+            // The page of this socket was served before a configuration file changed.
+            let _ = ws.send(&header, Opcode::Binary, false, true);
+        }
         self.underlying = Some(ws);
 
         if send_status != SendStatus::Dropped {

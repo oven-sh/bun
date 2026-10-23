@@ -173,14 +173,19 @@ impl HotReloadEvent {
         }
 
         let changed_file_paths = self.files.keys();
-        bun_core::handle_oom(
-            dev.server_graph
-                .invalidate(changed_file_paths, entry_points),
-        );
-        bun_core::handle_oom(
-            dev.client_graph
-                .invalidate(changed_file_paths, entry_points),
-        );
+        // A configuration file is not a file of either graph.
+        dev.take_config_changes(changed_file_paths);
+        // After it changed, every file is one to bundle again, and the pages load again.
+        if !dev.config_files.pages_outdated {
+            bun_core::handle_oom(
+                dev.server_graph
+                    .invalidate(changed_file_paths, entry_points),
+            );
+            bun_core::handle_oom(
+                dev.client_graph
+                    .invalidate(changed_file_paths, entry_points),
+            );
+        }
 
         if entry_points.set.count() == 0 {
             bun_core::debug_warn!("nothing to bundle");

@@ -612,22 +612,55 @@ impl<'a> Transpiler<'a> {
         );
 
         if auto_jsx {
-            // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir();
-            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
-                        self.options.use_define_for_class_fields = v;
-                    }
+            if let Some(tsconfig) = self.root_tsconfig() {
+                // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                if self.options.transform_options.jsx.is_none() {
+                    self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                }
+                self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                self.options.experimental_decorators = tsconfig.experimental_decorators;
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    self.options.use_define_for_class_fields = v;
                 }
             }
         }
+    }
+
+    /// The "tsconfig.json" of the top-level directory.
+    fn root_tsconfig(&mut self) -> Option<bun_resolver::resolver::TSConfigRef> {
+        // Most of the time, this will already be cached
+        let top_level_dir = self.fs().top_level_dir();
+        let root_dir = self.resolver.read_dir_info(top_level_dir).ok().flatten()?;
+        self.resolver.tsconfig_json(&root_dir)
+    }
+
+    /// Derives `options.jsx` again, for a "tsconfig.json" of the top-level directory that
+    /// changed after [`configure_linker`](Self::configure_linker) and
+    /// [`run_env_loader`](Self::run_env_loader) copied from it. The resolver starts from
+    /// `options.jsx` for the JSX options of each file. `jsx.development` stays: the mode of the
+    /// caller sets it, not that file.
+    pub fn reload_root_tsconfig_jsx(&mut self) {
+        use bun_options_types::schema::api::DotEnvBehavior;
+        let development = self.options.jsx.development;
+        self.options.jsx = match &self.options.transform_options.jsx {
+            Some(explicit) => crate::options_impl::jsx::Pragma::from_api(explicit.clone()),
+            None => Default::default(),
+        };
+        if let Some(tsconfig) = self.root_tsconfig() {
+            if self.options.transform_options.jsx.is_none() {
+                self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+            }
+            if matches!(
+                self.options.env.behavior,
+                DotEnvBehavior::prefix
+                    | DotEnvBehavior::load_all
+                    | DotEnvBehavior::load_all_without_inlining
+            ) {
+                merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
+            }
+        }
+        self.options.jsx.development = development;
+        self.resolver.opts.jsx = self.options.jsx.clone();
     }
 
     /// [`Self::configure_linker_with_auto_jsx`] with `auto_jsx = true`.

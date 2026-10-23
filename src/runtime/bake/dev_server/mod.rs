@@ -64,6 +64,7 @@ use super::{Graph, Side};
 // ─── submodules ──────────────────────────────────────────────────────────────
 mod bundle;
 mod bundler_vtable;
+mod config_watch;
 pub(crate) mod deferred_request;
 pub(crate) mod directory_watch_store;
 mod ensure_route;
@@ -558,6 +559,8 @@ pub(crate) struct DevServer {
     // `Watcher::shutdown` instead.
     pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub(crate) directory_watchers: DirectoryWatchStore,
+    /// The "tsconfig.json" files that the modules are built from.
+    pub(crate) config_files: config_watch::ConfigFiles,
     /// Heap-owned via `heap::into_raw` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.

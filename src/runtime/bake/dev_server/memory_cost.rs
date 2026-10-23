@@ -66,6 +66,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
+            config_files: _,
             watcher_atomics: _,
             testing_batch_events: _,
             generation: _,
@@ -197,6 +198,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     if let Some(hack) = &dev.has_tailwind_plugin_hack {
         other_bytes += memory_cost_array_hash_map(hack);
     }
+    // .config_files
+    other_bytes += dev.config_files.memory_cost();
     // .directory_watchers
     other_bytes += memory_cost_array_list(&dev.directory_watchers.dependencies);
     other_bytes += memory_cost_array_list(&dev.directory_watchers.dependencies_free_list);

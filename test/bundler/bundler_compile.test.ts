@@ -1282,6 +1282,30 @@ describe("bundler", () => {
     },
   });
 
+  // An executable would keep the chunk and drop the embedded file. The chunk of the second entry point
+  // is "sub/worker.js" and the asset is "./sub/worker.js".
+  for (const [name, worker] of [
+    ["", "worker"],
+    ["InSubdirectory", "sub/worker"],
+  ] as const) {
+    itBundled(`compile/AssetNoOverwriteEntryPoint${name}`, {
+      compile: true,
+      assetNaming: `${worker}.js`,
+      files: {
+        "/entry.ts": /* js */ `
+          import logo from "./logo.file" with { type: "file" };
+          console.log(await Bun.file(logo).text());
+        `,
+        [`/${worker}.ts`]: /* js */ `console.log("worker");`,
+        "/logo.file": "the logo",
+      },
+      entryPointsRaw: ["./entry.ts", `./${worker}.ts`],
+      bundleErrors: {
+        "<bun>": [`Multiple files share the same output path`],
+      },
+    });
+  }
+
   // An executable looks an embedded file up by its name as written: "a/../logo.file" and
   // "b/../logo.file" are two files.
   itBundled("compile/AssetSameNameInParentDirectory", {

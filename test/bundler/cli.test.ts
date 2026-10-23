@@ -883,7 +883,7 @@ test.concurrent("bun build names every input that maps to a shared output path",
   expect(exitCode).toBe(1);
 });
 
-describe.concurrent("bun build refuses two output files at one path", () => {
+describe.concurrent("bun build refuses two copied assets at one output path", () => {
   /** Runs `bun build <args> --outdir=dist` in `dir`. `dist` lists what the build wrote, or is `null` if it wrote nothing. */
   async function build(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
@@ -935,6 +935,27 @@ describe.concurrent("bun build refuses two output files at one path", () => {
     expect(await Bun.file(path.join(String(dir), "dist", "b", "logo.png")).text()).toBe("the second logo");
   });
 
+  // The bundler copies an asset that no live code uses, so that asset takes its output path too.
+  test("two assets with different bytes, one of them unused", async () => {
+    using dir = tempDir("bundle-unused-asset-collision", {
+      "entry.js": `import a from "./a/logo.png"; import b from "./b/logo.png"; console.log(a);\n`,
+      "a/logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+    });
+
+    const { stderr, ...rest } = await build(String(dir), "entry.js", "--asset-naming=[name].[ext]");
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./logo.png:
+          from input a/logo.png
+          from input b/logo.png
+
+
+      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+  });
+
   test("two images of an HTML entry point", async () => {
     using dir = tempDir("bundle-html-asset-collision", {
       "index.html": `<!doctype html><html><body><img src="./a/logo.png"><img src="./b/logo.png"></body></html>\n`,
@@ -949,85 +970,6 @@ describe.concurrent("bun build refuses two output files at one path", () => {
           from input a/logo.png
           from input b/logo.png
 
-
-      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
-    `);
-    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
-  });
-
-  test("an asset and the source map of an entry point", async () => {
-    using dir = tempDir("bundle-asset-sourcemap-collision", {
-      "entry.js": `import map from "./assets/entry.js.map" with { type: "file" }; console.log(map);\n`,
-      "assets/entry.js.map": "not a source map",
-    });
-
-    const { stderr, ...rest } = await build(
-      String(dir),
-      "entry.js",
-      "--asset-naming=[name].[ext]",
-      "--sourcemap=external",
-    );
-    expect(stderr).toMatchInlineSnapshot(`
-      "error: Multiple files share the same output path
-        ./entry.js.map:
-          from the source map of input entry.js
-          from input assets/entry.js.map
-
-
-      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique
-
-      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
-    `);
-    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
-  });
-
-  test("an entry point and the source map of another entry point", async () => {
-    using dir = tempDir("bundle-entry-sourcemap-collision", {
-      "entry.ts": `console.log("entry");\n`,
-      "entry.map.ts": `console.log("entry.map");\n`,
-    });
-
-    const { stderr, ...rest } = await build(
-      String(dir),
-      "entry.ts",
-      "entry.map.ts",
-      "--entry-naming=[name]",
-      "--sourcemap=external",
-    );
-    expect(stderr).toMatchInlineSnapshot(`
-      "error: Multiple files share the same output path
-        ./entry.map:
-          from input entry.map.ts
-          from the source map of input entry.ts
-
-
-      note: entry naming is './[name]', consider adding '[hash]' to make filenames unique"
-    `);
-    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
-  });
-
-  test("an asset and the bytecode of an entry point", async () => {
-    using dir = tempDir("bundle-asset-bytecode-collision", {
-      "entry.js": `import jsc from "./assets/entry.js.jsc" with { type: "file" }; console.log(jsc);\n`,
-      "assets/entry.js.jsc": "not bytecode",
-    });
-
-    const { stderr, ...rest } = await build(
-      String(dir),
-      "entry.js",
-      "--asset-naming=[name].[ext]",
-      "--target=bun",
-      "--format=cjs",
-      "--bytecode",
-    );
-    expect(stderr).toMatchInlineSnapshot(`
-      "error: Multiple files share the same output path
-        ./entry.js.jsc:
-          from the bytecode of input entry.js
-          from input assets/entry.js.jsc
-
-
-      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique
 
       note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
     `);

@@ -2992,6 +2992,35 @@ describe("bundler", () => {
     });
   }
 
+  // The rebuilt call is a method call when the factory is a member of a
+  // CommonJS import, so it passes `module.exports` as `this`.
+  const thisReadingFactoryImports = {
+    DefaultImport: `import lib from "./lib.cjs";`,
+    StarImport: `import * as lib from "./lib.cjs";`,
+  };
+  for (const [name, prelude] of Object.entries(thisReadingFactoryImports)) {
+    itBundled(`react-compiler/ClassicRuntimeFactoryKeepsThis-${name}`, {
+      files: {
+        "/entry.jsx": jsxCallShapeEntry(prelude, /* jsx */ `<div title={o.a}>hi</div>`),
+        "/lib.cjs": /* js */ `
+          exports.h = function (type, props, ...children) {
+            return this.make(type, props, children);
+          };
+          exports.make = function (type, props, children) {
+            return { made: type, props, children };
+          };
+        `,
+        ...jsxCallShapeRuntime,
+      },
+      jsx: { runtime: "classic", factory: "lib.h" },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      onAfterBundle: expectCompiled,
+      run: { stdout: '{"made":"div","props":{"title":"A"},"children":["hi"]}' },
+    });
+  }
+
   itBundled("react-compiler/AutomaticRuntimeKeyAfterSpread", {
     files: {
       "/entry.jsx": jsxCallShapeEntry(

@@ -924,7 +924,7 @@ impl IdentifierOpts {
     const IS_DELETE_TARGET: u8 = 1 << 2;
     const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
     const IS_CALL_TARGET: u8 = 1 << 4;
-    const IS_TEMPLATE_TAG: u8 = 1 << 5;
+    const PASSES_THIS: u8 = 1 << 5;
     const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
 
     #[inline]
@@ -953,10 +953,13 @@ impl IdentifierOpts {
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
-    /// The tag of a tagged template, which passes `this` like a call target.
+    /// The callee of a call that passes `this`, when it is not `p.call_target`:
+    /// the tag of a tagged template, or the classic JSX factory while the
+    /// parser builds its call. Only `is_call_target` gets the
+    /// `module.require()` and `module.exports()` rewrites.
     #[inline]
-    pub(crate) const fn is_template_tag(self) -> bool {
-        self.0 & Self::IS_TEMPLATE_TAG != 0
+    pub(crate) const fn passes_this(self) -> bool {
+        self.0 & Self::PASSES_THIS != 0
     }
     /// See `ExprIn::is_property_access_target`.
     #[inline]
@@ -991,8 +994,8 @@ impl IdentifierOpts {
         self
     }
     #[inline]
-    pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
+    pub(crate) const fn with_passes_this(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::PASSES_THIS) | ((v as u8) << 5);
         self
     }
     #[inline]

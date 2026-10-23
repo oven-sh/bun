@@ -5362,10 +5362,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
-    pub(crate) fn jsx_strings_to_member_expression(
+    fn jsx_strings_to_member_expression(
         &mut self,
         loc: bun_ast::Loc,
         parts: &[&'a [u8]],
+        last_link_opts: IdentifierOpts,
     ) -> Result<Expr, crate::Error> {
         let result = self.find_symbol(loc, parts[0])?;
 
@@ -5380,21 +5381,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..]));
+            return Ok(self.member_expression(loc, value, &parts[1..], last_link_opts));
         }
 
         Ok(value)
     }
 
-    /// The classic runtime's `options.jsx.factory` / `options.jsx.fragment` as
-    /// a member expression (`React.createElement`), resolved from the current
-    /// scope. `options.jsx` is dropped when `Parser::parse` returns, but the
-    /// parts live on in symbols and `E::Dot.name` until the printer runs, so
-    /// they are duped into the AST arena.
-    pub(crate) fn jsx_classic_member_expression(
+    /// The classic runtime's factory (`React.createElement`), as the callee of
+    /// the call that a JSX element becomes.
+    pub(crate) fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> Expr {
+        self.jsx_classic_member_expression(
+            loc,
+            |jsx| &jsx.factory,
+            IdentifierOpts::new().with_passes_this(true),
+        )
+    }
+
+    /// The classic runtime's fragment (`React.Fragment`), an argument of that call.
+    pub(crate) fn jsx_classic_fragment(&mut self, loc: bun_ast::Loc) -> Expr {
+        self.jsx_classic_member_expression(loc, |jsx| &jsx.fragment, IdentifierOpts::new())
+    }
+
+    /// `options.jsx.factory` / `options.jsx.fragment` as a member expression,
+    /// resolved from the current scope. `options.jsx` is dropped when
+    /// `Parser::parse` returns, but the parts live on in symbols and
+    /// `E::Dot.name` until the printer runs, so they are duped into the AST arena.
+    fn jsx_classic_member_expression(
         &mut self,
         loc: bun_ast::Loc,
         members: fn(&options::JSX::Pragma) -> &options::JSX::MemberList,
+        last_link_opts: IdentifierOpts,
     ) -> Expr {
         let arena = self.arena;
         let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
@@ -5402,30 +5418,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .iter()
                 .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
         );
-        self.jsx_strings_to_member_expression(loc, parts)
+        self.jsx_strings_to_member_expression(loc, parts, last_link_opts)
             .expect("unreachable")
     }
 
+    /// `last_link_opts` is the use of the whole expression. Each link before
+    /// the last is the target of the next property access.
     fn member_expression(
         &mut self,
         loc: bun_ast::Loc,
         initial_value: Expr,
         parts: &[&'a [u8]],
+        last_link_opts: IdentifierOpts,
     ) -> Expr {
         let mut value = initial_value;
 
         for (i, part) in parts.iter().enumerate() {
-            if let Some(rewrote) = self.maybe_rewrite_property_access(
-                loc,
-                value,
-                part,
-                loc,
-                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
-            ) {
+            let opts = if i + 1 == parts.len() {
+                last_link_opts
+            } else {
+                IdentifierOpts::new().with_is_property_access_target(true)
+            };
+            if let Some(rewrote) = self.maybe_rewrite_property_access(loc, value, part, loc, opts) {
                 value = rewrote;
             } else {
-                let is_import_property_use =
-                    self.record_import_property_use(&value, part, IdentifierOpts::default());
+                let is_import_property_use = self.record_import_property_use(&value, part, opts);
                 value = self.new_expr(
                     E::Dot {
                         target: value,
@@ -5834,7 +5851,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_call_target() || opts.is_template_tag() {
+        if opts.is_call_target() || opts.passes_this() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
             if !self.is_revisit_for_substitution {
                 let call = self
@@ -6591,7 +6608,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
-        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
+        inner_use.is_call_target |= opts.is_call_target() || opts.passes_this();
         true
     }
 

@@ -478,8 +478,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       value: function (stream) {
         let color = this[kColorMode];
         if (color === "auto") {
-          // Node's `shouldColorize(stream)`, without `internal/util/colors`: loading that creates `process.stderr`.
-          // A program can replace `process.env`, and `process`.
+          // Node's `shouldColorize(stream)`. Loading `internal/util/colors` for it creates `process.stderr`.
           const env = globalThis.process?.env ?? Bun.env;
           if (env.FORCE_COLOR !== undefined) {
             color = require("internal/tty").getColorDepth(env) > 2;
@@ -503,7 +502,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     [kFormatForStdout]: {
       ...consolePropAttributes,
       value: function (args) {
-        // As in Node: a lone string is logged as it is, and nothing decides about colors.
+        // As in Node 26: a lone string is logged as it is, and nothing decides about colors.
         if (args.length === 1 && typeof args[0] === "string") return args[0];
         const opts = this[kGetInspectOptions](this._stdout);
         return formatWithOptions(opts, ...args);
@@ -607,7 +606,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     // Defined by: https://console.spec.whatwg.org/#clear
     clear() {
       // It only makes sense to clear if _stdout is a TTY.
-      // Otherwise, do nothing. `TERM` is from the same `env` as the colors.
+      // Otherwise, do nothing.
       if (this._stdout.isTTY && (globalThis.process?.env ?? Bun.env).TERM !== "dumb") {
         this._stdout.write("\x1B[2J\x1B[3J\x1B[H");
       }

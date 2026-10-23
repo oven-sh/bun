@@ -431,6 +431,80 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test(".load of a module file declares the exported declarations of the file", async () => {
+      using dir = tempDir("repl-load-exports", {
+        "mod.ts": `
+          import path from "node:path";
+          import { sep } from "node:path";
+          export const cst: string = "c";
+          export class Cls {}
+          export function joinTwo(a: string, b: string) { return a + sep + b; }
+          export function base(p: string) { return path.basename(helper(p)); }
+          export default function main() { return cst + "!"; }
+          function helper(p: string) { return p; }
+        `,
+      });
+      const filePath = path.join(String(dir), "mod.ts");
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load ${filePath}`,
+        "[cst, typeof Cls, joinTwo('a', 'b'), base('/x/y.txt'), main()]",
+        // A function of the file calls the `helper` of the session.
+        "function helper(p) { return '/changed/z.txt' }",
+        "base('/x/y.txt')",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        `Loading ${filePath}...\nundefined`,
+        `[ "c", "function", ${JSON.stringify("a" + path.sep + "b")}, "y.txt", "c!" ]`,
+        "undefined",
+        '"z.txt"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load makes a file one input, and its functions are the session's", async () => {
+      using dir = tempDir("repl-load-functions", {
+        "lib.js": `
+          function memo(fn) {
+            var cache = new Map();
+            return x => (cache.has(x) ? cache : cache.set(x, fn(x))).get(x);
+          }
+          var slowCalls = 0;
+          function slow(x) { slowCalls++; return x * 2; }
+          slow = memo(slow);
+          function top() { return helper(); }
+          function helper() { return "from the file"; }
+        `,
+        "below.js": `
+          var result = early();
+          function late() { return "declared below the call"; }
+        `,
+      });
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load ${path.join(String(dir), "lib.js")}`,
+        "[slow(1), slow(1), slowCalls]",
+        `function helper() { return "from the prompt" }`,
+        "top()",
+        // A function of an earlier input calls one that the file declares below the call.
+        "function early() { return late() }",
+        `.load ${path.join(String(dir), "below.js")}`,
+        "result",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        `Loading ${path.join(String(dir), "lib.js")}...\nundefined`,
+        "[ 2, 2, 1 ]",
+        "undefined",
+        '"from the prompt"',
+        "undefined",
+        `Loading ${path.join(String(dir), "below.js")}...\nundefined`,
+        '"declared below the call"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load with a nonexistent file shows the error and keeps running", async () => {
       // A relative path: Windows rejects a forward-slash absolute path with EINVAL.
       const { outputs, stderr, exitCode } = await runRepl([
@@ -661,6 +735,20 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+    test("binds the default beside a namespace import", async () => {
+      using dir = tempDir("repl-import-default-star", {
+        "m.mjs": `export default "the-default"; export const named = 1;`,
+      });
+      const url = JSON.stringify(Bun.pathToFileURL(path.join(String(dir), "m.mjs")).href);
+      const { outputs, stderr, exitCode } = await runRepl([
+        `import def, * as ns from ${url}`,
+        "[def, ns.default, ns.named]",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"the-default"', '[ "the-default", "the-default", 1 ]']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("require", () => {
@@ -784,6 +872,368 @@ describe.concurrent("Bun REPL", () => {
         '{\n  outer: {\n    inner: "deep",\n  },\n}',
         '"deep"',
       ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("function declarations", () => {
+    // With top-level await the input runs in the async wrapper.
+    describe.each(["", "await 0; "])("input prefix %j", prefix => {
+      test("a function is one binding for its own input and for the session", async () => {
+        const { outputs, stderr, exitCode } = await runRepl([
+          `${prefix}function g1() {}; var g1 = 3`,
+          "typeof g1",
+          `${prefix}function g2() {}; g2 = 3`,
+          "typeof g2",
+          `${prefix}async function g3() {}; g3 = 3`,
+          "typeof g3",
+          `${prefix}function* g4() {}; g4 = 3`,
+          "typeof g4",
+          `${prefix}function wrapped() { return 1 }; wrapped = (inner => () => inner() + 100)(wrapped)`,
+          "wrapped()",
+          // `first` calls the `second` of the session, not a copy from its own input.
+          `${prefix}function first() { return second() }; function second() { return 1 }`,
+          "function second() { return 2 }",
+          "first()",
+          `${prefix}function cfg() {}; function read() { return cfg }`,
+          "cfg = 5",
+          "read()",
+          // A function reads its own name from the session too.
+          `${prefix}function fact(n) { return n < 2 ? 1 : n * fact(n - 1) }`,
+          "var calls = 0, original = fact; fact = n => (calls++, original(n))",
+          "fact(3)",
+          "calls",
+          // A redeclaration in the input, the last one wins. A `var` in front keeps its value.
+          `${prefix}function twice() { return 1 }; function twice() { return 2 }; twice()`,
+          `${prefix}var before = 3; function before() {}`,
+          "typeof before",
+          ".exit",
+        ]);
+        expect(outputs).toEqual([
+          "3",
+          '"number"',
+          "3",
+          '"number"',
+          "3",
+          '"number"',
+          "3",
+          '"number"',
+          "[Function]",
+          "101",
+          "undefined",
+          "undefined",
+          "2",
+          "undefined",
+          "5",
+          "5",
+          "undefined",
+          "[Function: fact]",
+          "6",
+          "3",
+          "2",
+          "undefined",
+          '"number"',
+        ]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("a function is bound before its input runs", async () => {
+        const { outputs, stderr, exitCode } = await runRepl([
+          "function caller() { return helper() }",
+          `${prefix}var early = caller(); function helper() { return 1 }`,
+          "early",
+          `${prefix}var seen = typeof globalThis.late; function late() {}`,
+          "seen",
+          // Node's REPL binds `afterThrow` too, but not when the input has top-level await.
+          `${prefix}if (1) throw new Error("mid"); function afterThrow() {}`,
+          "typeof afterThrow",
+          // A call above the declaration, both in one input.
+          `${prefix}var own = below(); function below() { return 7 }`,
+          "own",
+          ".exit",
+        ]);
+        expect(outputs).toEqual([
+          "undefined",
+          "undefined",
+          "1",
+          "undefined",
+          '"function"',
+          "error: mid",
+          '"function"',
+          "undefined",
+          "7",
+        ]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("a function can read what stays local to its input", async () => {
+        const { outputs, stderr, exitCode } = await runRepl([
+          // A lowered `using` is a `var` in a `try`, and direct `eval` declares its `var` when it runs.
+          `${prefix}using res = { v: 1, [Symbol.dispose]() {} }; function fromUsing() { return res.v }; fromUsing = (inner => () => inner() + 10)(fromUsing)`,
+          "fromUsing()",
+          `${prefix}eval("var q = 1"); function fromEval() { return q }`,
+          "fromEval()",
+          "fromEval.name",
+          // Such a function is one binding too, bound before the input runs.
+          `${prefix}eval("0"); function local() {}; local = 3`,
+          "typeof local",
+          "function localCaller() { return localHelper() }",
+          `${prefix}var localEarly = localCaller(); eval("0"); function localHelper() { return 1 }`,
+          "localEarly",
+          ".exit",
+        ]);
+        expect(outputs).toEqual([
+          "undefined",
+          "11",
+          "undefined",
+          "1",
+          '"fromEval"',
+          "3",
+          '"number"',
+          "undefined",
+          "undefined",
+          "1",
+        ]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("a function and a `var` in a nested statement are bindings of the session", async () => {
+        const { outputs, stderr, exitCode } = await runRepl([
+          // The function has the name of the `var`.
+          `${prefix}function s1() {}; if (1) var s1 = 3`,
+          "typeof s1",
+          `${prefix}if (1) var s2 = 3; function s2() {}`,
+          "typeof s2",
+          `${prefix}function s3() { return 1 }; if (0) var s3`,
+          "typeof s3",
+          `${prefix}function s4() {}; for (var s4;;) { s4 = 5; break }`,
+          "s4",
+          `${prefix}function s5() {}; while (typeof s5 == "function") var s5 = 6, other = 7`,
+          "[s5, other]",
+          // The function reads the `var`.
+          `${prefix}for (var i;;) { i = 5; break }; function fromLoop() { return i }`,
+          "fromLoop()",
+          `${prefix}if (1) var flag = 1; function fromIf() { return flag }`,
+          "flag = 2",
+          "fromIf()",
+          // Without a function too.
+          `${prefix}if (1) var lone = 8`,
+          `${prefix}for (var head; !head; ) head = 9`,
+          `${prefix}if (1) enum Color { Red = 10 }`,
+          "[lone, head, Color.Red]",
+          ".exit",
+        ]);
+        expect(outputs).toEqual([
+          "undefined",
+          '"number"',
+          "undefined",
+          '"number"',
+          "undefined",
+          '"function"',
+          "undefined",
+          "5",
+          "undefined",
+          "[ 6, 7 ]",
+          "undefined",
+          "5",
+          "undefined",
+          "2",
+          "2",
+          "undefined",
+          "undefined",
+          "undefined",
+          "[ 8, 9, 10 ]",
+        ]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("a function can use the helper of a lowering and an import of its input", async () => {
+        const { outputs, stderr, exitCode } = await runRepl([
+          `${prefix}function disposes() { using r = { [Symbol.dispose]() { disposed = true } }; return 1 }; var disposed = false`,
+          "[disposes(), disposed]",
+          `${prefix}import { sep } from "node:path"; function readSep() { return sep }`,
+          "readSep()",
+          `function readSep() { return "redefined " + sep }`,
+          "readSep()",
+          `${prefix}import { join } from "node:path"; function keepName(a, b) { return join(a, b) }`,
+          "keepName.toString()",
+          ".exit",
+        ]);
+        expect(outputs).toEqual([
+          "false",
+          "[ 1, true ]",
+          "undefined",
+          JSON.stringify(path.sep),
+          "undefined",
+          JSON.stringify("redefined " + path.sep),
+          "undefined",
+          '"function keepName(a, b) {\\n  return join(a, b);\\n}"',
+        ]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test("a function declaration hides the value in front of it, as before", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "function e1() {}",
+        "1; function e2() {}",
+        "function e3() {}; 2",
+        "const e4 = 10; function e5() {}",
+        `"use strict"; function e6() {}`,
+        // The parser's own statements: the import of the `using` helpers, `__dirname`.
+        "function e7() { using r = { [Symbol.dispose]() {} } }",
+        "function e8() { return __dirname }",
+        // A function that is assigned inside the wrapper.
+        `function e9() { return eval("__filename") }`,
+        `3; function e10() { return eval("1") }`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "undefined",
+        "2",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a function is strict only below a directive, and keeps its source text", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `"use strict"; function strictFn() { return this === undefined }`,
+        "strictFn()",
+        "function sloppyFn() { return this === undefined }",
+        "sloppyFn()",
+        `"use strict"; function strictLocal() { return eval("this") === undefined }; strictLocal = (inner => () => inner())(strictLocal)`,
+        "strictLocal()",
+        "function named(a, b) { return a + b }",
+        "named.toString()",
+        "[named.name, named.length]",
+        // Behind another directive the wrapper is not strict (as before), so the function stays a declaration.
+        `"use client"; "use strict"; function behindDirective() { return this === undefined }`,
+        `[behindDirective(), behindDirective.toString().startsWith("function behindDirective")]`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "true",
+        "undefined",
+        "false",
+        "[Function]",
+        "true",
+        "undefined",
+        '"function named(a, b) {\\n  return a + b;\\n}"',
+        '[ "named", 2 ]',
+        "undefined",
+        "[ false, true ]",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("export statements", () => {
+    test("an exported declaration is declared like the plain one", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "export function x1() { return 1 }",
+        "x1()",
+        "export async function x2() { return 2 }",
+        "await x2()",
+        "export function* x3() { yield 3 }",
+        "[...x3()]",
+        "export async function* x4() {}",
+        "typeof x4",
+        "export default function x5() { return 5 }",
+        "x5()",
+        "export default async function x6() { return 6 }",
+        "await x6()",
+        "export default class X7 { m() { return 7 } }",
+        "new X7().m()",
+        "export const x8 = 8",
+        "export class X9 {}",
+        "export enum E10 { A = 10 }",
+        "E10.A",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "1",
+        "undefined",
+        "2",
+        "undefined",
+        "[ 3 ]",
+        "undefined",
+        '"function"',
+        "undefined",
+        "5",
+        "undefined",
+        "6",
+        "[class X7]",
+        "7",
+        "8",
+        "[class X9]",
+        "undefined",
+        "10",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a default export without a name is evaluated, an export list declares nothing", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "export default 1 + 1",
+        "export default function () { return 3 }",
+        "_()",
+        "export default class { static n = 4 }",
+        "_.n",
+        "function listed() { return 5 }; export { listed as renamed }",
+        "[listed(), typeof renamed]",
+        "const c = 6; export { c }",
+        "c",
+        "export {}",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "2",
+        expect.stringMatching(/^\[Function/),
+        "3",
+        expect.stringMatching(/^\[class/),
+        "4",
+        "undefined",
+        '[ 5, "undefined" ]',
+        "6",
+        "6",
+        "undefined",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a re-export loads its module and binds nothing", async () => {
+      using dir = tempDir("repl-re-export", {
+        "star.mjs": `globalThis.__starRan = true; export const fromStar = 1;`,
+        "named.mjs": `globalThis.__namedRan = true; export const fromNamed = 2;`,
+        "ns.mjs": `globalThis.__nsRan = true; export const fromNs = 3;`,
+      });
+      const url = (name: string) => JSON.stringify(Bun.pathToFileURL(path.join(String(dir), name)).href);
+      const { outputs, stderr, exitCode } = await runRepl([
+        `export * from ${url("star.mjs")}; export { fromNamed } from ${url("named.mjs")}; export * as ns from ${url("ns.mjs")}; 0`,
+        "[__starRan, __namedRan, __nsRan]",
+        "[typeof fromStar, typeof fromNamed, typeof ns]",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["0", "[ true, true, true ]", '[ "undefined", "undefined", "undefined" ]']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -993,6 +1443,26 @@ describe.concurrent("Bun REPL", () => {
         "import path from 'path'; console.log(typeof path.join)",
       ]);
       expect(stdout).toBe("function\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p sees one binding for a function declared in the script", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-p",
+        "var seen = typeof globalThis.late; function g() {}; g = 3; function late() {}; [typeof g, typeof globalThis.g, seen]",
+      ]);
+      expect(stdout).toBe('[ "number", "number", "function" ]\n');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e accepts an exported function", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "export function x() { return 1 }; export default function d() { return 2 }; console.log(x() + d())",
+      ]);
+      expect(stdout).toBe("3\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1702,6 +2172,20 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("__editorResult + 23\n");
       send("\x04"); // Ctrl+D to finish editor mode
       await waitFor("123");
+    });
+  });
+
+  test(".editor makes a paste one input, and its functions are the session's", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      send("function __pasted() { return __pastedHelper() }\n");
+      send("function __pastedHelper() { return 'from the paste' }\n");
+      send("\x04"); // Ctrl+D to finish editor mode
+      await waitFor("undefined");
+      send("function __pastedHelper() { return 'from the prompt' }\n");
+      send("__pasted()\n");
+      await waitFor('"from the prompt"');
     });
   });
 

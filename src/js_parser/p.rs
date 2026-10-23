@@ -6871,7 +6871,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value: None,
             }]);
 
-            if self.current_scope == self.module_scope {
+            if self.current_scope == self.module_scope && self.relocates_single_stmt_body_decls() {
+                // `if (c) enum E {}`: `append_part` declares the "var" at the top level.
+                self.relocated_top_level_vars.push(LocRef {
+                    loc: name_loc,
+                    ref_: name_ref,
+                });
+            } else if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
                     S::Local {
@@ -8021,6 +8027,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .push(LocRef { loc, ref_: r#ref });
         self.record_usage(r#ref);
         Expr::init_identifier(r#ref, loc)
+    }
+
+    /// A brace-less `if`/`else`/`while`/`do` body opens no scope, and the REPL transform moves only top-level declarations out of its wrapper.
+    #[inline]
+    pub(crate) fn relocates_single_stmt_body_decls(&self) -> bool {
+        self.is_inside_single_stmt_body && self.options.repl_mode
     }
 
     // One statement could potentially expand to several statements

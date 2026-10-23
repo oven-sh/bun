@@ -3054,7 +3054,8 @@ declare module "bun" {
     /**
      * Enable REPL mode transforms:
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
-     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
+     * - Hoists variable, class and import declarations as var for REPL persistence across vm.runInContext calls
+     * - Moves top-level function declarations in front of the IIFE, or assigns them to a hoisted var at its start when the input has a direct `eval`, a top-level `using` or a `"use strict"` directive
      * - Wraps last expression in { __proto__: null, value: expr } for result capture
      * - Wraps code in sync/async IIFE to avoid parentheses around object literals
      *

@@ -4,6 +4,7 @@
 //! - Wraps the last expression in { value: expr } for result capture
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
+//! - Declares top-level functions in front of the IIFE, as functions of the Program
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -68,11 +69,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
         let all_stmts: &mut [Stmt] = all_stmts.into_bump_slice_mut();
 
-        // Check if there's top-level await or imports (imports become dynamic awaited imports)
+        // Check if there's top-level await, imports or re-exports (both become dynamic awaited imports)
         let mut has_top_level_await = self.top_level_await_keyword.len > 0;
         if !has_top_level_await {
             for stmt in all_stmts.iter() {
-                if matches!(stmt.data, StmtData::SImport(_)) {
+                if matches!(
+                    stmt.data,
+                    StmtData::SImport(_) | StmtData::SExportFrom(_) | StmtData::SExportStar(_)
+                ) {
                     has_top_level_await = true;
                     break;
                 }
@@ -99,9 +103,19 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         // Lists for hoisted declarations and inner statements
         let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
         let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
+        // Top-level function declarations, placed after the loop
+        let mut functions = BumpVec::<ReplFunction>::new_in(bump);
+        // The value of the input is an expression in `inner_stmts[value_start..]`
+        let mut value_start: usize = 0;
 
         // Process each statement - hoist all declarations for REPL persistence
         for stmt in all_stmts.iter() {
+            let stmt = match stmt.data {
+                StmtData::SExportDefault(export_default) => {
+                    self.repl_unwrap_export_default(export_default, stmt.loc)
+                }
+                _ => *stmt,
+            };
             match stmt.data {
                 StmtData::SLocal(local) => {
                     // Hoist all declarations as var so they become context properties
@@ -146,70 +160,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         }
                     }
                 }
-                StmtData::SFunction(func) => {
-                    // For function declarations:
-                    // Hoist as: var funcName;
-                    // Inner: this.funcName = funcName; function funcName() {}
-                    if let Some(name_loc) = func.func.name {
-                        let name_ref = name_loc.ref_;
-                        hoisted_stmts.push(self.s(
-                            S::Local {
-                                kind: S::Kind::KVar,
-                                decls: repl_one_decl(
-                                    bump,
-                                    Binding::alloc(
-                                        bump,
-                                        B::Identifier { r#ref: name_ref },
-                                        name_loc.loc,
-                                    ),
-                                ),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-
-                        // Add this.funcName = funcName assignment
-                        let this_expr = self.new_expr(E::This {}, stmt.loc);
-                        // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
-                        // detaches the borrow from `self.symbols` so the &mut self calls below
-                        // don't conflict.
-                        let name_str: &[u8] = self.symbols[name_ref.inner_index() as usize]
-                            .original_name
-                            .slice();
-                        let this_dot = self.new_expr(
-                            E::Dot {
-                                target: this_expr,
-                                name: name_str.into(),
-                                name_loc: name_loc.loc,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        );
-                        let func_id = self.new_expr(
-                            E::Identifier {
-                                ref_: name_ref,
-                                ..Default::default()
-                            },
-                            name_loc.loc,
-                        );
-                        let assign = self.new_expr(
-                            E::Binary {
-                                op: js_ast::OpCode::BinAssign,
-                                left: this_dot,
-                                right: func_id,
-                            },
-                            stmt.loc,
-                        );
-                        inner_stmts.push(self.s(
-                            S::SExpr {
-                                value: assign,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-                    }
-                    // Add the function declaration itself
-                    inner_stmts.push(*stmt);
+                StmtData::SFunction(mut function) => {
+                    function.func.flags.remove(flags::Function::IsExport);
+                    functions.push(ReplFunction {
+                        function,
+                        name: function.func.name.expect("infallible: name checked"),
+                        loc: stmt.loc,
+                    });
+                    // A function declaration hides the value in front of it.
+                    value_start = inner_stmts.len();
                 }
                 StmtData::SClass(mut class) => {
                     // For class declarations:
@@ -261,7 +220,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             stmt.loc,
                         ));
                     } else {
-                        inner_stmts.push(*stmt);
+                        inner_stmts.push(stmt);
                     }
                 }
                 StmtData::SImport(import_data) => {
@@ -270,30 +229,32 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
-                    let path_str: &'static [u8] = self.import_records.items()
-                        [import_data.import_record_index as usize]
-                        .path
-                        .text;
-                    let str_expr = self.new_expr(
-                        E::String {
-                            data: path_str.into(),
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    );
-                    let import_expr = self.new_expr(
-                        E::Import {
-                            expr: str_expr,
-                            options: Expr::EMPTY,
-                            import_record_index: u32::MAX,
-                            namespace_ref: bun_ast::Ref::NONE,
-                        },
-                        stmt.loc,
-                    );
-                    let await_expr = self.new_expr(E::Await { value: import_expr }, stmt.loc);
+                    let await_expr =
+                        self.repl_await_import(import_data.import_record_index, stmt.loc);
 
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
+
+                    // import X from 'mod', import X, { a } from 'mod', import X, * as ns from 'mod'
+                    if let Some(default_name) = import_data.default_name {
+                        hoisted_stmts.push(self.s(
+                            S::Local {
+                                kind: S::Kind::KVar,
+                                decls: repl_one_decl(
+                                    bump,
+                                    Binding::alloc(
+                                        bump,
+                                        B::Identifier {
+                                            r#ref: default_name.ref_,
+                                        },
+                                        default_name.loc,
+                                    ),
+                                ),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
+                    }
 
                     if !import_data.star_name_loc.is_empty() {
                         // import * as X from 'mod' -> var X = await import('mod')
@@ -336,26 +297,17 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             },
                             stmt.loc,
                         ));
+                        // import X, * as ns from 'mod' -> var X; X = ns.default
+                        if let Some(default_name) = import_data.default_name {
+                            inner_stmts.push(self.repl_assign_namespace_default(
+                                default_name,
+                                import_data.namespace_ref,
+                                stmt.loc,
+                            ));
+                        }
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        let default_ref = default_name.ref_;
-                        hoisted_stmts.push(self.s(
-                            S::Local {
-                                kind: S::Kind::KVar,
-                                decls: repl_one_decl(
-                                    bump,
-                                    Binding::alloc(
-                                        bump,
-                                        B::Identifier { r#ref: default_ref },
-                                        default_name.loc,
-                                    ),
-                                ),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-
                         if !import_items.is_empty() {
                             // Share a single await import() between default and named imports.
                             // namespace_ref is synthesized by processImportStatement for all non-star imports.
@@ -368,42 +320,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                 bump,
                                 stmt.loc,
                             )?;
-                            let ns_ref_expr = self.new_expr(
-                                E::Identifier {
-                                    ref_: import_data.namespace_ref,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            let dot_default = self.new_expr(
-                                E::Dot {
-                                    target: ns_ref_expr,
-                                    name: b"default".into(),
-                                    name_loc: stmt.loc,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            let left = self.new_expr(
-                                E::Identifier {
-                                    ref_: default_ref,
-                                    ..Default::default()
-                                },
-                                default_name.loc,
-                            );
-                            let assign = self.new_expr(
-                                E::Binary {
-                                    op: js_ast::OpCode::BinAssign,
-                                    left,
-                                    right: dot_default,
-                                },
-                                stmt.loc,
-                            );
-                            inner_stmts.push(self.s(
-                                S::SExpr {
-                                    value: assign,
-                                    ..Default::default()
-                                },
+                            inner_stmts.push(self.repl_assign_namespace_default(
+                                default_name,
+                                import_data.namespace_ref,
                                 stmt.loc,
                             ));
                         } else {
@@ -418,7 +337,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             );
                             let left = self.new_expr(
                                 E::Identifier {
-                                    ref_: default_ref,
+                                    ref_: default_name.ref_,
                                     ..Default::default()
                                 },
                                 default_name.loc,
@@ -479,14 +398,96 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         stmt.loc,
                     ));
                 }
-                _ => {
-                    inner_stmts.push(*stmt);
+                // A REPL input has no importer. A declaration lost its `export` in its own arm.
+                StmtData::SExportClause(_) => {}
+                // export ... from 'mod' -> await import('mod')
+                StmtData::SExportFrom(from) => {
+                    let value = self.repl_await_import(from.import_record_index, stmt.loc);
+                    inner_stmts.push(self.s(
+                        S::SExpr {
+                            value,
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ));
+                }
+                StmtData::SExportStar(star) => {
+                    let value = self.repl_await_import(star.import_record_index, stmt.loc);
+                    inner_stmts.push(self.s(
+                        S::SExpr {
+                            value,
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ));
+                }
+                // Unwrapped above.
+                StmtData::SExportDefault(_) => unreachable!(),
+                StmtData::SBlock(_)
+                | StmtData::SBreak(_)
+                | StmtData::SComment(_)
+                | StmtData::SContinue(_)
+                | StmtData::SDebugger(_)
+                | StmtData::SDoWhile(_)
+                | StmtData::SEmpty(_)
+                | StmtData::SEnum(_)
+                | StmtData::SExportEquals(_)
+                | StmtData::SExpr(_)
+                | StmtData::SFor(_)
+                | StmtData::SForIn(_)
+                | StmtData::SForOf(_)
+                | StmtData::SIf(_)
+                | StmtData::SLabel(_)
+                | StmtData::SLazyExport(_)
+                | StmtData::SNamespace(_)
+                | StmtData::SReturn(_)
+                | StmtData::SSwitch(_)
+                | StmtData::SThrow(_)
+                | StmtData::STry(_)
+                | StmtData::STypeScript(_)
+                | StmtData::SWhile(_)
+                | StmtData::SWith(_) => {
+                    inner_stmts.push(stmt);
+                }
+            }
+        }
+
+        let mut front_stmts = BumpVec::<Stmt>::new_in(bump);
+        // Directives stay first in the wrapper, and stay directives.
+        let is_directive = |stmt: &&Stmt| matches!(stmt.data, StmtData::SDirective(_));
+        let front_at = all_stmts.iter().take_while(is_directive).count();
+        if !functions.is_empty() {
+            let is_use_strict = |stmt: &Stmt| matches!(stmt.data, StmtData::SDirective(directive) if directive.value.slice() == b"use strict");
+            // Direct eval and a lowered `using` declare inside the wrapper, and a strict Program hides its declarations from indirect eval.
+            let in_wrapper = self.module_scope().contains_direct_eval
+                || self.will_wrap_module_in_try_catch_for_using
+                || all_stmts[..front_at].iter().any(is_use_strict);
+            for &function in functions.iter() {
+                // Keeps the session's name under `minify.identifiers`. The chain of a pinned name is pinned already.
+                if !self.symbols[function.name.ref_.inner_index() as usize].must_not_be_renamed() {
+                    self.set_must_not_be_renamed_through_links(function.name.ref_);
+                }
+                if in_wrapper {
+                    self.repl_assign_function(function, &mut hoisted_stmts, &mut front_stmts, bump);
+                } else {
+                    hoisted_stmts.push(Stmt {
+                        data: StmtData::SFunction(function.function),
+                        loc: function.loc,
+                    });
                 }
             }
         }
 
         // Wrap the last expression in return { value: expr }
-        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        self.repl_wrap_last_expression_with_return(&mut inner_stmts[value_start..], bump);
+
+        if !front_stmts.is_empty() {
+            let mut body = BumpVec::with_capacity_in(front_stmts.len() + inner_stmts.len(), bump);
+            body.extend_from_slice(&inner_stmts[..front_at]);
+            body.extend_from_slice(&front_stmts);
+            body.extend_from_slice(&inner_stmts[front_at..]);
+            inner_stmts = body;
+        }
 
         // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
         let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
@@ -540,6 +541,164 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         Ok(())
+    }
+
+    /// A named function or class of `export default` is declared like the plain statement, any other value is an expression.
+    fn repl_unwrap_export_default(
+        &mut self,
+        export_default: js_ast::StoreRef<S::ExportDefault>,
+        loc: bun_ast::Loc,
+    ) -> Stmt {
+        if let js_ast::StmtOrExpr::Stmt(declaration) = export_default.value {
+            match declaration.data {
+                StmtData::SFunction(mut func) => {
+                    // The visit pass gives an anonymous function the generated name of the default export.
+                    let is_named = func.func.name.is_some_and(|name| {
+                        self.symbols[name.ref_.inner_index() as usize].kind
+                            != js_ast::symbol::Kind::Other
+                    });
+                    if is_named {
+                        return declaration;
+                    }
+                    func.func.name = None;
+                }
+                StmtData::SClass(class) => {
+                    if class.class.class_name.is_some() {
+                        return declaration;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.s(
+            S::SExpr {
+                value: export_default.value.to_expr(),
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// `await import('mod')` for the module of an import record
+    fn repl_await_import(&mut self, import_record_index: u32, loc: bun_ast::Loc) -> Expr {
+        let path_str: &'static [u8] = self.import_records.items()[import_record_index as usize]
+            .path
+            .text;
+        let str_expr = self.new_expr(
+            E::String {
+                data: path_str.into(),
+                ..Default::default()
+            },
+            loc,
+        );
+        let import_expr = self.new_expr(
+            E::Import {
+                expr: str_expr,
+                options: Expr::EMPTY,
+                import_record_index: u32::MAX,
+                namespace_ref: bun_ast::Ref::NONE,
+            },
+            loc,
+        );
+        self.new_expr(E::Await { value: import_expr }, loc)
+    }
+
+    /// `X = ns.default`, for a default import whose module is already in `ns`
+    fn repl_assign_namespace_default(
+        &mut self,
+        default_name: js_ast::LocRef,
+        namespace_ref: bun_ast::Ref,
+        loc: bun_ast::Loc,
+    ) -> Stmt {
+        let ns_ref_expr = self.new_expr(
+            E::Identifier {
+                ref_: namespace_ref,
+                ..Default::default()
+            },
+            loc,
+        );
+        let dot_default = self.new_expr(
+            E::Dot {
+                target: ns_ref_expr,
+                name: b"default".into(),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        let left = self.new_expr(
+            E::Identifier {
+                ref_: default_name.ref_,
+                ..Default::default()
+            },
+            default_name.loc,
+        );
+        let assign = self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinAssign,
+                left,
+                right: dot_default,
+            },
+            loc,
+        );
+        self.s(
+            S::SExpr {
+                value: assign,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// `function f() {}` -> `var f;` in front of the wrapper and `f = function() {}` inside, anonymous because a declaration has no binding of its own name.
+    fn repl_assign_function<'bump>(
+        &mut self,
+        ReplFunction {
+            mut function,
+            name,
+            loc,
+        }: ReplFunction,
+        hoisted_stmts: &mut BumpVec<'bump, Stmt>,
+        front_stmts: &mut BumpVec<'bump, Stmt>,
+        bump: &'bump Bump,
+    ) {
+        hoisted_stmts.push(self.s(
+            S::Local {
+                kind: S::Kind::KVar,
+                decls: repl_one_decl(
+                    bump,
+                    Binding::alloc(bump, B::Identifier { r#ref: name.ref_ }, name.loc),
+                ),
+                ..Default::default()
+            },
+            loc,
+        ));
+        // The S::Function store entry is dead after this rewrite, so move the G::Fn out.
+        let mut func = core::mem::take(&mut function.func);
+        func.name = None;
+        let func_expr = self.new_expr(E::Function { func }, loc);
+        let func_id = self.new_expr(
+            E::Identifier {
+                ref_: name.ref_,
+                ..Default::default()
+            },
+            name.loc,
+        );
+        let assign = self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinAssign,
+                left: func_id,
+                right: func_expr,
+            },
+            loc,
+        );
+        front_stmts.push(self.s(
+            S::SExpr {
+                value: assign,
+                ..Default::default()
+            },
+            loc,
+        ));
     }
 
     /// Convert named imports to individual var assignments from the dynamic import
@@ -658,11 +817,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// Wrap the last expression in return { value: expr }
-    fn repl_wrap_last_expression_with_return<'bump>(
-        &mut self,
-        inner_stmts: &mut BumpVec<'bump, Stmt>,
-        bump: &'bump Bump,
-    ) {
+    fn repl_wrap_last_expression_with_return(&mut self, inner_stmts: &mut [Stmt], bump: &Bump) {
         if !inner_stmts.is_empty() {
             let mut last_idx: usize = inner_stmts.len();
             while last_idx > 0 {
@@ -885,6 +1040,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             B::B::BMissing(_) => self.new_expr(E::Missing {}, binding.loc),
         }
     }
+}
+
+/// A top-level function declaration of a REPL input
+#[derive(Clone, Copy)]
+struct ReplFunction {
+    function: js_ast::StoreRef<S::Function>,
+    name: js_ast::LocRef,
+    loc: bun_ast::Loc,
 }
 
 /// Bump-allocate a single-element `G::DeclList`.

@@ -1306,16 +1306,39 @@ const _: () = assert!(core::mem::size_of::<UvWork>() <= UV_WORK_T_SIZE);
 /// that never call `uv_cancel` ignore the status. The V8 API would also still enter JS.
 struct UvWorkJob;
 
+/// The request while it is queued or running. Dropped on the JS thread once the job
+/// completed or was released unrun: either way the loop's count of work in flight
+/// goes down, which the VM pointer reaches even after `after_work_cb` freed the request.
+struct QueuedUvWork {
+    req: JsPtr<UvWork>,
+    vm: NonNull<VirtualMachine>,
+}
+
+// SAFETY: the pool thread only runs `work_cb` through `req`; `vm` is read on the JS thread alone.
+unsafe impl Send for QueuedUvWork {}
+
+impl Drop for QueuedUvWork {
+    fn drop(&mut self) {
+        // SAFETY: the VM outlives its jobs; `of_vm` is null once the loop is gone.
+        let loop_ = unsafe { UvLoop::of_vm(self.vm.as_ptr()) };
+        if !loop_.is_null() {
+            // SAFETY: `of_vm` returned the VM's live loop, and this is the JS thread.
+            let loop_ = unsafe { &*loop_ };
+            loop_.work_in_flight.set(loop_.work_in_flight.get() - 1);
+        }
+    }
+}
+
 impl JobContext for UvWorkJob {
-    type OffThread = JsPtr<UvWork>;
+    type OffThread = QueuedUvWork;
     type Js = ();
 
     // SAFETY: never create a reference to the whole request, because `run` on the pool
     // thread can overlap `uv_cancel` on the loop thread. Access fields through the raw
     // pointer and borrow only `state`.
 
-    fn run(req: &mut JsPtr<UvWork>, done: Completion<Self>) -> Option<Completion<Self>> {
-        let req = req.as_ptr();
+    fn run(work: &mut QueuedUvWork, done: Completion<Self>) -> Option<Completion<Self>> {
+        let req = work.req.as_ptr();
         // SAFETY: the request is alive for the job's lifetime (see `UvWorkJob`), and
         // `work_cb` was written before the job was scheduled.
         let started = unsafe { &(*req).state }
@@ -1334,16 +1357,11 @@ impl JobContext for UvWorkJob {
         Some(done)
     }
 
-    fn then(req: JsPtr<UvWork>, _: (), cx: &JsThread<'_>) -> JsResult<()> {
-        let req = req.as_ptr();
+    fn then(work: QueuedUvWork, _: (), cx: &JsThread<'_>) -> JsResult<()> {
+        let req = work.req.as_ptr();
         // SAFETY: same as `run`. `state` doesn't change after the job is posted.
-        let (state, after_work_cb, loop_) = unsafe {
-            (
-                (*req).state.load(Ordering::SeqCst),
-                (*req).after_work_cb,
-                (*req).loop_,
-            )
-        };
+        let (state, after_work_cb) =
+            unsafe { ((*req).state.load(Ordering::SeqCst), (*req).after_work_cb) };
         let status = if state == WorkState::Cancelled as u32 {
             UV_ECANCELED
         } else {
@@ -1356,10 +1374,6 @@ impl JobContext for UvWorkJob {
             // SAFETY: calls the addon's callback on the loop thread.
             unsafe { after_work_cb(req, status) };
         }
-        // Read before the callback, which usually frees the request. The loop lives as long as its VM.
-        // SAFETY: `loop_` was a live loop when the work was queued (fn contract of `uv_queue_work`).
-        let loop_ = unsafe { &*loop_ };
-        loop_.work_in_flight.set(loop_.work_in_flight.get() - 1);
         if cx.global().has_exception() {
             return Err(JsError::Thrown);
         }
@@ -1405,8 +1419,12 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     // SAFETY: the loop is alive (fn contract), and this is the JS thread.
     let loop_ = unsafe { loop_ref.as_ref() };
     loop_.work_in_flight.set(loop_.work_in_flight.get() + 1);
-    // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
-    Job::<UvWorkJob>::schedule(&cx, unsafe { JsPtr::new(req_ref) }, ());
+    let work = QueuedUvWork {
+        // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
+        req: unsafe { JsPtr::new(req_ref) },
+        vm: loop_.vm,
+    };
+    Job::<UvWorkJob>::schedule(&cx, work, ());
     0
 }
 

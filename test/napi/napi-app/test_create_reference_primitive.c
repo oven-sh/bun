@@ -58,10 +58,66 @@ static napi_value create_ref(napi_env env, napi_callback_info info) {
   return out;
 }
 
+// Static refs that outlive one test file under `bun test --isolate`.
+static napi_ref retained_refs[8];
+
+static napi_ref *retained_slot(napi_env env, napi_callback_info info,
+                               size_t arg, napi_value *first) {
+  size_t argc = 2;
+  napi_value argv[2] = {NULL, NULL};
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (first) {
+    *first = argv[0];
+  }
+  uint32_t slot = 0;
+  if (argc > arg && argv[arg]) {
+    napi_get_value_uint32(env, argv[arg], &slot);
+  }
+  return &retained_refs[slot % 8];
+}
+
+// retain(value, slot = 0): creates a count-1 ref in the slot (never deleted).
+static napi_value retain(napi_env env, napi_callback_info info) {
+  napi_value value;
+  napi_ref *slot = retained_slot(env, info, 1, &value);
+  napi_value out;
+  napi_create_int32(env, (int32_t)napi_create_reference(env, value, 1, slot),
+                    &out);
+  return out;
+}
+
+// retained(slot = 0): the value, or undefined once the ref reads empty.
+static napi_value retained(napi_env env, napi_callback_info info) {
+  napi_ref *slot = retained_slot(env, info, 0, NULL);
+  napi_value value = NULL;
+  napi_get_reference_value(env, *slot, &value);
+  if (!value) {
+    napi_get_undefined(env, &value);
+  }
+  return value;
+}
+
+// ref_retained(slot = 0): the count napi_reference_ref reports.
+static napi_value ref_retained(napi_env env, napi_callback_info info) {
+  napi_ref *slot = retained_slot(env, info, 0, NULL);
+  uint32_t count = 0;
+  napi_reference_ref(env, *slot, &count);
+  napi_value out;
+  napi_create_uint32(env, count, &out);
+  return out;
+}
+
 NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_value fn;
   napi_create_function(env, "create_ref", NAPI_AUTO_LENGTH, create_ref, NULL,
                        &fn);
   napi_set_named_property(env, exports, "create_ref", fn);
+  napi_create_function(env, "retain", NAPI_AUTO_LENGTH, retain, NULL, &fn);
+  napi_set_named_property(env, exports, "retain", fn);
+  napi_create_function(env, "retained", NAPI_AUTO_LENGTH, retained, NULL, &fn);
+  napi_set_named_property(env, exports, "retained", fn);
+  napi_create_function(env, "ref_retained", NAPI_AUTO_LENGTH, ref_retained,
+                       NULL, &fn);
+  napi_set_named_property(env, exports, "ref_retained", fn);
   return exports;
 }

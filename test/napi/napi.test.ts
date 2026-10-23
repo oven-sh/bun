@@ -286,15 +286,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // GC through the retargeted env. A threadsafe function the first file created still
       // delivers in the second file.
       const addonPath = JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"));
+      // Node-API 10 accepts a primitive in napi_create_reference; napitests declares 8.
+      const v10Path = JSON.stringify(join(__dirname, "napi-app/build/Debug/test_create_reference_primitive_v10.node"));
       using dir = tempDir("napi-isolate", {
         "a.test.ts": `
           import { test } from "bun:test";
           const addon = require(${addonPath});
+          const v10 = require(${v10Path});
           test("creates refs and a threadsafe function", () => {
             addon.retain({ fromFileA: true }, 0);
             addon.retain(() => {}, 1);
             addon.retain(Symbol.for("napi-isolate"), 2);
             addon.retain(Symbol("local"), 3);
+            v10.retain("str", 0);
+            v10.retain(1, 1);
+            v10.retain(1n, 2);
             addon.create_wrap({}, true, true);
             addon.queue_threadsafe_function_items(() => {}, 0, false);
           });
@@ -302,6 +308,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "b.test.ts": `
           import { expect, test } from "bun:test";
           const addon = require(${addonPath});
+          const v10 = require(${v10Path});
           test("the released refs and the threadsafe function", async () => {
             // Objects and functions of the finished file are released.
             expect(addon.retained(0)).toBeUndefined();
@@ -310,11 +317,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             expect(addon.unref_retained(0)).toBe(0);
             expect(addon.retained(0)).toBeUndefined();
             expect(addon.retained(1)).toBeUndefined();
-            // A symbol has no realm to root and keeps its value.
+            // A symbol or primitive has no realm to root and keeps its value.
             expect(addon.retained(2)).toBe(Symbol.for("napi-isolate"));
             expect(addon.ref_retained(2)).toBe(2);
             expect(typeof addon.retained(3)).toBe("symbol");
             expect(addon.retained(3).description).toBe("local");
+            expect(v10.retained(0)).toBe("str");
+            expect(v10.ref_retained(0)).toBe(2);
+            expect(v10.retained(1)).toBe(1);
+            expect(v10.retained(2)).toBe(1n);
 
             const deadline = Date.now() + 10_000;
             while (!addon.was_wrap_finalize_called()) {

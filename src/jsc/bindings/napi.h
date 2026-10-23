@@ -915,7 +915,12 @@ public:
     // Node's Reference with a reset persistent handle. A symbol or primitive (no weak handle) has no realm to root.
     void releaseRealm()
     {
-        if (m_released || m_isEternal || weakValueRef.isClear() || value().isSymbol()) {
+        if (m_released || m_isEternal) {
+            return;
+        }
+        // A collected weak value roots nothing.
+        JSC::JSValue held = value();
+        if (!held || held.isSymbol() || weakValueRef.isClear()) {
             return;
         }
         m_released = true;

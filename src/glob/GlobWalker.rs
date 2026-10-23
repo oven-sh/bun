@@ -620,10 +620,18 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // SAFETY: dir_path_buf[dir_path_len] == 0 written above (or by collapse_dots)
         let dir_path = ZStr::from_buf(&dir_path_buf[..], dir_path_len);
 
+        if had_dot_dot && !self.walker.followed_links.is_empty() {
+            self.walker.followed_links.push(FollowedLink::DotDot);
+        }
+
         let mut at_cwd = false;
         let fd: A::Handle = 'fd: {
             if let Some(fd) = work_item.fd {
-                break 'fd fd;
+                if !had_dot_dot {
+                    break 'fd fd;
+                }
+                // The handle is open on the directory before the `..`, not on `dir_path`.
+                self.close_disallowing_cwd(fd);
             }
             if ROOT {
                 if had_dot_dot {
@@ -937,8 +945,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
                             let mut followed_link: Option<FollowedLink> = None;
                             let descend = child.count() != 0
-                                && if self.walker.followed_links.is_empty() {
-                                    // No followed ancestor exists, so this descent
+                                && if self.walker.followed_ancestors().is_empty()
+                                    || !self.walker.has_double_wildcard(&active)
+                                {
+                                    // No followed ancestor or no `**`, so this descent
                                     // cannot be a cycle: defer identifying the target
                                     // (record its logical path) so the walk performs
                                     // no stat unless a nested followed link needs it.
@@ -1052,6 +1062,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             if child.count() != 0 {
                                 let mut followed_link: Option<FollowedLink> = None;
                                 if self.walker.should_descend_resolved_dir(
+                                    &active,
                                     entry.symlink_target(),
                                     &mut followed_link,
                                 ) {
@@ -1256,6 +1267,8 @@ enum FollowedLink {
     /// Accessor-cached real path of the followed target
     /// ([`AccessorDirEntry::symlink_target`]).
     RealPath(Box<[u8]>),
+    /// A `..` was applied here: the walk is outside the targets of the links before it.
+    DotDot,
 }
 
 impl FollowedLink {
@@ -2037,10 +2050,31 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
     }
 
-    /// `followed_links` holds exactly the ancestor chain of the work item
+    /// The links that the walk is inside of: those followed after the last `..`.
+    fn followed_ancestors(&self) -> &[FollowedLink] {
+        let start = self
+            .followed_links
+            .iter()
+            .rposition(|link| matches!(link, FollowedLink::DotDot))
+            .map_or(0, |at| at + 1);
+        &self.followed_links[start..]
+    }
+
+    /// Only a `**` can enter the same directory again without end.
+    fn has_double_wildcard(&self, active: &ComponentSet) -> bool {
+        let mut indices = active.iterator::<true, true>();
+        while let Some(idx) = indices.next() {
+            if self.pattern_components[idx].syntax_hint == SyntaxHint::Double {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `followed_ancestors` is exactly the ancestor chain of the work item
     /// being processed, so a match means descending re-enters it.
     fn is_followed_link_cycle(&self, target: &FollowedLink) -> bool {
-        self.followed_links
+        self.followed_ancestors()
             .iter()
             .any(|followed| followed.same_target(target))
     }
@@ -2060,6 +2094,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// accessor's already-resolved target (no extra syscall).
     fn should_descend_resolved_dir(
         &self,
+        active: &ComponentSet,
         entry_symlink_target: Option<&[u8]>,
         followed_link: &mut Option<FollowedLink>,
     ) -> bool {
@@ -2069,6 +2104,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let Some(target) = entry_symlink_target else {
             return true;
         };
+        if !self.has_double_wildcard(active) {
+            *followed_link = Some(FollowedLink::RealPath(Box::from(target)));
+            return true;
+        }
         match self.check_followed_link(FollowedLink::RealPath(Box::from(target))) {
             Some(link) => {
                 *followed_link = Some(link);

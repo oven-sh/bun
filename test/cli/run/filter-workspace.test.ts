@@ -817,6 +817,27 @@ describe("bun", () => {
     });
   });
 
+  // Only `**` can walk into a link's target without end. `again` and `lnk` lead to `pk/real` too.
+  test.each(["pk/lnk/../lnk/*", "pk/lnk/again/*"])(
+    "a workspace pattern that names two links to one directory finds the package: %s",
+    pattern => {
+      using dir = tempDir("filter-symlink-twice", {
+        pk: {
+          real: {
+            pkga: {
+              "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
+            },
+          },
+        },
+        "package.json": JSON.stringify({ name: "ws", workspaces: [pattern] }),
+      });
+      symlinkSync(join(dir, "pk", "real"), join(dir, "pk", "lnk"), "junction");
+      symlinkSync(join(dir, "pk", "real"), join(dir, "pk", "real", "again"), "junction");
+
+      runInCwdSuccess({ cwd: String(dir), pattern: "*", target_pattern: /scripta/ });
+    },
+  );
+
   test("warning names which package.json failed to parse", async () => {
     await using dir = tempDir("filter-bad-pkgjson", {
       packages: {

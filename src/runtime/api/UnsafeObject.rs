@@ -1,5 +1,8 @@
+use crate::node::types::Encoding;
+use crate::webcore::encoding;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
 use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
@@ -29,19 +32,19 @@ pub(crate) fn array_buffer_to_string<'a>(
     let array_buffer = jsc::ArrayBuffer::from_typed_array(global, buffer);
     match array_buffer.typed_array_type {
         JSType::Uint16Array | JSType::Int16Array => {
-            match bytemuck::try_cast_slice::<u8, u16>(array_buffer.byte_slice()) {
+            let bytes = array_buffer.byte_slice();
+            match bytemuck::try_cast_slice::<u8, u16>(bytes) {
                 Ok(utf16) => Ok(EncodedSlice::utf16(utf16).to_js(global)),
                 // Not at an even address: an `ArrayBuffer` over external memory, or the empty slice
                 // of a detached view.
                 Err(_) => {
-                    let utf16 = array_buffer
-                        .elements::<u16>()
-                        .iter()
-                        .map(|unit| unit.get())
-                        .collect();
-                    // Like `to_js`, the empty string for more units than a string can hold.
-                    Ok(jsc::bun_string_jsc::try_owned_utf16_into_js(global, utf16)
-                        .unwrap_or_else(|| JSValue::js_empty_string(global)))
+                    let string = encoding::to_bun_string(bytes, Encoding::Utf16le);
+                    // Like `to_js`: the empty string when a string cannot hold the units, or
+                    // cannot be allocated.
+                    if string.is_dead() {
+                        return Ok(JSValue::js_empty_string(global));
+                    }
+                    string.into_js(global)
                 }
             }
         }

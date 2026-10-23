@@ -1,6 +1,7 @@
 import { expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows, unalignedTypedArraySource } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows, tempDir, unalignedTypedArraySource } from "harness";
+import { readFileSync, truncateSync } from "node:fs";
+import { join } from "node:path";
 
 it("arrayBufferToString u8", async () => {
   var encoder = new TextEncoder();
@@ -181,6 +182,46 @@ it("Bun.unsafe.arrayBufferToString reads 16-bit units from an ArrayBuffer at an 
     exitCode: 0,
   });
 });
+
+// 2 ** 31 units are one more than a string can hold. The file is sparse, so a view of it takes no
+// memory until something reads it. Bun.mmap is not on Windows.
+it.skipIf(isWindows)(
+  "Bun.unsafe.arrayBufferToString returns an empty string for more 16-bit units than a string can hold",
+  async () => {
+    using dir = tempDir("unsafe-array-buffer-to-string", { "sparse.bin": "" });
+    truncateSync(join(String(dir), "sparse.bin"), 2 ** 32 + 2);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const before = process.memoryUsage.rss();
+        // The view at offset 0 is at an even address, the view at offset 1 at an odd address.
+        const lengths = [0, 1].map(offset => {
+          const view = new Uint16Array(Bun.mmap("sparse.bin", { offset, size: 2 ** 32 }).buffer);
+          return [view.length, Bun.unsafe.arrayBufferToString(view).length];
+        });
+        const copied = process.memoryUsage.rss() - before > 2 ** 30;
+        console.log(JSON.stringify({ lengths, copied }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify({
+          lengths: [
+            [2 ** 31, 0],
+            [2 ** 31, 0],
+          ],
+          copied: false,
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 it("Bun.unsafe.memoryFootprint is a number of bytes, or undefined where there is nothing to read it from", () => {
   let known = isMacOS || isWindows;

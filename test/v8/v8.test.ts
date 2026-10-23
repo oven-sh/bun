@@ -394,9 +394,8 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
     // Node 26.12.1 returns 0 for these: its V8 clamps a negative Smi to 0 when the value was not a
     // number to begin with. V8 fixed that in
-    // https://github.com/v8/v8/commit/42bc03b82e4792fc618e1ba41c7e8646184eaa6c. When the Node half
-    // of this test fails because Node ships that V8, replace the body with checkSameOutput and
-    // remove the notes about Node 26.12.1 in V8Value.cpp and module.js.
+    // https://github.com/v8/v8/commit/42bc03b82e4792fc618e1ba41c7e8646184eaa6c, and a Node with that
+    // V8 prints what Bun prints. The Node on the machine can be either one.
     it("wraps a value that is not a number and converts to a negative int32", async () => {
       const testName = "test_v8_value_uint32_value_negative_int_from_non_number";
       const expected = [
@@ -422,9 +421,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
         expect(linesOf(output), `addon built in ${BuildMode[buildMode]} mode`).toEqual(expected);
       }
 
-      const expectedUnderNode = expected.map(line => line.replace(/FromJust\(\) = \d+$/, "FromJust() = 0"));
+      const expectedWithV8Bug = expected.map(line => line.replace(/FromJust\(\) = \d+$/, "FromJust() = 0"));
       const nodeOutput = await runOn(Runtime.node, BuildMode.release, testName);
-      expect(linesOf(nodeOutput), "under Node").toEqual(expectedUnderNode);
+      expect([expected, expectedWithV8Bug], "under Node").toContainEqual(linesOf(nodeOutput));
     });
   });
 

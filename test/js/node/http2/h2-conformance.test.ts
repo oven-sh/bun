@@ -1431,9 +1431,9 @@ describe("inbound stream lifecycle", () => {
     expect(exitCode).toBe(0);
   }, 30_000);
 
-  // emitErrorToAllStreams must reject a non-numeric error code up front (the native
-  // conversion requires a number) instead of reading it once per live stream. goaway()
-  // is stubbed because its own number check sits in front of this path in destroy().
+  // A non-numeric error code is refused before a stream is torn down, and is never read (the
+  // native conversion requires a number). destroy() sends its GOAWAY itself: like node it does
+  // not call session.goaway(), which refuses a destroyed session.
   test("session teardown rejects a non-numeric error code instead of reading it per stream", async () => {
     const fixture = String.raw`
       const http2 = require("node:http2");
@@ -1462,7 +1462,7 @@ describe("inbound stream lifecycle", () => {
         const req = client.request({ ":method": "POST", ":path": "/" });
         req.on("error", e => console.log("req error", e.message));
         req.on("close", () => console.log("req close rst=" + req.rstCode));
-        client.goaway = () => {};
+        client.goaway = () => console.log("goaway() called");
         let calls = 0;
         try {
           client.destroy(new Error("boom"), {
@@ -1493,6 +1493,67 @@ describe("inbound stream lifecycle", () => {
       destroy:done
       req error boom
       req close rst=8"
+    `);
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // The server twin. A destroy() that throws did not destroy, so the retry must run the whole
+  // teardown: the stream closes and the session emits 'close'.
+  test("a server session is destroyed by the retry after a destroy() that threw", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      function encodeFrame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header.writeUInt8(type, 3);
+        header.writeUInt8(flags, 4);
+        header.writeUInt32BE(streamId & 0x7fffffff, 5);
+        return Buffer.concat([header, payload]);
+      }
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        const session = stream.session;
+        session.on("error", e => console.log("session error", e.message));
+        session.on("close", () => console.log("session close"));
+        stream.on("error", e => console.log("stream error", e.message));
+        stream.on("close", () => console.log("stream close rst=" + stream.rstCode));
+        try {
+          session.destroy(new Error("boom"), {});
+          console.log("destroy:returned");
+        } catch (e) {
+          console.log("destroy threw: " + e.code + " destroyed=" + session.destroyed);
+        }
+        session.destroy(null, 8);
+        console.log("destroy:done destroyed=" + session.destroyed);
+        // 'close' is one tick away. Without it the session would keep this process alive.
+        setImmediate(() => setImmediate(() => process.exit(0)));
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const socket = net.connect(server.address().port, "127.0.0.1", () => {
+          // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+          const request = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+          socket.write(Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1"));
+          socket.write(encodeFrame(0x4, 0, 0));
+          socket.write(encodeFrame(0x1, 0x4, 1, request));
+        });
+        socket.on("error", () => {});
+        socket.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "destroy threw: ERR_INVALID_ARG_TYPE destroyed=false
+      destroy:done destroyed=true
+      stream close rst=8
+      session close"
     `);
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);

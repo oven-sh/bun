@@ -2232,6 +2232,25 @@ export async function readdirSorted(path: string): Promise<string[]> {
 }
 
 /**
+ * `chmod -R a-w dir` until the returned value is disposed, which gives every entry its mode back.
+ * Symbolic links are left alone: `chmod` follows them. POSIX only.
+ */
+export function withoutWriteBits(dir: string): Disposable {
+  const modes: [path: string, mode: number][] = [[dir, fs.statSync(dir).mode & 0o7777]];
+  for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    const path = join(entry.parentPath, entry.name);
+    modes.push([path, fs.statSync(path).mode & 0o7777]);
+  }
+  for (const [path, mode] of modes) fs.chmodSync(path, mode & ~0o222);
+  return {
+    [Symbol.dispose]() {
+      for (const [path, mode] of modes) fs.chmodSync(path, mode);
+    },
+  };
+}
+
+/**
  * Helper function for making automatically lazily-executed promises.
  *
  * The difference is that the promise has not already started to be evaluated when it is created,

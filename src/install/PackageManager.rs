@@ -1398,7 +1398,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         return Ok(());
     }
 
-    let tempdir = get_temporary_directory(manager);
+    let staging = directories::try_get_temporary_directory(manager);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
         fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
@@ -1406,26 +1406,57 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
 
-    let node_gyp_tempdir = match tempdir
-        .handle
-        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
-    {
-        Ok(d) => d,
-        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-            // it should not exist
-            bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
-            Global::crash();
+    // The script is never renamed into the cache, so the temp directory can hold it too.
+    let (tempdir, tempdir_name, node_gyp_tempdir): (Fd, &[u8], bun_sys::Dir) = match staging {
+        Ok(staging) => {
+            let node_gyp_tempdir = match staging
+                .handle
+                .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
+            {
+                Ok(d) => d,
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
+                    // it should not exist
+                    bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
+                    Global::crash();
+                }
+                Err(e) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
+                        bstr::BStr::new(e.name()),
+                    );
+                    Global::crash();
+                }
+            };
+            (staging.handle.fd, staging.name, node_gyp_tempdir)
         }
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
+        Err(why) => {
+            let name = fs::RealFS::tmpdir_path();
+            let opened = bun_sys::Dir::cwd()
+                .make_open_path(name, Default::default())
+                .and_then(|tempdir| {
+                    tempdir
+                        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
+                        .map(|node_gyp_tempdir| (tempdir, node_gyp_tempdir))
+                });
+            match opened {
+                // Stays open until exit: `remove_node_gyp_tempdir` deletes through it.
+                Ok((tempdir, node_gyp_tempdir)) => (tempdir.into_raw(), name, node_gyp_tempdir),
+                Err(e) => {
+                    if PackageManager::verbose_install() {
+                        bun_core::warn!(
+                            "{} creating a directory for the node-gyp script in {}. Lifecycle scripts run without it.",
+                            bstr::BStr::new(e.name()),
+                            bun_core::fmt::quote(name),
+                        );
+                        bun_core::note!("{}", why);
+                    }
+                    return Ok(());
+                }
+            }
         }
     };
     if NODE_GYP_TEMPDIR
-        .set((tempdir.handle.fd, manager.node_gyp_tempdir_name.clone()))
+        .set((tempdir, manager.node_gyp_tempdir_name.clone()))
         .is_ok()
     {
         Global::add_exit_callback(remove_node_gyp_tempdir);
@@ -1491,7 +1522,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
     let parts: [&[u8]; 3] = [
-        strings::without_trailing_slash(tempdir.name),
+        strings::without_trailing_slash(tempdir_name),
         &[SEP],
         &manager.node_gyp_tempdir_name,
     ];

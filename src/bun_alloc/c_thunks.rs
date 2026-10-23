@@ -43,12 +43,18 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 #[macro_export]
 macro_rules! c_thunks_for_zone {
     ($name:literal) => {
+        // One zone for the alloc and free thunks. `get_zone!` expands to its
+        // own `static` per use, so it must appear once.
+        fn zone() -> &'static $crate::heap_breakdown::Zone {
+            $crate::get_zone!($name)
+        }
+
         pub extern "C" fn malloc_size(
             _: *mut ::core::ffi::c_void,
             len: usize,
         ) -> *mut ::core::ffi::c_void {
             if $crate::heap_breakdown::ENABLED {
-                return $crate::get_zone!($name)
+                return zone()
                     .malloc_zone_malloc(len)
                     .unwrap_or(::core::ptr::null_mut());
             }
@@ -67,7 +73,7 @@ macro_rules! c_thunks_for_zone {
             if $crate::heap_breakdown::ENABLED {
                 // SAFETY: `data` was allocated by this zone in one of the
                 // alloc thunks above.
-                unsafe { $crate::get_zone!($name).malloc_zone_free(data) };
+                unsafe { zone().malloc_zone_free(data) };
                 return;
             }
             // SAFETY: data was allocated by the default allocator (or is null).

@@ -274,6 +274,7 @@ impl<R> StyleRule<R> {
         if supports_nesting {
             helpers_newline(self, dest, supports_nesting, len)?;
             self.rules.to_css(dest)?;
+            dest.pending_semicolon = false;
             helpers_end(dest, has_declarations)?;
         } else {
             // This rule is serialized once per vendor prefix, and each pass
@@ -389,21 +390,7 @@ impl<R> StyleRule<R> {
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
-        if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
-                context.err = Some(crate::error::MinifyError {
-                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
-                    loc: self.loc,
-                });
-                return Err(MinifyErr::minify_err);
-            }
-        }
-        Ok(())
+        context.charge_selector_expansion(self.selectors.v.len(), self.loc)
     }
 
     /// Minify this rule's nested rules, bumping the selector-expansion
@@ -450,7 +437,10 @@ impl<R> StyleRule<R> {
             &mut context.handler_context,
             &mut handler_context,
         );
-        let result = self.rules.minify(context, parent_is_unused);
+        // After the swap `handler_context` is this rule's own: `NestedDeclarationsRule::minify` stages in it.
+        let result =
+            self.rules
+                .minify_nested(context, parent_is_unused, Some(&mut handler_context));
         core::mem::swap::<PropertyHandlerContext<'_>>(
             &mut context.handler_context,
             &mut handler_context,

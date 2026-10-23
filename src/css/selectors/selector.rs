@@ -1295,7 +1295,7 @@ pub(crate) mod serialize {
     /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
-    fn serialize_nesting(
+    pub(crate) fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
         first: bool,

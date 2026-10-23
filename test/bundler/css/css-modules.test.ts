@@ -586,6 +586,159 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // Declarations written after a nested rule print after it. `composes` in the
+  // leading block is still consumed and not printed.
+  itBundled("css-module/DeclarationsAfterNestedRule", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .base { color: red; }
+        .button {
+          composes: base;
+          &:hover { color: blue; }
+          color: green;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          base: "base_-MSaAA",
+          button: "base_-MSaAA button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .base_-MSaAA {
+          color: red;
+        }
+
+        .button_-MSaAA {
+        }
+
+        .button_-MSaAA:hover {
+          color: #00f;
+        }
+
+        .button_-MSaAA {
+          color: green;
+        }
+        "
+      `);
+    },
+  });
+
+  // `composes` has no place in the cascade. Written after a nested at-rule, it
+  // is still applied to the class and not printed, and the declaration next to
+  // it keeps its place after the at-rule.
+  itBundled("css-module/ComposesAfterNestedAtRule", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .base { color: red; }
+        .button {
+          @media screen { background: blue; }
+          composes: base;
+          color: green;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          base: "base_-MSaAA",
+          button: "base_-MSaAA button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .base_-MSaAA {
+          color: red;
+        }
+
+        .button_-MSaAA {
+        }
+
+        @media screen {
+          .button_-MSaAA {
+            background: #00f;
+          }
+        }
+
+        .button_-MSaAA {
+          color: green;
+        }
+        "
+      `);
+    },
+  });
+});
+
+// The check for a property that two composed classes both set reads the
+// properties of the class. A declaration written after a nested at-rule counts.
+test("css-module/ComposesConflictAfterNestedAtRule", async () => {
+  using dir = tempDir("css-module-composes-conflict", {
+    "a.module.css": `.foo {\n  composes: bar from "./b.module.css";\n  @media screen { background: blue }\n  color: red;\n}\n`,
+    "b.module.css": ".bar {\n  color: blue;\n}\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "a.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("The value of color in the class foo is undefined.");
+  // The declaration prints after the at-rule.
+  expect(stdout).toContain("background: #00f");
+  expect(stdout.indexOf("color: red")).toBeGreaterThan(stdout.indexOf("background: #00f"));
+  expect(exitCode).toBe(0);
+});
+
+// Written directly in a nested at-rule, `composes` stops the build, as it does
+// in a nested style rule. A minified `@media all` prints with no block of its
+// own, which does not make the `composes` valid.
+test.concurrent.each([
+  ["@media screen", []],
+  ["@media all", ["--minify"]],
+])("css-module/ComposesInNestedAtRule: %s %j", async (prelude, args) => {
+  using dir = tempDir("css-module-composes-in-at-rule", {
+    "a.module.css": `.bar {\n  color: blue;\n}\n.foo {\n  ${prelude} { composes: bar; color: red }\n}\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "a.module.css", ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(`"composes" is not allowed inside nested selectors`);
+  expect(stderr).toContain("Failed to generate CSS for this file");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });
 
 // `bun build --no-bundle` prints a module file with no link step. Class

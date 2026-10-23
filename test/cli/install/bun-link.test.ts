@@ -27,7 +27,7 @@ import {
   toBeValidBin,
   toHaveBins,
 } from "harness";
-import { basename, join } from "path";
+import { basename, join, relative } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -720,7 +720,10 @@ it("bun link <package> only writes package.json and a lockfile when --save is pa
 
 // https://github.com/oven-sh/bun/issues/24190
 describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspace member (%s linker)", linker => {
-  /** Installs the workspace, runs `bun link lib-to-link` in `packages/app` and says what that left behind. */
+  /**
+   * Installs the workspace, runs `bun link lib-to-link` in `packages/app` and says what that left behind.
+   * The registry has every name at 0.0.2: newer than the sibling `monkey`, and the version of the sibling `peer`.
+   */
   async function linkInMember(dependencies: Record<string, string>, ...flags: string[]) {
     using dir = tempDir("bun-link-member", {
       "lib/package.json": JSON.stringify({ name: "lib-to-link", version: "1.0.0" }),
@@ -728,15 +731,28 @@ describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspa
       "mono/package.json": JSON.stringify({ name: "mono", workspaces: ["packages/*"] }),
       "mono/packages/app/package.json": JSON.stringify({ name: "app", dependencies }),
       "mono/packages/util/package.json": JSON.stringify({ name: "util", version: "1.0.0" }),
+      "mono/packages/monkey/package.json": JSON.stringify({ name: "monkey", version: "0.0.1" }),
+      "mono/packages/peer/package.json": JSON.stringify({ name: "peer", version: "0.0.2" }),
       "mono/vendor/bar-0.0.2.tgz": await readFile(join(import.meta.dir, "bar-0.0.2.tgz")),
     });
     const mono = join(String(dir), "mono");
     const app = join(mono, "packages", "app");
+    const registry = await createTestContext();
+    await using _ = {
+      [Symbol.asyncDispose]: async () => {
+        destroyTestContext(registry);
+        // The context comes with a project folder. This helper has its own.
+        await rm(registry.package_dir, { recursive: true, force: true });
+      },
+    };
+    const asked: string[] = [];
+    setContextHandler(registry, dummyRegistryForContext(registry, asked));
     async function bun(cwd: string, ...args: string[]) {
       await using proc = spawn({
         cmd: [bunExe(), ...args],
         cwd,
-        env: { ...env, BUN_INSTALL: join(String(dir), "bun-install") },
+        // The variable reaches a command that takes the member for the project. `mono/bunfig.toml` does not.
+        env: { ...env, BUN_INSTALL: join(String(dir), "bun-install"), BUN_CONFIG_REGISTRY: registry.registry_url },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
@@ -750,12 +766,24 @@ describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspa
     const lockfile = await file(join(mono, "bun.lock")).text();
 
     const { stdout, stderr, exitCode } = await bun(app, "link", "lib-to-link", ...flags);
+    const root = await realpath(mono);
+    // The folder that a module of the member gets for each sibling the member depends on.
+    const loads: Record<string, string | null> = {};
+    for (const name of ["util", "monkey", "peer"].filter(name => name in dependencies)) {
+      const found =
+        (await realpath(join(app, "node_modules", name)).catch(() => null)) ??
+        (await realpath(join(mono, "node_modules", name)).catch(() => null));
+      loads[name] = found && relative(root, found).replaceAll("\\", "/");
+    }
     return {
       stderr,
       installed: stdout.includes("installed lib-to-link@link:lib-to-link"),
       linksToLib:
         (await realpath(join(linker === "hoisted" ? mono : app, "node_modules", "lib-to-link")).catch(() => null)) ===
         (await realpath(join(String(dir), "lib"))),
+      loads,
+      // What the registry was asked for, from the first command to the last.
+      asked: asked.map(url => new URL(url).pathname.replace(`/${registry.id}/`, "")),
       app: await readdirSorted(app),
       appNodeModules: await readdirSorted(join(app, "node_modules")).catch(() => []),
       dependencies: (await file(join(app, "package.json")).json()).dependencies,
@@ -774,6 +802,8 @@ describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspa
       stderr: "",
       installed: true,
       linksToLib: true,
+      loads: { util: "packages/util" },
+      asked: [],
       app: isolated ? ["node_modules", "package.json"] : ["package.json"],
       appNodeModules: isolated ? ["lib-to-link", "util"] : [],
       dependencies: { util: "workspace:*" },
@@ -787,6 +817,8 @@ describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspa
       stderr: "",
       installed: true,
       linksToLib: true,
+      loads: {},
+      asked: [],
       app: isolated ? ["node_modules", "package.json"] : ["package.json"],
       appNodeModules: isolated ? ["bar", "lib-to-link"] : [],
       dependencies: { bar },
@@ -800,6 +832,8 @@ describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspa
       stderr: expect.stringContaining("Saved lockfile"),
       installed: true,
       linksToLib: true,
+      loads: {},
+      asked: [],
       app: isolated ? ["node_modules", "package.json"] : ["package.json"],
       appNodeModules: isolated ? ["bar", "lib-to-link"] : [],
       dependencies: { bar, "lib-to-link": "link:lib-to-link" },
@@ -807,6 +841,24 @@ describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspa
         '"lib-to-link": "link:lib-to-link",',
         '"lib-to-link": ["lib-to-link@link:lib-to-link", {}],',
       ],
+      exitCode: 0,
+    });
+  });
+
+  // A `bun link <package>` that takes the member for the project asks the registry for both names and exits 0.
+  // The member then loads the registry's `monkey`, not its sibling.
+  it.concurrent("does not ask the registry for a sibling named by a range", async () => {
+    const siblings = { monkey: "*", peer: "^0.0.2" };
+    expect(await linkInMember(siblings)).toEqual({
+      stderr: "",
+      installed: true,
+      linksToLib: true,
+      loads: { monkey: "packages/monkey", peer: "packages/peer" },
+      asked: [],
+      app: isolated ? ["node_modules", "package.json"] : ["package.json"],
+      appNodeModules: isolated ? ["lib-to-link", "monkey", "peer"] : [],
+      dependencies: siblings,
+      addedToRootLockfile: [],
       exitCode: 0,
     });
   });

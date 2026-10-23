@@ -1182,19 +1182,9 @@ pub mod O {
     #[cfg(windows)]
     pub const SYNC: i32 = 0;
     #[cfg(unix)]
-    pub const DSYNC: i32 = libc::O_DSYNC;
-    #[cfg(windows)]
-    pub const DSYNC: i32 = 0;
-    #[cfg(unix)]
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
     pub const NOCTTY: i32 = 0;
-    #[cfg(windows)]
-    pub const ACCMODE: i32 = 3;
-    #[cfg(target_os = "macos")]
-    pub const SYMLINK: i32 = libc::O_SYMLINK;
-    #[cfg(not(target_os = "macos"))]
-    pub const SYMLINK: i32 = 0;
     #[cfg(target_os = "macos")]
     pub const EVTONLY: i32 = libc::O_EVTONLY;
     #[cfg(not(target_os = "macos"))]
@@ -1350,7 +1340,6 @@ impl Tag {
     pub const uv_pipe: Tag = Tag(90);
     pub const uv_tty_set_mode: Tag = Tag(91);
     pub const uv_os_homedir: Tag = Tag(93);
-    pub const WriteFile: Tag = Tag(94);
     pub const NtQueryDirectoryFile: Tag = Tag(95);
     #[cfg(windows)]
     pub(crate) const NtSetInformationFile: Tag = Tag(96);
@@ -1360,7 +1349,6 @@ impl Tag {
     pub(crate) const CloseHandle: Tag = Tag(98);
     #[cfg(windows)]
     pub(crate) const SetFilePointerEx: Tag = Tag(99);
-    pub const SetEndOfFile: Tag = Tag(100);
     // ── later additions — appended above the frozen range so existing
     // discriminants never shift.
     pub const dup2: Tag = Tag(101);
@@ -5381,14 +5369,10 @@ pub mod linux {
     pub struct E(pub(crate) u16);
     impl E {
         pub const SUCCESS: E = E(0);
-        pub const PERM: E = E(libc::EPERM as u16);
-        pub const NOENT: E = E(libc::ENOENT as u16);
         pub const INTR: E = E(libc::EINTR as u16);
         pub const AGAIN: E = E(libc::EAGAIN as u16);
-        pub const NOMEM: E = E(libc::ENOMEM as u16);
         pub const FAULT: E = E(libc::EFAULT as u16);
         pub const INVAL: E = E(libc::EINVAL as u16);
-        pub const NOSYS: E = E(libc::ENOSYS as u16);
         pub const TIMEDOUT: E = E(libc::ETIMEDOUT as u16);
         /// Decode a raw Linux syscall return (`-errno` on failure, ≥0 on success).
         #[inline]
@@ -5417,8 +5401,6 @@ pub mod linux {
         pub const PRI: u32 = libc::EPOLLPRI as u32;
         pub const ERR: u32 = libc::EPOLLERR as u32;
         pub const HUP: u32 = libc::EPOLLHUP as u32;
-        pub const RDHUP: u32 = libc::EPOLLRDHUP as u32;
-        pub const ET: u32 = libc::EPOLLET as u32;
         pub const ONESHOT: u32 = libc::EPOLLONESHOT as u32;
         pub const CTL_ADD: i32 = libc::EPOLL_CTL_ADD;
         pub const CTL_MOD: i32 = libc::EPOLL_CTL_MOD;
@@ -5493,12 +5475,8 @@ pub mod linux {
 
     /// inotify mask flags (`IN_*`).
     pub mod IN {
-        pub const ACCESS: u32 = libc::IN_ACCESS;
         pub const MODIFY: u32 = libc::IN_MODIFY;
         pub const ATTRIB: u32 = libc::IN_ATTRIB;
-        pub const CLOSE_WRITE: u32 = libc::IN_CLOSE_WRITE;
-        pub const CLOSE_NOWRITE: u32 = libc::IN_CLOSE_NOWRITE;
-        pub const OPEN: u32 = libc::IN_OPEN;
         pub const MOVED_FROM: u32 = libc::IN_MOVED_FROM;
         pub const MOVED_TO: u32 = libc::IN_MOVED_TO;
         pub const CREATE: u32 = libc::IN_CREATE;
@@ -5506,15 +5484,11 @@ pub mod linux {
         pub const DELETE_SELF: u32 = libc::IN_DELETE_SELF;
         pub const MOVE_SELF: u32 = libc::IN_MOVE_SELF;
         pub const ONLYDIR: u32 = libc::IN_ONLYDIR;
-        pub const DONT_FOLLOW: u32 = libc::IN_DONT_FOLLOW;
         pub const EXCL_UNLINK: u32 = libc::IN_EXCL_UNLINK;
-        pub const MASK_ADD: u32 = libc::IN_MASK_ADD;
         pub const ISDIR: u32 = libc::IN_ISDIR;
-        pub const ONESHOT: u32 = libc::IN_ONESHOT;
         pub const IGNORED: u32 = libc::IN_IGNORED;
         pub const Q_OVERFLOW: u32 = libc::IN_Q_OVERFLOW;
         pub const CLOEXEC: c_int = libc::IN_CLOEXEC;
-        pub const NONBLOCK: c_int = libc::IN_NONBLOCK;
         use core::ffi::c_int;
     }
 
@@ -5677,11 +5651,7 @@ pub mod darwin {
     pub mod EVFILT {
         pub const READ: i16 = libc::EVFILT_READ;
         pub const WRITE: i16 = libc::EVFILT_WRITE;
-        pub const VNODE: i16 = libc::EVFILT_VNODE;
         pub const PROC: i16 = libc::EVFILT_PROC;
-        pub const SIGNAL: i16 = libc::EVFILT_SIGNAL;
-        pub const TIMER: i16 = libc::EVFILT_TIMER;
-        pub const USER: i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
         /// xnu-private filter used by libdispatch's `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE`.
         /// Not in `<sys/event.h>` (only `<sys/event_private.h>`), so hard-code the value.
@@ -5692,32 +5662,16 @@ pub mod darwin {
         pub const ADD: u16 = libc::EV_ADD;
         pub const DELETE: u16 = libc::EV_DELETE;
         pub const ENABLE: u16 = libc::EV_ENABLE;
-        pub const DISABLE: u16 = libc::EV_DISABLE;
         pub const ONESHOT: u16 = libc::EV_ONESHOT;
         pub const CLEAR: u16 = libc::EV_CLEAR;
-        pub const RECEIPT: u16 = libc::EV_RECEIPT;
         pub const DISPATCH: u16 = libc::EV_DISPATCH;
-        pub const EOF: u16 = libc::EV_EOF;
         pub const ERROR: u16 = libc::EV_ERROR;
     }
     /// kqueue fflags (Darwin).
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
-        pub const EXITSTATUS: u32 = libc::NOTE_EXITSTATUS;
-        pub const SIGNAL: u32 = libc::NOTE_SIGNAL;
-        pub const FORK: u32 = libc::NOTE_FORK;
-        pub const EXEC: u32 = libc::NOTE_EXEC;
-        pub const TRIGGER: u32 = libc::NOTE_TRIGGER;
-        pub const DELETE: u32 = libc::NOTE_DELETE;
-        pub const WRITE: u32 = libc::NOTE_WRITE;
-        pub const EXTEND: u32 = libc::NOTE_EXTEND;
-        pub const ATTRIB: u32 = libc::NOTE_ATTRIB;
-        pub const LINK: u32 = libc::NOTE_LINK;
-        pub const RENAME: u32 = libc::NOTE_RENAME;
-        pub const REVOKE: u32 = libc::NOTE_REVOKE;
         /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
         /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
-        pub const MEMORYSTATUS_PRESSURE_NORMAL: u32 = 0x00000001;
         pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
         pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }
@@ -6150,7 +6104,6 @@ pub mod RTLD {
     // Windows `LoadLibrary` ignores these; provided so cross-platform call
     // sites compile. Values match POSIX so any bitmask logic stays inert.
     pub const LAZY: i32 = 0x1;
-    pub const LOCAL: i32 = 0;
 }
 
 /// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
@@ -8025,12 +7978,6 @@ pub mod posix {
     // Darwin/BSD, 23 on Windows) — keep the `libc` symbol on POSIX.
     pub mod AF {
         use core::ffi::c_int;
-        // Windows literals live in `bun_windows_sys::ws2_32` (leaf tier-0); route
-        // through it so the hardcoded `2/23` exists in exactly one place.
-        #[cfg(windows)]
-        pub const UNSPEC: c_int = bun_windows_sys::ws2_32::AF_UNSPEC;
-        #[cfg(windows)]
-        pub const UNIX: c_int = bun_windows_sys::ws2_32::AF_UNIX;
         #[cfg(windows)]
         pub const INET: c_int = bun_windows_sys::ws2_32::AF_INET;
         #[cfg(windows)]
@@ -8062,7 +8009,6 @@ pub mod posix {
     // POSIX-standard values; libuv re-uses the same numbers on Windows
     // (`uv/win.h`), so these are target-invariant.
     pub const F_OK: c_int = 0;
-    pub const R_OK: c_int = 4;
     pub const W_OK: c_int = 2;
     pub const X_OK: c_int = 1;
 
@@ -8628,29 +8574,19 @@ pub mod freebsd {
         pub const WRITE: i16 = libc::EVFILT_WRITE;
         pub const VNODE: i16 = libc::EVFILT_VNODE;
         pub const PROC: i16 = libc::EVFILT_PROC;
-        pub const SIGNAL: i16 = libc::EVFILT_SIGNAL;
-        pub const TIMER: i16 = libc::EVFILT_TIMER;
-        pub const USER: i16 = libc::EVFILT_USER;
     }
     /// kqueue event flags (FreeBSD).
     pub mod EV {
         pub const ADD: u16 = libc::EV_ADD;
         pub const DELETE: u16 = libc::EV_DELETE;
         pub const ENABLE: u16 = libc::EV_ENABLE;
-        pub const DISABLE: u16 = libc::EV_DISABLE;
         pub const ONESHOT: u16 = libc::EV_ONESHOT;
         pub const CLEAR: u16 = libc::EV_CLEAR;
-        pub const RECEIPT: u16 = libc::EV_RECEIPT;
         pub const DISPATCH: u16 = libc::EV_DISPATCH;
-        pub const EOF: u16 = libc::EV_EOF;
-        pub const ERROR: u16 = libc::EV_ERROR;
     }
     /// kqueue fflags (FreeBSD).
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
-        pub const FORK: u32 = libc::NOTE_FORK;
-        pub const EXEC: u32 = libc::NOTE_EXEC;
-        pub const TRIGGER: u32 = libc::NOTE_TRIGGER;
         pub const DELETE: u32 = libc::NOTE_DELETE;
         pub const WRITE: u32 = libc::NOTE_WRITE;
         pub const EXTEND: u32 = libc::NOTE_EXTEND;

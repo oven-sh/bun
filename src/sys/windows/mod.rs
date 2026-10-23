@@ -525,9 +525,6 @@ pub unsafe fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> 
     unsafe { externs::CopyFileW(source, dest, bFailIfExists) }
 }
 
-/// `bun.windows.Error` — alias for `Win32Error`.
-pub type Error = Win32Error;
-
 /// `bun.windows.translateNTStatusToErrno` — thin wrapper over the canonical
 /// table in `bun_errno::windows::translate_ntstatus_to_errno`. This crate only
 /// adds the debug-build `Output::debug_warn` diagnostics (which `bun_errno`
@@ -971,8 +968,6 @@ pub const ENABLE_ECHO_INPUT: DWORD = 0x004;
 pub const ENABLE_LINE_INPUT: DWORD = 0x002;
 pub const ENABLE_PROCESSED_INPUT: DWORD = 0x001;
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x200;
-pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
-pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 
 pub use bun_windows_sys::externs::GetConsoleCP;
 pub use bun_windows_sys::externs::GetConsoleOutputCP;
@@ -1161,7 +1156,6 @@ pub const MS_VC_EXCEPTION: u32 = 0x406d1388;
 #[allow(nonstandard_style)]
 pub mod disposition {
     use core::ffi::c_long;
-    pub const ExceptionContinueExecution: c_long = 0;
     pub const ExceptionContinueSearch: c_long = 1;
 }
 
@@ -2009,34 +2003,6 @@ pub(crate) fn FreeEnvironmentStringsW(penv: *mut u16) {
     // SAFETY: penv from GetEnvironmentStringsW
     let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(penv) };
     debug_assert!(rc != 0);
-}
-
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum GetEnvironmentVariableError {
-    #[error("EnvironmentVariableNotFound")]
-    EnvironmentVariableNotFound,
-    #[error("Unexpected")]
-    Unexpected,
-}
-
-pub fn GetEnvironmentVariableW(
-    lpName: LPWSTR,
-    lpBuffer: *mut u16,
-    nSize: DWORD,
-) -> Result<DWORD, GetEnvironmentVariableError> {
-    // SAFETY: caller provides valid buffer
-    let rc = unsafe { kernel32_2::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
-
-    if rc == 0 {
-        match Win32Error::get() {
-            Win32Error::ENVVAR_NOT_FOUND => {
-                return Err(GetEnvironmentVariableError::EnvironmentVariableNotFound);
-            }
-            _ => return Err(GetEnvironmentVariableError::Unexpected),
-        }
-    }
-
-    Ok(rc)
 }
 
 pub mod env;

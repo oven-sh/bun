@@ -69,7 +69,6 @@ unsafe extern "C" {
     pub fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
-    pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_heap_malloc_aligned(heap: *mut Heap, size: usize, alignment: usize) -> *mut c_void;
     fn mi_heap_zalloc_aligned(heap: *mut Heap, size: usize, alignment: usize) -> *mut c_void;
     pub fn mi_heap_realloc_aligned(

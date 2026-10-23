@@ -274,19 +274,13 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            let ExprKind::Ident(name) = hir[e].kind else {
-                continue;
-            };
-            let idents = &bound.idents_out_of_namespaces;
-            if idents.binary_search_by_key(&e, |it| it.0).is_ok()
-                && matches!(self.resolve_identifier(file, e, name, true), Ok(Some(found)) if found.file != file)
-            {
-                continue;
-            }
             if bound.symbol(symbol).flags.intersects(SymFlags::VALUE) {
                 u.referenced[symbol.idx()] |= reference_kinds(SymFlags::VALUE);
                 continue;
             }
+            let ExprKind::Ident(name) = hir[e].kind else {
+                continue;
+            };
             let Ok(at) = bound.alias_idents.binary_search_by_key(&e, |alias| alias.0) else {
                 continue;
             };

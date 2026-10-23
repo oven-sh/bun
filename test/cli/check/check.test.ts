@@ -18291,6 +18291,231 @@ wrap<Missing>(function ({ variant = "x", other, ...props }, ref) { table[variant
       expect(exitCode).toBe(1);
     });
 
+    test("every check sees that another file's export of a namespace hides a value declared outside of it", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "noUnusedLocals": true, "noUnusedParameters": true, "types": [], "isolatedModules": false } }
+`,
+        "assigned-one.ts": `namespace N { export let q: string | undefined; export let w: string | undefined; export let param: number; }
+`,
+        "assigned-three.ts": `namespace N { neverAssigned = "s"; param = 1; }
+`,
+        "assigned-two.ts": `declare function init(): string | undefined;
+let q = init();
+let w = init();
+namespace N { q = undefined; export function reset() { w = undefined; } }
+if (q) { const f = () => q.length; f(); }
+if (w) { const f = () => w.length; f(); }
+function outer(param: string | undefined) {
+  if (param) { return () => param.length; }
+  return undefined;
+}
+let neverAssigned: string;
+namespace N { export let neverAssigned: string; }
+outer(neverAssigned);
+`,
+        "aug.ts": `import "./mod";
+let a: boolean;
+let onlyHere: boolean;
+let unusedLet: number;
+const enum CE { A = "outer" }
+class K { i = "outer" }
+declare module "./mod" {
+  namespace N {
+    let a2: typeof a;
+    let k2: typeof K;
+    let ce: typeof CE.A;
+    let here: typeof onlyHere;
+  }
+}
+export {};
+`,
+        "mod.ts": `export namespace N { export let a: string | number = 1; export const enum CE { A = 1 } export class K { i = 1 } }
+`,
+        "one.ts": `namespace N {
+  export let a: string | number | undefined;
+  export let b: string | number = 1;
+  export const c = { k: 1 } as const;
+  export let d: string;
+  export let auto;
+  export let e: string | undefined;
+  export function fn(x: string): string;
+  export function fn(x: number): number;
+  export function fn(x: any) { return x; }
+  export enum En { A = 1 }
+  export const enum CEn { A = 1 }
+  export class K { static s = 1; i = 1; }
+  export let g: { p?: string } = {};
+  export var hoisted = 1;
+  export namespace Deep { export let z: string | number = 1; }
+}
+enum Top { P = 1 }
+`,
+        "order-four.ts": `namespace N { export const oc: 0 = k; export const od = new kk2(); }
+class k {}
+class kk2 {}
+`,
+        "order-one.ts": `namespace N { export const x = 1; export let m: string | number = 1; export const k = 1; }
+`,
+        "order-three.ts": `let m: string | number;
+namespace N {
+  export function f() { return m; }
+  export const oa: 0 = m;
+}
+m = "s";
+namespace N {
+  export const ob: 0 = m;
+}
+`,
+        "order-two.ts": `namespace N { export const y: 0 = x; }
+const x = "outer";
+`,
+        "two.ts": `let a: boolean | undefined;
+let b: boolean;
+const c = { k: "outer" } as const;
+let d: number;
+let auto;
+let e: number | undefined;
+function fn(x: boolean) { return x; }
+enum En { A = "outer" }
+const enum CEn { A = "outer" }
+class K { static s = "outer"; i = "outer"; }
+let g: { p?: number } = {};
+var hoisted = "outer";
+let z: boolean = true;
+const P = "outer";
+namespace N {
+  // narrowing by typeof, truthiness and assignment, in the body and in functions
+  if (typeof a === "string") { const r: 0 = a; } else if (typeof a === "number") { const r: 0 = a; } else { const r: 0 = a; }
+  a = "s"; export const a1: 0 = a;
+  a = 1; export const a2: 0 = a;
+  a = true;
+  export function f1() { if (a) { const r: 0 = a; } a = undefined; return a; }
+  export const f2 = () => { b = "s"; const r: 0 = b; return () => b; };
+  b = 2; export const b1: 0 = b; export const b2: 0 = (() => b)();
+  export const c1: 0 = c.k;
+  export const d1: 0 = d;
+  d = "s"; d = 1;
+  auto = 1; export const au1: 0 = auto; auto = "s"; export const au2: 0 = auto;
+  export function f3() { return auto; }
+  e ??= "s"; export const e1: 0 = e; e = 1;
+  export const n1: 0 = fn("s"), n2: 0 = fn(1), n3 = fn(true);
+  export const en1: 0 = En.A, en2: 0 = CEn.A;
+  export const k1: 0 = K.s, k2: 0 = new K().i;
+  export class L extends K { j = this.i; }
+  export const l1: 0 = new L().j;
+  if (g.p) { const r: 0 = g.p; }
+  g = { p: 1 }; g.p = 1;
+  export const h1: 0 = hoisted;
+  for (a of ["x"]) { const r: 0 = a; }
+  for (b in {}) { const r: 0 = b; }
+  [a, b] = ["q", 2]; ({ a, b } = { a: 1, b: "w" });
+  a++; b += 1;
+  export const t1 = \`\${a}\${b}\`;
+  export function f4(p = a, q = () => b) { const r: [0, 0] = [p, q()]; return r; }
+  export namespace Deep { z = "s"; export const z1: 0 = z; z = true; export const a3: 0 = a; }
+  export const typed: typeof a = true, typed2: typeof K = K, typed3: typeof En.A = En.A;
+  export const sat = a satisfies string | number | undefined;
+  delete g.p;
+  label: while (a) { a = undefined; break label; }
+  switch (a) { case "x": { const r: 0 = a; break; } case true: break; }
+  try { a = "t"; } catch { a = 2; } finally { const r: 0 = a; }
+}
+enum Top { Q = P }
+function usesOuter() { return [a, b, c, d, auto, e, fn, En, CEn.A, K, g, hoisted, z, P, Top.Q]; }
+usesOuter();
+`,
+        "useaug.ts": `import { N } from "./mod";
+import "./aug";
+export const r1: 0 = N.a2, r2: 0 = new N.k2().i, r3: 0 = N.ce, r4: 0 = N.here;
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "assigned-two.ts(5,26): error TS18048: 'q' is possibly 'undefined'.
+          assigned-two.ts(6,26): error TS18048: 'w' is possibly 'undefined'.
+          assigned-two.ts(13,7): error TS2454: Variable 'neverAssigned' is used before being assigned.
+          aug.ts(2,5): error TS6133: 'a' is declared but its value is never read.
+          aug.ts(4,5): error TS6133: 'unusedLet' is declared but its value is never read.
+          aug.ts(5,12): error TS6196: 'CE' is declared but never used.
+          aug.ts(6,7): error TS6196: 'K' is declared but never used.
+          aug.ts(11,20): error TS2475: 'const' enums can only be used in property or index access expressions or the right hand side of an import declaration or export assignment or type query.
+          console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
+          one.ts(6,14): error TS7005: Variable 'auto' implicitly has an 'any' type.
+          order-four.ts(1,28): error TS2322: Type '1' is not assignable to type '0'.
+          order-four.ts(1,61): error TS2449: Class 'kk2' used before its declaration.
+          order-three.ts(4,16): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          order-three.ts(8,16): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          order-two.ts(1,28): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(5,5): error TS7034: Variable 'auto' implicitly has type 'any' in some locations where its type cannot be determined.
+          two.ts(17,38): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(17,38): error TS6133: 'r' is declared but its value is never read.
+          two.ts(17,90): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(17,90): error TS6133: 'r' is declared but its value is never read.
+          two.ts(17,115): error TS2322: Type 'undefined' is not assignable to type '0'.
+          two.ts(17,115): error TS6133: 'r' is declared but its value is never read.
+          two.ts(18,25): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(19,23): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(20,3): error TS2322: Type 'true' is not assignable to type 'string | number | undefined'.
+          two.ts(21,41): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          two.ts(21,41): error TS6133: 'r' is declared but its value is never read.
+          two.ts(22,44): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(22,44): error TS6133: 'r' is declared but its value is never read.
+          two.ts(23,23): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(23,47): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(24,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(25,16): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(26,12): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(29,27): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(29,38): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(30,16): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(30,33): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(30,56): error TS2769: No overload matches this call.
+            The last overload gave the following error.
+              Argument of type 'boolean' is not assignable to parameter of type 'number'.
+          two.ts(31,16): error TS2322: Type 'En' is not assignable to type '0'.
+          two.ts(31,31): error TS2322: Type 'CEn' is not assignable to type '0'.
+          two.ts(32,16): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(32,29): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(34,16): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(35,20): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(35,20): error TS6133: 'r' is declared but its value is never read.
+          two.ts(36,9): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(36,17): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(37,16): error TS2322: Type 'number' is not assignable to type '0'.
+          two.ts(38,28): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(38,28): error TS6133: 'r' is declared but its value is never read.
+          two.ts(39,25): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(39,25): error TS6133: 'r' is declared but its value is never read.
+          two.ts(43,63): error TS2322: Type 'string | number | undefined' is not assignable to type '0'.
+            Type 'undefined' is not assignable to type '0'.
+          two.ts(43,66): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          two.ts(44,49): error TS2322: Type 'string' is not assignable to type '0'.
+          two.ts(44,60): error TS2322: Type 'boolean' is not assignable to type 'string | number'.
+          two.ts(44,83): error TS2322: Type 'string | number | undefined' is not assignable to type '0'.
+            Type 'undefined' is not assignable to type '0'.
+          two.ts(45,16): error TS2322: Type 'boolean' is not assignable to type 'number'.
+          two.ts(49,21): error TS2678: Type 'string' is not comparable to type 'number'.
+          two.ts(49,34): error TS6133: 'r' is declared but its value is never read.
+          two.ts(49,58): error TS2678: Type 'boolean' is not comparable to type 'number'.
+          two.ts(50,53): error TS2322: Type 'string | number | undefined' is not assignable to type '0'.
+            Type 'undefined' is not assignable to type '0'.
+          two.ts(50,53): error TS6133: 'r' is declared but its value is never read.
+          two.ts(53,44): error TS7005: Variable 'auto' implicitly has an 'any' type.
+          useaug.ts(3,14): error TS2322: Type 'string | number' is not assignable to type '0'.
+            Type 'string' is not assignable to type '0'.
+          useaug.ts(3,28): error TS2322: Type 'number' is not assignable to type '0'.
+          useaug.ts(3,50): error TS2322: Type 'CE' is not assignable to type '0'.
+          useaug.ts(3,64): error TS2322: Type 'boolean' is not assignable to type '0'."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

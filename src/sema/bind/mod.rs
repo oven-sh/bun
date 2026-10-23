@@ -1625,8 +1625,8 @@ pub struct BoundIn<S: Storage> {
     /// scope. It takes the whole program to tell whether the alias is a value. Sorted by
     /// expression.
     pub alias_idents: S::List<(ExprId, ScopeId)>,
-    /// The identifiers in a namespace or an enum that resolve to a declaration outside of it, each with its enclosing
-    /// scope. Another file's declaration of the namespace or enum may export the name. Sorted by expression.
+    /// The identifiers in a namespace or an enum that resolve to a declaration outside of it, each with the scope of the
+    /// innermost such namespace or enum. Another file's declaration of it may export the name. Sorted by expression.
     pub idents_out_of_namespaces: S::List<(ExprId, ScopeId)>,
     /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
     pub arguments_objects: S::Few<ExprId>,

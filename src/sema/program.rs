@@ -7493,6 +7493,51 @@ impl<'s> Files<'s> {
             self.memo.module_links.insert_ref(module, links);
         }
         self.is_merged = true;
+        self.free_identifiers_hidden_by_namespace_exports();
+    }
+
+    /// At a namespace or an enum, `NameResolver.Resolve` looks in the exports of the merged symbol before it continues in
+    /// the enclosing scope. The binder only knows its own file's declarations. Where it has resolved an identifier to
+    /// one outside of the namespace, and another file exports the name from there, the identifier becomes one that
+    /// the file doesn't declare.
+    fn free_identifiers_hidden_by_namespace_exports(&mut self) {
+        for at in 0..self.modules.len() {
+            let (file, bound) = (FileId(at as u32), &self.modules[at].bound);
+            // A file refers to few names often.
+            let mut known = FxHashMap::default();
+            let is_hidden = |&&(e, scope): &&(ExprId, ScopeId)| {
+                let ExprKind::Ident(name) = self.hir(file)[e].kind else {
+                    return false;
+                };
+                *known.entry((scope, name)).or_insert_with(|| {
+                    (self.resolve_name(file, scope, name, SymFlags::VALUE))
+                        .is_some_and(|found| found.file != file)
+                })
+            };
+            let idents = bound.idents_out_of_namespaces.iter();
+            let hidden: Vec<(ExprId, ScopeId)> = idents.filter(is_hidden).copied().collect();
+            if hidden.is_empty() {
+                continue;
+            }
+            let is_hidden = |e: ExprId| hidden.binary_search_by_key(&e, |it| it.0).is_ok();
+            let mut free: Vec<_> = bound.free_idents.iter().chain(&hidden).copied().collect();
+            free.sort_unstable_by_key(|it| it.0);
+            let aliases = bound.alias_idents.iter().filter(|it| !is_hidden(it.0));
+            let aliases: Vec<_> = aliases.copied().collect();
+            let assignments = bound.assignments.iter().filter(|it| !is_hidden(it.1));
+            let assignments: Vec<_> = assignments.copied().collect();
+            let (arena, bound) = (self.arena, &mut self.modules[at].bound);
+            bound.free_idents = Fixed::copied_in(arena, &free);
+            bound.alias_idents = Fixed::copied_in(arena, &aliases);
+            bound.assignments = Fixed::copied_in(arena, &assignments);
+            let mut e = 0;
+            bound.expr_symbol.change_each_in(arena, |symbol| {
+                if is_hidden(ExprId(e)) {
+                    *symbol = SymbolId::NONE;
+                }
+                e += 1;
+            });
+        }
     }
 
     /// Converts `links`, whose `resolved_exports` are the tables' entries, to the form that's

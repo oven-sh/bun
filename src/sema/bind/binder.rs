@@ -1775,13 +1775,13 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `Resolve` for the value `name`, limited to what the file declares. Runs once everything is
-    /// declared. Returns `None` for `argumentsSymbol`. Sets `outside_namespace` if the search continues outside of a
-    /// namespace or an enum.
+    /// declared. Returns `None` for `argumentsSymbol`. If the search continues outside of a namespace or an enum,
+    /// `innermost_namespace` is set to the scope of the first one.
     fn resolve(
         &self,
         mut scope: ScopeId,
         name: Atom,
-        outside_namespace: &mut bool,
+        innermost_namespace: &mut ScopeId,
     ) -> Option<SymbolId> {
         let (b, tables) = (&self.b, &self.tables);
         // `lastLocation`: the kind of the scope the search has just left.
@@ -1853,7 +1853,11 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 return None;
             }
-            *outside_namespace |= matches!(s.kind, ScopeKind::Module(_) | ScopeKind::Enum(_));
+            if innermost_namespace.is_none()
+                && matches!(s.kind, ScopeKind::Module(_) | ScopeKind::Enum(_))
+            {
+                *innermost_namespace = scope;
+            }
             from = s.kind;
             scope = s.parent;
         }
@@ -1941,7 +1945,8 @@ impl<'f, 's> Binder<'f, 's> {
             return self.b.arguments_objects.binary_search(&e).is_ok();
         }
         let scope = self.scope_of_name(node);
-        let Some(symbol) = self.resolve(scope, known::arguments, &mut false) else {
+        let mut innermost_namespace = ScopeId::NONE;
+        let Some(symbol) = self.resolve(scope, known::arguments, &mut innermost_namespace) else {
             return true;
         };
         self.b
@@ -2044,8 +2049,8 @@ impl<'f, 's> Binder<'f, 's> {
             if name == known::empty {
                 continue;
             }
-            let mut outside_namespace = false;
-            let Some(symbol) = self.resolve(scope, name, &mut outside_namespace) else {
+            let mut innermost_namespace = ScopeId::NONE;
+            let Some(symbol) = self.resolve(scope, name, &mut innermost_namespace) else {
                 self.b.arguments_objects.push(expr);
                 continue;
             };
@@ -2057,8 +2062,8 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 continue;
             }
-            if symbol.is_some() && outside_namespace {
-                self.b.idents_out_of_namespaces.push((expr, scope));
+            if symbol.is_some() && innermost_namespace.is_some() {
+                (self.b.idents_out_of_namespaces).push((expr, innermost_namespace));
             }
             if symbol.is_none() {
                 self.b.free_idents.push((expr, scope));

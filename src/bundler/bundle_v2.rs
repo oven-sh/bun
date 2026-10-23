@@ -8178,16 +8178,6 @@ pub mod bv2_impl {
         }
     }
 
-    impl PartialEq for StableRef {
-        #[inline]
-        fn eq(&self, other: &Self) -> bool {
-            let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
-            let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
-            a_idx == b_idx && a_ref == b_ref
-        }
-    }
-    impl Eq for StableRef {}
-
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct ImportTracker {
         pub(crate) source_index: Index,

@@ -5460,12 +5460,6 @@ pub mod color {
     pub enum ColorError {
         Parse,
     }
-    impl core::fmt::Display for ColorError {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            f.write_str("parse")
-        }
-    }
-    impl core::error::Error for ColorError {}
 
     /// Either an angle or a number.
     pub(crate) enum AngleOrNumber {

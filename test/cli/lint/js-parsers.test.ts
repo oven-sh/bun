@@ -1954,6 +1954,29 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
         expect(result.exitCode).toBe(2);
       });
 
+      test.each(["installed", "not installed"])(
+        "with an .eslintrc, nor does it for JavaScript that only the parser can read (eslint is %s)",
+        async eslint => {
+          const files = {
+            ".eslintrc.json": JSON.stringify({ root: true, parser: "some-parser", rules: { "no-var": "error" } }),
+            "node_modules/some-parser/package.json": JSON.stringify({ name: "some-parser", main: "index.js" }),
+            "node_modules/some-parser/index.js": "module.exports = { parse() {} };",
+            "a.js": "var a;\n",
+            "b.js": "var b = await import.source('./b.wasm');\n",
+            "c.js": "var c = #;\n",
+          };
+          const installed = { "node_modules/eslint/package.json": `{ "name": "eslint", "version": "8.57.1" }` };
+          const result = await lint({ ...files, ...(eslint === "installed" && installed) }, ["-f", "unix", "."]);
+          expect(result.stdout).toContain("a.js:1:1: Unexpected var");
+          expect(result.stderr).toContain(
+            "2 files were not linted because the parser in your config only works with an eslint.config.js (2 *.js): b.js, c.js\n",
+          );
+          expect(result.stderr).not.toContain("bun add");
+          expect(result.stderr).not.toContain("install");
+          expect(result.exitCode).toBe(2);
+        },
+      );
+
       describe("a block that a processor finds in a file", () => {
         const project = {
           ...jsonPackage(),

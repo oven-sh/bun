@@ -2095,13 +2095,6 @@ impl<'a> Parser<'a> {
                     || item.path.text == b"@jest/globals"
                     || item.path.text == b"vitest"
                 {
-                    if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                        // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if item.path.text != b"bun:test" {
-                            cache.input_hash = None;
-                        }
-                    }
-
                     break 'outer;
                 }
             }
@@ -2262,11 +2255,6 @@ impl<'a> Parser<'a> {
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });
-            }
-
-            // If we injected jest globals, we need to disable the runtime transpiler cache
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                cache.input_hash = None;
             }
         }
 

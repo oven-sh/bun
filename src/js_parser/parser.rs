@@ -381,13 +381,20 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
             hasher.update(&[self.react_compiler as u8]);
+
+            // `bun test` injects `bun:test` imports for bare jest globals and
+            // rewrites `vitest` / `@jest/globals` imports to `bun:test`. Both
+            // change the printed output, so test-mode entries get their own key.
+            // Added only when set so existing entries stay valid.
+            if self.inject_jest_globals {
+                hasher.update(b"jest");
+            }
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add

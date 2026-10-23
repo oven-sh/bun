@@ -519,6 +519,69 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
   });
+
+  // `bun test` rewrites `vitest` / `@jest/globals` imports to `bun:test` and
+  // injects a `bun:test` import for bare jest globals. An entry a normal run
+  // wrote for the same bytes has neither, so it must not be served to `bun test`.
+  describe("bun test does not reuse entries written by a normal run", () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+
+    const run = (args: string[]) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd: temp_dir, env });
+      return { success: result.success, stderr: result.stderr.toString() };
+    };
+
+    const setup = (code: string) => {
+      mkdirSync(join(temp_dir, "node_modules", "vitest"), { recursive: true });
+      writeFileSync(
+        join(temp_dir, "node_modules", "vitest", "package.json"),
+        `{"name":"vitest","version":"0.0.0","main":"index.js"}`,
+      );
+      writeFileSync(
+        join(temp_dir, "node_modules", "vitest", "index.js"),
+        `export const it = () => { throw new Error("real vitest loaded"); };\nexport const expect = it;`,
+      );
+      writeFileSync(join(temp_dir, "ordinary.ts"), code + filler);
+      writeFileSync(join(temp_dir, "a.test.ts"), code + filler);
+    };
+
+    const expectTestPasses = () => {
+      const cached = readFileSync(join(cache_dir, readdirSync(cache_dir)[0]));
+      const first = run(["test", "./a.test.ts"]);
+      expect(first.stderr).toContain("1 pass");
+      expect(first.success).toBeTrue();
+      // The test-mode output replaces the entry in place.
+      expect(newCacheCount()).toBe(0);
+      expect(readFileSync(join(cache_dir, readdirSync(cache_dir)[0])).equals(cached)).toBeFalse();
+
+      const second = run(["test", "./a.test.ts"]);
+      expect(second.stderr).toContain("1 pass");
+      expect(second.success).toBeTrue();
+      expect(newCacheCount()).toBe(0);
+    };
+
+    test("vitest import is still rewritten to bun:test", () => {
+      setup(`import { it, expect } from "vitest";\nit("x", () => {\n  expect(1 + 1).toBe(2);\n});`);
+
+      const ordinary = run(["-e", `await import("./ordinary.ts")`]);
+      expect(ordinary.stderr).toContain("real vitest loaded");
+      expect(ordinary.success).toBeFalse();
+      expect(newCacheCount()).toBe(1);
+
+      expectTestPasses();
+    });
+
+    test("bare jest globals are still injected", () => {
+      setup(`it("x", () => {\n  expect(1 + 1).toBe(2);\n});`);
+
+      const ordinary = run(["-e", `await import("./ordinary.ts")`]);
+      expect(ordinary.stderr).toContain("it is not defined");
+      expect(ordinary.success).toBeFalse();
+      expect(newCacheCount()).toBe(1);
+
+      expectTestPasses();
+    });
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

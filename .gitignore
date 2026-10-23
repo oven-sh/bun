@@ -206,6 +206,9 @@ core.[0-9]*
 # them on disk; keep ignored so they don't show as untracked).
 src/jsc/bindings/GeneratedJS2Native.zig
 src/jsc/bindings/GeneratedBindings.zig
+# Legacy output of test/js/bun/ffi/addr32.test.ts, which used to compile its
+# fixture into the source tree; checkouts that ran the old test still have it.
+/test/js/bun/ffi/libaddr32.so
 
 # Web Streams rewrite working notes (design docs, spec transcription, review logs).
 # Kept locally for the ongoing work; not part of the source tree.

@@ -100,15 +100,26 @@ impl BlobContentType {
 
     /// The type that script gave to `new Blob()`, `new File()` or `slice()`.
     pub fn from_script(slice: &[u8]) -> Self {
-        let Some(given) = bun_http_types::MimeType::interned_name(slice) else {
-            return Self::from_lowercased(slice);
-        };
-        match bun_http_types::MimeType::by_name_static(given).map(|mime| mime.value) {
-            Some(std::borrow::Cow::Borrowed(header)) if header != given => {
-                Self::Named { given, header }
-            }
-            _ => Self::Static(given),
-        }
+        Self::from_known_name(slice).unwrap_or_else(|| Self::from_lowercased(slice))
+    }
+
+    /// The `type` of the Blob that a clone is made from. Not every Blob's is lowercase.
+    pub fn from_clone(given: &[u8]) -> Self {
+        Self::from_known_name(given)
+            .filter(|known| known.given() == given)
+            .unwrap_or_else(|| Self::Owned(std::sync::Arc::from(given)))
+    }
+
+    fn from_known_name(slice: &[u8]) -> Option<Self> {
+        let given = bun_http_types::MimeType::interned_name(slice)?;
+        Some(
+            match bun_http_types::MimeType::by_name_static(given).map(|mime| mime.value) {
+                Some(std::borrow::Cow::Borrowed(header)) if header != given => {
+                    Self::Named { given, header }
+                }
+                _ => Self::Static(given),
+            },
+        )
     }
 
     /// Heap-owned ASCII-lowercased copy of `slice`.

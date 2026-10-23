@@ -3873,7 +3873,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     if !content_type.is_empty() {
         blob.content_type
-            .set(BlobContentType::from_script(&content_type));
+            .set(BlobContentType::from_clone(&content_type));
         blob.content_type_was_set.set(content_type_was_set);
     }
 

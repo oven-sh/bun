@@ -1,0 +1,84 @@
+---
+title: MCP server for Bun docs
+sidebarTitle: MCP Server
+mode: center
+---
+
+Bun's documentation site provides a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes a search tool for AI coding assistants to query the docs programmatically.
+
+The server URL is:
+
+```
+https://bun.com/docs/mcp
+```
+
+It uses Streamable HTTP transport and requires no authentication or API key. There are no usage limits.
+
+## Claude Code
+
+```bash
+claude mcp add --transport http bun-docs https://bun.com/docs/mcp
+```
+
+## Cursor
+
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "bun-docs": {
+      "url": "https://bun.com/docs/mcp"
+    }
+  }
+}
+```
+
+## VS Code
+
+Add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "bun-docs": {
+      "type": "http",
+      "url": "https://bun.com/docs/mcp"
+    }
+  }
+}
+```
+
+## Windsurf
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "bun-docs": {
+      "serverUrl": "https://bun.com/docs/mcp"
+    }
+  }
+}
+```
+
+## Zed
+
+Add to Zed's settings (`Zed > Settings > Open Settings`), under `"context_servers"`:
+
+```json
+{
+  "context_servers": {
+    "bun-docs": {
+      "settings": {
+        "url": "https://bun.com/docs/mcp"
+      }
+    }
+  }
+}
+```
+
+## What it provides
+
+The MCP server exposes a single `search` tool that queries the Bun documentation. AI assistants can use this to look up API details, configuration options, and guides without leaving your editor.

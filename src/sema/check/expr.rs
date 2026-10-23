@@ -4542,6 +4542,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 continue;
             }
+            // `checkImportType` visits the argument, which is a string here, and no type argument.
+            if let NodeData::Type(inner) = hir.data(at)
+                && matches!(hir[inner].kind, TypeNodeKind::Import { spec, .. } if spec.is_some())
+            {
+                continue;
+            }
             let from = pending.len();
             hir.for_each_child(at, &mut |child| {
                 pending.push(child);

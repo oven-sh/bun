@@ -2320,6 +2320,24 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     pub fn lex(&mut self) -> Result<(), LexerError> {
+        self.lex_tokens()?;
+        self.report_unclosed_quote();
+        Ok(())
+    }
+
+    fn report_unclosed_quote(&mut self) {
+        let msg: &[u8] = match self.chars.state {
+            CharState::Normal => return,
+            CharState::Single => b"Unclosed single quote",
+            CharState::Double => b"Unclosed double quote",
+        };
+        // A lexer error makes this state unreliable: `echo "$(cmd |& tr -d '"')"` ends in Single.
+        if self.errors.is_empty() {
+            self.add_error(msg);
+        }
+    }
+
+    fn lex_tokens(&mut self) -> Result<(), LexerError> {
         loop {
             // Fast path: bulk-consume runs of non-special bytes in Normal state.
             // The guard-arm chain below does not compile to a jump table in

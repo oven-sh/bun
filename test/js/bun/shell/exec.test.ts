@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -15,6 +15,24 @@ describe("bun exec", () => {
     .exitCode(1)
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
     .runAsTest("it works on command fail");
+
+  // Without a POSIX shell (always on Windows), lifecycle scripts and `--filter`
+  // run a script as `bun exec --no-env-file <script>`. The command in front of
+  // the open quote does not run.
+  for (const flags of [[], ["--no-env-file"]]) {
+    TestBuilder.command`${BUN} exec ${flags} ${'touch MARKER; echo "start'}`
+      .env(bunEnv)
+      .ensureTempDir()
+      .stdout("")
+      .stderr((stderr, dir) =>
+        expect(normalizeBunSnapshot(stderr, dir)).toBe(
+          "error: Failed to run script <dir>/[eval] due to error Unclosed double quote",
+        ),
+      )
+      .exitCode(1)
+      .doesNotExist("MARKER")
+      .runAsTest(["a script that ends inside an open quote is refused", ...flags].join(" "));
+  }
 
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)

@@ -165,7 +165,8 @@ if (!isMainThread) {
     for (const s of open) s.terminate();
     summary.closed = holders();
 
-    await connectAll([...Array(BUDGET).fill(NO_RECORD_HEAD), RECORD_HEAD]);
+    // All six alike, because the loop may read them in any order.
+    await connectAll(Array(BUDGET + 1).fill(NO_RECORD_HEAD));
     sweepSocketTimers(1);
     expectedDeadline = getEventLoopStats().sweepDeadline;
     for (const s of open) s.resume();

@@ -1664,6 +1664,22 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
     expect(exitCode).toBe(1);
   });
 
+  // The link reads as a missing file, and nothing can be created through it.
+  test.skipIf(isWindows).each([[[]], [["--parallel=2"]]])(
+    "a file of vitest that can't be written fails the test that adds to it %j",
+    async args => {
+      using dir = tempDir("snapshot-unwritable", {
+        "a.test.js": importing("vitest") + `test("adds", () => { expect(1).toMatchSnapshot(); });`,
+        "b.test.js": importing("vitest") + `test("passes", () => {});`,
+        "__snapshots__/b.test.js.snap": headers.vitest,
+      });
+      symlinkSync(join(String(dir), "missing", "a.snap"), join(String(dir), "__snapshots__", "a.test.js.snap"));
+      const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "false" }, ...args);
+      expect(stderr).toContain("Failed to open snapshot file");
+      expect({ pass, fail, exitCode }).toEqual({ pass: 1, fail: 1, exitCode: 1 });
+    },
+  );
+
   test("Vitest does not mind the white space around a snapshot, Jest does", async () => {
     const files = (format: "jest" | "vitest") => ({
       "a.test.js": `test("t", () => { expect({ a: 1 }).toMatchSnapshot(); });`,
@@ -1744,6 +1760,47 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots", "-t", "same");
       const { "d > gone 1": _, ...after } = before;
       expect(snap(dir)).toBe(file(format, after));
+      expect(exitCode).toBe(0);
+    });
+
+    // How Jest 30 and Vitest 5 write the key, and they keep the entry too.
+    test.each([
+      ["jest", "new\\\\nline 1"],
+      ["vitest", "new\nline 1"],
+    ] as const)("%s: the entry of a skipped test with a line break in its name stays", async (format, key) => {
+      const saved = headers[format] + `\nexports[\`${key}\`] = \`1\`;\n` + "\nexports[`other 1`] = `2`;\n";
+      using dir = tempDir("snapshot-obsolete-line-break", {
+        "a.test.js":
+          importing(format === "vitest" ? "vitest" : null) +
+          `test.skip("new\\nline", () => { expect(1).toMatchSnapshot(); });
+           test("other", () => { expect(2).toMatchSnapshot(); });`,
+        "__snapshots__/a.test.js.snap": saved,
+      });
+      const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+      expect(snap(dir)).toBe(saved);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun: a test that runs again replaces what its earlier attempt wrote", async () => {
+      using dir = tempDir("snapshot-update-attempts", {
+        "a.test.js": `
+          let runs = 0, attempts = 0;
+          test("repeats", () => { expect("run " + ++runs).toMatchSnapshot(); }, { repeats: 2 });
+          test("between", () => { expect("between").toMatchSnapshot(); });
+          test("retries", () => {
+            expect("attempt " + ++attempts).toMatchSnapshot();
+            if (attempts < 2) throw new Error("again");
+          }, { retry: 2 });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+      expect(snap(dir)).toBe(
+        headers.bun +
+          '\nexports[`repeats 1`] = `"run 3"`;\n' +
+          '\nexports[`between 1`] = `"between"`;\n' +
+          '\nexports[`retries 1`] = `"attempt 2"`;\n',
+      );
+      expect(stderr).toContain("+3 added");
       expect(exitCode).toBe(0);
     });
 

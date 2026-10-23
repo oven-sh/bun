@@ -1,5 +1,4 @@
 use core::ffi::c_ulong;
-use std::io::Write as _;
 
 use crate::Error;
 use bun_collections::{StringArrayHashMap, StringHashMap};
@@ -323,17 +322,22 @@ impl Snapshots {
             name.extend_from_slice(format.hint_separator());
             name.extend_from_slice(hint);
         }
-        if format == Format::Jest && strings::index_of_any(&name, b"\r\n").is_some() {
-            name = name.iter().fold(Vec::with_capacity(name.len() + 8), |mut escaped, byte| {
-                match byte {
-                    b'\r' => escaped.extend_from_slice(b"\\r"),
-                    b'\n' => escaped.extend_from_slice(b"\\n"),
-                    _ => escaped.push(*byte),
-                }
-                escaped
-            });
+        Ok(Self::escape_line_breaks(format, name))
+    }
+
+    /// Jest's keys spell a line break as `\r` or `\n`.
+    fn escape_line_breaks(format: Format, name: Vec<u8>) -> Vec<u8> {
+        if format != Format::Jest || strings::index_of_any(&name, b"\r\n").is_none() {
+            return name;
         }
-        Ok(name)
+        name.iter().fold(Vec::with_capacity(name.len() + 8), |mut escaped, byte| {
+            match byte {
+                b'\r' => escaped.extend_from_slice(b"\\r"),
+                b'\n' => escaped.extend_from_slice(b"\\n"),
+                _ => escaped.push(*byte),
+            }
+            escaped
+        })
     }
 
     /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
@@ -398,17 +402,7 @@ impl Snapshots {
     ) -> Result<Outcome, Error> {
         let format = self.format_of(expect)?;
         if format == Format::Bun {
-            if let bun_sys::Result::Err(err) = self.open_to_append() {
-                // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
-                // not an enum — match arms require structural-eq; use if-chain instead.
-                return Err(if err.syscall == bun_sys::Tag::mkdir {
-                    Error::FailedToMakeSnapshotDirectory
-                } else if err.syscall == bun_sys::Tag::open {
-                    Error::FailedToOpenSnapshotFile
-                } else {
-                    Error::SnapshotFailed
-                });
-            }
+            self.open_to_append()?;
         }
 
         let (mut key, counter) = self.add_count(expect, format, hint)?;
@@ -417,6 +411,8 @@ impl Snapshots {
         key.push(b' ');
         key.extend_from_slice(counter);
 
+        // `--update-snapshots` doesn't read a file in Bun's format, so an entry that's already there is from this run.
+        let mut written_by_earlier_attempt: Option<Box<[u8]>> = None;
         let mut key_in_file = None;
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
@@ -441,6 +437,8 @@ impl Snapshots {
             }
             if is_to_be_renamed {
                 self.values.swap_remove(&key_in_file);
+            } else if format == Format::Bun {
+                written_by_earlier_attempt = Some(entry.value.clone());
             }
         } else if bun_core::ci_info::is_ci() && !self.update_snapshots {
             self.last_error_snapshot_name = Some(key.into_boxed_slice());
@@ -451,13 +449,25 @@ impl Snapshots {
             let escape = |text| {
                 strings::format_escapes(text, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() })
             };
-            self.file_buf.reserve(key.len() + received.len() + 32);
-            write!(self.file_buf, "\nexports[`{}`] = `{}`;\n", escape(&key), escape(received))
-                .map_err(|_| Error::WriteError)?;
-        } else if let Some(file) = self._current_file.as_mut() {
-            file.dirty = true;
+            let text_of = |value| format!("\nexports[`{}`] = `{}`;\n", escape(&key), escape(value)).into_bytes();
+            let earlier = written_by_earlier_attempt.as_deref().map(text_of);
+            match earlier.and_then(|text| Some((strings::last_index_of(&self.file_buf, &text)?, text.len()))) {
+                Some((at, len)) => drop(self.file_buf.splice(at..at + len, text_of(received))),
+                None => self.file_buf.extend_from_slice(&text_of(received)),
+            }
+        } else if self._current_file.as_ref().is_some_and(|file| !file.dirty) {
+            // `write_sorted` writes the file after the tests. If it can't be written, the test that adds to it fails.
+            self.open_to_append()?;
+            if let Some(file) = self._current_file.as_mut() {
+                file.dirty = true;
+                if let Some(opened) = file.file.take() {
+                    let _ = opened.close();
+                }
+            }
         }
-        self.added += 1;
+        if written_by_earlier_attempt.is_none() {
+            self.added += 1;
+        }
         self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false });
         Ok(Outcome::Written)
     }
@@ -581,7 +591,8 @@ impl Snapshots {
                     TestScheduleEntry::Describe(describe) => scopes.push(describe),
                     TestScheduleEntry::TestCallback(test) => {
                         if except.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
-                            names.insert(&full_test_name(test, format.name_separator(), format == Format::Jest), ());
+                            let name = full_test_name(test, format.name_separator(), format == Format::Jest);
+                            names.insert(&Self::escape_line_breaks(format, name), ());
                         }
                     }
                 }
@@ -1178,7 +1189,21 @@ impl Snapshots {
         Ok(success.get())
     }
 
-    fn open_to_append(&mut self) -> bun_sys::Result<()> {
+    fn open_to_append(&mut self) -> Result<(), Error> {
+        self.try_open_to_append().map_err(|err| {
+            // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
+            // not an enum — match arms require structural-eq; use if-chain instead.
+            if err.syscall == bun_sys::Tag::mkdir {
+                Error::FailedToMakeSnapshotDirectory
+            } else if err.syscall == bun_sys::Tag::open {
+                Error::FailedToOpenSnapshotFile
+            } else {
+                Error::SnapshotFailed
+            }
+        })
+    }
+
+    fn try_open_to_append(&mut self) -> bun_sys::Result<()> {
         let Some(current) = self._current_file.as_mut().filter(|file| file.file.is_none()) else {
             return Ok(());
         };

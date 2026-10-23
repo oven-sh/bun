@@ -139,6 +139,41 @@ impl PollOrFd {
 // keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
 pub use crate::posix_event_loop::FileType;
 
+/// When a reader asks the event loop to watch its fd.
+#[cfg(unix)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum ReadPoll {
+    /// A regular file or a block device: `O_NONBLOCK` has no effect on its reads, so there is nothing to wait for. Also any other blocking fd: its read blocks the caller.
+    Never,
+    /// A FIFO, a socket or a terminal.
+    AtStart,
+    /// Once a read answers `EAGAIN`. The file type does not say if a read of this fd waits, or if the event loop can watch it: a read of `/dev/null` or `/dev/zero` never waits, and Linux epoll refuses both with `EPERM` (macOS kqueue: `EINVAL`).
+    OnWouldBlock,
+}
+
+#[cfg(unix)]
+impl ReadPoll {
+    /// `nonblocking` is `O_NONBLOCK` on the open file description. `is_terminal` is asked only for a character device.
+    pub fn for_mode(
+        mode: bun_sys::Mode,
+        nonblocking: bool,
+        is_terminal: impl FnOnce() -> bool,
+    ) -> ReadPoll {
+        use bun_sys::S;
+        if S::ISREG(mode) || S::ISBLK(mode) {
+            return ReadPoll::Never;
+        }
+        if S::ISFIFO(mode) || S::ISSOCK(mode) || (S::ISCHR(mode) && is_terminal()) {
+            return ReadPoll::AtStart;
+        }
+        if nonblocking {
+            ReadPoll::OnWouldBlock
+        } else {
+            ReadPoll::Never
+        }
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ReadState {
     /// The most common scenario

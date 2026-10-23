@@ -6,6 +6,8 @@ use bun_collections::VecExt;
 use bun_io as aio;
 #[cfg(not(windows))]
 use bun_io::FileType;
+#[cfg(unix)]
+use bun_io::pipes::ReadPoll;
 use bun_io::{BufferedReader, Chunk, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -100,6 +102,9 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// `ReadPoll::OnWouldBlock`: `pollable`, but not watched until a read answers `EAGAIN`.
+    #[cfg(not(windows))]
+    pub(crate) poll_on_would_block: bool,
 }
 
 impl Default for OpenedFileBlob {
@@ -110,6 +115,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            poll_on_would_block: false,
         }
     }
 }
@@ -209,14 +216,17 @@ impl Lazy {
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
-            if sys::S::ISREG(mode) {
+            // A blocking fd is a terminal only if `file.is_atty` recorded it above.
+            let read_poll = ReadPoll::for_mode(mode, is_nonblocking, || {
+                file.is_atty.unwrap_or(false) || (is_nonblocking && sys::isatty(fd))
+            });
+            // A regular file and a block device are read by offset.
+            if read_poll == ReadPoll::Never {
                 is_nonblocking = false;
             }
 
-            // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
-            this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
-                || is_nonblocking
-                || file.is_atty.unwrap_or(false);
+            this.pollable = read_poll != ReadPoll::Never;
+            this.poll_on_would_block = read_poll == ReadPoll::OnWouldBlock;
             this.file_type = if sys::S::ISFIFO(mode) {
                 FileType::Pipe
             } else if sys::S::ISSOCK(mode) {
@@ -305,6 +315,8 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
+        #[cfg(unix)]
+        let mut poll_on_would_block = false;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
@@ -330,6 +342,7 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                                poll_on_would_block = opened.poll_on_would_block;
                             }
                             #[cfg(unix)]
                             {
@@ -374,14 +387,16 @@ impl FileReader {
         if was_lazy {
             // The across-read ref roots the JS wrapper (`increment_count`
             // upgrades `this_jsvalue` to Strong) so an event-loop callback
-            // firing with no JS on the stack never lands on a freed box. For a
-            // POSIX non-pollable regular file every read is synchronous
-            // (`read_file` → `sys::pread`), so there is no such callback —
-            // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
-            // regular files, so the ref is always taken there.
+            // firing with no JS on the stack never lands on a freed box. On
+            // POSIX that callback is the poll's, so the ref is taken when the
+            // event loop starts to watch the fd: here, or in
+            // `hold_ref_if_watched` for `ReadPoll::OnWouldBlock`. Every read
+            // of an fd that is not watched is synchronous — holding the Strong
+            // there would root an abandoned reader forever and leak its fd.
+            // Windows file reads are async via libuv even for regular files,
+            // so the ref is always taken there.
             #[cfg(unix)]
-            let need_io_ref = pollable;
+            let need_io_ref = pollable && !poll_on_would_block;
             #[cfg(windows)]
             let need_io_ref = true;
             if need_io_ref {
@@ -389,6 +404,11 @@ impl FileReader {
                 self.waiting_for_on_reader_done.set(true);
             }
             self.reader().set_limit(self.max_size);
+            #[cfg(unix)]
+            if poll_on_would_block {
+                // `start()` does not register a paused reader. Every read unpauses it first.
+                self.reader().pause();
+            }
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
@@ -403,6 +423,16 @@ impl FileReader {
                     unsafe { Source::decrement_count(parent) };
                 }
                 return streams::Start::Err(e);
+            }
+            #[cfg(unix)]
+            if poll_on_would_block {
+                if let Some(offset @ 1..) = self.start_offset {
+                    // Its reads go by the fd's position. An fd that cannot seek has no position to start at.
+                    match sys::set_file_offset(self.fd.get(), offset as u64) {
+                        Err(err) if err.get_errno() != sys::E::ESPIPE => self.on_reader_error(err),
+                        _ => {}
+                    }
+                }
             }
         } else {
             #[cfg(unix)]
@@ -565,9 +595,7 @@ impl FileReader {
         }
         if !self.reader().has_pending_read() {
             self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-            // the raw re-entrancy-safe entry (its dispatch runs user JS).
-            unsafe { IOReader::read(self.reader.get()) };
+            self.read();
         }
     }
 
@@ -858,6 +886,37 @@ impl FileReader {
         self.reader().deinit();
     }
 
+    /// Takes the across-read ref once a read has left the event loop watching the fd (`ReadPoll::OnWouldBlock`). `on_start` has taken it for every other pollable fd.
+    fn hold_ref_if_watched(&self) {
+        #[cfg(unix)]
+        if !self.waiting_for_on_reader_done.get() && self.reader().has_pending_read() {
+            self.waiting_for_on_reader_done.set(true);
+            self.parent_const().increment_count();
+        }
+    }
+
+    /// `IOReader::read`, for a caller that does nothing after it.
+    fn read(&self) {
+        #[cfg(unix)]
+        {
+            use bun_io::pipe_reader::PosixFlags;
+            // This read can be the one that arms the poll of a `ReadPoll::OnWouldBlock` reader.
+            if !self.waiting_for_on_reader_done.get()
+                && self.reader().flags.contains(PosixFlags::POLLABLE)
+            {
+                // SAFETY: see `parent()`. The read dispatches user JS; the pin keeps `self` for the call after it.
+                let _pin = unsafe { RefPtr::init_ref(self.parent()) };
+                // SAFETY: as below.
+                unsafe { IOReader::read(self.reader.get()) };
+                self.hold_ref_if_watched();
+                return;
+            }
+        }
+        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+        // the raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { IOReader::read(self.reader.get()) };
+    }
+
     /// Done, with no stored read error left for one more pull to return.
     fn reader_finished(&self) -> bool {
         self.reader().is_done() && self.read_error.get().is_none()
@@ -903,9 +962,7 @@ impl FileReader {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
+                self.read();
             }
         } else {
             self.reader().pause();
@@ -976,6 +1033,7 @@ impl readable_stream::SourceContext for FileReader {
             self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
+            self.hold_ref_if_watched();
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {

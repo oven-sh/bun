@@ -6,6 +6,7 @@ import {
   readableStreamToBytes,
   readableStreamToText,
 } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import {
   bunEnv,
@@ -20,7 +21,18 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  openAsBlob,
+  openSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -30,6 +42,8 @@ import {
   readerConsumers as directReaderConsumers,
   shapes as directShapes,
 } from "./direct-stream-contract";
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
@@ -2924,6 +2938,463 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
     expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
     expect(exitCode).toBe(0);
   });
+});
+
+// A read of /dev/null, /dev/zero or /dev/urandom never waits, and the event loop
+// refuses to watch them (Linux epoll with EPERM, macOS kqueue with EINVAL). So the
+// stream reads such a device first, and asks the event loop only when a read would block.
+describe.skipIf(isWindows)("Bun.file().stream() over a character device", () => {
+  it("/dev/null ends without a chunk", async () => {
+    const chunks = [];
+    for await (const chunk of Bun.file("/dev/null").stream()) chunks.push(chunk);
+    const fd = openSync("/dev/null", constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      expect({
+        chunks,
+        stream: await readableStreamToText(Bun.file("/dev/null").stream()),
+        body: await readableStreamToText(new Response(Bun.file("/dev/null")).body),
+        openAsBlob: await readableStreamToText((await openAsBlob("/dev/null")).stream()),
+        nonblockingFd: await readableStreamToText(Bun.file(fd).stream()),
+      }).toEqual({ chunks: [], stream: "", body: "", openAsBlob: "", nonblockingFd: "" });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it.each([8, 300_000])("/dev/zero yields the %d bytes of a slice", async length => {
+    const bytes = await readableStreamToBytes(
+      Bun.file("/dev/zero")
+        .slice(3, 3 + length)
+        .stream(),
+    );
+    expect(bytes).toEqual(new Uint8Array(length));
+  });
+
+  it("/dev/urandom yields the bytes of a slice", async () => {
+    const bytes = await readableStreamToBytes(Bun.file("/dev/urandom").slice(5, 21).stream());
+    expect(bytes.length).toBe(16);
+  });
+
+  // A native sink reads through `read()`, a JS reader through `read_into()`.
+  it("is read by a native sink", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(String((await req.bytes()).length)),
+    });
+    const upload = body => fetch(server.url, { method: "POST", body }).then(res => res.text());
+    using dir = tempDir("file-stream-device", {});
+    const out = join(String(dir), "out.bin");
+    expect({
+      uploadZero: await upload(Bun.file("/dev/zero").slice(0, 300_000).stream()),
+      uploadNull: await upload(Bun.file("/dev/null").stream()),
+      writeZero: await Bun.write(out, Bun.file("/dev/zero").slice(0, 300_000).stream()),
+      writeNull: await Bun.write(out, Bun.file("/dev/null").stream()),
+      rewriteNull: await new HTMLRewriter().transform(new Response(Bun.file("/dev/null").stream())).text(),
+    }).toEqual({ uploadZero: "300000", uploadNull: "0", writeZero: 300_000, writeNull: 0, rewriteNull: "" });
+  });
+
+  // A device with no end is read in a child: a stream of it that does not stop reading takes its process with it.
+  it("/dev/stdin is read when stdin is /dev/null, and an unfinished stream lets the process exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        console.log(JSON.stringify(await Bun.readableStreamToText(Bun.file("/dev/stdin").stream())));
+        for (const path of ["/dev/zero", "/dev/urandom"]) {
+          const { value } = await Bun.file(path).stream().getReader().read();
+          console.log(path, value.length > 0);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '""\n/dev/zero true\n/dev/urandom true\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The stream roots itself once the event loop watches its fd. The event loop refuses /dev/zero and can watch
+  // /dev/random, but a read of either never waits, so neither is watched.
+  it("an abandoned reader does not leak its fd after GC", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { readdirSync } from "node:fs";
+        const openFds = () => readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").length;
+        const before = openFds();
+        for (const path of ["/dev/zero", "/dev/random"]) {
+          for (let i = 0; i < 30; i++) await Bun.file(path).stream().getReader().read();
+        }
+        for (let i = 0; i < 30; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log(openFds() - before);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 30 readers of each device were abandoned. Allow a small slack for GC nondeterminism.
+    expect({ leakedFds: Number(stdout) < 10 ? "under 10" : stdout, stderr, exitCode }).toEqual({
+      leakedFds: "under 10",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // An eventfd stands in for a device that the event loop can watch: it is not a terminal, and a read of an
+  // empty one answers EAGAIN. Its 8 bytes are the sum of what was written to it.
+  describe.skipIf(!isLinux)("a read that would block", () => {
+    const eventfd = () => {
+      const libc = dlopen(libcPathForDlopen(), { eventfd: { args: ["u32", "i32"], returns: "i32" } });
+      const [EFD_CLOEXEC, EFD_NONBLOCK] = [0o2000000, 0o4000];
+      const fd = libc.symbols.eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+      libc.close();
+      expect(fd).toBeGreaterThan(2);
+      return fd;
+    };
+    const html = Buffer.from("<b>x</b>");
+    const collect = async () => {
+      for (let i = 0; i < 5; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
+
+    it("waits for the fd, with nothing but the pending read left of the stream", async () => {
+      const fd = eventfd();
+      try {
+        const pending = (() => Bun.file(fd).slice(0, 8).stream().getReader().read())();
+        await collect();
+        writeSync(fd, html);
+        const { value } = await pending;
+        expect(Buffer.from(value).toString()).toBe("<b>x</b>");
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    // Its own copy of the fd stays open: the stream roots itself while the event loop can still call it.
+    it("is not collected while the event loop watches the fd", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { dlopen } from "bun:ffi";
+          import { readFileSync, readdirSync, writeSync } from "node:fs";
+          const libc = dlopen(process.env.LIBC, { eventfd: { args: ["u32", "i32"], returns: "i32" } });
+          const fd = libc.symbols.eventfd(0, 0o4000 /* EFD_NONBLOCK */);
+          const openFds = () => readdirSync("/proc/self/fd").length;
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          const one = new Uint8Array(8).fill(1);
+          const before = openFds();
+          await (async () => {
+            const reader = Bun.file(fd).stream().getReader();
+            writeSync(fd, one);
+            await reader.read();
+            // The stream pulls again by itself, finds the fd empty and waits for it.
+            await tick();
+            // This chunk fills the queue of the stream, so it does not pull a third time. The fd is watched again.
+            writeSync(fd, one);
+          })();
+          while (!/eventfd-count:\\s+0\\n/.test(readFileSync("/proc/self/fdinfo/" + fd, "utf8"))) await tick();
+          const copies = new Set();
+          const deadline = Date.now() + 250;
+          do {
+            Bun.gc(true);
+            await tick();
+            copies.add(openFds() - before);
+          } while (Date.now() < deadline);
+          console.log([...copies].join(","));
+          process.exit(0);
+          `,
+        ],
+        env: { ...bunEnv, LIBC: libcPathForDlopen() },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+    });
+
+    // Every non-blocking fd used to be watched from the start of its stream. Now a read that finds data leaves
+    // the fd unwatched: nothing roots the abandoned stream, and nothing holds the process.
+    it("is not watched when its read finds data", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { dlopen } from "bun:ffi";
+          import { readFileSync, readdirSync, writeSync } from "node:fs";
+          const libc = dlopen(process.env.LIBC, { eventfd: { args: ["u32", "i32"], returns: "i32" } });
+          const fd = libc.symbols.eventfd(0, 0o4000 /* EFD_NONBLOCK */);
+          const openFds = () => readdirSync("/proc/self/fd").length;
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          const before = openFds();
+          for (let i = 0; i < 30; i++) {
+            writeSync(fd, new Uint8Array(8).fill(1));
+            Bun.file(fd).stream().getReader();
+            // The stream pulls once by itself, and takes what was written.
+            while (!/eventfd-count:\\s+0\\n/.test(readFileSync("/proc/self/fdinfo/" + fd, "utf8"))) await tick();
+          }
+          for (let i = 0; i < 30; i++) {
+            Bun.gc(true);
+            await tick();
+          }
+          console.log(openFds() - before);
+          `,
+        ],
+        env: { ...bunEnv, LIBC: libcPathForDlopen() },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ leakedFds: Number(stdout) < 10 ? "under 10" : stdout, stderr, exitCode }).toEqual({
+        leakedFds: "under 10",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("Bun.write() of the stream waits for the fd", async () => {
+      const fd = eventfd();
+      using dir = tempDir("file-stream-eventfd", {});
+      const out = join(String(dir), "out.bin");
+      try {
+        const written = Bun.write(out, Bun.file(fd).slice(0, 8).stream());
+        await collect();
+        writeSync(fd, html);
+        expect(await written).toBe(8);
+        expect(readFileSync(out, "utf8")).toBe("<b>x</b>");
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it("an HTMLRewriter that nothing observes keeps rewriting after its input waited", async () => {
+      const fd = eventfd();
+      try {
+        const { promise, resolve } = Promise.withResolvers();
+        (() => {
+          new HTMLRewriter()
+            .on("b", { element: element => resolve(element.tagName) })
+            .transform(new Response(Bun.file(fd).slice(0, 8).stream()));
+        })();
+        await collect();
+        writeSync(fd, html);
+        expect(await promise).toBe("b");
+      } finally {
+        closeSync(fd);
+      }
+    });
+  });
+
+  // An LD_PRELOAD shim stands between the stream and libc. It fails epoll_ctl(ADD) of a character device with
+  // ENOMEM and of an inotify fd with EPERM, and it records each lseek of a character device or fails it with the
+  // errno in FAIL_LSEEK. FilePoll registers through syscall(SYS_epoll_ctl), not through the libc epoll_ctl symbol.
+  it.skipIf(!isLinux || !cc)(
+    "asks for no epoll_ctl until a read would block, and seeks to the start of a slice",
+    async () => {
+      const shim = /* c */ `
+      #define _GNU_SOURCE
+      #include <dlfcn.h>
+      #include <errno.h>
+      #include <stdarg.h>
+      #include <stdio.h>
+      #include <stdlib.h>
+      #include <string.h>
+      #include <sys/epoll.h>
+      #include <sys/stat.h>
+      #include <sys/syscall.h>
+      #include <unistd.h>
+
+      static int is_device(int fd) {
+        struct stat st;
+        return fstat(fd, &st) == 0 && S_ISCHR(st.st_mode);
+      }
+
+      static int is_inotify(int fd) {
+        char link[32], target[32] = {0};
+        snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+        return readlink(link, target, sizeof(target) - 1) > 0 && strcmp(target, "anon_inode:inotify") == 0;
+      }
+
+      long syscall(long number, ...) {
+        static long (*real)(long, long, long, long, long, long, long);
+        va_list ap;
+        va_start(ap, number);
+        long a = va_arg(ap, long), b = va_arg(ap, long), c = va_arg(ap, long);
+        long d = va_arg(ap, long), e = va_arg(ap, long), f = va_arg(ap, long);
+        va_end(ap);
+        if (!real) real = dlsym(RTLD_NEXT, "syscall");
+        if (number == SYS_epoll_ctl && b == EPOLL_CTL_ADD && (is_device((int)c) || is_inotify((int)c))) {
+          errno = is_device((int)c) ? ENOMEM : EPERM;
+          return -1;
+        }
+        return real(number, a, b, c, d, e, f);
+      }
+
+      off_t lseek(int fd, off_t offset, int whence) {
+        static off_t (*real)(int, off_t, int);
+        if (!real) real = dlsym(RTLD_NEXT, "lseek");
+        if (is_device(fd) && getenv("LSEEK_LOG")) {
+          FILE *log = fopen(getenv("LSEEK_LOG"), "a");
+          fprintf(log, "lseek(%lld, %s)\\n", (long long)offset, whence == SEEK_SET ? "SEEK_SET" : "other");
+          fclose(log);
+          if (getenv("FAIL_LSEEK")) {
+            errno = atoi(getenv("FAIL_LSEEK"));
+            return -1;
+          }
+        }
+        return real(fd, offset, whence);
+      }
+    `;
+      const fixture = /* js */ `
+      import { dlopen, ptr } from "bun:ffi";
+      import { closeSync, constants, openSync, readdirSync, writeFileSync, writeSync } from "node:fs";
+      import { Readable } from "node:stream";
+      const openFds = () => readdirSync("/proc/self/fd").length;
+      const failure = err => err.code + " from " + err.syscall;
+      // Catches a throw apart from a rejection: an error of the reader rejects the read, and nothing throws.
+      const settled = start => {
+        try {
+          return start().catch(failure);
+        } catch (err) {
+          return "threw " + failure(err);
+        }
+      };
+      const bytes = blob => settled(() => Bun.readableStreamToBytes(blob.stream()).then(bytes => bytes.length));
+      const firstRead = blob => settled(() => blob.stream().getReader().read().then(({ value }) => "read " + value.length));
+      const libc = dlopen(process.env.LIBC, {
+        posix_openpt: { args: ["int"], returns: "int" },
+        grantpt: { args: ["int"], returns: "int" },
+        unlockpt: { args: ["int"], returns: "int" },
+        ptsname: { args: ["int"], returns: "cstring" },
+        inotify_init1: { args: ["int"], returns: "int" },
+        inotify_add_watch: { args: ["int", "ptr", "u32"], returns: "int" },
+      }).symbols;
+      const before = openFds();
+      const result = {};
+
+      // The event loop is not asked for a device whose reads do not wait, and a slice starts at its offset.
+      result.null = await bytes(Bun.file("/dev/null"));
+      result.slice = await bytes(Bun.file("/dev/zero").slice(3, 11));
+      result.sliceReader = await firstRead(Bun.file("/dev/zero").slice(3, 11));
+      for (let i = 0; i < 8; i++) await bytes(Bun.file("/dev/zero").slice(3, 11));
+
+      // A terminal with a byte to read is still watched from the start of its stream.
+      const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK);
+      if (master < 0 || libc.grantpt(master) !== 0 || libc.unlockpt(master) !== 0) throw new Error("pty setup failed");
+      const slave = openSync(libc.ptsname(master).toString(), constants.O_RDWR | constants.O_NOCTTY);
+      writeSync(slave, "x");
+      result.terminal = await firstRead(Bun.file(master));
+      closeSync(slave);
+      closeSync(master);
+
+      // An inotify fd has no file type, and a read of an empty one waits. Each of these has one event to read:
+      // the read after it asks the event loop, and the refusal is the error of the stream.
+      let created = 0;
+      const watcher = () => {
+        const fd = libc.inotify_init1(constants.O_NONBLOCK);
+        libc.inotify_add_watch(fd, ptr(Buffer.from(process.env.WATCH_DIR + "\\0")), 0x100 /* IN_CREATE */);
+        writeFileSync(process.env.WATCH_DIR + "/" + created++, "");
+        return fd;
+      };
+      const watchers = [watcher(), watcher(), watcher()];
+      const reader = Bun.file(watchers[0]).stream().getReader();
+      const first = await reader.read().then(({ value }) => value.length > 0, failure);
+      result.reader = [first, await reader.read().then(() => "read", failure)];
+      result.sink = await Bun.write(process.env.WATCH_DIR + "/out", Bun.file(watchers[1]).stream()).catch(failure);
+      result.flowing = await new Promise(resolve => {
+        const events = [];
+        Readable.fromWeb(Bun.file(watchers[2]).stream(), { highWaterMark: 1 })
+          .on("data", chunk => events.push(chunk.length > 0))
+          .on("error", err => resolve([...events, failure(err)]))
+          .on("end", () => resolve([...events, "end"]));
+      });
+      watchers.forEach(closeSync);
+
+      // The fd of a stream that failed is closed on another thread.
+      const deadline = Date.now() + 5000;
+      while (openFds() > before && Date.now() < deadline) await Bun.sleep(5);
+      console.log(JSON.stringify({ ...result, leakedFds: openFds() - before }));
+    `;
+      using dir = tempDir("file-stream-device-shim", {
+        "shim.c": shim,
+        "fixture.mjs": fixture,
+        "seekable/lseek.log": "",
+        "unseekable/lseek.log": "",
+        "failing/lseek.log": "",
+      });
+      const path = (...names) => join(String(dir), ...names);
+      {
+        await using compile = Bun.spawn({
+          cmd: [cc, "-shared", "-fPIC", "-o", path("shim.so"), path("shim.c"), "-ldl"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          compile.stdout.text(),
+          compile.stderr.text(),
+          compile.exited,
+        ]);
+        if (exitCode !== 0) throw new Error(`the shim does not compile: ${stderr || stdout}`);
+      }
+
+      async function run(name, env) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), path("fixture.mjs")],
+          env: {
+            ...bunEnv,
+            ...env,
+            LIBC: libcPathForDlopen(),
+            WATCH_DIR: path(name),
+            LSEEK_LOG: path(name, "lseek.log"),
+            LD_PRELOAD: bunEnv.LD_PRELOAD ? `${path("shim.so")}:${bunEnv.LD_PRELOAD}` : path("shim.so"),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const seeks = readFileSync(path(name, "lseek.log"), "utf8").trim().split("\n");
+        return { stdout: stdout.trim(), stderr, exitCode, seeks: [...new Set(seeks)] };
+      }
+
+      const [seekable, unseekable, failing] = await Promise.all([
+        run("seekable", {}),
+        run("unseekable", { FAIL_LSEEK: "29" /* ESPIPE */ }),
+        run("failing", { FAIL_LSEEK: "22" /* EINVAL */ }),
+      ]);
+      const seeks = ["lseek(3, SEEK_SET)"];
+      const stdout = (slice, sliceReader) =>
+        JSON.stringify({
+          null: 0,
+          slice,
+          sliceReader,
+          terminal: "ENOMEM from epoll_ctl",
+          reader: [true, "EPERM from epoll_ctl"],
+          sink: "EPERM from epoll_ctl",
+          flowing: [true, "EPERM from epoll_ctl"],
+          leakedFds: 0,
+        });
+      expect({ seekable, unseekable, failing }).toEqual({
+        seekable: { stdout: stdout(8, "read 8"), stderr: "", exitCode: 0, seeks },
+        unseekable: { stdout: stdout(8, "read 8"), stderr: "", exitCode: 0, seeks },
+        failing: { stdout: stdout("EINVAL from lseek", "EINVAL from lseek"), stderr: "", exitCode: 0, seeks },
+      });
+    },
+  );
 });
 
 // Each read returns at most 256 KiB, so the first read doesn't drain everything the closed peer sent.

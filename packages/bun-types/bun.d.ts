@@ -3609,7 +3609,7 @@ declare module "bun" {
      *
      * File contents can be provided as:
      * - `string` - The source code as a string
-     * - `Blob` - A Blob containing the source code
+     * - `Blob` - A Blob containing the source code. A `Bun.file()` or an `S3File` throws: pass its text or bytes instead
      * - `NodeJS.TypedArray` - A typed array (e.g., `Uint8Array`) containing the source code
      * - `ArrayBufferLike` - An ArrayBuffer containing the source code
      *
@@ -7813,6 +7813,8 @@ declare module "bun" {
        * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process reads from buffer/stream.
        * - `number`: The process reads from the file descriptor
        *
+       * An {@link S3File} throws as stdin. Pass `await s3file.bytes()` instead.
+       *
        * For stdout and stderr you may pass:
        *
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
@@ -7841,6 +7843,9 @@ declare module "bun" {
        * - `"inherit"`: The process inherits the standard input of the current process
        * - `ArrayBufferView`, `Blob`: The process reads from the buffer
        * - `number`: The process reads from the file descriptor
+       *
+       * An {@link S3File} throws: it has no path or file descriptor to give the
+       * process, and its bytes are not in memory. Pass `await s3file.bytes()` instead.
        *
        * @default "ignore"
        */

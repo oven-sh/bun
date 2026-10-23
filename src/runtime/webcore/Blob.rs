@@ -2287,10 +2287,10 @@ impl BlobExt for Blob {
     }
 
     fn in_memory_view(&self) -> Option<&[u8]> {
-        if self.needs_to_read_file() || self.is_s3() {
-            return None;
+        match self.store().map(|store| &store.data) {
+            None | Some(store::Data::Bytes(_)) => Some(self.shared_view()),
+            Some(store::Data::File(_) | store::Data::S3(_)) => None,
         }
-        Some(self.shared_view())
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
@@ -6266,6 +6266,14 @@ impl Any {
             Any::Blob(b) => b.shared_view(),
             Any::WTFStringImpl(s) => s.utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
+        }
+    }
+
+    /// [`Self::slice`], or `None` for a file- or S3-backed Blob, which has to be read first.
+    pub(crate) fn in_memory_view(&self) -> Option<&[u8]> {
+        match self {
+            Any::Blob(b) => b.in_memory_view(),
+            Any::WTFStringImpl(_) | Any::InternalBlob(_) => Some(self.slice()),
         }
     }
 

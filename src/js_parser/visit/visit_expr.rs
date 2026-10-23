@@ -1947,6 +1947,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.options.bundle && !p.is_file_considered_to_have_esm_exports {
                         p.record_usage(p.module_ref);
                         p.record_usage(p.exports_ref);
+                        Self::record_path_names_read_by_direct_eval(p, &e_);
                     }
 
                     // Walk `Scope.parent` (`Option<StoreRef<Scope>>`) via the safe
@@ -2492,6 +2493,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Counts a use of `__dirname` / `__filename` when a direct eval's string literal names it.
+    #[cold]
+    #[inline(never)]
+    fn record_path_names_read_by_direct_eval(p: &mut Self, call: &E::Call) {
+        use crate::parser::options::Format;
+
+        // In cjs and iife output such an eval keeps reading the names of the output file.
+        if !matches!(
+            p.options.output_format,
+            Format::Esm | Format::InternalBakeDev
+        ) {
+            return;
+        }
+        let Some(arg) = call.args.slice().first() else {
+            return;
+        };
+        let Data::EString(code) = &arg.data else {
+            return;
+        };
+        let names: [(&'static [u8], Ref); 2] = [
+            (b"__dirname", p.dirname_ref),
+            (b"__filename", p.filename_ref),
+        ];
+        for (name, ambient) in names {
+            if !contains_identifier(code, name) {
+                continue;
+            }
+            // A declaration in the file shadows the parser's symbol. The eval reads that one.
+            let found = p
+                .find_symbol_with_record_usage::<false>(arg.loc, name)
+                .expect("unreachable");
+            if !found.r#ref.eql(ambient) {
+                continue;
+            }
+            // As for a reference: outside a `with` scope a define replaces it, so nothing is declared.
+            if !found.is_inside_with_scope
+                && p.define
+                    .for_identifier(name)
+                    .is_some_and(|def| !def.valueless())
+            {
+                continue;
+            }
+            p.record_usage_impl(ambient, false);
+        }
+    }
+
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
@@ -2858,4 +2905,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e_.class_name = None;
         }
     }
+}
+
+/// Whether `text` holds `name` with no identifier character directly before or after it.
+fn contains_identifier(text: &E::String, name: &'static [u8]) -> bool {
+    fn is_whole<T: Copy>(text: &[T], at: usize, len: usize, is_part: impl Fn(T) -> bool) -> bool {
+        !(at > 0 && is_part(text[at - 1])) && !text.get(at + len).is_some_and(|&c| is_part(c))
+    }
+
+    if text.is_utf8() {
+        // The lexer keeps a literal 8-bit only when all of it is ASCII.
+        let is_part = |c: u8| js_lexer::is_identifier_continue(i32::from(c));
+        let text = text.slice8();
+        let mut from = 0;
+        while let Some(found) = strings::index_of(&text[from..], name) {
+            let at = from + found;
+            if is_whole(text, at, name.len(), is_part) {
+                return true;
+            }
+            from = at + 1;
+        }
+        return false;
+    }
+
+    // A surrogate half next to the name belongs to an astral identifier character.
+    let is_part =
+        |c: u16| (0xD800..=0xDFFF).contains(&c) || js_lexer::is_identifier_continue(i32::from(c));
+    let text = text.slice16();
+    (0..text.len()).any(|at| {
+        strings::has_prefix_comptime_utf16(&text[at..], name)
+            && is_whole(text, at, name.len(), is_part)
+    })
 }

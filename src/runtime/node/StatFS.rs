@@ -1,4 +1,4 @@
-//! StatFS and BigIntStatFS classes from node:fs
+//! The `StatFs` class from node:fs. The number result and the bigint result share it.
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value

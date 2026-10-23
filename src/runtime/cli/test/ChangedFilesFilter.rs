@@ -249,13 +249,12 @@ pub(crate) fn filter<'a>(
         }
     }
     for (stand_in, page) in bundle.graph.html_import_pages() {
-        // A `with { type: "text" }` or `"file"` import of the page binds to the same stand-in and reads only the file.
+        // Only an HTML import, or a script that re-exports one, loads the page: `with { type: "text" }` reads the file.
         let imports_the_page = |record: &bun_ast::ImportRecord| {
             record.source_index.get() == stand_in
-                && !matches!(
-                    record.loader,
-                    Some(bun_ast::Loader::Text | bun_ast::Loader::File)
-                )
+                && record.loader.is_none_or(|loader| {
+                    loader == bun_ast::Loader::Html || loader.is_javascript_like()
+                })
         };
         // An HTML import's record points at a stand-in without import records: link its importer to the page.
         for i in 0..importers[stand_in as usize].len() {

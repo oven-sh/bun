@@ -470,29 +470,30 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a change under an HTML page does not select a test that only reads the page as text or as a file", async () => {
+  test("a change under an HTML page does not select a test that only reads the page as data", async () => {
     using dir = tempDir("test-changed-page-reader", {
       "package.json": JSON.stringify({ name: "page-reader", type: "module" }),
       "front.ts": `document.title = "front";\n`,
       "page.html": `<!doctype html><script type="module" src="./front.ts"></script>\n`,
-      // The chains usually make these imports resolve after page.test.ts has the stand-in of
-      // page.html. The bundler then binds them to that stand-in.
-      "reader.ts": `import raw from "./page.html" with { type: "text" };\nexport { raw };\n`,
+      // The bundler binds these imports to the stand-in of page.html when page.test.ts resolves
+      // the page first. The chain makes that the usual order.
+      "reader.ts": `import text from "./page.html" with { type: "text" };\nimport file from "./page.html" with { type: "file" };\nimport url from "./page.html" with { type: "dataurl" };\nexport const raw = [text, file, url];\n`,
       ...chain("reader", "raw"),
-      "copier.ts": `import url from "./page.html" with { type: "file" };\nexport { url };\n`,
-      ...chain("copier", "url", "e"),
       "page.test.ts": `import { test, expect } from "bun:test";\nimport page from "./page.html";\ntest("page", () => expect(page).toBeDefined());\n`,
-      "reader.test.ts": `import { test, expect } from "bun:test";\nimport { raw } from "./d8";\ntest("reader", () => expect(raw).toContain("front.ts"));\n`,
-      "copier.test.ts": `import { test, expect } from "bun:test";\nimport { url } from "./e8";\ntest("copier", () => expect(url).toContain("page"));\n`,
+      "reader.test.ts": `import { test, expect } from "bun:test";\nimport { raw } from "./d8";\ntest("reader", () => expect(raw).toHaveLength(3));\n`,
     });
     initRepo(String(dir));
     touch(String(dir), "front.ts");
 
-    // When one of the two resolves first, the scan does not read page.html as a page and
-    // nothing is selected. The two readers do not run in any order.
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, ["reader.test.ts", "copier.test.ts"])).toEqual([]);
-    expect(exitCode).toBe(0);
+    // In the other order the scan does not read page.html as a page, and nothing is selected.
+    // Run again until page.test.ts is selected, so that reader.ts has records on the stand-in.
+    let ran: string[] = [];
+    for (let attempt = 0; attempt < 10 && !ran.includes("page.test.ts"); attempt++) {
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      ran = ranFiles(stderr, ["page.test.ts", "reader.test.ts"]);
+      expect(exitCode).toBe(0);
+    }
+    expect(ran).toEqual(["page.test.ts"]);
   });
 
   test("a change under an HTML page selects a test that reaches the page through a CommonJS file", async () => {

@@ -4,145 +4,247 @@ sidebarTitle: "SvelteKit with Bun"
 mode: center
 ---
 
-Use `sv create my-app` to create a SvelteKit project with the Svelte CLI. Answer the prompts to select a template and set up your development environment.
-
-```sh terminal icon="terminal"
-bunx sv create my-app
-```
-
-```txt
-┌  Welcome to the Svelte CLI! (v0.5.7)
-│
-◇  Which template would you like?
-│  SvelteKit demo
-│
-◇  Add type checking with Typescript?
-│  Yes, using Typescript syntax
-│
-◆  Project created
-│
-◇  What would you like to add to your project?
-│  none
-│
-◇  Which package manager do you want to install dependencies with?
-│  bun
-│
-◇  Successfully installed dependencies
-│
-◇  Project next steps ─────────────────────────────────────────────────────╮
-│                                                                          │
-│  1: cd my-app                                                            │
-│  2: git init && git add -A && git commit -m "Initial commit" (optional)  │
-│  3: bun run dev -- --open                                                │
-│                                                                          │
-│  To close the dev server, hit Ctrl-C                                     │
-│                                                                          │
-│  Stuck? Visit us at https://svelte.dev/chat                              │
-│                                                                          │
-├──────────────────────────────────────────────────────────────────────────╯
-│
-└  You're all set!
-```
+[SvelteKit](https://svelte.dev/docs/kit) is a framework for building full-stack web applications with [Svelte](https://svelte.dev/). It supports server-side rendering (SSR), static site generation (SSG), client-side rendering (CSR), and API routes, and can also be compiled into standalone executables with the Bun adapter.
 
 ---
 
-Once the project is initialized, `cd` into the new project. The dependencies are already installed, so you don't need to run `bun install`.
+<Steps>
+  <Step title="Create a new SvelteKit app">
+    Use the official Svelte CLI (`sv`) to scaffold a new SvelteKit project and select **bun** as the package manager:
 
-Then start the development server with `bun --bun run dev`.
+    ```sh terminal icon="terminal"
+    bunx --bun sv create my-app
+    ```
 
-To run the dev server with Node.js instead of Bun, omit the `--bun` flag.
+    Follow the interactive prompts to choose a template (such as *SvelteKit demo* or *Minimal skeleton*) and add TypeScript support:
 
-```sh terminal icon="terminal"
-cd my-app
-bun --bun run dev
-```
+    ```txt
+    ┌  Welcome to the Svelte CLI!
+    │
+    ◇  Which template would you like?
+    │  SvelteKit minimal
+    │
+    ◇  Add type checking with Typescript?
+    │  Yes, using Typescript syntax
+    │
+    ◆  Project created
+    │
+    ◇  What would you like to add to your project?
+    │  none
+    │
+    ◇  Which package manager do you want to install dependencies with?
+    │  bun
+    │
+    ◇  Successfully installed dependencies
+    └  You're all set!
+    ```
 
-```txt
-  $ vite dev
-  Forced re-optimization of dependencies
+  </Step>
+  <Step title="Start the dev server">
+    Change to the project directory and start the Vite dev server with Bun runtime:
 
-    VITE v5.4.10  ready in 424 ms
+    ```sh terminal icon="terminal"
+    cd my-app
+    bun --bun run dev
+    ```
 
-    ➜  Local:   http://localhost:5173/
-    ➜  Network: use --host to expose
-    ➜  press h + enter to show help
-```
+    ```txt
+      VITE ready in 350 ms
 
----
+      ➜  Local:   http://localhost:5173/
+      ➜  Network: use --host to expose
+      ➜  press h + enter to show help
+    ```
 
-Visit [http://localhost:5173](http://localhost:5173/) in a browser to see the template app.
+    Open [`http://localhost:5173`](http://localhost:5173/) in your browser. Editing files in `src/routes/+page.svelte` will hot-reload automatically in your browser.
 
-<Frame>
-  ![SvelteKit app running](https://github.com/oven-sh/bun/assets/3084745/7c76eae8-78f9-44fa-9f15-1bd3ca1a47c0)
-</Frame>
+    <Note>
+      The `--bun` flag forces Vite and its dependency graph to execute directly under Bun's runtime rather than Node.js.
+    </Note>
 
----
+  </Step>
+  <Step title="Update scripts in package.json">
+    Prefix the CLI commands in your `package.json` scripts with `bun --bun` so Bun executes Vite for development, building, and previews:
 
-Edit and save `src/routes/+page.svelte` and the dev server hot-reloads your changes in the browser.
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "dev": "bun --bun vite dev", // [!code ++]
+        "build": "bun --bun vite build", // [!code ++]
+        "preview": "bun --bun vite preview" // [!code ++]
+      }
+    }
+    ```
 
----
-
-To build for production, you need a SvelteKit adapter. We recommend `svelte-adapter-bun`; install it with `bun add -D svelte-adapter-bun`.
-
-Then make the following changes to your `vite.config.ts` (or `vite.config.js`). If your project configures SvelteKit in a `svelte.config.js` instead, swap the adapter import there.
-
-```ts vite.config.ts icon="/icons/typescript.svg"
-import adapter from "@sveltejs/adapter-auto"; // [!code --]
-import adapter from "svelte-adapter-bun"; // [!code ++]
-import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
-
-export default defineConfig({
-  plugins: [
-    sveltekit({
-      compilerOptions: {
-        // Force runes mode for the project, except for libraries. Can be removed in svelte 6.
-        runes: ({ filename }) => (filename.split(/[/\\]/).includes("node_modules") ? undefined : true),
-      },
-
-      // adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-      // If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-      // See https://svelte.dev/docs/kit/adapters for more information about adapters.
-      adapter: adapter(),
-    }),
-  ],
-});
-```
-
----
-
-To build a production bundle:
-
-```sh terminal icon="terminal"
-bun --bun run build
-```
-
-```txt
-  $ vite build
-  vite v5.4.10 building SSR bundle for production...
-  "confetti" is imported from external module "@neoconfetti/svelte" but never used in "src/routes/sverdle/+page.svelte".
-  ✓ 130 modules transformed.
-  vite v5.4.10 building for production...
-  ✓ 148 modules transformed.
-  ...
-  ✓ built in 231ms
-  ...
-  ✓ built in 899ms
-
-  Run npm run preview to preview your production build locally.
-
-  > Using svelte-adapter-bun
-    ✔ done
-```
+  </Step>
+</Steps>
 
 ---
 
-Then start the production server with `bun ./build/index.js`. It listens on port `3000` by default; set the `PORT` environment variable to change it.
+## Production Hosting
 
-```sh terminal icon="terminal"
-bun ./build/index.js
-```
+SvelteKit uses adapters to transform your application into production artifacts tailored to specific target environments.
 
-```txt
-Listening on http://0.0.0.0:3000/
-```
+Starting with **SvelteKit 3**, the framework includes an **official Bun adapter** (`@sveltejs/adapter-bun`). For SvelteKit 2.4+ in the 2.x series, use the community-maintained `svelte-adapter-bun`.
+
+<Tabs>
+  <Tab title="Official Adapter (SvelteKit 3+)">
+    <Note>
+      The official [`@sveltejs/adapter-bun`](https://svelte.dev/docs/kit/adapter-bun) adapter was introduced in SvelteKit 3. It requires **Bun 1.4 or newer** and builds your application into a high-performance standalone Bun server utilizing `Bun.serve` and `Bun.file`.
+    </Note>
+
+    <Steps>
+      <Step title="Install the official Bun adapter">
+        Add `@sveltejs/adapter-bun` to your development dependencies:
+
+        ```sh terminal icon="terminal"
+        bun add -D @sveltejs/adapter-bun
+        ```
+
+      </Step>
+      <Step title={<span>Configure the adapter in <code>vite.config.ts</code></span>}>
+        In SvelteKit 3, project configuration is declared inside `vite.config.ts` (or `vite.config.js`). Replace `@sveltejs/adapter-auto` with `@sveltejs/adapter-bun`:
+
+        ```ts vite.config.ts icon="/icons/typescript.svg"
+        import adapter from "@sveltejs/adapter-auto"; // [!code --]
+        import adapter from "@sveltejs/adapter-bun"; // [!code ++]
+        import { sveltekit } from "@sveltejs/kit/vite";
+        import { defineConfig } from "vite";
+
+        export default defineConfig({
+          plugins: [
+            sveltekit({
+              adapter: adapter(), // [!code ++]
+            }),
+          ],
+        });
+        ```
+
+      </Step>
+      <Step title="Build the production bundle">
+        Run the build command:
+
+        ```sh terminal icon="terminal"
+        bun --bun run build
+        ```
+
+        This outputs the compiled server and client assets to the `build/` directory.
+
+        <Note>
+          Deploying an uncompiled server requires `build/`, `package.json`, `bun.lock`, and production dependencies installed on the host with `bun install --production --frozen-lockfile`. To deploy without `node_modules`, compile into a [standalone executable](#standalone-executable-single-file-binary) instead.
+        </Note>
+      </Step>
+      <Step title="Start the production server">
+        Start your standalone Bun server:
+
+        ```sh terminal icon="terminal"
+        bun ./build/index.js
+        ```
+
+        ```txt
+        Listening on http://0.0.0.0:3000/
+        ```
+
+      </Step>
+    </Steps>
+
+    ### Standalone Executable (Single-File Binary)
+
+    One of the major advantages of `@sveltejs/adapter-bun` is native support for compiling your SvelteKit server, client assets, and prerendered pages into a **single standalone executable binary** using Bun's built-in bundler:
+
+    ```ts vite.config.ts icon="/icons/typescript.svg"
+    import adapter from "@sveltejs/adapter-bun";
+    import { sveltekit } from "@sveltejs/kit/vite";
+    import { defineConfig } from "vite";
+
+    export default defineConfig({
+      plugins: [
+        sveltekit({
+          adapter: adapter({
+            buildOptions: {
+              compile: true, // [!code ++]
+              minify: true, // [!code ++]
+              bytecode: true, // [!code ++]
+            },
+          }),
+        }),
+      ],
+    });
+    ```
+
+    Build and run the compiled binary directly without requiring Bun or `node_modules` installed on the target machine:
+
+    ```sh terminal icon="terminal"
+    bun --bun run build
+    ./build/server
+    ```
+
+    You can also cross-compile for another platform target (e.g. `linux-x64` or `darwin-arm64`) using `compile: { target: "bun-linux-x64", outfile: "my-app" }`.
+
+    ### Environment Variables
+
+    Bun loads `.env` files automatically. Configure the host and port using `HOST` and `PORT`:
+
+    ```sh terminal icon="terminal"
+    HOST=0.0.0.0 PORT=8080 bun ./build/index.js
+    ```
+
+    For advanced runtime options (such as Unix domain sockets, payload body limits, and idle timeouts), refer to the [official `@sveltejs/adapter-bun` documentation](https://svelte.dev/docs/kit/adapter-bun#Environment-variables).
+
+  </Tab>
+
+  <Tab title="Legacy Projects (SvelteKit 2.4–2.x)">
+    <Warning>
+      Use this adapter only if your project runs **SvelteKit 2.4 or later in the 2.x series**. For SvelteKit 3+, use the official `@sveltejs/adapter-bun` described in the first tab.
+    </Warning>
+
+    For SvelteKit 2.x projects prior to SvelteKit 3, the community-maintained [`svelte-adapter-bun`](https://github.com/gornostay25/svelte-adapter-bun) package is used.
+
+    <Steps>
+      <Step title="Install community adapter">
+        Install `svelte-adapter-bun`:
+
+        ```sh terminal icon="terminal"
+        bun add -D svelte-adapter-bun
+        ```
+
+      </Step>
+      <Step title={<span>Configure in <code>svelte.config.js</code></span>}>
+        In SvelteKit 2, adapter settings reside in `svelte.config.js`:
+
+        ```js svelte.config.js icon="/icons/javascript.svg"
+        import adapter from "svelte-adapter-bun"; // [!code ++]
+
+        export default {
+          kit: {
+            adapter: adapter(), // [!code ++]
+          },
+        };
+        ```
+
+        *(Note: If you migrated to SvelteKit 2.62+ with `vite.config.ts`, you can configure the adapter inside `sveltekit({ adapter: adapter() })`).*
+
+      </Step>
+      <Step title="Build and run">
+        Build your production bundle and start the server:
+
+        ```sh terminal icon="terminal"
+        bun --bun run build
+        bun ./build/index.js
+        ```
+
+      </Step>
+    </Steps>
+
+  </Tab>
+</Tabs>
+
+---
+
+## Resources
+
+- [Official SvelteKit adapter-bun Documentation](https://svelte.dev/docs/kit/adapter-bun)
+- [SvelteKit v3 Migration Guide](https://svelte.dev/docs/kit/migrating-to-sveltekit-3)
+- [Official SvelteKit Monorepo (`sveltejs/kit`)](https://github.com/sveltejs/kit)
+- [Community `svelte-adapter-bun` Repository (for SvelteKit 2.x)](https://github.com/gornostay25/svelte-adapter-bun)
+- [Bun Executable Compilation Documentation](https://bun.com/docs/bundler/executables)

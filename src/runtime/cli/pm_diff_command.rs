@@ -27,8 +27,6 @@ use crate::cli::pm_diff_normalize as normalize;
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
 
-use bun_core::fmt::buf_print_infallible as buf_print;
-
 #[derive(Clone, Copy)]
 pub(crate) struct DiffFlags {
     /// Compare bytes, not the canonical re-print of JS/CSS/JSON.
@@ -106,7 +104,8 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
-    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    // Two folders are compared as written, because the patch between them has to apply to the files
+    // on disk.
     let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
@@ -621,7 +620,7 @@ fn read_dir_tree(
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
-            // Before the parse below: this one parses other package.json files.
+            // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
@@ -753,7 +752,8 @@ fn read_dir_tree(
     Ok(tree)
 }
 
-/// What `bun pm pack` in `dir` resolves the `workspace:` and `catalog:` of `manifest` through.
+/// Returns the manifests that `bun pm pack` in `dir` would use to resolve the `workspace:` and
+/// `catalog:` specifiers in `manifest`.
 fn manifests_for(
     pm: &mut PackageManager,
     dir: &[u8],
@@ -791,7 +791,7 @@ fn with_published_versions(
         ) else {
             return;
         };
-        // A version that does not resolve stays as written: pack refuses to publish it.
+        // A version that doesn't resolve is left as written. pack would refuse to publish it.
         let Some(Ok(published)) =
             Substitution::for_spec(spec).map(|found| found.published(manifests, dir, name))
         else {
@@ -831,24 +831,15 @@ fn fetch_registry_tree(
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
 
-    let mut url_buf = bun_paths::path_buffer_pool::get();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let manifest_url = buf_print(
-        path_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name)
-        ),
+    let manifest_url = format!(
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
     );
     let body = registry_get(
         pm,
         scope,
-        URL::parse(manifest_url),
+        URL::parse(manifest_url.as_bytes()),
         true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         Some(b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*"),
@@ -2287,7 +2278,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
             let at = first_difference(&theirs, &ours);
             notes.push(note!(
                 colors,
-                "the registry and the package.json of {} disagree on <b>{}<r>: {} <d>vs<r> {} <d>(bun install goes by the registry)<r>",
+                "registry and package.json of {} disagree on <b>{}<r>: {} <d>vs<r> {} <d>(bun install uses the registry's)<r>",
                 &[
                     BStr::new(&tree.label).to_string(),
                     BStr::new(field).to_string(),
@@ -2317,7 +2308,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
             if keys[..i].contains(key) {
                 notes.push(note!(
                     colors,
-                    "<b>{}<r> is in package.json more than once",
+                    "<b>{}<r> listed more than once in package.json",
                     &[BStr::new(key).to_string()],
                 ));
             }

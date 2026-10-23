@@ -660,7 +660,7 @@ describe("`bun audit`", () => {
     args: ["--audit-level", "invalid"],
     fn: async ({ stderr }) => {
       expect(await stderr).toContain("invalid `--audit-level` value");
-      expect(await stderr).toContain("Valid values are: low, moderate, high, critical");
+      expect(await stderr).toContain("valid values: low, moderate, high, critical");
     },
   });
 
@@ -777,7 +777,7 @@ describe("`bun audit`", () => {
 
     const NON_JSON = (registry: string) => `error: ${registry} returned a non-JSON audit response`;
     const NOT_ADVISORIES = (registry: string) =>
-      `error: ${registry} returned an audit response that is not a list of advisories`;
+      `error: invalid audit response from ${registry}: not a list of advisories`;
 
     async function auditAgainst(responseBody: string, args: string[] = [], status = 200) {
       await using registry = Bun.serve({
@@ -864,7 +864,7 @@ describe("`bun audit`", () => {
       expect(exitCode).toBe(0);
     });
 
-    // No answer says nothing about the packages. `npm audit` fails on it too.
+    // No response says nothing about the packages. `npm audit` fails in that case too.
     test.concurrent.each([
       ["", 200],
       [" \n", 200],
@@ -874,7 +874,7 @@ describe("`bun audit`", () => {
       for (const args of [[], ["--json"], ["fix"]]) {
         const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody, args, status);
         expect(stdout.replace(/^bun audit .*\n\n/, "")).toBe("");
-        expect(stderr).toBe(`error: ${registry} returned an empty audit response`);
+        expect(stderr).toBe(`error: empty audit response from ${registry}`);
         expect(exitCode).toBe(1);
       }
     });
@@ -903,7 +903,7 @@ describe("`bun audit`", () => {
           "ms\x1b[31m": [{ severity: "critical", title: "not a real package", url: "https://example.com/fake" }],
         }),
       );
-      // Not normalizeBunSnapshot: it rewrites the backslashes the escapes are made of.
+      // Doesn't use normalizeBunSnapshot, because it rewrites the backslashes in the escapes.
       expect(withoutHeader(stdout)).toBe(
         [
           "ms@0.7.0",
@@ -1429,7 +1429,7 @@ describe("`bun audit` report", () => {
     await using server = startRegistry({}, { bulkBody: "[]" });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const lockBefore = await lock(dir);
-    const rejected = `error: ${registryHref(server)} returned an audit response that is not a list of advisories`;
+    const rejected = `error: invalid audit response from ${registryHref(server)}: not a list of advisories`;
 
     const json = await audit(dir, "--json");
     expect(json.stdout).toBe("[]\n");
@@ -1450,7 +1450,7 @@ describe("`bun audit` report", () => {
 
     const fix = await auditFix(dir);
     expect(normalizeBunSnapshot(fix.stderr)).toBe(
-      `error: ${registryHref(server)} returned an audit response that is not a list of advisories`,
+      `error: invalid audit response from ${registryHref(server)}: not a list of advisories`,
     );
     expect(normalizeBunSnapshot(fix.stdout)).toBe("bun audit fix <version> (<revision>)");
     expect(fix.exitCode).toBe(1);
@@ -2903,7 +2903,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("an override written as a $reference is reported as the blocker and left alone", async () => {
+  test.concurrent("an override written as a $reference is reported as the blocker and isn't changed", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, {
       name: "foo",
@@ -4619,6 +4619,84 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"no-deps@1.0.1"');
   });
 
+  // A `catalog:` rule reads the catalog entry of the name in its key, and the fix rewrites that entry.
+  test.concurrent.each([
+    ["a flat rule", { "no-deps": "catalog:" }, "catalog:", "default"],
+    ["a rule scoped to a parent", { "one-range-dep>no-deps": "catalog:build" }, "catalog:build", "build"],
+  ])("--json names the catalog entry that %s with a catalog: value reads", async (_, overrides, reference, catalog) => {
+    const catalogs = (version: string) =>
+      reference === "catalog:" ? { catalog: { "no-deps": version } } : { catalogs: { build: { "no-deps": version } } };
+    const project = (version: string) => ({
+      name: "root",
+      workspaces: { packages: [], ...catalogs(version) },
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides,
+    });
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, project("1.0.0"));
+    expect(await lock(dir)).toContain('"no-deps@1.0.0"');
+
+    const { stdout, exitCode } = await auditFix(dir, "--json");
+    const doc = JSON.parse(stdout);
+    expect(doc.fixes).toStrictEqual([
+      {
+        name: "no-deps",
+        from: "1.0.0",
+        to: "1.0.1",
+        downgrade: false,
+        newerThanMinimumReleaseAge: false,
+        packageJson: [{ file: "package.json", catalog, override: null, key: "no-deps", from: "1.0.0", to: "1.0.1" }],
+      },
+    ]);
+    expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0 });
+    expect(exitCode).toBe(0);
+    expect(await pkgJson(dir)).toStrictEqual(project("1.0.1"));
+    expect(await lock(dir)).toContain('"no-deps@1.0.1"');
+    expect(await lock(dir)).not.toContain('"no-deps@1.0.0"');
+    await expectInstall(dir, "--frozen-lockfile");
+  });
+
+  test.concurrent("--json names the catalog entry of the alias for a rule keyed by an npm: alias", async () => {
+    // The package that the alias points at has an entry of its own. The rule does not read it, and the fix leaves it.
+    const project = (version: string) => ({
+      name: "root",
+      workspaces: { packages: [], catalog: { "my-alias": `npm:no-deps@${version}`, "no-deps": "1.0.0" } },
+      dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+      overrides: { "my-alias@npm:no-deps@^1.0.0": "catalog:" },
+    });
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, project("1.0.0"));
+    expect(await lock(dir)).toContain('"no-deps@1.0.0"');
+
+    const { stdout, exitCode } = await auditFix(dir, "--json");
+    const doc = JSON.parse(stdout);
+    expect(doc.fixes).toStrictEqual([
+      {
+        name: "no-deps",
+        from: "1.0.0",
+        to: "1.0.1",
+        downgrade: false,
+        newerThanMinimumReleaseAge: false,
+        packageJson: [
+          {
+            file: "package.json",
+            catalog: "default",
+            override: null,
+            key: "my-alias",
+            from: "npm:no-deps@1.0.0",
+            to: "npm:no-deps@1.0.1",
+          },
+        ],
+      },
+    ]);
+    expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0 });
+    expect(exitCode).toBe(0);
+    expect(await pkgJson(dir)).toStrictEqual(project("1.0.1"));
+    expect(await installedVersion(dir, "my-alias")).toBe("1.0.1");
+    expect(await lock(dir)).not.toContain('"no-deps@1.0.0"');
+    await expectInstall(dir, "--frozen-lockfile");
+  });
+
   test.concurrent("a bunfig.toml that freezes or stops saving the lockfile is explained in the note", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
@@ -5127,7 +5205,8 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  // Both dependents declare no-deps@^1.0.0, which also rejects 2.0.0; the override is what the user can change, so it alone is reported.
+  // Both dependents declare no-deps@^1.0.0, which also rejects 2.0.0. The override is what the user can change, so only
+  // the override is reported.
   test.concurrent(
     "a range held by an overrides entry is blocked on the override, which --latest rewrites",
     async () => {

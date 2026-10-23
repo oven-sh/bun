@@ -25,7 +25,7 @@ impl Rule for NoThisAssignment {
             Node::Expr(assignment) => {
                 if let Some((_, target, _)) = assignment.as_assign()
                     && let Some(ident_name) = target.as_ident()
-                    // Not the default value in a pattern.
+                    // A default value in a pattern isn't an assignment.
                     && !assignment.is_assignment_target()
                 {
                     cx.report(assignment, NO_THIS_ASSIGNMENT).data("ident_name", ident_name);

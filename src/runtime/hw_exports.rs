@@ -16,7 +16,7 @@
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
 //!   - `Bun__JSSourceMap__find`
-//!       → `src/sourcemap_jsc/JSSourceMap.rs`
+//!       → `src/runtime/api/JSSourceMap.rs`
 //!   - `Bun__Process__send`
 //!       → `bun_jsc::virtual_machine_exports`
 
@@ -154,16 +154,19 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+    if this.entry_point_result.evaluated_as_cjs {
         return;
     }
+    let Some(main) = this.main() else {
+        return;
+    };
     let global = this.global();
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
     let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
         return;
     };
-    if specifier_str.eql_utf8(this.main()) {
+    if specifier_str.eql_utf8(main) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
 }
@@ -181,8 +184,8 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 
 // ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
 //
-// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig` /
-// `webcore::Blob` (this crate depends on it). Instead of Rust→Rust
+// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig`
+// (this crate depends on it). Instead of Rust→Rust
 // `extern "C"` re-decls (which let the two sides silently disagree on pointee
 // layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
 // crate registers a `&'static` instance from [`crate::jsc_hooks::
@@ -269,20 +272,6 @@ mod sql_hooks {
         // SAFETY: `this` is a live boxed `SSLConfig`.
         unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
     }
-    unsafe fn blob_needs_to_read_file(this: *const c_void) -> bool {
-        // SAFETY: `this` is a live `Blob` (codegen `m_ctx` payload from
-        // `Blob__fromJS`).
-        unsafe { (*this.cast::<crate::webcore::Blob>()).needs_to_read_file() }
-    }
-    unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
-        // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
-        unsafe {
-            crate::webcore::blob::Bun__Blob__sharedView(
-                this.cast::<crate::webcore::Blob>(),
-                out_len,
-            )
-        }
-    }
 
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
@@ -298,8 +287,6 @@ mod sql_hooks {
         ssl_config_as_usockets_client,
         ssl_config_server_name,
         ssl_config_reject_unauthorized,
-        blob_needs_to_read_file,
-        blob_shared_view,
     };
 }
 
@@ -354,5 +341,5 @@ pub(crate) fn on_reject_entry_point_result(
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
 // `crate::webview::chrome_process` (mod webview is declared in lib.rs).
 //
-// `Bun__JSSourceMap__find` — exported from `bun_sourcemap_jsc::js_source_map`
+// `Bun__JSSourceMap__find` — exported from `crate::api::js_source_map`
 // via `#[bun_jsc::host_fn(export = ...)]`.

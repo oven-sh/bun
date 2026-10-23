@@ -23,25 +23,27 @@ const REQUIRE_TO_DESTRUCT: Message = Message::new("", "useState call is not dest
 const FOLLOW_NAMING_CONVENTION: Message =
     Message::new("", "useState call does not follow the [thing, setThing] naming convention");
 
-/// What `Components.detect` collects of the `import .. from "react"`. It has what is above the node that it is at.
+/// What `Components.detect` collects from `import .. from "react"`. At any node, upstream only has the imports above
+/// it.
 #[derive(Default)]
 pub struct ReactImports<'a> {
-    /// Where they start, in the order of the source.
+    /// The imports' start offsets, in source order.
     starts: SmallVec<[u32; 2]>,
     /// `getDefaultReactImports()[0].local`
     default: Option<Ident<'a>>,
-    /// `getNamedReactImports()[0]`, and the first of them that import `useState` and `useMemo`.
+    /// `getNamedReactImports()[0]`, and the first named imports of `useState` and `useMemo`.
     named: Option<ImportSpec<'a>>,
     use_state: Option<ImportSpec<'a>>,
     use_memo: Option<ImportSpec<'a>>,
-    /// `reactHookImportNames`, by the local name.
+    /// `reactHookImportNames`, keyed by local name.
     hooks: FxHashMap<Name<'a>, ImportSpec<'a>>,
-    first_references: FxHashMap<Asked<'a>, Option<Reference<'a>>>,
+    first_references: FxHashMap<FirstReferenceKey<'a>, Option<Reference<'a>>>,
 }
 
-/// The first reference in `scope` to `react`, or without it to a hook, with that many imports above.
+/// Cache key for the first reference in `scope` to `react`, or to any hook if `react` is `None`, with `imports` imports
+/// above the call.
 #[derive(PartialEq, Eq, Hash)]
-struct Asked<'a> {
+struct FirstReferenceKey<'a> {
     scope: Scope<'a>,
     imports: usize,
     react: Option<Name<'a>>,
@@ -57,7 +59,7 @@ impl Rule for HookUseState {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // For upstream it has the name that it is imported under.
+        // For upstream the hook can have any local name it's imported under.
         match file.language().is_oxlint {
             true if file.find_name("useState").is_none() => On::new(),
             true => On::new().calls_named(&["useState"]),
@@ -69,7 +71,7 @@ impl Rule for HookUseState {
         if !file.mentions("useState") {
             return None;
         }
-        // oxlint goes by the names, whatever is imported.
+        // oxlint only checks the names, regardless of the imports.
         if file.language().is_oxlint {
             return Some(ReactImports::default());
         }
@@ -87,7 +89,7 @@ impl Rule for HookUseState {
             return;
         }
         let not_destructured = if is_oxlint { REQUIRE_TO_DESTRUCT } else { USE_STATE_ERROR_MESSAGE };
-        // oxlint has a node for parentheses.
+        // oxlint's AST has a node for parentheses.
         let is_child = !e.is_chain_root() && !(is_oxlint && e.is_parenthesized());
         let var = match e.parent() {
             Node::VarDecl(var) if is_child => var,
@@ -99,11 +101,11 @@ impl Rule for HookUseState {
         };
         let array_pattern = var.pat();
         let PatKind::Array(elements) = array_pattern.kind() else {
-            // oxlint points at the declarator.
+            // oxlint reports the declarator.
             cx.report(if is_oxlint { var.span() } else { e.span() }, not_destructured);
             return;
         };
-        // `valueVariable`, `setterVariable`, if they are names or patterns. For oxlint `a = 1` is what `a` is.
+        // `valueVariable` and `setterVariable`, if they're names or patterns. oxlint treats `a = 1` like `a`.
         let variable = |i: usize| {
             let is_plain = |it: &PatElem<'a>| !it.is_rest() && (is_oxlint || it.default().is_none());
             elements.get(i).filter(is_plain).and_then(PatElem::pat)
@@ -164,7 +166,7 @@ impl<'a> ReactImports<'a> {
             all.default = all.default.or_else(|| import.default());
             for specifier in import.named().iter() {
                 all.named = all.named.or(Some(specifier));
-                // A name in quotes is no `Identifier`.
+                // A quoted name isn't an `Identifier`.
                 let imported = specifier.imported();
                 if imported.is_string() || !is_hook_name(imported.bytes()) {
                     continue;
@@ -202,7 +204,8 @@ impl<'a> ReactImports<'a> {
         if !hook_name.is("useState") {
             return false;
         }
-        // `isPotentialReactHookCall` with the name of the default import, `isPotentialHookCall` without.
+        // `isPotentialReactHookCall` if there's an object, which has to be the default import, else
+        // `isPotentialHookCall`.
         let react = match callee.object() {
             Some(object) => match default.filter(|it| it.start() < at) {
                 Some(react) if object.as_ident() == Some(react.name()) => Some(react.name()),
@@ -212,12 +215,12 @@ impl<'a> ReactImports<'a> {
             None => return false,
         };
         let scope = Node::Expr(e).scope();
-        let is_asked_for = |it: &Reference<'a>| match react {
+        let is_match = |it: &Reference<'a>| match react {
             Some(react) => it.name() == react,
             None => imported_hook(it.name()).is_some() || is_in_object_prototype(it.name().bytes()),
         };
-        let asked = Asked { scope, imports: starts.partition_point(|it| *it < at), react };
-        let first = first_references.entry(asked).or_insert_with(|| scope.references().find(is_asked_for));
+        let cache_key = FirstReferenceKey { scope, imports: starts.partition_point(|it| *it < at), react };
+        let first = first_references.entry(cache_key).or_insert_with(|| scope.references().find(is_match));
         let Some(first) = *first else {
             return false;
         };
@@ -226,12 +229,12 @@ impl<'a> ReactImports<'a> {
                 let is_import = |it: Declaration<'a>| it.kind() == Some(DeclarationKind::ImportBinding);
                 (react.is_none() && first.name() != local_hook_name) || symbol.declarations().all(is_import)
             }
-            // Where it resolves to nothing upstream throws.
+            // Upstream throws if it doesn't resolve to anything.
             None => first.global().is_some(),
         }
     }
 
-    /// The fix of `suggestMemo`.
+    /// The `suggestMemo` fix.
     #[cold]
     #[inline(never)]
     fn use_memo(&self, fixer: Fixer<'a>, e: Expr<'a>, id: Span, value: Name<'a>) -> Option<Vec<Fix>> {

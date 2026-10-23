@@ -350,11 +350,10 @@ impl BuiltinIO {
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
-                // `len = buf.len` stays usize so `i + len > byte_len` is
-                // computed at usize width and cannot overflow; only the
-                // stored cursor is u32.
+                // JS can resize the buffer between chunks.
+                let dst_all = arraybuf.live_slice_mut();
                 let idx = *i as usize;
-                let total = arraybuf.byte_len;
+                let total = dst_all.len();
                 if idx >= total {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
@@ -362,7 +361,7 @@ impl BuiltinIO {
                     ));
                 }
                 let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                let dst = &mut dst_all[idx..idx + write_len];
                 dst.copy_from_slice(&buf[..write_len]);
                 *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
@@ -603,34 +602,7 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => {
-                            #[cfg(windows)]
-                            {
-                                use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
-                                    Err(e) => {
-                                        let sys = e.to_shell_system_error();
-                                        return Some(Self::cmd_write_failing_error(
-                                            interp,
-                                            cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
-                                        ));
-                                    }
-                                    Ok(f2) => f2,
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                f
-                            }
-                        }
+                        Ok(f) => f,
                     }
                 };
 
@@ -677,13 +649,9 @@ impl Builtin {
             }
             Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
-                let idx = jsbuf.idx as usize;
                 // Safe accessor — single `unsafe` deref lives in
                 // `Interpreter::global_this_ref`.
-                let Some(global) = interp
-                    .global_this_ref()
-                    .filter(|_| idx < interp.jsobjs.len())
-                else {
+                let Some(global) = interp.global_this_ref() else {
                     interp.throw(crate::shell::ShellErr::Custom(
                         b"Invalid JS object reference in shell"
                             .to_vec()
@@ -691,7 +659,9 @@ impl Builtin {
                     ));
                     return Some(Yield::Failed(cmd));
                 };
-                let jsval = interp.jsobjs[idx];
+                let Ok(jsval) = interp.jsobj(global, jsbuf.idx) else {
+                    return Some(Yield::Failed(cmd));
+                };
 
                 if jsval.js_type().is_array_buffer_like() {
                     // Each slot gets its own pin + GC root; `None` has thrown OOM.

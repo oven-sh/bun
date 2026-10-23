@@ -38,7 +38,8 @@ struct NodeModulesFolder {
     dependencies: Box<[DependencyID]>,
 }
 
-/// `bun pm ls` lists what is on disk: the lockfile also has never-installed optionals and pruned entries.
+/// `bun pm ls` lists what's on disk. The lockfile also has optional dependencies that were never
+/// installed, and pruned entries.
 struct InstalledFilter {
     path: AutoAbsPath,
     top_len: usize,
@@ -59,7 +60,9 @@ impl InstalledFilter {
         })
     }
 
-    /// `or_in_store`: an isolated install links only direct dependencies into a `node_modules`, so an entry of the (hoisted) tree may be in `node_modules/.bun` alone. A dependency of the root is one the root can load: it has to be linked.
+    /// `or_in_store`: an isolated install only links direct dependencies into a `node_modules`, so
+    /// an entry of the (hoisted) tree may only be in `node_modules/.bun`. A dependency of the root
+    /// has to be linked, because the root has to be able to load it.
     fn is_installed(
         &mut self,
         lockfile: &Lockfile,
@@ -78,7 +81,8 @@ impl InstalledFilter {
         // Local sources live outside of node_modules.
         match resolution.tag {
             ResolutionTag::Root | ResolutionTag::Symlink => return true,
-            // A pruned checkout (`turbo prune`, a Docker layer) lacks some of the lockfile's workspaces.
+            // A pruned checkout (`turbo prune`, a Docker layer) is missing some of the lockfile's
+            // workspaces.
             ResolutionTag::Workspace => {
                 // `join` resolves a `..` in the workspace's path, which `append` does not. Windows
                 // treats a `..` that is left in an absolute path as a literal name.
@@ -184,7 +188,7 @@ impl PackageManagerCommand {
         Global::crash();
     }
 
-    /// What `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it.
+    /// Returns what `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it.
     fn protected_in(dir: &[u8], bun_install: Option<&[u8]>, cwd: &[u8]) -> Option<&'static str> {
         let protected: [(&'static str, Option<&[u8]>); 5] = [
             ("the home directory", env_var::HOME.get_not_empty()),
@@ -195,14 +199,15 @@ impl PackageManagerCommand {
             ("$BUN_INSTALL", bun_install),
             (
                 "the project directory",
-                Some(Fs::FileSystem::get().top_level_dir),
+                Some(Fs::FileSystem::get().top_level_dir()),
             ),
             ("the current directory", Some(cwd)),
         ];
         let mut buf = bun_paths::path_buffer_pool::get();
         for (what, path) in protected {
             let Some(path) = path else { continue };
-            // Real paths on both sides: a symlink to `$HOME` has to compare as `$HOME`.
+            // Compare real paths on both sides, so that a symlink to `$HOME` compares equal to
+            // `$HOME`.
             let real: &[u8] = match Dir::open(path) {
                 Ok(opened) => match opened.get_fd_path(&mut buf) {
                     Ok(real) => &real[..],
@@ -282,7 +287,8 @@ impl PackageManagerCommand {
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
-            // Drops a leading "pm" from the field: the branches below index `positionals[1]` and up.
+            // Drops a leading "pm" from the field, because the branches below index
+            // `positionals[1]` and up.
             Self::get_subcommand(&mut pm.options.positionals)
         };
         let positionals: &'static [&'static [u8]] = pm.options.positionals;
@@ -334,7 +340,7 @@ impl PackageManagerCommand {
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
-                Fs::FileSystem::get().top_level_dir,
+                Fs::FileSystem::get().top_level_dir(),
                 pm.options.bin_path.as_bytes(),
             );
             bun_core::prettyln!("{}", bstr::BStr::new(output_path));
@@ -411,9 +417,18 @@ impl PackageManagerCommand {
                 let dry_run = pm.options.dry_run;
 
                 // Not `pm.options`: a project's `.env`, bunfig.toml or `.npmrc` does not choose what is deleted.
+                // `~/.bunfig.toml` is honored because a project can't write to it. `~/.npmrc`
+                // isn't, because its `cache` setting is npm's cache, which Bun shouldn't delete.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let cache_dir = match fetch_cache_directory_path(&mut process_env, cli.cache_dir) {
+                let user_cache_dir = match cli.cache_dir {
+                    Some(_) => None,
+                    None => (bun_bunfig::arguments::load_user_install_section().ok())
+                        .flatten()
+                        .and_then(|install| install.cache_directory),
+                };
+                let configured = cli.cache_dir.or(user_cache_dir.as_deref());
+                let cache_dir = match fetch_cache_directory_path(&mut process_env, configured) {
                     Ok(cache_dir) => cache_dir,
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
@@ -423,7 +438,8 @@ impl PackageManagerCommand {
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
-                // The real path and whether it holds the global store; `None` when there is no directory.
+                // The real path, and whether it contains the global store. `None` if the directory
+                // doesn't exist.
                 let found: Option<(&[u8], bool)> = match &rm_dir {
                     Some(rm_dir) => {
                         let has_global_store =
@@ -443,7 +459,8 @@ impl PackageManagerCommand {
                 });
                 let protected = found
                     .and_then(|(real, _)| Self::protected_in(real, bun_install.as_deref(), &cwd));
-                // What bunx installed is inside the install cache: counted before it goes with it.
+                // The packages that bunx installed are inside the install cache, so count them
+                // before it's deleted.
                 let mut deleted: usize = match protected {
                     None if !prune => crate::cli::bunx_command::count_cached_packages(rm_path),
                     _ => 0,
@@ -451,7 +468,7 @@ impl PackageManagerCommand {
 
                 if let Some(what) = protected {
                     Output::err_generic(
-                        "refusing to {s} \"{s}\": it is or contains {s}",
+                        "refusing to {s} \"{s}\": is or contains {s}",
                         (
                             if prune { "prune" } else { "clear" },
                             bstr::BStr::new(rm_path),
@@ -459,7 +476,7 @@ impl PackageManagerCommand {
                         ),
                     );
                     bun_core::note!(
-                        "the cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r> or <b>$BUN_INSTALL<r>. Point it at a directory that holds nothing but the bun install cache."
+                        "cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r>, <b>~/.bunfig.toml<r> or <b>$BUN_INSTALL<r>. point it at a directory used only for the bun install cache"
                     );
                     had_err = true;
                 } else if prune {
@@ -482,7 +499,7 @@ impl PackageManagerCommand {
                     }
                     if has_global_store {
                         bun_core::note!(
-                            "the global store {} removed with it. Run 'bun install' again in each project that uses it.",
+                            "global store {} removed too, run 'bun install' in each project that uses it",
                             if dry_run { "would be" } else { "was" },
                         );
                     }
@@ -597,7 +614,7 @@ impl PackageManagerCommand {
                 Output::println(format_args!(
                     "{} node_modules{}",
                     bstr::BStr::new(strings::without_trailing_slash(
-                        Fs::FileSystem::get().top_level_dir
+                        Fs::FileSystem::get().top_level_dir()
                     )),
                     if all { "" } else { " (0 installed)" },
                 ));
@@ -613,13 +630,16 @@ impl PackageManagerCommand {
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
 
-            let Some(mut installed) = InstalledFilter::init() else {
-                if log_level != LogLevel::Silent {
-                    Output::err_generic("node_modules not found, nothing to list", ());
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::exit(1);
-            };
+            // If there's no `node_modules`, list every dependency that the lockfile resolved.
+            let mut on_disk = InstalledFilter::init();
+            let mut is_installed =
+                |dir: &[u8], dep_id: DependencyID, or_in_store: bool| match on_disk.as_mut() {
+                    Some(on_disk) => on_disk.is_installed(lockfile, dir, dep_id, or_in_store),
+                    None => {
+                        (lockfile.buffers.resolutions[dep_id as usize] as usize)
+                            < lockfile.packages.len()
+                    }
+                };
 
             let resolutions = lockfile.buffers.resolutions.as_slice();
             // `--production` and `--omit` exclude a dependency group, along with every package that
@@ -655,7 +675,7 @@ impl PackageManagerCommand {
                 let mut dependencies = node_modules.dependencies.to_vec();
                 dependencies.retain(|&dep_id| {
                     wanted.is_set_allow_out_of_bound(resolutions[dep_id as usize] as usize, false)
-                        && installed.is_installed(lockfile, dir, dep_id, true)
+                        && is_installed(dir, dep_id, true)
                 });
                 installed_count += dependencies.len();
                 max_depth = max_depth.max(node_modules.depth + 1);
@@ -732,8 +752,7 @@ impl PackageManagerCommand {
                 });
 
                 sorted_dependencies.retain(|&dep_id| {
-                    installed.is_installed(lockfile, b"node_modules", dep_id, false)
-                        && selected(dep_id)
+                    is_installed(b"node_modules", dep_id, false) && selected(dep_id)
                 });
                 print_flat_list(lockfile, &sorted_dependencies);
                 !sorted_dependencies.is_empty()

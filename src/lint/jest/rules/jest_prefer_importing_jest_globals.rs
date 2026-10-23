@@ -1,7 +1,6 @@
 use crate::jest::{
     self, JestFnKind, JestGeneralFnKind, OxlintOrder, ParsedJestFnCall, parent_expression,
 };
-use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::oxlint::source_type;
@@ -10,7 +9,7 @@ use std::collections::BTreeSet;
 
 /// Prefer importing Jest globals from `@jest/globals` rather than relying on ambient globals.
 pub struct PreferImportingJestGlobals {
-    /// For `hook`, `describe`, `test`, `expect`, `jest` and `unknown`.
+    /// One flag each for `hook`, `describe`, `test`, `expect`, `jest` and `unknown`.
     types: [bool; 6],
 }
 
@@ -82,7 +81,7 @@ impl PreferImportingJestGlobals {
             }
             found.push(jest_node);
         }
-        // The first of oxlint's list is reported.
+        // Report the first one in oxlint's order.
         let Some(span) = OxlintOrder::first(file, &found)
             .and_then(|it| it.node.callee())
             .map(Expr::outer_span)
@@ -103,7 +102,7 @@ fn join(names: &Names) -> Vec<u8> {
         .join(b", ".as_slice())
 }
 
-/// `ctx.source_type().is_module()`
+/// oxlint's `ctx.source_type().is_module()`.
 fn is_module<'a>(file: &'a File<'a>) -> bool {
     source_type(file) == SourceType::Module
 }
@@ -119,7 +118,7 @@ fn create_import_text(is_module: bool, functions: &Names) -> Vec<u8> {
 
 fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: Names) -> Fix {
     let is_module = is_module(file);
-    // With the first `import .. from "@jest/globals"`.
+    // Merge into the first `import .. from "@jest/globals"`.
     if let Some(first) =
         import_entries(file).find(|it| it.declaration.spec().is(IMPORT_SOURCE) && !it.is_type())
     {
@@ -144,7 +143,7 @@ fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: 
             create_import_text(true, &functions_to_import),
         );
     }
-    // With the first `const { .. } = require("@jest/globals")`.
+    // Merge into the first `const { .. } = require("@jest/globals")`.
     for reference in file
         .unresolved_references_to(b"require")
         .filter_map(Reference::expr)
@@ -204,22 +203,6 @@ fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: 
             create_import_text(is_module, &functions_to_import),
         );
     }
-    let text = create_import_text(is_module, &functions_to_import);
-    if let Some(directive) = file
-        .body()
-        .iter()
-        .take_while(|it| it.directive().is_some())
-        .last()
-    {
-        return fixer.insert_after(directive, [b"\n".as_slice(), &text].concat());
-    }
-    if file.text().starts_with(b"#!") {
-        let hashbang_end =
-            strings::index_of_any(file.text(), b"\r\n").unwrap_or_else(|| file.text().len());
-        return fixer.insert_after(
-            Span::empty(hashbang_end as u32),
-            [b"\n".as_slice(), &text].concat(),
-        );
-    }
-    fixer.insert_before(Span::empty(0), [text.as_slice(), b"\n".as_slice()].concat())
+    // oxlint only skips the `#!` line and the directives, so it inserts the import above `// @ts-nocheck`.
+    fixer.insert_first_statement(&create_import_text(is_module, &functions_to_import))
 }

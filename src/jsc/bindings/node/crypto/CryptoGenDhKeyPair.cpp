@@ -16,13 +16,9 @@ void DhKeyPairJobCtx::deinit()
     delete this;
 }
 
-extern "C" void Bun__DhKeyPairJobCtx__runTask(DhKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
+extern "C" void Bun__DhKeyPairJobCtx__runTask(DhKeyPairJobCtx* ctx, JSGlobalObject*)
 {
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
+    KeyPairJobCtx::generate(*ctx);
 }
 
 extern "C" void Bun__DhKeyPairJobCtx__runFromJS(DhKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
@@ -45,12 +41,10 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
         auto prime = primeFixedValue->clone();
         auto bnG = ncrypto::BignumPointer::New();
         if (!prime || !bnG || !bnG.setWord(m_generator)) {
-            m_opensslError = ERR_get_error();
             return {};
         }
         auto dh = ncrypto::DHPointer::New(WTF::move(prime), WTF::move(bnG));
         if (!dh) {
-            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -60,7 +54,6 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
 
         int* primeLength = std::get_if<int>(&m_prime);
         if (!paramCtx.initForParamgen() || !paramCtx.setDhParameters(*primeLength, m_generator)) {
-            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -68,13 +61,11 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
     }
 
     if (!keyParams) {
-        m_opensslError = ERR_get_error();
         return {};
     }
 
     ncrypto::EVPKeyCtxPointer ctx = keyParams.newCtx();
     if (!ctx.initForKeygen()) {
-        m_opensslError = ERR_get_error();
         return {};
     }
 

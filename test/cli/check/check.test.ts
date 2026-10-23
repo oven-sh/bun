@@ -16856,6 +16856,265 @@ declare module "./reexport" {
       expect(exitCode).toBe(1);
     });
 
+    test("the checks of a class or an interface keep the base types of the declarations before an augmentation through a re-export", async () => {
+      const direct = `export {};
+declare module "./expect" {
+  interface Assertion { snapshot(): void }
+}
+`;
+      const through = `export {};
+interface M { m(): void }
+declare module "./reexport" {
+  interface Assertion extends M {}
+}
+`;
+      const shapes: Record<string, [expect: string, direct: string, through: string]> = {
+        abstract: [
+          `export abstract class Base { abstract a(): void; b(): void {} }
+export abstract class Assertion extends Base {}
+export interface Assertion { b: number }
+`,
+          direct,
+          through,
+        ],
+        class1: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base {}
+export interface Assertion { a: number }
+`,
+          direct,
+          through,
+        ],
+        class2: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base {}
+`,
+          `export {};
+interface D { a: number }
+declare module "./expect" {
+  interface Assertion extends D {}
+}
+`,
+          through,
+        ],
+        cycle: [
+          `import "./through";
+export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion<T> { snapshot(): void }
+}
+`,
+          `import "./reexport";
+interface M<T> { a(): T }
+declare module "./reexport" {
+  interface Assertion<T = any> extends M<T> {}
+}
+`,
+        ],
+        generic: [
+          `export class Base<T> { a(): T { return null!; } }
+export class Assertion<T> extends Base<T> {}
+export interface Assertion<T> { a: number }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion<T> { snapshot(): T }
+}
+`,
+          `export {};
+interface M<T> { m(): T }
+declare module "./reexport" {
+  interface Assertion<T> extends M<T> {}
+}
+`,
+        ],
+        hiddenbase: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base {}
+`,
+          direct,
+          `export {};
+interface M { a: number }
+declare module "./reexport" {
+  interface Assertion extends M {}
+}
+`,
+        ],
+        hiddenimplements: [
+          `export interface I { a(): void }
+export class Assertion implements I { a(): void {} }
+`,
+          direct,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { a: number }
+}
+`,
+        ],
+        implements: [
+          `export interface I { a(): void }
+export class Base { b(): void {} }
+export class Assertion extends Base implements I { a(): void {} }
+export interface Assertion { b: number }
+`,
+          direct,
+          through,
+        ],
+        implements2: [
+          `export interface I { a(): void; z: number }
+export class Assertion implements I { a(): void {} }
+`,
+          direct,
+          through,
+        ],
+        index: [
+          `export interface Assertion { [key: string]: number }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion { d: string }
+}
+`,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { t: string }
+}
+`,
+        ],
+        index3: [
+          `export class Assertion { [key: string]: number }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion { d: string }
+}
+`,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { t: string }
+}
+`,
+        ],
+        override: [
+          `export class Base { a(): void {} }
+export class Assertion extends Base { a(): void {} }
+`,
+          direct,
+          `export {};
+declare module "./reexport" {
+  interface Assertion { b: number }
+}
+`,
+        ],
+        samebase: [
+          `export interface A1 { a(): void }
+export interface Assertion extends A1 { a: number }
+`,
+          direct,
+          `import { A1 } from "./expect";
+declare module "./reexport" {
+  interface Assertion extends A1 {}
+}
+`,
+        ],
+        two: [
+          `export interface A1 { a(): void }
+export interface A2 { a(): number }
+export interface Assertion extends A1 {}
+export interface Assertion extends A2 {}
+`,
+          direct,
+          through,
+        ],
+        two2: [
+          `export interface A1 { a(): void }
+export interface Assertion extends A1 {}
+export interface Assertion { a: number }
+`,
+          direct,
+          through,
+        ],
+        typeparams2: [
+          `export interface Assertion<T> { own: T }
+`,
+          `export {};
+declare module "./expect" {
+  interface Assertion<U> { snapshot(): U }
+}
+`,
+          `export {};
+declare module "./reexport" {
+  interface Assertion<T> { u: T }
+}
+`,
+        ],
+      };
+      using dir = project(
+        Object.fromEntries(
+          Object.entries(shapes).flatMap(([name, [expect, direct, through]]) => [
+            [`${name}/expect.ts`, expect],
+            [`${name}/direct.ts`, direct],
+            [`${name}/reexport.ts`, `import "./direct";\nexport { Assertion } from "./expect";\n`],
+            [`${name}/through.ts`, through],
+          ]),
+        ),
+      );
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "abstract/expect.ts(2,23): error TS2415: Class 'Assertion' incorrectly extends base class 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        abstract/expect.ts(3,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        class1/expect.ts(2,14): error TS2415: Class 'Assertion' incorrectly extends base class 'Base'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        class1/expect.ts(3,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'Base'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        class2/direct.ts(4,13): error TS2320: Interface 'Assertion' cannot simultaneously extend types 'Base' and 'D'.
+          Named property 'a' of types 'Base' and 'D' are not identical.
+        cycle/expect.ts(3,18): error TS2320: Interface 'Assertion<T>' cannot simultaneously extend types 'Base<T>' and 'M<T>'.
+          Named property 'a' of types 'Base<T>' and 'M<T>' are not identical.
+        generic/expect.ts(2,14): error TS2415: Class 'Assertion<T>' incorrectly extends base class 'Base<T>'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => T'.
+        generic/expect.ts(3,18): error TS2430: Interface 'Assertion<T>' incorrectly extends interface 'Base<T>'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => T'.
+        hiddenimplements/expect.ts(2,39): error TS2300: Duplicate identifier 'a'.
+        hiddenimplements/through.ts(3,25): error TS2300: Duplicate identifier 'a'.
+        implements/expect.ts(3,14): error TS2415: Class 'Assertion' incorrectly extends base class 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        implements/expect.ts(4,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'Base'.
+          Types of property 'b' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        implements2/expect.ts(2,14): error TS2420: Class 'Assertion' incorrectly implements interface 'I'.
+          Property 'z' is missing in type 'Assertion' but required in type 'I'.
+        index/direct.ts(3,25): error TS2411: Property 'd' of type 'string' is not assignable to 'string' index type 'number'.
+        index/through.ts(3,25): error TS2411: Property 't' of type 'string' is not assignable to 'string' index type 'number'.
+        index3/direct.ts(3,25): error TS2411: Property 'd' of type 'string' is not assignable to 'string' index type 'number'.
+        index3/through.ts(3,25): error TS2411: Property 't' of type 'string' is not assignable to 'string' index type 'number'.
+        samebase/expect.ts(2,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'A1'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        two/expect.ts(3,18): error TS2320: Interface 'Assertion' cannot simultaneously extend types 'A1' and 'A2'.
+          Named property 'a' of types 'A1' and 'A2' are not identical.
+        two2/expect.ts(2,18): error TS2430: Interface 'Assertion' incorrectly extends interface 'A1'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type '() => void'.
+        typeparams2/direct.ts(3,13): error TS2428: All declarations of 'Assertion' must have identical type parameters.
+        typeparams2/expect.ts(1,18): error TS2428: All declarations of 'Assertion' must have identical type parameters.
+        typeparams2/through.ts(3,13): error TS2428: All declarations of 'Assertion' must have identical type parameters."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

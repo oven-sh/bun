@@ -782,20 +782,29 @@ impl Checker<'_, '_> {
         let ty = self.declared_type(sym);
         let name_pos = self.hir(file)[i].name_pos;
         let mut bases = self.base_types(sym);
-        // The checks below are those of `getSymbolOfDeclaration(node)`, with the base types that its declarations name.
-        if let Some(count) = self.files().declarations_of_first_clone(sym) {
-            let mut named = Vec::new();
-            for &(f, declaration) in self.files().decls_of(sym).iter().take(count) {
+        // The checks below are those of `getSymbolOfDeclaration(node)`: the first clone, without the base types that the
+        // later declarations name, which are the last ones. tsgo checks the second clone at one of those declarations,
+        // and reports at `firstInterfaceDeclaration` too, which is lost if the errors of that file are collected by then.
+        if let Some(count) = self.files().declarations_of_first_clone(sym)
+            && let Some((first, _)) = interface_declaration
+        {
+            let mut later = 0;
+            for &(f, declaration) in self.files().decls_of(sym).iter().skip(count) {
+                if self.position_in_program_order(f, 0) <= self.position_in_program_order(first, 0)
+                {
+                    later = 0;
+                    break;
+                }
                 let Decl::Interface(id) = declaration else {
                     continue;
                 };
                 for node in self.hir(f).ids(self.hir(f)[id].extends) {
                     let base = self.type_from_node(f, node);
-                    named.push(self.reduced(base));
+                    later += usize::from(bases.contains(&self.reduced(base)));
                 }
             }
-            named.retain(|base| bases.contains(base));
-            bases = List::Own(named);
+            let count = bases.len().saturating_sub(later);
+            bases = List::Own(bases.iter().copied().take(count).collect());
         }
         if is_first {
             let at = self.span_of_token(file, name_pos);

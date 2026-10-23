@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { once } from "node:events";
+import { truncateSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -220,6 +223,51 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
   });
+});
+
+// The request head announces the whole file in Content-Length. A file that gets shorter
+// while sendfile(2) uploads it cannot fill that. The fetch used to stay pending: the
+// request counted as sent, and the server waited for bytes that never came.
+// Windows reads the file into memory before the request starts.
+test.skipIf(isWindows)("a Bun.file() body that shrinks while it is uploaded rejects the fetch", async () => {
+  // More than the socket buffers of a reader that stopped can hold. A sparse file: no data is written.
+  const SIZE = 64 * 1024 * 1024;
+  using dir = tempDir("fetch-file-upload-shrinks", { "body.bin": "" });
+  const path = join(String(dir), "body.bin");
+  truncateSync(path, SIZE);
+
+  const sockets = new Set<net.Socket>();
+  const { promise: uploadStarted, resolve: onUploadStarted } = Promise.withResolvers<net.Socket>();
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      // Stop reading, so that the upload cannot finish before the file shrinks.
+      socket.pause();
+      onUploadStarted(socket);
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  try {
+    const outcome = fetch(`http://127.0.0.1:${port}/`, { method: "PUT", body: Bun.file(path) }).then(
+      res => ({ rejected: false as const, status: res.status }),
+      e => ({ rejected: true as const, code: e.code, message: e.message }),
+    );
+    const socket = await uploadStarted;
+    truncateSync(path, 1);
+    socket.resume();
+    expect(await outcome).toEqual({
+      rejected: true,
+      code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+      message: `Request body file is shorter than the Content-Length of ${SIZE}`,
+    });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
 });
 
 test("missing file throws the expected error", async () => {

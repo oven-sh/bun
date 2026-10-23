@@ -252,6 +252,66 @@ test.concurrent("POST of a Bun.file() large enough for sendfile through a TLS pr
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "200 true\n", stderr: "", exitCode: 0 });
 });
 
+// The first request of these uploads is plain http, so fetch() sends the Bun.file() body
+// with sendfile(2). The origin then redirects to a URL whose connection sendfile(2) cannot
+// write to, and the file has to go out again there as a stream. The redirected request
+// used to have `Content-Length: 0` and no body.
+describe("a redirect sends a Bun.file() body again where sendfile cannot write", () => {
+  // Every 8 bytes encode their own offset, so a part that is lost, repeated or out of
+  // order changes the text.
+  const SIZE = 1_500_123;
+  const CONTENT = Buffer.alloc(SIZE);
+  for (let offset = 0; offset < SIZE; offset += 8)
+    CONTENT.write(offset.toString(16).padStart(8, "0"), offset, "latin1");
+
+  // Subprocess: the proxy environment is read when the process starts.
+  async function uploadFromChild(redirectTo: string, proxyEnv: Record<string, string>) {
+    using dir = tempDir("proxy-file-body-redirect", { "body.bin": CONTENT });
+    using origin = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const body = await req.arrayBuffer();
+        if (body.byteLength !== SIZE) return new Response("the origin did not get the file", { status: 500 });
+        return new Response(null, { status: 307, headers: { Location: redirectTo } });
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const file = Bun.file("body.bin");
+        const res = await fetch(${JSON.stringify(`http://127.0.0.1:${origin.port}/`)}, { method: "POST", body: file, tls: { rejectUnauthorized: false } });
+        const echoed = await res.text();
+        console.log(res.status, res.url, echoed.length, echoed === (await file.text()));`,
+      ],
+      env: { ...bunEnv, ...proxyFreeEnv, ...proxyEnv },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("through a CONNECT tunnel to an https origin", async () => {
+    const proxyEnv = { http_proxy: httpProxyServer.url, https_proxy: httpProxyServer.url };
+    expect(await uploadFromChild(String(httpsServer.url), proxyEnv)).toEqual({
+      stdout: `200 ${httpsServer.url} ${SIZE} true\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("through a TLS proxy, from an origin that is exempt from it", async () => {
+    const proxyEnv = { http_proxy: httpsProxyServer.url, NO_PROXY: "127.0.0.1" };
+    expect(await uploadFromChild(String(httpServer.url), proxyEnv)).toEqual({
+      stdout: `200 ${httpServer.url} ${SIZE} true\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 for (const server_tls of [false, true]) {
   describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
     test("with empty body #12007", async () => {

@@ -78,10 +78,6 @@ const errorTags = [
   <ErrorTag type={ErrorTagType.hmr}></ErrorTag>,
 ];
 
-function getAssetPrefixPath() {
-  return globalThis["__BUN_HMR"]?.assetPrefixPath || "";
-}
-
 export const normalizedFilename = (filename: string, cwd?: string): string => {
   if (filename.startsWith("http://") || filename.startsWith("https://")) {
     const url = new URL(filename, globalThis.location.href);
@@ -95,18 +91,8 @@ export const normalizedFilename = (filename: string, cwd?: string): string => {
     filename = filename.substring(blobI + "/blob:".length);
   }
 
-  const assetPrefixPath = getAssetPrefixPath();
-
   if (cwd && filename.startsWith(cwd)) {
     filename = filename.substring(cwd.length);
-
-    if (assetPrefixPath.length > 0 && filename.startsWith(assetPrefixPath)) {
-      return filename.substring(assetPrefixPath.length);
-    }
-  }
-
-  if (assetPrefixPath.length > 0 && filename.startsWith(assetPrefixPath)) {
-    return filename.substring(assetPrefixPath.length);
   }
 
   return filename;
@@ -161,7 +147,6 @@ const openWithoutFlashOfNewTab: JSX.MouseEventHandler<HTMLAnchorElement> = event
     return true;
   }
 
-  event.preventDefault();
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
@@ -218,13 +203,11 @@ class FancyTypeError {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
     this.message = exception.message || "";
-    this.explain = "";
 
     this.normalize(exception);
   }
 
   runtimeType: RuntimeType;
-  explain: string;
   runtimeTypeName: string;
   message: string;
 
@@ -573,7 +556,7 @@ export const StackFrameIdentifier = ({
 };
 
 const getNativeStackFrameIdentifier = frame => {
-  const { file, function_name: functionName, scope } = frame;
+  const { function_name: functionName, scope } = frame;
 
   return StackFrameIdentifier({
     functionName,

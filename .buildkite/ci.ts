@@ -177,7 +177,6 @@ interface Target {
   os: Os;
   arch: Arch;
   abi?: Abi | undefined;
-  baseline?: boolean | undefined;
   profile?: Profile | undefined;
   /**
    * Build on a Linux host for a foreign target OS (currently: darwin and
@@ -190,13 +189,10 @@ interface Target {
 }
 
 function getTargetKey(target: Target): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, profile } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
-  }
-  if (baseline) {
-    key += "-baseline";
   }
   if (profile && profile !== "release") {
     key += `-${profile}`;
@@ -205,13 +201,10 @@ function getTargetKey(target: Target): string {
 }
 
 function getTargetLabel(target: Target): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, profile } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
-  }
-  if (baseline) {
-    label += "-baseline";
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
@@ -328,11 +321,8 @@ function getPlatformKey(platform: Platform): string {
 
 /** `arch` is only printed here, and placeBinaryCheck() passes `<arch>-<abi>` as one. */
 function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): string {
-  const { os, arch, baseline, profile, distro, release } = platform;
+  const { os, arch, profile, distro, release } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
-  if (baseline) {
-    label += "-baseline";
-  }
   if (profile && profile !== "release") {
     label += `-${profile}`;
   }
@@ -392,7 +382,7 @@ function getImageDependsOn(platform: Platform, baking: ReadonlySet<string>): str
   return baking.has(key) ? [`${key}-image`] : [];
 }
 
-/** Tells kinds of machine apart: the baseline and profile variants of a platform run on the same one. */
+/** Tells kinds of machine apart: the profile variants of a platform run on the same one. */
 function getMachineKey({ os, arch, distro, release, abi }: Platform): string {
   return [os, arch, distro, release, abi].join("-");
 }
@@ -574,7 +564,7 @@ function getTestAgent(platform: Platform): Agent {
  * (--target passthrough) with direct build.ts flags.
  */
 function getBuildArgs(target: Target, options: PipelineOptions): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, profile } = target;
   const { canary } = options;
 
   const args = ["--profile=ci-build"];
@@ -584,7 +574,6 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   args.push(`--os=${os}`, `--arch=${arch}`);
   if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
 
-  if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
 
   // canary: options.canary can be number (revision count) or undefined
@@ -636,20 +625,17 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
 }
 
 /**
- * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl".
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
  */
 function getTargetTriplet(platform: Target): string {
-  const { os, arch, abi, baseline } = platform;
+  const { os, arch, abi } = platform;
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
   }
   if (abi === "android") {
     triplet += "-android";
-  }
-  if (baseline) {
-    triplet += "-baseline";
   }
   return triplet;
 }
@@ -1362,13 +1348,10 @@ function getOptionsStep(): BlockStep {
         multiple: true,
         default: [],
         options: buildPlatforms.map(platform => {
-          const { os, arch, abi, baseline } = platform;
+          const { os, arch, abi } = platform;
           let label = `${getEmoji(os)} ${arch}`;
           if (abi) {
             label += `-${abi}`;
-          }
-          if (baseline) {
-            label += `-baseline`;
           }
           return {
             label,
@@ -1383,7 +1366,7 @@ function getOptionsStep(): BlockStep {
         required: false,
         multiple: true,
         default: [],
-        // One option per distinct image — the baseline/profile variants collapse
+        // One option per distinct image — the profile variants collapse
         // into the first (plain) entry since profiles come from `build-profiles`.
         // The option value must be that entry's *platform* key: it's what
         // getPipelineOptions() resolves through testPlatformsMap, and the image
@@ -1740,7 +1723,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       binaryCheckSteps.push({ key: getPlatformKey(host), group: getPlatformLabel(host), steps: [step] });
       return [];
     }
-    const lane = { ...host, abi: target.abi, baseline: target.baseline, profile: target.profile };
+    const lane = { ...host, abi: target.abi, profile: target.profile };
     return [
       {
         key: getPlatformKey(lane),

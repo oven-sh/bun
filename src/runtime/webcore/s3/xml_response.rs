@@ -2,9 +2,12 @@
 //! `{ name, attributes, children }` node shape, whose text is exact) and the
 //! few strings wanted are copied out.
 
+use std::io::Write as _;
+
 use bun_ast::E;
 use bun_ast::expr::Data;
 use bun_parsers::xml::{self, XML};
+use bun_s3_signing::error::S3Error;
 
 /// One element of a parsed response.
 #[derive(Clone, Copy)]
@@ -119,12 +122,12 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
 
 /// The `<Code>` and `<Message>` (each if present and non-empty) of an S3
 /// `<Error>` document; `None` if the body is not one.
-pub(crate) struct ErrorBody {
-    pub code: Option<Box<[u8]>>,
-    pub message: Option<Box<[u8]>>,
+struct ErrorBody {
+    code: Option<Box<[u8]>>,
+    message: Option<Box<[u8]>>,
 }
 
-pub(crate) fn parse_error(body: &[u8]) -> Option<ErrorBody> {
+fn parse_error(body: &[u8]) -> Option<ErrorBody> {
     parse(body, |root| {
         (root.name == b"Error").then(|| ErrorBody {
             code: root.child_nonempty_text(b"Code"),
@@ -132,4 +135,89 @@ pub(crate) fn parse_error(body: &[u8]) -> Option<ErrorBody> {
         })
     })
     .flatten()
+}
+
+const UNEXPECTED: &[u8] = b"an unexpected error has occurred";
+
+/// The error of a request that failed in transport; the failure's name is its code.
+/// `status` is that of the response head, or 0 when none arrived before the failure.
+pub(crate) fn transport_failure(cause: bun_http::Error, status: u32) -> S3Error<'static> {
+    S3Error::from_response(cause.name().as_bytes(), UNEXPECTED, status)
+}
+
+/// "HTTP 403": the message of a failed response that has no body.
+struct StatusLine {
+    bytes: [u8; Self::MAX],
+    len: usize,
+}
+
+impl StatusLine {
+    const MAX: usize = "HTTP 4294967295".len();
+
+    fn of(status: u32) -> Self {
+        let mut bytes = [0u8; Self::MAX];
+        let mut rest = &mut bytes[..];
+        write!(rest, "HTTP {status}").expect("MAX fits the longest u32");
+        let len = Self::MAX - rest.len();
+        Self { bytes, len }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+/// What the body of a response that may be a failure says about it: S3's
+/// `<Error>` document when the body is one, the body as text when it is
+/// anything else (a proxy's page), nothing when it is empty (every HEAD).
+pub(crate) struct FailedResponse {
+    document: Option<ErrorBody>,
+    /// Written by `error` when the status is all there is to say.
+    status_line: Option<StatusLine>,
+}
+
+impl FailedResponse {
+    /// Inlined: an empty body, which is all a missing key gets, then costs no call.
+    #[inline]
+    pub(crate) fn read(body: &[u8]) -> Self {
+        let mut response = Self {
+            document: None,
+            status_line: None,
+        };
+        if !body.is_empty() {
+            response.document = parse_error(body);
+        }
+        response
+    }
+
+    /// A request can answer 200 and still carry an `<Error>` document.
+    pub(crate) fn is_error_document(&self) -> bool {
+        self.document.is_some()
+    }
+
+    pub(crate) fn has_code(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(|document| document.code.is_some())
+    }
+
+    /// The error that the response with this `body` and `status` reports.
+    pub(crate) fn error<'a>(&'a mut self, body: &'a [u8], status: u32) -> S3Error<'a> {
+        let document = self.document.as_ref();
+        let code = document
+            .and_then(|document| document.code.as_deref())
+            .unwrap_or(b"UnknownError");
+        let message = match document.and_then(|document| document.message.as_deref()) {
+            Some(message) => message,
+            None if !body.is_empty() => body,
+            None => {
+                // The status is all the response says. A 2xx names no failure.
+                self.status_line = (status >= 300).then(|| StatusLine::of(status));
+                self.status_line
+                    .as_ref()
+                    .map_or(UNEXPECTED, StatusLine::as_bytes)
+            }
+        };
+        S3Error::from_response(code, message, status)
+    }
 }

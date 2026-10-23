@@ -74,6 +74,9 @@ pub(crate) fn generate_code_for_lazy_export(
                 break 'out;
             }
             let mut exports = E::Object::default();
+            exports
+                .properties
+                .ensure_total_capacity(css_ast.local_scope.count());
 
             let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
             let all_import_records = this.graph.ast.items_import_records();
@@ -403,7 +406,15 @@ pub(crate) fn generate_code_for_lazy_export(
 
                 // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                 let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
-                exports.put(arena, key, value)?;
+                // `local_scope` holds each name once, so the object needs no lookup.
+                debug_assert!(
+                    css_ast
+                        .local_scope
+                        .get(key)
+                        .is_some_and(|found| found.ref_ == ref_)
+                );
+                exports
+                    .append_property(Expr::allocate(arena, E::String::init(key), stmt.loc), value);
             }
 
             if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {

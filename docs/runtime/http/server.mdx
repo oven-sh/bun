@@ -271,6 +271,14 @@ Bun.serve({
   timeout for that request with [`server.timeout(req, 0)`](#server-timeout-request-seconds).
 </Note>
 
+<Note>
+  **HTTP/1.0 clients and proxies:** An HTTP/1.0 client reads a streamed body until the connection ends, so a normal
+  close looks like the end of the body. When Bun closes the connection in the middle of such a body, Bun resets the TCP
+  connection, and a client that is connected directly gets an error. A unix socket cannot carry a reset. If a reverse
+  proxy sits in front of Bun, use HTTP/1.1 between the proxy and Bun (in nginx, `proxy_http_version 1.1`). The proxy
+  then sees that a chunked body is incomplete.
+</Note>
+
 ---
 
 ## export default syntax

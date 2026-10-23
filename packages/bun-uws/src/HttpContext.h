@@ -1126,6 +1126,10 @@ private:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
             }
+            /* The peer can have ended only its sending side, and still read. */
+            if (((HttpResponse<SSL> *) s)->hasIncompleteCloseDelimitedBody(httpResponseData)) {
+                return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+            }
         }
 
         asyncSocket->uncorkWithoutSending();
@@ -1134,8 +1138,8 @@ private:
         return asyncSocket->close();
     }
 
+    template <bool IsNodeHttp>
     static us_socket_t *onTimeout(us_socket_t *s) {
-        /* Force close rather than gracefully shutdown and risk confusing the client with a complete download */
         AsyncSocket<SSL> *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
         // Node.js by default closes the connection but they emit the timeout event before that
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
@@ -1144,7 +1148,20 @@ private:
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
         asyncSocket->uncork();
+        if constexpr (!IsNodeHttp) {
+            if (((HttpResponse<SSL> *) s)->hasIncompleteCloseDelimitedBody(httpResponseData)) {
+                return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+            }
+        }
+        /* An orderly close: a FIN, and over TLS a close_notify before it. */
         return us_socket_close_now(s);
+    }
+
+    /* us_socket_group_close_all_ex's close code for a Bun.serve connection. */
+    static int closeAllCode(us_socket_t *s) {
+        return ((HttpResponse<SSL> *) s)->hasIncompleteCloseDelimitedBody((HttpResponseData<SSL> *) us_socket_ext(s))
+            ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET
+            : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN;
     }
 
     /* Static .rodata vtables — one per (SSL, IsNodeHttp), shared by every
@@ -1158,7 +1175,7 @@ private:
         /* on_fd */           nullptr,
         /* on_writable */     &onWritable<IsNodeHttp>,
         /* on_close */        &onClose<IsNodeHttp>,
-        /* on_timeout */      &onTimeout,
+        /* on_timeout */      &onTimeout<IsNodeHttp>,
         /* on_long_timeout */ nullptr,
         /* on_end */          &onEnd<IsNodeHttp>,
         /* on_connect_error */nullptr,

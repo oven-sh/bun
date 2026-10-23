@@ -108,7 +108,8 @@
  *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
  *      peer replies; TCP FINs.
  *   1  reset: TLS sends no close_notify (abortive), TCP arms SO_LINGER{1,0} → RST.
- *      Drops any unflushed kernel send buffer; only for terminate()/abort.
+ *      Drops any unflushed kernel send buffer. For terminate()/abort, and for
+ *      an HTTP response that an orderly close would end as if it were whole.
  *   2  fast-shutdown: TLS fast-shutdown (no wait), TCP FINs normally. For
  *      net.Socket._destroy() / _handle.close() where the wrapper detaches
  *      immediately so (0)'s deferral would orphan the us_socket_t, but data
@@ -350,8 +351,10 @@ void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
- * finalize, closing here would be a UAF on the owner's raw pointer). */
-void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) nonnull_fn_decl;
+ * finalize, closing here would be a UAF on the owner's raw pointer).
+ * `close_code` picks the close() code of each socket, just before its close;
+ * NULL closes every socket with LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN. */
+void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners, int (*close_code)(struct us_socket_t *s)) __attribute__((nonnull(1)));
 
 /* Teardown: close_all_ex(g, 0) on every group currently linked to the loop
  * (Listener-, App-, and RareData-owned alike). Returns 1 if any group had open

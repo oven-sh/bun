@@ -360,7 +360,8 @@ public:
     TemplatedApp &&close() {
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
-        us_socket_group_close_all(httpContext->getSocketGroup());
+        us_socket_group_close_all_ex(httpContext->getSocketGroup(), 1,
+            httpContext->isNodeHttp() ? nullptr : &HttpContext<SSL>::closeAllCode);
         for (us_socket_group_t *g : webSocketGroups) {
             /* Snapshot the list first: end() runs the close handler, which can close other sockets in the group */
             std::vector<us_socket_t *> sockets;

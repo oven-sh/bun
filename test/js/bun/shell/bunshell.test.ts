@@ -2326,6 +2326,97 @@ fi
 
   TestBuilder.command`echo fif hi`.stdout("fif hi\n").runAsTest("parsing edge case");
 
+  describe("then, elif, else and fi directly after a compound command", () => {
+    TestBuilder.command`if true; then if true; then echo hi; fi fi`.stdout("hi\n").runAsTest("fi after fi");
+
+    TestBuilder.command`if true; then (echo hi) fi`.stdout("hi\n").runAsTest("fi after a subshell");
+
+    TestBuilder.command`if true; then [[ a == a ]] fi && echo ok`.stdout("ok\n").runAsTest("fi after [[ ]]");
+
+    TestBuilder.command`if (true) then echo yes; fi`.stdout("yes\n").runAsTest("then after a subshell");
+
+    TestBuilder.command`if [[ a == a ]] then echo yes; fi`.stdout("yes\n").runAsTest("then after [[ ]]");
+
+    TestBuilder.command`if false; then (echo a) else echo b; fi`
+      .stdout("b\n")
+      .runAsTest("else after a subshell, condition false");
+
+    TestBuilder.command`if true; then (echo a) else
+      echo b; fi`
+      .stdout("a\n")
+      .runAsTest("else after a subshell, condition true");
+
+    TestBuilder.command`if false; then (echo a) elif true; then echo c; fi`
+      .stdout("c\n")
+      .runAsTest("elif after a subshell");
+
+    TestBuilder.command`if false; then echo a; elif false; then (echo c) else echo d; fi`
+      .stdout("d\n")
+      .runAsTest("else after a subshell in an elif body");
+
+    TestBuilder.command`if false; then echo a; elif false; then (echo c) elif true; then echo e; fi`
+      .stdout("e\n")
+      .runAsTest("elif after a subshell in an elif body");
+
+    TestBuilder.command`if false; then echo a; elif (true) then echo c; fi`
+      .stdout("c\n")
+      .runAsTest("then after a subshell in an elif condition");
+
+    TestBuilder.command`if false; then echo a; else (echo b) fi`
+      .stdout("b\n")
+      .runAsTest("fi after a subshell in an else body");
+
+    TestBuilder.command`if true; then if true; then echo hi; fi else echo no; fi`
+      .stdout("hi\n")
+      .runAsTest("else after fi");
+
+    TestBuilder.command`if false; then echo a; elif true; then if true; then echo c; fi else echo d; fi`
+      .stdout("c\n")
+      .runAsTest("else after fi in an elif body");
+
+    TestBuilder.command`if true; then (echo a) else (echo b) fi`.stdout("a\n").runAsTest("else and fi after subshells");
+
+    TestBuilder.command`if true; then (echo hi) fi | cat`
+      .stdout("hi\n")
+      .runAsTest("fi after a subshell, in a pipeline");
+
+    TestBuilder.command`if true; then
+  if true; then
+    echo hi
+  fi # inner
+fi`
+      .stdout("hi\n")
+      .runAsTest("comment after the inner fi");
+
+    TestBuilder.command`if false; then
+  if true; then
+    echo a
+  fi # inner
+else
+  echo b
+fi`
+      .stdout("b\n")
+      .runAsTest("comment after the inner fi, then else on the next line");
+
+    TestBuilder.command`if true; then
+  (echo a) # first
+  (echo b) # second
+fi`
+      .stdout("a\nb\n")
+      .runAsTest("comments after two subshells");
+
+    TestBuilder.command`if true; then
+  echo a > /dev/null # first
+  (echo b) # second
+fi`
+      .stdout("b\n")
+      .runAsTest("comments after a redirection and a subshell");
+
+    TestBuilder.command`if true; then (echo hi) ${"fi"}`
+      .error('Expected "else", "elif", or "fi" but got: Eof')
+      .runAsTest("an interpolated fi after a subshell does not close the clause");
+  });
+
   // Ported from https://github.com/posix-shell-tests/posix-shell-tests/
   describe("ported from posix shell tests", () => {
     // test_oE 'execution path of if, true'

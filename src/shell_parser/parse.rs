@@ -106,6 +106,21 @@ pub mod ast {
                 _ => None,
             }
         }
+
+        /// A simple command stops at its first redirection, so a word can follow one too: `echo > f fi`.
+        pub(crate) fn ends_in_compound_cmd(&self) -> bool {
+            match self {
+                Expr::Subshell(_) | Expr::If(_) | Expr::CondExpr(_) => true,
+                Expr::Binary(binary) => binary.right.ends_in_compound_cmd(),
+                Expr::Pipeline(pipeline) => match pipeline.items.last() {
+                    Some(
+                        PipelineItem::Subshell(_) | PipelineItem::If(_) | PipelineItem::CondExpr(_),
+                    ) => true,
+                    Some(PipelineItem::Cmd(_) | PipelineItem::Assigns(_)) | None => false,
+                },
+                Expr::Assign(_) | Expr::Cmd(_) | Expr::Async(_) => false,
+            }
+        }
     }
 
     /// https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
@@ -808,7 +823,7 @@ impl<'bump> Parser<'bump> {
             ])
         } {
             self.skip_newlines();
-            stmts.push(self.parse_stmt()?);
+            stmts.push(self.parse_stmt(&[])?);
             self.skip_newlines();
         }
         if let Some(kind) = self.inside_subshell {
@@ -821,7 +836,8 @@ impl<'bump> Parser<'bump> {
         })
     }
 
-    pub(crate) fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
+    /// `until`: the words the enclosing `if` clause waits for. `parse_if_clause` consumes the one that ends the statement.
+    pub(crate) fn parse_stmt(&mut self, until: &[IfClauseTok]) -> ParseResult<ast::Stmt<'bump>> {
         if !self.stack_check.is_safe_to_recurse() {
             self.add_error(format_args!("Nesting depth exceeded"))?;
             return Err(ParseError::NestingTooDeep.into());
@@ -841,6 +857,11 @@ impl<'bump> Parser<'bump> {
                     .closing_tok(),
             ])
         } {
+            if exprs.last().is_some_and(ast::Expr::ends_in_compound_cmd)
+                && self.peek_any_ifclausetok(until)
+            {
+                break;
+            }
             let expr = self.parse_expr()?;
             if self.r#match(TokenTag::Ampersand) {
                 self.add_error(format_args!(
@@ -1170,7 +1191,7 @@ impl<'bump> Parser<'bump> {
                 ])
         } {
             self.skip_newlines();
-            let stmt = self.parse_stmt()?;
+            let stmt = self.parse_stmt(until)?;
             ret.append(stmt, self.alloc);
             self.skip_newlines();
         }

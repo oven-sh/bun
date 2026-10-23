@@ -401,7 +401,6 @@ fn end_vm(frees: bool) {
     // Never released: `exit_and_free` frees the VM, and the lock with it.
     let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
     drop(crate::jsc_hooks::take_lint_vm());
-    drop(core::mem::take(&mut vm.as_mut().argv));
     // SAFETY: `start_vm` created it on this thread, which holds its lock. No other thread has a pointer to it.
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
 }

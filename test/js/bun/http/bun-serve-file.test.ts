@@ -2215,6 +2215,21 @@ using server = Bun.serve({
   fetch: req => new Response(Bun.file(req.url.endsWith("/small") ? "small.bin" : "big.bin")),
 });
 
+// The pool has one thread (UV_THREADPOOL_SIZE=1). These jobs keep it busy, so that a read of the response waits in
+// the queue of the pool, or has just started, when the client leaves.
+function occupyPool(jobs: number) {
+  let stop = false;
+  const stopped = Promise.all(
+    Array.from({ length: jobs }, async () => {
+      while (!stop) await lowestFreeFd();
+    }),
+  );
+  return () => {
+    stop = true;
+    return stopped;
+  };
+}
+
 // Requests path, takes more than the given number of bytes of the response and resets the connection.
 // Resolves with the read count at that moment.
 async function leaveAfter(path: string, bytes: number) {
@@ -2242,7 +2257,9 @@ const idleFd = await lowestFreeFd();
 const readsAfterLeave: number[] = [];
 let released = true;
 for (let i = 0; i < 24 && released; i++) {
+  const freePool = occupyPool(2 << (i % 4));
   const atLeave = await leaveAfter(i % 2 ? "/route" : "/handler", [0, 100_000, 1_000_000][i % 3]);
+  await freePool();
   released = await settled(idleFd);
   readsAfterLeave.push(reads() - atLeave);
   // This response read the rest of the file. The next ones would only take more time to say the same.
@@ -2257,7 +2274,7 @@ console.log(
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.ts"],
-    env: bunEnv,
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "1" },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

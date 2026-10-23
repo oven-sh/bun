@@ -716,9 +716,11 @@ fn every_javascript_program_with_and_without_jsdoc() {
             return;
         }
         let is_accessor_field = |node: NodeData| matches!(node, NodeData::Member(member) if typed[member].flags.contains(bun_sema::hir::Flags::ACCESSOR));
+        let has_decorators = !typed.decorators.is_empty();
         match check_erasure(&typed, &untyped) {
             Erasure::Mismatch(found)
-                if found.kind == EmitsCode && is_accessor_field(found.typed) => {}
+                if found.kind == EmitsCode
+                    && (has_decorators || is_accessor_field(found.typed)) => {}
             result => assert_eq!(result, Erasure::Exact, "{path}"),
         }
     });

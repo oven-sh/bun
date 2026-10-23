@@ -2,7 +2,7 @@
 // Each form of work-that-data-causes/forms.js and typed-forms.ts runs on the same input compiled and in plain Bun. What is judged is the ratio of the two times and how the
 // compiled time grows with the input, never seconds: a table that such data fills must not make the work quadratic.
 import { afterAll, expect } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isLinux, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
@@ -65,6 +65,29 @@ describe("compile/aot/work that data causes", () => {
         timesPlainBun: 5,
         growth: 40,
       });
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux)(
+    "memory that is left when what was parsed is dropped: orders of the names of four record types",
+    async () => {
+      const source = "memory-left-behind.ts";
+      copyFileSync(inFolder(source), join(cwd, source));
+      const built = await run([bunExe(), "build", "--compile", "--aot", source, "--outfile", compiled(source)], cwd);
+      expect(built.stderr).not.toContain("error:");
+      expect(built.exitCode).toBe(0);
+      const left = async (cmd: string[]) => {
+        const ran = await run(cmd, cwd);
+        expect({ cmd, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ cmd, stderr: "", exitCode: 0 });
+        const [megabytes, answer] = ran.stdout.trim().split(" ");
+        return { megabytes: Number(megabytes), answer };
+      };
+      const plain = await left([bunExe(), source, "40000"]);
+      const ours = await left([compiled(source), "40000"]);
+      expect(ours.answer).toBe(plain.answer);
+      const timesPlainBun = Math.round(ours.megabytes / Math.max(plain.megabytes, 10));
+      expect({ timesPlainBun: Math.max(timesPlainBun, 3) }).toEqual({ timesPlainBun: 3 });
     },
     120_000,
   );

@@ -7,9 +7,49 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { createLiveOutputFilter, parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
+
+describe("live worker output", () => {
+  const annotation = "::error file=src/js/node/_http_client.ts,line=650::socket hang up";
+  const input = `::group::test/js/node/http/example.test.ts\n${annotation}\n::endgroup::\n`;
+
+  test.each(["\n", "\r\n", "\r"])("keeps file context and unchanged annotations across chunks with %j", newline => {
+    for (const prefix of ["", "\x1b[0m", "\x1b[0m\x1b[31m"]) {
+      const output = `${prefix}::group::test/example.test.ts${newline}${annotation}${newline}::endgroup::${newline}`;
+      for (let split = 0; split <= output.length; split++) {
+        const filter = createLiveOutputFilter({ github: true, buildkite: false });
+        expect(filter(output.slice(0, split)) + filter(output.slice(split)) + filter.end()).toBe(
+          `test: test/example.test.ts${newline}${annotation}${newline}`,
+        );
+      }
+    }
+  });
+
+  test.each(["\n", "\r\n", "\r"])("keeps ANSI-prefixed file headers with %j line endings", newline => {
+    const filter = createLiveOutputFilter({ github: true, buildkite: false });
+    const output = filter(`\x1b[0m::group::test/example.test.ts${newline}${annotation}${newline}::endgroup::`);
+    expect(output + filter.end()).toBe(`test: test/example.test.ts${newline}${annotation}${newline}`);
+  });
+
+  test.each([false, true])("retains file context outside GitHub with Buildkite=%s", buildkite => {
+    const filter = createLiveOutputFilter({ github: false, buildkite });
+    expect(filter(input) + filter.end()).toBe("test: test/js/node/http/example.test.ts\n");
+  });
+
+  test("preserves an unterminated file header and defuses Buildkite groups", () => {
+    const filter = createLiveOutputFilter({ github: false, buildkite: true });
+    expect(filter("--- not a group\n::gro")).toBe(" not a group\n");
+    expect(filter("up::test/example.test.ts")).toBe("");
+    expect(filter.end()).toBe("test: test/example.test.ts");
+  });
+
+  test("does not treat a marker in the middle of a line as a command", () => {
+    const filter = createLiveOutputFilter({ github: true, buildkite: false });
+    expect(filter("literal ") + filter("::group::not a file\n") + filter.end()).toBe("literal ::group::not a file\n");
+  });
+});
 
 describe("parseJunitFileSuites", () => {
   test("reports each file from its own suite, not from the describe suites nested in it", () => {

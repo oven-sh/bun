@@ -497,6 +497,97 @@ export function stripAnsi(string: string): string {
   return string.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
+interface LiveOutputFilterOptions {
+  /** the runner itself runs in GitHub Actions */
+  github?: boolean;
+  /** the runner itself runs in Buildkite */
+  buildkite?: boolean;
+}
+
+type LiveOutputFilter = ((chunk: string) => string) & { end: () => string };
+
+/**
+ * Creates a filter for the live output of one child process stream, for the CI log.
+ *
+ * Single-file tests set GITHUB_ACTIONS=true so the runner can parse `::error` commands;
+ * parallel batches inherit the CI environment. With GITHUB_ACTIONS=true, Bun emits
+ * file headers as `::group::` commands. Keep them as plain text so worker errors retain
+ * their file context without nesting the runner's own groups. Other workflow commands
+ * are kept only in GitHub Actions, where they become annotations. Buildkite group
+ * markers (`--- `) are defused too.
+ *
+ * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
+ * writes, so a chunk usually ends in the middle of one. An incomplete last line that
+ * starts with `::`, or that is so far only the start of a marker, is held back until
+ * the rest of it arrives. `end()` returns what is still held back when the stream ends.
+ *
+ * @returns the text to write for each chunk
+ */
+export function createLiveOutputFilter({
+  github = isGithubAction,
+  buildkite = isBuildkite,
+}: LiveOutputFilterOptions = {}): LiveOutputFilter {
+  const ansi = /(?:\u001b\[[0-9;]*[a-zA-Z])*/.source;
+  const command = `^${ansi}::${github ? "(?:end)?group::" : ""}.*`;
+  const fileHeaders = new RegExp(`^${ansi}::group::([^\\r\\n]*)(\\r\\n|\\r|\\n|$)`, "gm");
+  const commands = new RegExp(`${command}(?:\r\n|\r|\n)`, "gm");
+  const lastCommand = new RegExp(`${command}\r?$`);
+  const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
+  const markers = buildkite ? ["::", "--- ", "+++ ", "~~~ ", "^^^ "] : ["::"];
+
+  /** `line` is an incomplete line. */
+  const holdBack = (line: string) => {
+    const visible = stripAnsi(line);
+    return (
+      /^\u001b(?:\[[0-9;]*)?$/.test(visible) ||
+      visible.startsWith("::") ||
+      markers.some(marker => marker.length > visible.length && marker.startsWith(visible))
+    );
+  };
+
+  let pending = "";
+  let atLineStart = true;
+  const filter = (chunk: string) => {
+    let text = pending + chunk;
+    const startsLine = atLineStart;
+
+    // A trailing \r may be the first half of a \r\n, so the line it ends is not complete yet.
+    // Once written, the next chunk starts a line either way: the \n of a \r\n is an empty one.
+    const endsWithCR = text.endsWith("\r");
+    const searchEnd = endsWithCR ? text.length - 2 : text.length - 1;
+    const lastLineStart = Math.max(text.lastIndexOf("\n", searchEnd), text.lastIndexOf("\r", searchEnd)) + 1;
+    const lastLine = text.slice(lastLineStart);
+    if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
+      pending = lastLine;
+      text = text.slice(0, lastLineStart);
+      atLineStart = true;
+    } else {
+      pending = "";
+      if (text) atLineStart = endsWithCR || lastLineStart === text.length;
+    }
+
+    // A chunk that starts in the middle of a line continues a line that was already written.
+    let head = "";
+    if (!startsLine) {
+      const end = /\r\n|\r|\n/.exec(text);
+      const split = end ? end.index + end[0].length : text.length;
+      head = text.slice(0, split);
+      text = text.slice(split);
+    }
+
+    text = text.replace(fileHeaders, "test: $1$2").replace(commands, "");
+    if (buildkite) text = text.replace(groupMarkers, " ");
+    return head + text;
+  };
+  filter.end = () => {
+    const text = pending;
+    pending = "";
+    atLineStart = true;
+    return text.replace(fileHeaders, "test: $1$2").replace(lastCommand, "");
+  };
+  return filter;
+}
+
 function unescapeXml(string: string): string {
   return string
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))

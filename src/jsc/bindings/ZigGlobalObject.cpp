@@ -1340,7 +1340,10 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
     auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().errorEvent, value, *thisObject);
+    auto& eventTarget = thisObject->eventTarget();
+    setEventHandlerAttribute<JSEventListener>(eventTarget, eventNames().errorEvent, value, *thisObject);
+    if (auto* handler = eventTarget.attributeEventListener(eventNames().errorEvent, thisObject->world()))
+        handler->setIsGlobalScopeErrorHandler();
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
     return true;

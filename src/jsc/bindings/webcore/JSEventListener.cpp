@@ -21,6 +21,7 @@
 #include "JSEventListener.h"
 
 #include "BunProcess.h"
+#include "ErrorEvent.h"
 #include "EventNames.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
@@ -270,6 +271,12 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     }
 
     // Do return value handling for event handlers (https://html.spec.whatwg.org/#the-event-handler-processing-algorithm).
+
+    if (m_isGlobalScopeErrorHandler && is<ErrorEvent>(event)) [[unlikely]] {
+        if (retval.isTrue())
+            event.preventDefault();
+        return;
+    }
 
     if (retval.isFalse())
         event.preventDefault();

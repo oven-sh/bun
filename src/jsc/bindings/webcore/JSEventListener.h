@@ -48,6 +48,10 @@ public:
 
     bool wasCreatedFromMarkup() const { return m_wasCreatedFromMarkup; }
 
+    // `onerror` of a global scope: for an ErrorEvent, returning true cancels the event and returning
+    // false does not (https://html.spec.whatwg.org/multipage/webappapis.html#the-event-handler-processing-algorithm).
+    void setIsGlobalScopeErrorHandler() { m_isGlobalScopeErrorHandler = true; }
+
     JSC::JSObject* ensureJSFunction(ScriptExecutionContext&) const;
     DOMWrapperWorld* isolatedWorld() const { return m_isolatedWorld.get(); }
 
@@ -85,6 +89,7 @@ private:
 
     bool m_isAttribute : 1;
     bool m_wasCreatedFromMarkup : 1;
+    bool m_isGlobalScopeErrorHandler : 1 { false };
 
     mutable bool m_isInitialized : 1;
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;

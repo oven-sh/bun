@@ -84,6 +84,40 @@ for (const [Constructor, name, eventName, prop] of globalSetters) {
   });
 }
 
+// https://html.spec.whatwg.org/multipage/webappapis.html#the-event-handler-processing-algorithm
+test("self.onerror cancels an ErrorEvent by returning true, and any other event by returning false", () => {
+  const calls = [];
+  // dispatchEvent() returns false when the event was cancelled.
+  const cancelled = (returns, Constructor) => {
+    globalThis.onerror = (...args) => {
+      calls.push(`${args.length} ${args[0].constructor.name}`);
+      return returns;
+    };
+    try {
+      return !dispatchEvent(new Constructor("error", { cancelable: true }));
+    } finally {
+      globalThis.onerror = null;
+    }
+  };
+  expect({
+    "ErrorEvent, true": cancelled(true, ErrorEvent),
+    "ErrorEvent, false": cancelled(false, ErrorEvent),
+    "ErrorEvent, undefined": cancelled(undefined, ErrorEvent),
+    "ErrorEvent, 1": cancelled(1, ErrorEvent),
+    "Event, true": cancelled(true, Event),
+    "Event, false": cancelled(false, Event),
+  }).toEqual({
+    "ErrorEvent, true": true,
+    "ErrorEvent, false": false,
+    "ErrorEvent, undefined": false,
+    "ErrorEvent, 1": false,
+    "Event, true": false,
+    "Event, false": true,
+  });
+  // The handler gets the event, not the five arguments of OnErrorEventHandler.
+  expect(calls).toEqual([...Array(4).fill("1 ErrorEvent"), ...Array(2).fill("1 Event")]);
+});
+
 // Assigning onmessage/onerror through a receiver that is not the global object
 // (e.g. a Proxy of globalThis) used to crash with a type confusion.
 test.concurrent("onmessage/onerror assignment through a Proxy of globalThis", async () => {

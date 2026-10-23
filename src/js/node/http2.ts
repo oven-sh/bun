@@ -6340,9 +6340,9 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
       this.#trackActiveRequest(req);
-      // node corks every Http2Stream until its native handle is assigned (always at least one tick
-      // after request() returns), so body chunks written synchronously after request() are buffered
-      // and flushed together through _writev.
+      // node has no cork here: it uncorks when the native handle is assigned, which on a connected
+      // session happens inside request(). This one-tick cork is Bun's own: body chunks written in
+      // the tick of request() are buffered and flushed together by end() or on the next tick.
       req.cork();
       process.nextTick(uncorkNT, req);
       setupRequestEndAndSignal(req, options, signal);

@@ -1,4 +1,3 @@
-import type { FeatureModel } from "../../../scripts/build/trim/types.ts";
 import type { ModelBuilder, MutableBuiltin } from "./build-entries.ts";
 import type { TypeInterner } from "./build-types.ts";
 import type { Declaration, HostReadUse, Source } from "./declarations.ts";
@@ -27,6 +26,7 @@ import type {
   ModelOverload,
   ModelStartup,
   ModelType,
+  TableFeature,
 } from "./model.ts";
 import { compareBytes, joinPath, pathOfNativeBinding, tokenOf } from "./paths.ts";
 import {
@@ -975,11 +975,11 @@ function buildHostMethodCalls(context: AttachmentContext): ModelHostMethodCall[]
     .sort((left, right) => compareNames(left.name, right.name) || compareNames(left.cell, right.cell));
 }
 
-export function buildAttachments(builder: ModelBuilder, features: FeatureModel, types: TypeInterner): void {
+export function buildAttachments(builder: ModelBuilder, features: readonly TableFeature[], types: TypeInterner): void {
   const context: AttachmentContext = {
     builder,
     types,
-    featureNames: new Set(features.features.map(feature => feature.name)),
+    featureNames: new Set(features.map(feature => feature.name)),
     nativeLoads: collectNativeLoads(builder),
     nativeCalls: collectNativeCalls(builder),
     textForms: new Map(),

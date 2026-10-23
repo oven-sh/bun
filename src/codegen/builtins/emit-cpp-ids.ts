@@ -1,4 +1,4 @@
-import { cap } from "../helpers.ts";
+import { cap } from "./support.ts";
 import { GeneratorError, Problems } from "./declarations.ts";
 import {
   classTokensArray,

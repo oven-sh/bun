@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-d0e0b8ce";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-a5c3076f";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -137,7 +137,8 @@ export function webkitTestAotPath(cfg: Config): string {
     : resolve(cfg.buildDir, `testaot${cfg.exeSuffix}`);
 }
 
-export type WebKitAotFile = "AOTSchema.def" | "schema-generated" | "builtins-generated" | "tests";
+export type WebKitAotFile =
+  "AOTSchema.def" | "schema-generated" | "builtins-generated" | "verified-overloads.txt" | "tests";
 
 /** A file or folder under JavaScriptCore's aot/ that Bun's build or tests read. The prebuilt tarball has it at the checkout's path. Absolute. It need not exist yet. */
 export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
@@ -152,6 +153,8 @@ export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
       return join(aot, "ir", "generated");
     case "builtins-generated":
       return join(aot, "builtins", "generated");
+    case "verified-overloads.txt":
+      return join(aot, "builtins", "verified-overloads.txt");
     case "tests":
       return join(aot, "tests");
   }
@@ -164,7 +167,7 @@ export function webkitEngineSources(cfg: Config): EngineSources {
   const schema = webkitAotFile(cfg, "AOTSchema.def");
   const schemaGeneratedDirectory = webkitAotFile(cfg, "schema-generated");
   const builtinsGeneratedDirectory = webkitAotFile(cfg, "builtins-generated");
-  const common = { schema, schemaGeneratedDirectory, builtinsGeneratedDirectory, requiresVerifiedOverloads: false };
+  const common = { schema, schemaGeneratedDirectory, builtinsGeneratedDirectory };
   if (cfg.webkit === "prebuilt") {
     return {
       ...common,

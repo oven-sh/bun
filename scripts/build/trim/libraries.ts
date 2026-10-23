@@ -168,11 +168,14 @@ function namesOfNode(graph: SectionGraph, node: number): string[] {
 function measureLibraries(count: number, owners: Map<string, number>, graph: SectionGraph, partition: Partition) {
   const measured = Array.from({ length: count }, () => ({ retainedBytes: 0, sets: new Set<number>() }));
   for (let node = 0; node < graph.placedCount; node++) {
-    const libraries = new Set(namesOfNode(graph, node).flatMap(name => owners.get(name) ?? []));
+    const names = namesOfNode(graph, node);
+    const libraries = new Set(names.flatMap(name => owners.get(name) ?? []));
+    const isFolded = graph.aliases.has(node);
     for (const library of libraries) {
-      if (partition.isRetained[node] || partition.setOf[node] === 0)
+      if (!partition.isRetained[node] && partition.setOf[node] !== 0)
+        measured[library]!.sets.add(partition.setOf[node]!);
+      else if (!isFolded || names.every(name => owners.get(name) === library))
         measured[library]!.retainedBytes += graph.size[node]!;
-      else measured[library]!.sets.add(partition.setOf[node]!);
     }
   }
   return measured;

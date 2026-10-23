@@ -1,5 +1,5 @@
 import type { EffectsSummary, Schema } from "../aot-schema/load.ts";
-import { cap } from "../helpers.ts";
+import { cap } from "./support.ts";
 import { isObjectKind } from "./build-entries.ts";
 import { admits } from "./build-types.ts";
 import { checkDependencies } from "./check-dependencies.ts";

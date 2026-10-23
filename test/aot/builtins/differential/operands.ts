@@ -38,22 +38,20 @@ export type PassedOperands = {
 };
 
 export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
-  [/^process\.(exit|reallyExit|abort|kill|_kill|execve|dlopen|_debugProcess|_debugEnd|binding|_linkedBinding)$/, "it ends, replaces or signals a process"],
-  [/^process\.(chdir|umask|setuid|setgid|seteuid|setegid|setgroups|initgroups|_rawDebug|_startProfilerIdleNotifier|_stopProfilerIdleNotifier)$/, "it changes the state of the process"],
-  [/^process\.(stdin|stdout|stderr|openStdin)\b/, "it takes over a standard stream"],
-  [/^%EventEmitter%\.prototype\.(removeAllListeners|off|removeListener|emit|setMaxListeners)$/, "with process as its receiver it takes away or runs the handlers of the process"],
+  [/^process\.(exit|reallyExit|abort|kill|_kill|execve|dlopen|_debugProcess|_debugEnd)$/, "it ends, replaces or signals a process"],
+  [/^process\.(umask|setuid|setgid|seteuid|setegid|setgroups|initgroups|_startProfilerIdleNotifier|_stopProfilerIdleNotifier|setUncaughtExceptionCaptureCallback)$/, "it changes the state of the process"],
+  [/^process\.(stdin|openStdin)\b/, "it takes over a standard stream"],
   [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$/, "it blocks, starts a process or opens a socket"],
-  [/^(alert|confirm|prompt)$/, "it waits for input"],
-  [/^Atomics\.(wait|waitAsync|pause)$/, "it blocks the thread"],
-  [/^(Worker|WebSocket|fetch|postMessage)$/, "it starts a thread or opens a connection"],
-  [/^%ModuleRequire%/, "it loads whatever its operand names"],
+  [/^Atomics\.wait$/, "it blocks the thread"],
+  [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^ShadowRealm\.prototype\.importValue$/, "it loads whatever its operand names"],
+  [/^%PrivateGlobals%\.(makeErrorWithCode|inherits)$/, "a call spells out a number, and by it native code takes the other operands on trust: the table does not say which"],
 ]);
 
 // Only the code of Bun and of the engine names these, and they take the kinds of their operands on trust: with a value outside the
 // declared types there is no such call, and native code may do anything.
-const takesOperandsOnTrust = /^%LinkTimeConstant:|^%NodeHTTPInternalBinding%\.setServer/;
+const takesOperandsOnTrust = /^%LinkTimeConstant:|^%NodeHTTPInternalBinding%\.setServer|^%(CompilerHelpers|PrivateGlobals|NativeFunctions|NodeURLFunctions)%\./;
 
 export function reasonNeverCalled(path: string): string | undefined {
   for (const [pattern, reason] of neverCalled) if (pattern.test(path)) return reason;
@@ -344,14 +342,15 @@ function combinationsOf(receiver: Candidate, base: Candidate[]): OperandSet[] {
 }
 
 // A length between these makes the built-in allocate and fill gigabytes.
-const allocatesByLength = /^(%TypedArray%|\w+Array|ArrayBuffer|SharedArrayBuffer|Buffer(\.\w+)?|String\.prototype\.(repeat|padStart|padEnd)|Bun\.allocUnsafe|\w*ArrayBuffer\.prototype\.\w+)$/;
+const allocatesByLength = /^(%CompilerHelpers%\.(\w+Array|array\w+)|%TypedArray%|\w+Array|ArrayBuffer|SharedArrayBuffer|Buffer(\.\w+)?|String\.prototype\.(repeat|padStart|padEnd)|Bun\.allocUnsafe|\w*ArrayBuffer\.prototype\.\w+)$/;
 const smallestHugeLength = 2 ** 24;
 const largestHugeLength = 2 ** 40;
 
 function isHugeLength(candidate: Candidate): boolean {
-  if (candidate.kind !== "Primitive") return false;
+  if (candidate.kind !== "Primitive" && candidate.kind !== "Pristine") return false;
   const { value } = sampleOf(candidate);
-  return typeof value === "number" && value >= smallestHugeLength && value <= largestHugeLength;
+  const length = value instanceof Date ? value.getTime() : value;
+  return typeof length === "number" && length >= smallestHugeLength && length <= largestHugeLength;
 }
 
 const takesHugeArrayLikes = /^Array\.prototype\.(push|pop|at)$/;
@@ -434,8 +433,23 @@ function isWithinDeclaredTypes(realm: Realm, overload: DumpedOverload, set: Oper
   });
 }
 
+// A call spells such a number out, the code of an error or the number of a class, and native code looks it up without a test.
+function isNumberThatIsSpelledOut({ overloads }: Call, set: OperandSet, position: number): boolean {
+  const ranges = overloads.flatMap(overload => parameterOf(overload, position)?.accepted.integers ?? []);
+  if (ranges.length === 0) return true;
+  if (position >= set.arguments.length) return false;
+  const { value } = sampleOf(set.arguments[position]);
+  const isInRange = ({ minimum, maximum }: { minimum: number; maximum: number }) => (value as number) >= minimum && (value as number) <= maximum;
+  const least = Math.min(...ranges.map(({ minimum }) => minimum));
+  const most = Math.max(...ranges.map(({ maximum }) => maximum));
+  return Number.isInteger(value) && !Object.is(value, -0) && isInRange({ minimum: least, maximum: most });
+}
+
 export function isCallThatExists(realm: Realm, call: Call, set: OperandSet): boolean {
+  if (allocatesByLength.test(call.entry.path) && set.arguments.some(isHugeLength)) return false;
   if (!takesOperandsOnTrust.test(call.entry.path)) return true;
+  const widest = Math.max(...call.overloads.map(({ parameters }) => parameters.length));
+  for (let position = 0; position < widest; position++) if (!isNumberThatIsSpelledOut(call, set, position)) return false;
   return call.overloads.some(overload => isWithinDeclaredTypes(realm, overload, set));
 }
 

@@ -817,4 +817,24 @@ describe("libraryBytes", () => {
       { name: "toy", version: "1", retainedBytes: 8192, sets: [result.setOf[result.node("onlyA")]!] },
     ]);
   });
+
+  test.skipIf(isWindows).each([
+    ["the program's copy is the one in the image", "ofProgram", "ofLibrary", 0],
+    ["the library's copy is the one in the image", "ofLibrary", "ofProgram", 0],
+    ["both copies are the library's", "ofLibrary", "alsoOfLibrary", 8192],
+  ])(
+    "a function that the linker folded with retained code outside the library is not the library's: %s",
+    (_, inImage, folded, retainedBytes) => {
+      const sections = { ...oneFeature, main: { ...oneFeature.main, to: [...oneFeature.main.to!, inImage] } };
+      const result = partitioned({ ...sections, [inImage]: { foldedWith: [folded] } }, oneFeatureGuards);
+      using dir = tempDir("trim-libraries", { "nm.sh": "#!/bin/sh\necho onlyA\necho ofLibrary\necho alsoOfLibrary\n" });
+      const nm = join(String(dir), "nm.sh");
+      chmodSync(nm, 0o755);
+      const file = { nm, libraries: [{ name: "toy", version: "1", inputs: ["toy.a"], crates: [] }] };
+      expect(result.retained()).toContain(inImage);
+      expect(libraryBytes(file, [], result.graph, result, join(String(dir), "work"))).toEqual([
+        { name: "toy", version: "1", retainedBytes, sets: [result.setOf[result.node("onlyA")]!] },
+      ]);
+    },
+  );
 });

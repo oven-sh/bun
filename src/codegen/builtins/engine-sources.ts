@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { evaluateCMake } from "../../../scripts/build/cmake.ts";
 import { engineBuiltinSources, exportedNameOf, functionBounds } from "./collect-runtime-functions.ts";
 import { GeneratorError, Problems, type SourcedDeclaration } from "./declarations.ts";
 import type { ModelEngineFile } from "./model.ts";
 import { compareBytes } from "./paths.ts";
+import { readCMakeList } from "./support.ts";
 
 type TokenGroups = Readonly<Record<string, string | undefined>>;
 
@@ -158,7 +158,7 @@ export function engineFiles(javaScriptCore: string, declared: readonly SourcedDe
   const handwrittenObjects = new Set(
     declarations.flatMap(declaration => (declaration.declares === "HandwrittenFile" ? [declaration.file] : [])),
   );
-  const modelFiles = evaluateCMake(join(javaScriptCore, tableListFile), { variables: {} }).list(modelListName);
+  const modelFiles = readCMakeList(join(javaScriptCore, tableListFile), modelListName);
   const readEngineFile = (path: string): string => readFileSync(join(javaScriptCore, path), "utf8");
 
   const problems = new Problems();

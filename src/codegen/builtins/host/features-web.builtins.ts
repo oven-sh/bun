@@ -34,6 +34,9 @@ const serverFeatures = ["Bodies", "Headers", "Url", ...abortSignalFeatures, "Web
 const whenFormat = (format: string) => b.whenOperand("format", format);
 
 export default b.declarations(
+  // Which of ICU's data these entries of the engine open.
+  extendAll(["IntlLocale"], "Intl.Locale", "Intl.supportedValuesOf"),
+  extendAll(["IntlPluralRules"], "Intl.PluralRules", "Intl.RelativeTimeFormat"),
   extendAll(["HtmlRewriter", "Bodies", "WebStreams"], "HTMLRewriter"),
   extendAll(
     ["HtmlRewriter"],

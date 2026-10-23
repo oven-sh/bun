@@ -195,6 +195,7 @@ export class ModelBuilder {
   readonly namesDeclaredByEngine = new Set<ModelName>();
   readonly hostRoles: { path: BuiltinPath; source: Source }[] = [];
   readonly hostClassRoles: { name: ClassName; source: Source }[] = [];
+  unfilledHostRoles: { path: BuiltinPath; class: ClassName; source: Source } | null = null;
   hostObjects: ModelHostObject[] = [];
   namedMemberCalls: ModelNamedMemberCall[] = [];
   hostMethodCalls: ModelHostMethodCall[] = [];

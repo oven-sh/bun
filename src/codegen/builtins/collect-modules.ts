@@ -12,7 +12,8 @@ import {
   type Source,
   type SourcedDeclaration,
 } from "./declarations.ts";
-import { compareBytes, memberPathOf, registeredSymbolPrefix, symbolPrefix } from "./paths.ts";
+import { parseOwnProperties } from "./own-properties.ts";
+import { compareBytes, memberPathOf } from "./paths.ts";
 import { targetPlatforms, type BuiltinPath, type TargetPlatform } from "./vocabulary.ts";
 
 export interface RuntimeModuleSource {
@@ -21,19 +22,6 @@ export interface RuntimeModuleSource {
   registryField: string | null;
   hasSource: boolean;
   isEsModule: boolean;
-}
-
-export interface OwnProperty {
-  name: string;
-  attributes: { isAccessor: boolean; isWritable: boolean; isConfigurable: boolean } | null;
-  /** Written "~": the host creates the property in some runs only, so nobody states its attributes. */
-  isCreatedInSomeRuns: boolean;
-}
-
-export interface OwnPropertyLine {
-  holder: string;
-  isOpen: boolean;
-  properties: OwnProperty[];
 }
 
 export interface ListedExport {
@@ -68,13 +56,9 @@ const functionMark = "=function";
 
 const exportsFile = "src/codegen/builtins/data/module-exports.txt";
 const absentOnWindowsFile = "src/codegen/builtins/data/module-exports-absent-on-windows.txt";
-const ownPropertiesFile = "src/codegen/builtins/data/own-properties.txt";
+export const ownPropertiesFile = "src/codegen/builtins/data/own-properties.txt";
 const importableModulesFile = "src/resolve_builtins/HardcodedModule.rs";
 const importableSpecifierPattern = /#\[strum\(serialize = "([^"]+)"\)\]/g;
-
-const linePattern = /^(\S+)( open)? :((?: \S+\/(?:\?|~|-|a?w?c?))*)$/;
-const createdInSomeRunsMark = "~";
-const wellKnownSymbolPattern = new RegExp(`^${symbolPrefix}[A-Za-z]+$`);
 
 const sourceAt = (file: string, line: number | null): Source => ({ file, line, origin: "Host", proof: "Structure" });
 
@@ -328,109 +312,4 @@ export function collectModules(bunRoot: string, problems: Problems): SourcedDecl
     }
     return withSource(declareModule(bunRoot, source, lists, importableSpecifiers), declaredAt);
   });
-}
-
-export function isListableName(name: string): boolean {
-  if (name.startsWith(registeredSymbolPrefix)) return name.length > registeredSymbolPrefix.length;
-  return !name.startsWith(symbolPrefix) || wellKnownSymbolPattern.test(name);
-}
-
-function fail(lineNumber: number, message: string): never {
-  throw new GeneratorError(`${ownPropertiesFile}:${lineNumber}: ${message}`);
-}
-
-function parseAttributes(text: string, name: string, lineNumber: number): OwnProperty["attributes"] {
-  if (text === "?" || text === createdInSomeRunsMark) return null;
-  if (text === "") fail(lineNumber, `${name} has no attributes`);
-  if (text.includes("a") && text.includes("w")) fail(lineNumber, `${name} is both accessor and writable`);
-  return { isAccessor: text.includes("a"), isWritable: text.includes("w"), isConfigurable: text.includes("c") };
-}
-
-function parseProperties(text: string, lineNumber: number): OwnProperty[] {
-  const properties: OwnProperty[] = [];
-  for (const entry of text.split(" ").slice(1)) {
-    const separator = entry.lastIndexOf("/");
-    const name = entry.slice(0, separator);
-    if (!isListableName(name)) fail(lineNumber, `${name} is neither a well-known nor a registered symbol`);
-    const previous = properties.at(-1);
-    if (previous && compareBytes(previous.name, name) >= 0) fail(lineNumber, `${name} is repeated or out of order`);
-    const written = entry.slice(separator + 1);
-    properties.push({
-      name,
-      attributes: parseAttributes(written, name, lineNumber),
-      isCreatedInSomeRuns: written === createdInSomeRunsMark,
-    });
-  }
-  return properties;
-}
-
-export function parseOwnProperties(text: string): OwnPropertyLine[] {
-  const pieces = text.split("\n");
-  if (pieces.at(-1) !== "") fail(pieces.length, "the text does not end in a newline");
-  const lines: OwnPropertyLine[] = [];
-  pieces.slice(0, -1).forEach((piece, index) => {
-    const lineNumber = index + 1;
-    const match = linePattern.exec(piece);
-    if (match === null) fail(lineNumber, "malformed line");
-    const [, holder, open, properties] = match;
-    const previous = lines.at(-1);
-    if (previous && compareBytes(previous.holder, holder) >= 0) {
-      fail(lineNumber, `${holder} is repeated or out of order`);
-    }
-    lines.push({ holder, isOpen: open !== undefined, properties: parseProperties(properties, lineNumber) });
-  });
-  return lines;
-}
-
-export function formatAttributes(attributes: OwnProperty["attributes"]): string {
-  if (attributes === null) return "?";
-  const { isAccessor, isWritable, isConfigurable } = attributes;
-  return (isAccessor ? "a" : "") + (isWritable ? "w" : "") + (isConfigurable ? "c" : "") || "-";
-}
-
-export function formatOwnProperties(lines: readonly OwnPropertyLine[]): string {
-  const sortedLines = lines.toSorted((left, right) => compareBytes(left.holder, right.holder));
-  return sortedLines
-    .map(({ holder, isOpen, properties }) => {
-      const sortedProperties = properties.toSorted((left, right) => compareBytes(left.name, right.name));
-      const entries = sortedProperties.map(
-        ({ name, attributes, isCreatedInSomeRuns }) =>
-          ` ${name}/${isCreatedInSomeRuns ? createdInSomeRunsMark : formatAttributes(attributes)}`,
-      );
-      return `${holder}${isOpen ? " open" : ""} :${entries.join("")}\n`;
-    })
-    .join("");
-}
-
-function isFixedProperty({ attributes }: OwnProperty): boolean {
-  return attributes !== null && !attributes.isAccessor && !attributes.isWritable && !attributes.isConfigurable;
-}
-
-function declareOwnProperties({ holder, isOpen, properties }: OwnPropertyLine): Declaration[] {
-  return [
-    {
-      declares: "OwnProperties",
-      holder,
-      isOpen,
-      properties: properties.map(property => ({
-        name: property.name,
-        isAccessor: property.attributes?.isAccessor ?? false,
-        isFixed: isFixedProperty(property),
-        isCreatedInSomeRuns: property.isCreatedInSomeRuns,
-      })),
-    },
-    ...properties.filter(isFixedProperty).map(({ name }): Declaration => ({
-      declares: "Extension",
-      path: memberPathOf(holder, name),
-      columns: { mutability: "AlwaysLocked" },
-    })),
-  ];
-}
-
-export function collectOwnProperties(bunRoot: string, problems: Problems): SourcedDeclaration[] {
-  const lines = parseOrReport(problems, () =>
-    parseOwnProperties(readFileSync(path.join(bunRoot, ownPropertiesFile), "utf8")),
-  );
-  if (lines === null) return [];
-  return lines.flatMap((line, index) => withSource(declareOwnProperties(line), sourceAt(ownPropertiesFile, index + 1)));
 }

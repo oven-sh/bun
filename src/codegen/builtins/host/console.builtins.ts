@@ -80,7 +80,6 @@ export default b.declarations(
       uses: { values: b.inspected },
       implementation: b.hostCall,
     },
-    takeHeapSnapshot: b.otherwise,
     Console: createdOnFirstRead,
     _stdout: createdOnFirstRead,
     _stderr: createdOnFirstRead,

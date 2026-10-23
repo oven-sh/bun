@@ -1,4 +1,4 @@
-import { cap } from "../helpers.ts";
+import { cap } from "./support.ts";
 import { GeneratorError } from "./declarations.ts";
 import {
   emitArray,
@@ -89,7 +89,10 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     array: "builtinTableNamedBuiltins",
     countName: "numberOfNamedBuiltins",
     items: orderNamedItems(
-      [...model.builtins.filter(isEngineRow), ...model.hostRoles].map(builtin => [builtin.token, builtin] as const),
+      [
+        ...model.builtins.filter(isEngineRow).map(builtin => [builtin.token, builtin] as const),
+        ...model.hostRoles.map(({ token, builtin }) => [token, builtin] as const),
+      ],
       isEngineRow,
     ),
     format: builtin => formatId("BuiltinID", builtin),
@@ -113,9 +116,10 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     array: "builtinTableNamedClasses",
     countName: "numberOfNamedBuiltinClasses",
     items: orderNamedItems(
-      [...model.classes.filter(isEngineRow), ...model.hostClassRoles].map(
-        builtinClass => [builtinClass.token, builtinClass] as const,
-      ),
+      [
+        ...model.classes.filter(isEngineRow).map(builtinClass => [builtinClass.token, builtinClass] as const),
+        ...model.hostClassRoles.map(({ token, builtinClass }) => [token, builtinClass] as const),
+      ],
       isEngineRow,
     ),
     format: builtinClass => formatId("BuiltinClassID", builtinClass),
@@ -126,7 +130,7 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     array: "builtinTableNamedLayouts",
     countName: "numberOfNamedBuiltinLayouts",
     items: orderNamedItems(
-      model.layouts.map(layout => [layout.token, layout] as const),
+      model.layouts.filter(isEngineRow).map(layout => [layout.token, layout] as const),
       () => true,
     ),
     format: layout => formatId("BuiltinLayoutID", layout),

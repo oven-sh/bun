@@ -1,4 +1,3 @@
-import type { FeatureModel } from "../../../scripts/build/trim/types.ts";
 import { GeneratorError } from "./declarations.ts";
 import {
   emitArray,
@@ -32,6 +31,7 @@ import {
   type ModelName,
   type ModelNamedMemberCall,
   type ModelOverload,
+  type TableFeature,
   type TableModel,
 } from "./model.ts";
 import { targetPlatforms, type FeatureName } from "./vocabulary.ts";
@@ -358,7 +358,7 @@ function emitTableArray(cppType: string, plural: string, elements: readonly stri
   return emitArray(`constinit const ${cppType} builtinTable${plural}`, elements);
 }
 
-export function emitCppAttachments(model: TableModel, features: FeatureModel): string {
+export function emitCppAttachments(model: TableModel, features: readonly TableFeature[]): string {
   const context: AttachmentContext = {
     names: new Pool("BuiltinName", "names"),
     conditions: new Pool("BuiltinCondition", "conditions"),
@@ -367,7 +367,7 @@ export function emitCppAttachments(model: TableModel, features: FeatureModel): s
     usesOfExports: new Pool("BuiltinHostUses", "usesOfExports"),
     hostObjectFields: new Pool("BuiltinHostObjectField", "hostObjectFields"),
     hostObjectInternalFields: new Pool("BuiltinHostObjectInternalField", "hostObjectInternalFields"),
-    featureIndexes: new Map(features.features.map(feature => [feature.name, feature.index])),
+    featureIndexes: new Map(features.map(feature => [feature.name, feature.index])),
   };
   const { builtins } = model;
   const arrays = [

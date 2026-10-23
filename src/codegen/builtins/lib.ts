@@ -28,6 +28,7 @@ import type {
   Conversion,
   CppClassRef,
   EntryColumns,
+  FeatureName,
   Freshness,
   FunctionRef,
   HandlerSpec,
@@ -1297,6 +1298,14 @@ export const hostRoles = (...paths: readonly BuiltinPath[]): Declaration[] =>
   paths.map(path => ({ declares: "HostRole", path }));
 export const hostClassRoles = (...names: readonly ClassName[]): Declaration[] =>
   names.map(className => ({ declares: "HostClassRole", name: className }));
+export const unfilledHostRoles = (path: BuiltinPath, className: ClassName): Declaration[] => [
+  { declares: "UnfilledHostRoles", path, class: className },
+];
+export const frontEndFunctions = (file: string, ...functions: readonly string[]): Declaration[] =>
+  functions.map(functionName => ({ declares: "FrontEndFunction", function: { file, name: functionName } }));
+export const engineFeatures = (...names: readonly FeatureName[]): Declaration[] => [
+  { declares: "EngineFeatures", names },
+];
 
 export const hostRead = (context: HostReadContext, exportName: string, use: HostReadUse): Declaration[] => [
   { declares: "HostRead", context, exportName, use },

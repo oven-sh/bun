@@ -1,11 +1,12 @@
-import type { FeatureModel, StubKind } from "../../../scripts/build/trim/types.ts";
 import { Problems } from "./declarations.ts";
 import { namedBuiltinsOf } from "./emit-cpp-names.ts";
 import { emitMacroList, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
-import type { ModelBuiltin, TableModel } from "./model.ts";
+import type { ModelBuiltin, TableFeature, TableModel } from "./model.ts";
 import { compareBytes } from "./paths.ts";
 import type { BuiltinKind, FeatureName } from "./vocabulary.ts";
+
+type StubKind = "Throw";
 
 interface GuardedSymbol {
   symbol: string;
@@ -55,10 +56,8 @@ function isFirstWithSymbol(guarded: GuardedSymbol, index: number, sorted: readon
   return index === 0 || sorted[index - 1].symbol !== guarded.symbol;
 }
 
-export function emitCppFeatures(model: TableModel, features: FeatureModel): string {
-  const engineFeatures = features.features
-    .filter(feature => feature.isEngine)
-    .sort((left, right) => left.index - right.index);
+export function emitCppFeatures(model: TableModel, features: readonly TableFeature[]): string {
+  const engineFeatures = features.filter(feature => feature.isEngine).sort((left, right) => left.index - right.index);
   const engineFeatureNames = new Set(engineFeatures.map(feature => feature.name));
   const problems = new Problems();
   const guardedSymbols = model.builtins

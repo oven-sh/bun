@@ -1,4 +1,3 @@
-import type { FeatureModel } from "../../../scripts/build/trim/types.ts";
 import type { Schema } from "../aot-schema/load.ts";
 import { buildAttachments, createTextForms } from "./build-attachments.ts";
 import { buildClasses, buildEntries, buildFunctions, buildLayouts, ModelBuilder } from "./build-entries.ts";
@@ -8,16 +7,16 @@ import { TypeInterner } from "./build-types.ts";
 import { checkModel } from "./check.ts";
 import type { SourcedDeclaration } from "./declarations.ts";
 import { buildDispatches } from "./dispatch.ts";
-import type { ModelEngineFile, TableModel } from "./model.ts";
+import type { ModelEngineFile, TableFeature, TableModel } from "./model.ts";
 import { numberModel } from "./number.ts";
 import { applyTextHashes } from "./verification.ts";
 
 export interface ModelInput {
   declarations: readonly SourcedDeclaration[];
   schema: Schema;
-  features: FeatureModel;
+  features: readonly TableFeature[];
   engineFiles: readonly ModelEngineFile[];
-  syntaxUses: SyntaxUses;
+  syntaxUses: SyntaxUses | null;
 }
 
 // An operand that may hold an object and has no `uses` counts as used in every way.

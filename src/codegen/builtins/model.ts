@@ -609,6 +609,7 @@ export interface ModelLayoutField {
 export interface ModelLayout {
   id: number;
   token: string;
+  origin: Origin;
   isTuple: boolean;
   fields: readonly ModelLayoutField[];
 }
@@ -741,6 +742,13 @@ export interface ModelEngineFile {
   text: string;
 }
 
+/** What the table takes from the list of what an executable can be linked without. */
+export interface TableFeature {
+  name: FeatureName;
+  index: number;
+  isEngine: boolean;
+}
+
 export interface TableModel {
   names: readonly ModelName[];
   builtins: readonly ModelBuiltin[];
@@ -763,8 +771,9 @@ export interface TableModel {
   hostReads: readonly ModelHostRead[];
   /** What hand-written code of the engine may name besides the entries, classes and layouts that the engine declares. */
   namesOfEngine: ReadonlySet<ModelName>;
-  hostRoles: readonly ModelBuiltin[];
-  hostClassRoles: readonly ModelClass[];
+  /** The token is the role's. The entry is another where the host leaves the role out. */
+  hostRoles: readonly { token: string; builtin: ModelBuiltin }[];
+  hostClassRoles: readonly { token: string; builtinClass: ModelClass }[];
   hostObjects: readonly ModelHostObject[];
   namedMemberCalls: readonly ModelNamedMemberCall[];
   hostMethodCalls: readonly ModelHostMethodCall[];

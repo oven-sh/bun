@@ -1,3 +1,4 @@
+import { reasonTargetIsSkipped } from "../native-contract/targets";
 import { compare, type Difference } from "./compare";
 import { createMemberProbe } from "./instances";
 import type { Invocation, Realm } from "./members";
@@ -43,12 +44,14 @@ function keysReadFrom(run: Run, operand: OperandName): PropertyKey[] {
 }
 
 // Sets that give a name that the built-in was seen to read something to find.
-function probeSetsFor(run: Run): OperandSet[] {
+function probeSetsFor(run: Run, invocation: Invocation): OperandSet[] {
   const { set } = run;
   const operands: [OperandName, string][] = [["this", set.receiver.name], ...set.arguments.map((candidate, index): [OperandName, string] => [index, candidate.name])];
   return operands.flatMap(([operand, name]) => {
     if (!probedCandidates.includes(name)) return [];
-    const keys = [...new Set(keysReadFrom(run, operand))].slice(0, maxProbedKeys);
+    // What a receiver answers under the name of the entry itself is not the entry.
+    const isNameOfEntry = (key: PropertyKey) => operand === "this" && invocation.callsWhatIsRead && key === invocation.key;
+    const keys = [...new Set(keysReadFrom(run, operand))].filter(key => !isNameOfEntry(key)).slice(0, maxProbedKeys);
     return keys.flatMap(key =>
       (["Object", "Function"] as const).map(held => {
         const probe = createMemberProbe(key, held);
@@ -86,10 +89,14 @@ class Reports {
 }
 
 function findInvocation(realm: Realm, { entry, mode }: Call): Invocation | string {
-  const reason = reasonNeverCalled(entry.path);
-  const isPlainRead = mode === "Get" && entry.kind === "DataProperty" && !entry.path.startsWith("process.");
+  // A function that a native binding answers is known by the name of its native code.
+  const binding = realm.bindingAnswering(entry.token)?.binding;
+  const reason = reasonNeverCalled(entry.path) ?? (binding && reasonTargetIsSkipped(binding.path));
+  // A read or a store of the member calls nothing. What makes a standard stream is a getter.
+  const isPlainRead = (mode === "Get" || mode === "Set") && entry.kind === "DataProperty" && !/^process\.std/.test(entry.path);
   if (reason !== undefined && !isPlainRead) return reason;
-  if (entry.holder !== null && realm.valueOf(entry.holder) === undefined) return "this realm does not have its holder";
+  const hasHolder = entry.holder === null || realm.valueOf(entry.holder) !== undefined;
+  if (!hasHolder && realm.valueOf(entry.token) === undefined) return "this realm does not have its holder";
   return realm.invocationOf(entry, mode) ?? "this realm does not have it";
 }
 
@@ -124,7 +131,7 @@ export async function checkCall(realm: Realm, call: Call, onSet?: (name: string)
       continue;
     }
     reports.add(realm, call, run);
-    if (!set.name.includes("member:")) pending.push(...probeSetsFor(run));
+    if (!set.name.includes("member:")) pending.push(...probeSetsFor(run, invocation));
   }
   for (const { overload, difference } of await checkPairs(realm, call, invocation)) {
     reports.addDifference(overload.token, difference);

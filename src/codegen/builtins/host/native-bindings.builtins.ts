@@ -25,9 +25,8 @@ const urlFunctions = "%NodeURLFunctions%";
 
 const convertsDomain = {
   ...operandCodeOnly,
-  args: { domain: b.any.optional },
+  args: { domain: b.string.loose.optional },
   returns: b.string,
-  uses: { domain: converted },
   implementation: b.generic,
 } satisfies b.FunctionField;
 

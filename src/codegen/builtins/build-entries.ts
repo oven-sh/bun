@@ -179,6 +179,9 @@ function pathOfDeclaration(declaration: Declaration): BuiltinPath | null {
     case "HandwrittenFile":
     case "HostRole":
     case "HostClassRole":
+    case "UnfilledHostRoles":
+    case "FrontEndFunction":
+    case "EngineFeatures":
     case "HostRead":
     case "HostObject":
     case "NamedMemberCall":
@@ -1071,6 +1074,12 @@ export function buildEntries(builder: ModelBuilder, declarations: readonly Sourc
       builder.problems.add(source, `${declaration.name}: only the engine declares a role of the host`);
     else builder.hostClassRoles.push({ name: declaration.name, source });
   }
+  for (const { declaration, source } of select(sorted, "UnfilledHostRoles")) {
+    if (source.origin !== "Host")
+      builder.problems.add(source, "only a host says where the roles point that it leaves out");
+    else if (builder.unfilledHostRoles !== null) builder.problems.add(source, "unfilledHostRoles() is written twice");
+    else builder.unfilledHostRoles = { path: declaration.path, class: declaration.class, source };
+  }
 }
 
 const hasSameNames = (left: readonly ModelName[], right: readonly ModelName[]): boolean =>
@@ -1226,9 +1235,9 @@ function declareLayouts(builder: ModelBuilder, declarations: readonly SourcedDec
     (left, right) =>
       compareBytes(left.declaration.name, right.declaration.name) || compareSources(left.source, right.source),
   );
-  for (const { declaration } of layouts) {
+  for (const { declaration, source } of layouts) {
     const { name, isTuple } = declaration;
-    builder.addLayout(name, { id: -1, token: tokenOf([name]), isTuple, fields: [] });
+    builder.addLayout(name, { id: -1, token: tokenOf([name]), origin: source.origin, isTuple, fields: [] });
   }
   return layouts;
 }

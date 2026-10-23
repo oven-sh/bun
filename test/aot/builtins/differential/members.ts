@@ -1,6 +1,8 @@
 import * as internals from "bun:internal-for-testing";
 import { jscDescribe } from "bun:jsc";
+import { readdirSync } from "node:fs";
 import { isBuiltin } from "node:module";
+import { join } from "node:path";
 import { types } from "node:util";
 import { isObject, type CallMode, type DumpedEntry, type DumpedType, type Table } from "./table-description";
 
@@ -13,6 +15,24 @@ export type Invocation = {
 };
 
 const prototypeOf = (value: unknown): object => Reflect.getPrototypeOf(Object(value))!;
+const modulesInPlaceOfPackages = ["utf-8-validate"];
+
+const preludeFolder = join(import.meta.dir, "../../../../src/aot/prelude");
+
+// The helpers that are written in TypeScript and compiled with a program. Here they run as they are written.
+function loadCompiledHelpers(): object {
+  const helpers: Record<string, unknown> = {};
+  // Each file says by stores to this name which of its functions a stack trace shows.
+  Reflect.set(globalThis, "$visibility", "");
+  try {
+    for (const file of readdirSync(preludeFolder)) {
+      if (file.endsWith(".ts") && !file.endsWith(".d.ts")) Object.assign(helpers, require(join(preludeFolder, file)));
+    }
+  } finally {
+    Reflect.deleteProperty(globalThis, "$visibility");
+  }
+  return helpers;
+}
 
 function createHiddenRoots(): Map<string, () => unknown> {
   const generatorFunction = prototypeOf(function* () {});
@@ -38,7 +58,8 @@ function createHiddenRoots(): Map<string, () => unknown> {
     ["%HeadersIterator%.prototype", () => prototypeOf(new Headers().entries())],
     ["%URLSearchParamsIterator%.prototype", () => prototypeOf(new URLSearchParams().entries())],
     ["%ImportMeta%", () => import.meta],
-    ["%ModuleObject%", () => (typeof module === "undefined" ? undefined : module)],
+    ["%ModuleObject%", () => require("./module-object.cjs")],
+    ["%CompilerHelpers%", loadCompiledHelpers],
     ["%ModuleRequire%", () => require],
   ]);
 }
@@ -68,28 +89,36 @@ export class Realm {
     const hidden = this.#hiddenRoots.get(entry.path);
     if (hidden) return hidden();
     if (entry.scope === "Module") return this.#findInAnswersOfBindings(entry.token);
-    return entry.path.startsWith("%") || !isBuiltin(entry.path) ? undefined : require(entry.path);
+    // A package that Bun answers for by itself where none is installed.
+    return entry.path.startsWith("%") || !(isBuiltin(entry.path) || modulesInPlaceOfPackages.includes(entry.path)) ? undefined : require(entry.path);
   }
 
-  // An object that a native binding answers, by itself or as a field of what it answers.
-  #findInAnswersOfBindings(token: string): unknown {
+  // The native binding that answers the object, by itself or as a field of what it answers.
+  bindingAnswering(token: string): { binding: DumpedEntry; field: PropertyKey | undefined } | undefined {
     const names = ({ parts }: DumpedType) => parts.some(part => part.part === "Builtin" && part.builtin === token);
     for (const binding of this.table.dump.entries) {
       const answer = binding.kind === "NativeBinding" ? binding.overloads.find(({ mode }) => mode === "Get")?.result.type : undefined;
       if (answer === undefined) continue;
-      if (names(answer)) return this.valueOf(binding.token);
+      if (names(answer)) return { binding, field: undefined };
       for (const part of answer.parts) {
         const layout = part.part === "Layout" ? this.table.layouts.get(part.layout) : undefined;
         const index = layout?.fields.findIndex(field => names(field.type)) ?? -1;
-        const holder = index < 0 ? undefined : this.valueOf(binding.token);
-        if (isObject(holder)) return Reflect.get(holder, layout!.fields[index].name ?? index);
+        if (index >= 0) return { binding, field: layout!.fields[index].name ?? index };
       }
     }
     return undefined;
   }
 
+  #findInAnswersOfBindings(token: string): unknown {
+    const found = this.bindingAnswering(token);
+    const answer = found && this.valueOf(found.binding.token);
+    if (found?.field === undefined) return answer;
+    return isObject(answer) ? Reflect.get(answer, found.field) : undefined;
+  }
+
   keyOf(entry: DumpedEntry): PropertyKey {
-    return entry.isSymbolName ? (Reflect.get(Symbol, entry.name) as symbol) : entry.name;
+    if (!entry.isSymbolName) return entry.name;
+    return (Reflect.get(Symbol, entry.name) as symbol | undefined) ?? Symbol.for(entry.name);
   }
 
   memberOf(entry: DumpedEntry): Member | undefined {
@@ -114,6 +143,8 @@ export class Realm {
       else if (entry) value = entry.holder === null ? this.#rootOf(entry) : this.#readMember(entry);
       // A prototype without a path from the global object, and what a native binding gives.
       if (entry && value === undefined && entry.kind !== "Accessor") value = this.#findById(entry);
+      // A holder that is only a heading of the table: the functions that native bindings answer stand under one.
+      if (entry && value === undefined && entry.holder !== null) value = this.#findInAnswersOfBindings(token);
     } catch {}
     this.#values.set(token, value);
     return value;
@@ -124,6 +155,14 @@ export class Realm {
     this.#idsInThisBuild ??= new Map(internals.aotBuiltinEntries().entries.map(entry => [entry.token, entry.id]));
     const id = this.#idsInThisBuild.get(token);
     return id === undefined ? undefined : internals.aotBuiltinValue?.(id, "object");
+  }
+
+  // The native code that a compiled program calls without a function object. A helper of the compiler has no other form.
+  #findDirectFunction(entry: DumpedEntry, mode: CallMode): unknown {
+    this.#idsInThisBuild ??= new Map(internals.aotBuiltinEntries().entries.map(other => [other.token, other.id]));
+    const id = this.#idsInThisBuild.get(entry.token);
+    const position = entry.overloads.findIndex(overload => overload.mode === mode && !overload.isUndeclared);
+    return id === undefined || position < 0 ? undefined : internals.aotBuiltinValue?.(id, `direct:${position}`);
   }
 
   // A lazily created member is an accessor or a custom property until its first read.
@@ -144,8 +183,12 @@ export class Realm {
       return isInThisBuild ? { mode, callee: () => this.#findById(entry), key, callsWhatIsRead: false } : undefined;
     }
     if (!isAccessor && (mode === "Call" || mode === "Construct") && entry.kind !== "DataProperty") {
-      const callee = this.valueOf(entry.token);
+      const callee = this.valueOf(entry.token) ?? this.#findDirectFunction(entry, mode);
       return typeof callee === "function" ? { mode, callee, key, callsWhatIsRead: false } : undefined;
+    }
+    // Under a holder that is only a heading of the table there is nothing to read from.
+    if (mode === "Get" && !isAccessor && entry.holder !== null && this.valueOf(entry.holder) === undefined) {
+      return this.#findById(entry) === undefined ? undefined : { mode, callee: () => this.#findById(entry), key, callsWhatIsRead: false };
     }
     const descriptor = this.memberOf(entry)?.descriptor;
     const accessor = mode === "Set" ? descriptor?.set : descriptor?.get;

@@ -317,11 +317,6 @@ export function findStaleEntries(table: TableDump, listedHashes: ReadonlySet<str
     .map(overload => overload.token);
 }
 
-export const describeStaleEntries = (tokens: readonly string[]): string =>
-  `Hand-written built-in overloads that have not passed test/aot/builtins/differential.test.ts as written now (${tokens.length}):\n` +
-  tokens.map(token => `  ${token}\n`).join("") +
-  "Run: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts";
-
 export function parseVerifiedList(text: string): Set<string> {
   const hashes = new Set<string>();
   for (const line of text.split("\n")) {
@@ -331,7 +326,28 @@ export function parseVerifiedList(text: string): Set<string> {
   return hashes;
 }
 
-export function formatVerifiedList(origin: Origin, overloads: readonly DumpedOverload[]): string {
+const unverifiedPrefix = "# unverified ";
+
+export interface UnverifiedOverload {
+  token: string;
+  reason: string;
+}
+
+export function parseUnverifiedList(text: string): Map<string, string> {
+  const reasons = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    if (!line.startsWith(unverifiedPrefix)) continue;
+    const [token, ...reason] = line.slice(unverifiedPrefix.length).split(": ");
+    reasons.set(token, reason.join(": "));
+  }
+  return reasons;
+}
+
+export function formatVerifiedList(
+  origin: Origin,
+  overloads: readonly DumpedOverload[],
+  unverified: readonly UnverifiedOverload[],
+): string {
   const lines = overloads
     .map(overload => `${overload.textHash} ${overload.token}`)
     .sort((left, right) => {
@@ -342,6 +358,10 @@ export function formatVerifiedList(origin: Origin, overloads: readonly DumpedOve
   return (
     `# Hashes of the hand-written ${origin === "Engine" ? "engine" : "host"} overloads that test/aot/builtins/differential.test.ts has checked.\n` +
     "# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts\n" +
+    unverified
+      .map(({ token, reason }) => `${unverifiedPrefix}${token}: ${reason}\n`)
+      .sort()
+      .join("") +
     lines.map(line => `${line}\n`).join("")
   );
 }

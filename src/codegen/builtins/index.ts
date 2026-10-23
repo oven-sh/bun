@@ -11,26 +11,20 @@ import { builtinFunctionIds } from "../builtin-function-ids.ts";
 import { nativeCalls, type EngineFunctions } from "../builtins-manifest-model.ts";
 import { nativeCallListStamp } from "../generate-js2native.ts";
 import { argParse, writeIfNotChanged } from "../helpers.ts";
+import { tableEntryRecord } from "../removable-entry-points.ts";
 import { buildModel } from "./build-model.ts";
-import { collectSyntaxUses } from "./build-syntax.ts";
 import { describeUndescribedResults, summarizeUndescribedResults } from "./check-dependencies.ts";
 import { collectBindgen } from "./collect-bindgen.ts";
-import { collectModules, collectOwnProperties } from "./collect-modules.ts";
+import { collectHostFunctions, collectPreludeFunctions } from "./collect-host-functions.ts";
+import { collectModules, ownPropertiesFile } from "./collect-modules.ts";
 import { collectNativeBindings } from "./collect-native-bindings.ts";
 import { checkNativeCalls, collectBufferAccessors, collectNativeLoads } from "./collect-registrations.ts";
 import { collectRuntimeFunctions } from "./collect-runtime-functions.ts";
 import { collectStaticTables } from "./collect-static-tables.ts";
+import { collectSyntaxUses } from "./collect-syntax-uses.ts";
 import { GeneratorError, Problems, symbolsNaming, type SourcedDeclaration } from "./declarations.ts";
 import { verifiedListPaths, type TableDump } from "./dump.ts";
-import { emitCppAttachments } from "./emit-cpp-attachments.ts";
-import { emitEngineBindings, emitHostBindings } from "./emit-cpp-bindings.ts";
-import { emitCppBuiltins } from "./emit-cpp-builtins.ts";
-import { emitCppFeatures } from "./emit-cpp-features.ts";
-import { emitCppArraysHeader, emitCppIds, engineListStampOf } from "./emit-cpp-ids.ts";
-import { emitCppNames } from "./emit-cpp-names.ts";
-import { emitCppOverloads } from "./emit-cpp-overloads.ts";
-import { emitCppTypes } from "./emit-cpp-types.ts";
-import { emitCppWords } from "./emit-cpp-words.ts";
+import { emitHostBindings } from "./emit-cpp-bindings.ts";
 import { dumpOf } from "./emit-dump.ts";
 import { emitRustIds } from "./emit-rust-ids.ts";
 import { emitRustSyntax } from "./emit-rust-syntax.ts";
@@ -41,14 +35,17 @@ import {
   serializeEngineDeclarations,
   type EngineDeclarations,
 } from "./engine-declarations.ts";
-import { engineFiles } from "./engine-sources.ts";
 import {
-  engineDeclarationFiles,
-  hostDeclarationFiles,
-  loadDeclarationFiles,
-  registerLibraryModule,
-} from "./load-declaration-files.ts";
+  arraysHeader,
+  collectEngine,
+  emitEngineCode,
+  engineDeclarationsName,
+  engineFeaturesOf,
+  type EngineCode,
+} from "./engine.ts";
+import { hostDeclarationFiles, loadDeclarationFiles, registerLibraryModule } from "./load-declaration-files.ts";
 import type { TableModel } from "./model.ts";
+import { collectOwnProperties } from "./own-properties.ts";
 import { compareBytes } from "./paths.ts";
 import { readVerifiedHashes, reportStaleEntries } from "./verification.ts";
 import { targetPlatforms, type BuiltinPath, type TargetPlatform } from "./vocabulary.ts";
@@ -72,27 +69,23 @@ export interface GeneratedFiles {
   undescribedResultsSummary: string;
 }
 
-interface EmittedCode {
-  engine: Map<string, string>;
-  table: Map<string, string>;
+interface EmittedCode extends EngineCode {
   codegen: Map<string, string>;
 }
 
 interface CommandLine {
   options: GenerateOptions;
   codegenPath: string;
-  requiresVerified: boolean;
   isCheck: boolean;
 }
 
 const ownBunRoot = resolve(import.meta.dir, "..", "..", "..");
-const engineDeclarationsName = "AOTBuiltinEngineDeclarations.json";
 
 const usage =
   "usage: bun src/codegen/builtins/index.ts --codegen-path=<dir> " +
   `--target=<${targetPlatforms.join("|")}> --sources=<crate>=<a.bind.ts>,.. ` +
   "(--javascriptcore=<Source/JavaScriptCore> | --prebuilt-generated=<dir>) " +
-  "[--types-only=<b.bind.ts>,..] [--require-verified] [--check]";
+  "[--types-only=<b.bind.ts>,..] [--check]";
 
 const singleRoot = (root: string): { Engine: string; Host: string } => ({ Engine: root, Host: root });
 
@@ -107,20 +100,6 @@ const engineDirectoryOf = (options: GenerateOptions): string =>
 
 const verifiedHashesOf = (options: GenerateOptions): Set<string> =>
   readVerifiedHashes(verifiedListPaths(options.bunRoot, engineDirectoryOf(options)));
-
-export async function collectEngine(javaScriptCore: string, problems: Problems): Promise<EngineDeclarations> {
-  const written = await loadDeclarationFiles(engineDeclarationFiles(javaScriptCore), "Engine", javaScriptCore);
-  const declared = [...written, ...collectStaticTables(written, singleRoot(javaScriptCore), problems)];
-  const functions = collectRuntimeFunctions(
-    { javaScriptCore, bunRoot: ownBunRoot, declared, hostFunctionIds: new Map() },
-    problems,
-  ).filter(({ source }) => source.origin === "Engine");
-  problems.throwIfAny();
-  return {
-    declarations: [...declared, ...functions],
-    engineFiles: engineFiles(javaScriptCore, declared),
-  };
-}
 
 function findPlacements(staticTableMembers: readonly SourcedDeclaration[]): Map<string, BuiltinPath> {
   const placements = new Map<string, BuiltinPath>();
@@ -156,7 +135,7 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
     ...written,
     ...staticTableMembers,
     ...collectModules(bunRoot, problems),
-    ...collectOwnProperties(bunRoot, problems),
+    ...collectOwnProperties(bunRoot, ownPropertiesFile, problems),
     ...collectNativeBindings(calls, bindsWhatExistsForTests, schemas.constructorBindings, problems),
     ...collectBufferAccessors(bunRoot, problems),
     ...collectNativeLoads(bunRoot, nativeModuleLoadSites, problems),
@@ -177,11 +156,11 @@ async function collectDeclarations(
 ): Promise<SourcedDeclaration[]> {
   const declared = [...engine.declarations, ...(await collectHost(options, problems))];
   const hostFunctionIds = builtinFunctionIds(join(options.bunRoot, "src", "js", "builtins"));
-  const hostFunctions = collectRuntimeFunctions(
-    { javaScriptCore: null, bunRoot: options.bunRoot, declared, hostFunctionIds },
+  const compilerFunctions = collectRuntimeFunctions(
+    { javaScriptCore: null, declared, frontEndFunctions: collectPreludeFunctions(options.bunRoot) },
     problems,
   );
-  return [...declared, ...hostFunctions];
+  return [...declared, ...compilerFunctions, ...collectHostFunctions(hostFunctionIds, declared, problems)];
 }
 
 interface EmitterInput {
@@ -190,8 +169,6 @@ interface EmitterInput {
   features: FeatureModel;
   nativeCallListStamp: string;
 }
-
-const arraysHeader = "AOTBuiltinTableArrays.h";
 
 // Bun compiles the table beside its own sources, where a header of the engine is a header of a framework.
 function spellIncludesForHost(text: string): string {
@@ -203,26 +180,16 @@ function spellIncludesForHost(text: string): string {
 }
 
 function emitCode({ model, schema, features, nativeCallListStamp }: EmitterInput): EmittedCode {
-  const ids = emitCppIds(model);
-  const table = new Map([
-    [arraysHeader, emitCppArraysHeader(model, engineListStampOf(ids))],
-    ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
-    ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model)],
-    ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
-    ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
-    ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
-  ]);
+  const { engine, table } = emitEngineCode(model, schema, features.features);
   return {
-    engine: new Map([
-      ["AOTBuiltinFeatures.h", emitCppFeatures(model, features)],
-      ["AOTBuiltinIDs.h", ids],
-      ["AOTBuiltinTableEngineBindings.cpp", emitEngineBindings(model)],
-      ["AOTBuiltinTableWords.h", emitCppWords(schema)],
-    ]),
+    engine,
     table,
     codegen: new Map([
       ...Array.from(table, ([name, text]): [string, string] => [name, spellIncludesForHost(text)]),
-      ["BunAOTHostBindings.cpp", emitHostBindings(model, features, nativeCallListStamp)],
+      [
+        "BunAOTHostBindings.cpp",
+        emitHostBindings(model, (...record) => tableEntryRecord(features, ...record), nativeCallListStamp),
+      ],
       ["aot_builtin_ids.rs", emitRustIds(model, schema)],
       ["aot_builtin_syntax.rs", emitRustSyntax(model)],
       ["aot_builtin_table.rs", emitRustTable(model)],
@@ -240,6 +207,24 @@ function engineFunctionsOf(model: TableModel): EngineFunctions {
   };
 }
 
+// The engine numbers its features. src/trim/features/engine.def says what Bun's link has to know about each.
+function checkEngineFeatures(engine: EngineDeclarations, features: FeatureModel): void {
+  const declared = engineFeaturesOf(engine.declarations);
+  const described = features.features
+    .filter(feature => feature.isEngine)
+    .sort((left, right) => left.index - right.index);
+  const problems = new Problems();
+  for (let index = 0; index < Math.max(declared.length, described.length); index++) {
+    const [ofEngine, ofBun] = [declared[index]?.name ?? "nothing", described[index]?.name ?? "nothing"];
+    if (ofEngine === ofBun && described[index].index === index) continue;
+    problems.add(
+      null,
+      `feature ${index} of the engine is ${ofEngine} in WebKit's aot/builtins/features.builtins.ts and ${ofBun} in src/trim/features/engine.def`,
+    );
+  }
+  problems.throwIfAny();
+}
+
 export async function generate(options: GenerateOptions): Promise<GeneratedFiles> {
   registerLibraryModule();
   const problems = new Problems();
@@ -249,10 +234,11 @@ export async function generate(options: GenerateOptions): Promise<GeneratedFiles
 
   const schema = loadSchema(join(engineDirectoryOf(options), "aot", "ir", "AOTSchema.def"));
   const features = loadFeatures(options.bunRoot);
+  checkEngineFeatures(engine, features);
   const model = buildModel({
     declarations,
     schema,
-    features,
+    features: features.features,
     engineFiles: engine.engineFiles,
     syntaxUses: collectSyntaxUses(options.bunRoot, engine.engineFiles),
   });
@@ -329,7 +315,6 @@ function readCommandLine(): CommandLine {
     "javascriptcore",
     "prebuilt-generated",
     "types-only",
-    "require-verified",
     "check",
   ]);
   const textOf = (name: string): string | null => {
@@ -359,13 +344,12 @@ function readCommandLine(): CommandLine {
       typesOnly: listOf(textOf("types-only") ?? ""),
     },
     codegenPath,
-    requiresVerified: flags["require-verified"] === true,
     isCheck: flags.check === true,
   };
 }
 
 async function main(): Promise<void> {
-  const { options, codegenPath, requiresVerified, isCheck } = readCommandLine();
+  const { options, codegenPath, isCheck } = readCommandLine();
   const { engine, table, codegen, dump, undescribedResultsSummary } = await generate(options);
   const generatedDirectory = generatedDirectoryOf(options);
   if (options.javaScriptCore === null) checkFilesAreCurrent(generatedDirectory, engine, remedyForPrebuilt);
@@ -373,7 +357,7 @@ async function main(): Promise<void> {
   else writeFiles(generatedDirectory, new Map([...engine, ...table]));
   if (!isCheck) writeFiles(codegenPath, codegen);
   console.error(`builtins table: ${undescribedResultsSummary}`);
-  reportStaleEntries(dump, verifiedHashesOf(options), requiresVerified);
+  reportStaleEntries(dump, verifiedHashesOf(options));
 }
 
 function exitWithError(error: unknown): never {

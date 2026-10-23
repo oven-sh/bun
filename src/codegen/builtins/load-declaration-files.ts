@@ -1,7 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { evaluateCMake } from "../../../scripts/build/cmake.ts";
 import {
   DeclarationFile,
   Problems,
@@ -12,6 +11,7 @@ import {
 } from "./declarations.ts";
 import * as lib from "./lib.ts";
 import { compareBytes } from "./paths.ts";
+import { readCMakeList } from "./support.ts";
 import type { Origin } from "./vocabulary.ts";
 
 export const libraryModuleName = "bun-builtins-table";
@@ -27,11 +27,19 @@ let isLibraryModuleRegistered = false;
 export function registerLibraryModule(): void {
   if (isLibraryModuleRegistered) return;
   isLibraryModuleRegistered = true;
-  Bun.plugin({
-    name: libraryModuleName,
-    setup(build) {
-      build.module(libraryModuleName, () => ({ exports: lib, loader: "object" }));
-    },
+  if (typeof Bun !== "undefined") {
+    Bun.plugin({
+      name: libraryModuleName,
+      setup(build) {
+        build.module(libraryModuleName, () => ({ exports: lib, loader: "object" }));
+      },
+    });
+    return;
+  }
+  const libraryUrl = new URL("./lib.ts", import.meta.url).href;
+  process.getBuiltinModule("node:module").registerHooks({
+    resolve: (specifier, context, nextResolve) =>
+      specifier === libraryModuleName ? { url: libraryUrl, shortCircuit: true } : nextResolve(specifier, context),
   });
 }
 
@@ -43,7 +51,7 @@ const declarationFileNamesIn = (directory: string): string[] =>
 const sourceOfFile = (file: string, origin: Origin): Source => ({ file, line: null, origin, proof: "Structure" });
 
 export function engineDeclarationFiles(javaScriptCore: string): string[] {
-  const listed = evaluateCMake(resolve(javaScriptCore, engineListFile), { variables: {} }).list(engineListName);
+  const listed = readCMakeList(resolve(javaScriptCore, engineListFile), engineListName);
   const problems = new Problems();
   for (const file of listed) {
     if (existsSync(resolve(javaScriptCore, file))) continue;

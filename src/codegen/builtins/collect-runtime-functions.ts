@@ -1,8 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
-import { evaluateCMake } from "../../../scripts/build/cmake.ts";
-import { windowsOnlyBuiltinFunctions } from "../builtin-function-ids.ts";
-import { cap } from "../helpers.ts";
 import {
   GeneratorError,
   type Problems,
@@ -11,6 +8,7 @@ import {
   type SourcedDeclaration,
 } from "./declarations.ts";
 import { compareBytes } from "./paths.ts";
+import { cap, readCMakeList } from "./support.ts";
 import { targetPlatforms, type FunctionRef, type Origin, type TargetPlatform } from "./vocabulary.ts";
 
 export interface EngineFunction {
@@ -22,9 +20,9 @@ export interface EngineFunction {
 
 export interface RuntimeFunctionInput {
   javaScriptCore: string | null;
-  bunRoot: string;
   declared: readonly SourcedDeclaration[];
-  hostFunctionIds: ReadonlyMap<string, number>;
+  /** What the front end of the host compiles, beside what the host declares with b.frontEndFunctions(). */
+  frontEndFunctions: readonly FoundFunction[];
 }
 
 interface FunctionBounds {
@@ -33,7 +31,7 @@ interface FunctionBounds {
   name: string;
 }
 
-interface FoundFunction {
+export interface FoundFunction {
   function: FunctionRef;
   exportName: string;
   source: Source;
@@ -53,10 +51,6 @@ const tableListFile = "aot/builtins/AOTBuiltinTable.cmake";
 const handwrittenListName = "JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS";
 const modelListName = "JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS";
 const handwrittenDirectory = "aot/builtins/handwritten";
-const preludeDirectory = "src/aot/prelude";
-const hostFunctionDirectory = "src/js/builtins";
-
-const windowsOnly: readonly TargetPlatform[] = ["Windows"];
 
 const functionHeadPattern = /(?:@[\w|=\[\] "\.]+\s*\n)*(?:async\s+)?function\s+(\w+)\s*\(.*?\)/gs;
 const constructorAnnotationPattern = /^@(?:constructor|nakedConstructor)/m;
@@ -93,18 +87,16 @@ function functionNameOf(exportName: string): string {
   return exportedNameOf(name) === exportName ? name : exportName;
 }
 
-const keyOf = ({ file, name }: FunctionRef): string => `${file}\t${name}`;
+export const keyOf = ({ file, name }: FunctionRef): string => `${file}\t${name}`;
 
 const compareFunctions = (left: FunctionRef, right: FunctionRef): number =>
   compareBytes(left.file, right.file) || compareBytes(left.name, right.name);
 
-const sourceOf = (file: string, origin: Origin): Source => ({ file, line: null, origin, proof: "Structure" });
+export const sourceOf = (file: string, origin: Origin): Source => ({ file, line: null, origin, proof: "Structure" });
 
 export function engineBuiltinSources(javaScriptCore: string): string[] {
   const file = join(javaScriptCore, "CMakeLists.txt");
-  const sources = evaluateCMake(file, {
-    variables: { JAVASCRIPTCORE_DIR: javaScriptCore, JavaScriptCore_LIBRARY_TYPE: "STATIC" },
-  }).list(engineSourceListName);
+  const sources = readCMakeList(file, engineSourceListName, { JAVASCRIPTCORE_DIR: javaScriptCore });
   if (sources.length === 0) throw new GeneratorError(`${file}: there is no list ${engineSourceListName}`);
   return sources;
 }
@@ -192,11 +184,13 @@ export function engineFunctions(javaScriptCore: string): EngineFunction[] {
   return findEngineFunctions(engineBuiltinSources(javaScriptCore));
 }
 
+const exportedFunctionPattern = /^export\s+(?:async\s+)?function\s*\*?\s*([\w$]+)/gm;
+
 export function exportedFunctionsOf(file: string): string[] {
-  return new Bun.Transpiler({ loader: "ts" }).scan(readFileSync(file, "utf8")).exports;
+  return Array.from(readFileSync(file, "utf8").matchAll(exportedFunctionPattern), match => match[1]).sort(compareBytes);
 }
 
-function findExportedFunctions(root: string, path: string, file: string, origin: Origin): FoundFunction[] {
+export function findExportedFunctions(root: string, path: string, file: string, origin: Origin): FoundFunction[] {
   return exportedFunctionsOf(join(root, path)).map(exportName => ({
     function: { file, name: functionNameOf(exportName) },
     exportName,
@@ -204,7 +198,7 @@ function findExportedFunctions(root: string, path: string, file: string, origin:
   }));
 }
 
-function declarationOf(
+export function declarationOf(
   found: FoundFunction,
   id: number,
   role: RuntimeFunctionRole,
@@ -304,12 +298,12 @@ function collectEngineHalf(
   );
   const includedFunctions = removeExcludedFunctions(findEngineFunctions(sources), declared, problems);
   const handwrittenFiles = findHandwrittenFiles(declared, problems);
-  const lists = evaluateCMake(join(javaScriptCore, tableListFile), { variables: {} });
-  const listedHandwrittenFiles = new Set(lists.list(handwrittenListName));
+  const listOf = (name: string): string[] => readCMakeList(join(javaScriptCore, tableListFile), name);
+  const listedHandwrittenFiles = new Set(listOf(handwrittenListName));
 
   const half: EngineHalf = {
     builtins: [],
-    compilerFunctions: collectModelFunctions(javaScriptCore, lists.list(modelListName), problems),
+    compilerFunctions: collectModelFunctions(javaScriptCore, listOf(modelListName), problems),
   };
   for (const { file, name, cppCodeName, index } of includedFunctions) {
     if (handwrittenFiles.has(file)) continue;
@@ -332,80 +326,38 @@ function collectEngineHalf(
   return half;
 }
 
-function collectPreludeFunctions(bunRoot: string): FoundFunction[] {
-  return readdirSync(join(bunRoot, preludeDirectory))
-    .filter(name => name.endsWith(".ts") && !name.endsWith(".d.ts"))
-    .sort(compareBytes)
-    .flatMap(name =>
-      findExportedFunctions(bunRoot, `${preludeDirectory}/${name}`, `prelude/${basename(name, ".ts")}`, "Host"),
-    );
-}
-
+// The engine's come first, so that no function of a host moves the number of one of them.
 function numberCompilerFunctions(
   found: readonly FoundFunction[],
-  declaredFunctions: readonly FunctionRef[],
+  numberOfDeclaredFunctions: number,
 ): SourcedDeclaration[] {
-  const foundFunctions = found.map(compilerFunction => compilerFunction.function);
-  const ordered = [...foundFunctions, ...declaredFunctions].sort(compareFunctions);
-  const idByKey = new Map(ordered.map((ref, position) => [keyOf(ref), firstCompilerFunctionId + position]));
-  return found.map(compilerFunction =>
-    declarationOf(compilerFunction, idByKey.get(keyOf(compilerFunction.function))!, "CompilerFunction", null),
-  );
+  const firstId = firstCompilerFunctionId + numberOfDeclaredFunctions;
+  return found
+    .toSorted((left, right) => compareFunctions(left.function, right.function))
+    .map((compilerFunction, position) => declarationOf(compilerFunction, firstId + position, "CompilerFunction", null));
 }
 
-function findExcludedHostFunctions(
-  hostFunctions: readonly FunctionRef[],
-  declared: readonly SourcedDeclaration[],
-  problems: Problems,
-): Set<string> {
-  const hostKeys = new Set(hostFunctions.map(keyOf));
-  const excludedKeys = new Set<string>();
-  for (const { declaration, source } of declared) {
-    if (declaration.declares !== "ExcludedFunction" || source.origin !== "Host") continue;
-    const { file, name } = declaration.function;
-    if (!hostKeys.has(keyOf(declaration.function))) problems.add(source, `src/js/${file}.ts has no function ${name}`);
-    excludedKeys.add(keyOf(declaration.function));
-  }
-  return excludedKeys;
-}
-
-function collectHostFunctions(
-  hostFunctionIds: ReadonlyMap<string, number>,
-  declared: readonly SourcedDeclaration[],
-  problems: Problems,
-): SourcedDeclaration[] {
-  const hostFunctions = Array.from(hostFunctionIds, ([key, id]) => {
-    const [fileName, name] = key.split("\t");
-    const found = {
-      function: { file: `builtins/${basename(fileName, ".ts")}`, name },
-      exportName: name,
-      source: sourceOf(`${hostFunctionDirectory}/${fileName}`, "Host"),
-    };
-    return { found, id, platforms: windowsOnlyBuiltinFunctions.has(key) ? windowsOnly : targetPlatforms };
-  });
-  const excludedKeys = findExcludedHostFunctions(
-    hostFunctions.map(({ found }) => found.function),
-    declared,
-    problems,
+function collectDeclaredFrontEndFunctions(declared: readonly SourcedDeclaration[]): FoundFunction[] {
+  return declared.flatMap(({ declaration, source }) =>
+    declaration.declares === "FrontEndFunction"
+      ? [{ function: declaration.function, exportName: exportedNameOf(declaration.function.name), source }]
+      : [],
   );
-  return hostFunctions
-    .filter(({ found }) => !excludedKeys.has(keyOf(found.function)))
-    .map(({ found, id, platforms }) => declarationOf(found, id, "HostBuiltin", null, platforms));
 }
 
 export function collectRuntimeFunctions(input: RuntimeFunctionInput, problems: Problems): SourcedDeclaration[] {
-  const { javaScriptCore, bunRoot, declared, hostFunctionIds } = input;
+  const { javaScriptCore, declared, frontEndFunctions } = input;
   const engine: EngineHalf =
     javaScriptCore === null
       ? { builtins: [], compilerFunctions: [] }
       : collectEngineHalf(javaScriptCore, declared, problems);
-  const declaredCompilerFunctions = declared.flatMap(({ declaration }) =>
-    declaration.declares === "RuntimeFunction" && declaration.role === "CompilerFunction" ? [declaration.function] : [],
-  );
-  const compilerFunctions = [...engine.compilerFunctions, ...collectPreludeFunctions(bunRoot)];
-  return [
-    ...engine.builtins,
-    ...numberCompilerFunctions(compilerFunctions, declaredCompilerFunctions),
-    ...collectHostFunctions(hostFunctionIds, declared, problems),
+  const numberOfDeclaredCompilerFunctions = declared.filter(
+    ({ declaration }) => declaration.declares === "RuntimeFunction" && declaration.role === "CompilerFunction",
+  ).length;
+  const compilerFunctions = [
+    ...engine.compilerFunctions,
+    ...frontEndFunctions,
+    ...collectDeclaredFrontEndFunctions(declared),
   ];
+  return [...engine.builtins, ...numberCompilerFunctions(compilerFunctions, numberOfDeclaredCompilerFunctions)];
 }

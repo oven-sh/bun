@@ -1,21 +1,7 @@
-// Must come before ../replacements.ts: the two import each other, and builtin-parser.ts reads function_replacements while it loads.
-import fs from "node:fs";
-import path from "node:path";
-import { census, censusOfText } from "../builtin-name-census.ts";
-import { jscNames } from "../builtin-names.ts";
-import "../builtin-parser.ts";
-import { functionFiles, locate, sourceFiles, type NativeCall } from "../builtins-manifest-model.ts";
-import { define, globalsToPrefix, numberedClasses, numberedErrorCodes } from "../replacements.ts";
 import type { ModelBuilder } from "./build-entries.ts";
 import type { Problems, Source, SourcedDeclaration } from "./declarations.ts";
 import { canonicalTextOf } from "./dump.ts";
-import type {
-  ModelEngineFile,
-  ModelIntrinsic,
-  ModelIntrinsicMeaning,
-  ModelNativeBinding,
-  ModelPrefixedGlobal,
-} from "./model.ts";
+import type { ModelIntrinsic, ModelIntrinsicMeaning, ModelNativeBinding, ModelPrefixedGlobal } from "./model.ts";
 import { compareBytes, joinPath, pathOfNativeBinding } from "./paths.ts";
 import {
   conversions,
@@ -29,6 +15,7 @@ import {
   type NativeCallKind,
 } from "./vocabulary.ts";
 
+/** What the sources that the front end of the host compiles use of the lines. A host without a front end has none, and nobody reads its lines. */
 export interface SyntaxUses {
   names: ReadonlyMap<string, ReadonlySet<IntrinsicPosition>>;
   prefixedGlobals: readonly string[];
@@ -48,7 +35,6 @@ interface SyntaxLine {
 
 const errorCallee = "makeErrorWithCode";
 const inheritsCallee = "inherits";
-const intrinsicDefinePrefix = "__intrinsic__";
 const symbolKeyMark = "$";
 const symbolConstructorPath = "Symbol";
 const maxUint32 = 2 ** 32 - 1;
@@ -56,7 +42,7 @@ const usingSources = "src/js, the engine's built-ins, the models or the prelude"
 const declaringFiles =
   "src/codegen/builtins/host/bun-syntax.builtins.ts or WebKit's Source/JavaScriptCore/aot/builtins/engine-syntax.builtins.ts";
 
-const nativeCallMacros: Readonly<Record<NativeCallKind, NativeCall["macro"]>> = {
+const nativeCallMacros: Readonly<Record<NativeCallKind, string>> = {
   Cpp: "cpp",
   Rust: "rust",
   NewCppFunction: "newCppFunction",
@@ -344,16 +330,20 @@ function wordsOfEngine(
 export function buildSyntax(
   builder: ModelBuilder,
   declarations: readonly SourcedDeclaration[],
-  uses: SyntaxUses,
+  uses: SyntaxUses | null,
 ): void {
   const table = new SyntaxTable(builder.problems);
   addWrittenLines(table, declarations);
-  addErrorCodes(table, uses.errorCodes);
-  addInheritableClasses(table, uses.inheritableClasses);
+  if (uses !== null) {
+    addErrorCodes(table, uses.errorCodes);
+    addInheritableClasses(table, uses.inheritableClasses);
+  }
   addCalleesAndMacros(table);
-  addPrivateNames(table, uses);
-  checkUses(table, uses, builder.problems);
-  checkPrefixedGlobals(table, uses.prefixedGlobals, builder.problems);
+  if (uses !== null) {
+    addPrivateNames(table, uses);
+    checkUses(table, uses, builder.problems);
+    checkPrefixedGlobals(table, uses.prefixedGlobals, builder.problems);
+  }
 
   const resolveLines = (lines: readonly SyntaxLine[]): ModelIntrinsic[] =>
     lines.flatMap(line => {
@@ -377,40 +367,5 @@ export function buildSyntax(
     linkTimeConstants: wordsOfEngine(builder, lines, "link-time constant", ({ spec, name }) =>
       spec.intrinsic === "LinkTimeConstant" ? [name] : [],
     ),
-  };
-}
-
-function hostSourceFiles(bunRoot: string): string[] {
-  const prelude = path.join(bunRoot, "src/aot/prelude");
-  const preludeFiles = fs
-    .readdirSync(prelude, { withFileTypes: true })
-    .filter(entry => entry.isFile() && entry.name.endsWith(".ts"))
-    .map(entry => entry.name)
-    .sort(compareBytes);
-  const library = [...sourceFiles, ...functionFiles].map(locate);
-  return [...library, ...preludeFiles.map(name => path.join(prelude, name))];
-}
-
-export function collectSyntaxUses(bunRoot: string, engineFiles: readonly ModelEngineFile[]): SyntaxUses {
-  const definedNames = new Set(
-    Object.keys(define)
-      .filter(key => key.startsWith(intrinsicDefinePrefix))
-      .map(key => key.slice(intrinsicDefinePrefix.length)),
-  );
-  const names = new Map<string, Set<IntrinsicPosition>>();
-  const engineUses = engineFiles.flatMap(({ name, text }) => censusOfText(name, text));
-  for (const { name, position } of [...census(hostSourceFiles(bunRoot)), ...engineUses]) {
-    if (definedNames.has(name)) continue;
-    const positions = names.get(name);
-    if (positions === undefined) names.set(name, new Set([position]));
-    else positions.add(position);
-  }
-  const bunNames = fs.readFileSync(path.join(bunRoot, "src/js/builtins/BunBuiltinNames.h"), "utf8");
-  return {
-    names,
-    prefixedGlobals: [...globalsToPrefix, ...errorKinds],
-    privateNames: [...jscNames.private, ...Array.from(bunNames.matchAll(/^\s*macro\((\w+)\)/gm), match => match[1])],
-    errorCodes: numberedErrorCodes,
-    inheritableClasses: numberedClasses,
   };
 }

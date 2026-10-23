@@ -7,8 +7,9 @@ const pathListRead = b.runsTransitively("OwnValues", "PrototypeChain", b.named("
 const resolveOptions = [b.retained, pathListRead];
 const requireOptions = [b.retained, b.runsTransitively("OwnValues", "PrototypeChain", b.named("paths", "type"))];
 
+// What is no string is refused as it is: nothing converts it.
 const loadsModule = {
-  args: { specifier: b.string.loose, options: b.any.optional },
+  args: { specifier: b.string, options: b.any.optional },
   returns: b.any,
   capability: "js",
   throws: true,
@@ -23,12 +24,14 @@ const compilesText = {
   capability: "js",
   throws: true,
   readsStateBeforeConversions: true,
-  uses: { text: [b.evaluatedAsText] },
+  // It puts require on the module, and the text gets the module.
+  this: b.any,
+  uses: { this: [b.everything], text: [b.evaluatedAsText] },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
 const resolvesFromModule = {
-  args: { specifier: b.string.loose, options: b.any.optional },
+  args: { specifier: b.string, options: b.any.optional },
   returns: b.any,
   capability: "js",
   throws: true,

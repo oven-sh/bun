@@ -364,7 +364,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 {
     JSFunction* createParsedShellScript = JSFunction::create(vm, globalObject, 2, "createParsedShellScript"_s, JSC::removableFunction<Bun::Feature::Shell, JSC::RemovedFeatureStub::Throw, BunObject_callback_createParsedShellScript>(), ImplementationVisibility::Private, NoIntrinsic);
-    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, Bun::Bindgen::Generated::Interpreter::jsCreateShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, JSC::removableFunction<Bun::Feature::Shell, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Interpreter::jsCreateShellInterpreter>(), ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -412,37 +412,37 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun::Bindgen::Generated::Dns::jsLookup, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Dns::jsLookup>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolve, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolve>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSrv, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSrv>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTxt, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTxt>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSoa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSoa>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNaptr>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveMx, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveMx>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCaa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCaa>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNs, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNs>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolvePtr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolvePtr>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCname, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCname>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveAny, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveAny>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGetGlobalServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGetGlobalServers>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsSetGlobalServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsSetGlobalServers>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalReverse, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalReverse>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalLookupService, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalLookupService>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 1, Bun::Bindgen::Generated::Dns::jsPrefetch, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);

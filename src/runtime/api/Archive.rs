@@ -81,7 +81,12 @@ impl Archive {
                 .print_as::<W, ENABLE_ANSI_COLORS>(
                     jsc::FormatTag::Double,
                     writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
+                    JSValue::js_number(f64::from(bun_removable_features::call_removable!(
+                        Archive,
+                        Abort,
+                        count_files_in_archive,
+                        data
+                    ))),
                     jsc::JSType::NumberObject,
                 )
                 .map_err(|_| crate::Error::JSError)?;
@@ -111,6 +116,7 @@ fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_al
 }
 
 /// Count the number of files in an archive
+#[inline(never)]
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();

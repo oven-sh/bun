@@ -1,4 +1,4 @@
-import { cap } from "../helpers.ts";
+import { cap } from "./support.ts";
 import { GeneratorError } from "./declarations.ts";
 import type { NameKind } from "./model.ts";
 import type { BuiltinPath, NativeCallKind } from "./vocabulary.ts";

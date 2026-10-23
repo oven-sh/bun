@@ -847,12 +847,12 @@ export const aotBuiltinEntries: () => import("../codegen/builtins/dump.ts").Tabl
   "jsFunction_aotBuiltinEntries",
   0,
 );
-/** What this realm holds for the entry with that `id` of the compiler's table: its object, or the getter or setter of an accessor. */
-export const aotBuiltinValue: (id: number, part: "object" | "getter" | "setter") => unknown = $newCppFunction(
-  "InternalForTesting.cpp",
-  "jsFunction_aotBuiltinValue",
-  2,
-);
+/**
+ * What this realm holds for the entry with that `id` of the compiler's table: its object, or the getter or setter of an accessor.
+ * `direct:<n>`: a function that hands its receiver and arguments to the native code that a compiled program calls for the entry's overload n without a function object.
+ */
+export const aotBuiltinValue: (id: number, part: "object" | "getter" | "setter" | `direct:${number}`) => unknown =
+  $newCppFunction("InternalForTesting.cpp", "jsFunction_aotBuiltinValue", 2);
 /** The native functions that Bun's own modules call under a private name of the global object. A key is the name, then what it is called with. */
 export const privateGlobalFunctions: Record<string, (...operands: any[]) => unknown> = {
   toClass: (fn, name, base) => $toClass(fn, name, base),

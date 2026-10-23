@@ -12,6 +12,7 @@
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
 #include <atomic>
 #include <memory>
@@ -27,6 +28,7 @@
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTBuiltinTableRealm.h>
 #include <JavaScriptCore/AOTNameClass.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include "JS2Native.h"
 #endif
 
@@ -130,6 +132,51 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinEntries, (JSC::JSGlobalObject * gl
 #endif
 }
 
+#if ENABLE(AOT)
+// A function that passes its receiver and its arguments to the native code that compiled code calls for the overload without a function object.
+static JSValue functionCallingDirectly(JSC::JSGlobalObject* globalObject, JSC::AOT::BuiltinOverloadID overload)
+{
+    using namespace JSC::AOT;
+    std::optional<uint32_t> number = BuiltinBindings::directFunctionNumberOf(overload);
+    if (!number)
+        return jsUndefined();
+    const BuiltinDirectFunctionBinding& binding = BuiltinBindings::directFunctionAt(*number);
+    auto parameters = std::span(binding.parameters).first(binding.parameterCount);
+    bool takesOnlyWords = std::ranges::all_of(parameters, [](BuiltinDirectValue parameter) {
+        return parameter == BuiltinDirectValue::Realm || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::Value || parameter == BuiltinDirectValue::ValueOrEmpty;
+    });
+    if (!takesOnlyWords)
+        return jsUndefined();
+
+    return JSNativeStdFunction::create(globalObject->vm(), globalObject, 0, {}, [&binding](JSGlobalObject* realm, CallFrame* frame) -> EncodedJSValue {
+        std::array<uint64_t, BuiltinDirectFunctionBinding::maxParameterCount> words {};
+        static_assert(words.size() == 6);
+        size_t argument = 0;
+        for (size_t index = 0; index < binding.parameterCount; ++index) {
+            switch (binding.parameters[index]) {
+            case BuiltinDirectValue::Realm:
+                words[index] = std::bit_cast<uintptr_t>(realm);
+                break;
+            case BuiltinDirectValue::Receiver:
+                words[index] = JSValue::encode(frame->thisValue());
+                break;
+            case BuiltinDirectValue::Value:
+                words[index] = JSValue::encode(frame->argument(argument++));
+                break;
+            case BuiltinDirectValue::ValueOrEmpty:
+                words[index] = JSValue::encode(argument < frame->argumentCount() ? frame->uncheckedArgument(argument) : JSValue());
+                ++argument;
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+        using Function = EncodedJSValue(SYSV_ABI*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+        return reinterpret_cast<Function>(const_cast<void*>(binding.function))(words[0], words[1], words[2], words[3], words[4], words[5]);
+    });
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinValue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if ENABLE(AOT)
@@ -148,6 +195,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinValue, (JSC::JSGlobalObject * glob
         Bun__AOT__registerHostBindings();
 
     BuiltinID id(index);
+    if (part.startsWith("direct:"_s)) {
+        std::optional<uint32_t> position = parseInteger<uint32_t>(StringView(part).substring(7));
+        uint32_t seen = 0;
+        for (BuiltinOverloadID overload : table.overloadIDsOf(id)) {
+            if (position && seen++ == *position)
+                return JSValue::encode(functionCallingDirectly(globalObject, overload));
+        }
+        return JSValue::encode(jsUndefined());
+    }
     if (table.at(id).kind == BuiltinKind::NativeBinding) {
         // What native code hands over by itself has no number: no text evaluates it.
         std::optional<uint16_t> hostNumber = BuiltinBindings::hostNumberOf(id);

@@ -1,5 +1,3 @@
-import type { FeatureModel, FeatureName } from "../../../scripts/build/trim/types.ts";
-import { tableEntryRecord } from "../removable-entry-points.ts";
 import { GeneratorError } from "./declarations.ts";
 import {
   emitArray,
@@ -20,7 +18,16 @@ import {
   type TableModel,
 } from "./model.ts";
 import { compareBytes } from "./paths.ts";
-import type { CppClassRef, DirectEntrySpec, Origin } from "./vocabulary.ts";
+import type { CppClassRef, DirectEntrySpec, FeatureName, Origin } from "./vocabulary.ts";
+
+/** The statement that records an entry of one of the host's tables of functions for whoever links an executable without a feature. The host writes it. */
+export type FormatTableEntryRecord = (
+  table: string,
+  feature: FeatureName,
+  stub: "Abort" | "Throw" | "ReturnUndefined" | "ReturnDefault",
+  symbol: string,
+  builtin?: number,
+) => string;
 
 interface BindingLists {
   classes: readonly string[];
@@ -199,17 +206,15 @@ function formatHostEntryPointRecord(
   table: string,
   builtin: ModelBuiltin,
   symbol: string | null,
-  features: FeatureModel,
+  formatRecord: FormatTableEntryRecord,
   stub: "Throw" | "Abort" = "Throw",
 ): string[] {
   if (symbol === null) return [];
   const guard = builtin.attachments.featureUses.find(use => use.isGuard);
   if (guard !== undefined)
-    return [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, guard.feature, stub, symbol, builtin.id)];
+    return [formatRecord(`Bun::AOTHostBindings::${table}`, guard.feature, stub, symbol, builtin.id)];
   const feature = findFeatureOfHolders(builtin);
-  return feature === undefined
-    ? []
-    : [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
+  return feature === undefined ? [] : [formatRecord(`Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
 }
 
 // What stands in for a function of a removed feature throws in the realm that it takes first.
@@ -448,7 +453,11 @@ function formatHostNumberBinding(builtin: ModelBuiltin): string[] {
   ];
 }
 
-export function emitHostBindings(model: TableModel, features: FeatureModel, nativeCallListStamp: string): string {
+export function emitHostBindings(
+  model: TableModel,
+  formatRecord: FormatTableEntryRecord,
+  nativeCallListStamp: string,
+): string {
   const classes = findClassesWithBindings(model, "Host");
   const nativeFunctions = findNativeFunctions(model, "Host");
   const appendSymbols = sortUnique(model.builtins.flatMap(builtin => builtin.attachments.hostAppendSymbol ?? []));
@@ -460,7 +469,7 @@ export function emitHostBindings(model: TableModel, features: FeatureModel, nati
   const isInNamespace = (symbol: string) => symbol.includes("::");
   const records = [
     ...model.builtins.flatMap(builtin =>
-      formatHostEntryPointRecord("appendFunctions", builtin, builtin.attachments.hostAppendSymbol, features),
+      formatHostEntryPointRecord("appendFunctions", builtin, builtin.attachments.hostAppendSymbol, formatRecord),
     ),
     ...new Set(
       directFunctions.flatMap(({ overload, directEntry }) =>
@@ -468,17 +477,17 @@ export function emitHostBindings(model: TableModel, features: FeatureModel, nati
           "directFunctions",
           overload.builtin,
           directEntry.symbol,
-          features,
+          formatRecord,
           stubOfDirectFunction(directEntry),
         ),
       ),
     ),
     ...nativeFunctions.flatMap(({ builtin, nativeFunction }) =>
-      formatHostEntryPointRecord("nativeFunctions", builtin, nativeFunction.symbol, features),
+      formatHostEntryPointRecord("nativeFunctions", builtin, nativeFunction.symbol, formatRecord),
     ),
     ...model.overloads.flatMap(overload => {
       const symbol = customGetterOf(overload);
-      return formatHostEntryPointRecord("customGetters", overload.builtin, symbol, features);
+      return formatHostEntryPointRecord("customGetters", overload.builtin, symbol, formatRecord);
     }),
   ];
   const blocks = [

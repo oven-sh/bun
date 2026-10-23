@@ -995,6 +995,7 @@ impl EventLoop {
             "pending immediates must be released (release_queued_tasks) while the loop is alive"
         );
         self.tasks = Queue::init();
+        self.plugin_requests = Queue::init();
         // Free the deferred-task map's storage. The tasks must not be run, and an
         // entry owns nothing but a `Copy` ctx pointer whose owner released it when
         // the JSC teardown before this finalized it. A worker's VM box is

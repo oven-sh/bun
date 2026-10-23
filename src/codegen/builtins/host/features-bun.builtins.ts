@@ -684,7 +684,6 @@ export default b.declarations(
   extendAll(
     ["Profilers"],
     "Bun.generateHeapSnapshot",
-    "console.takeHeapSnapshot",
     ...nativeBindings(
       "NewCppFunction",
       "JSInspectorProfiler.cpp",

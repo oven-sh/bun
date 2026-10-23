@@ -1,6 +1,5 @@
-import type { Capability } from "../bindgen-lib-internal.ts";
-
-export type { Capability };
+/** The word of a schema of Bun's natives (src/codegen/bindgen-lib-internal.ts) means the same. */
+export type Capability = "none" | "heap" | "js";
 
 export const capabilities = ["js", "heap", "none"] as const satisfies readonly Capability[];
 

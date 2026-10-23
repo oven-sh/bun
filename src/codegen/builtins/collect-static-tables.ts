@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cap } from "../helpers.ts";
+import { cap } from "./support.ts";
 import { Problems, type MemberDeclaration, type Source, type SourcedDeclaration } from "./declarations.ts";
 import { memberPathOf } from "./paths.ts";
 import { targetPlatforms, type BuiltinPath, type EntryColumns, type TargetPlatform } from "./vocabulary.ts";

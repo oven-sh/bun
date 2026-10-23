@@ -377,7 +377,6 @@ describe("emitBuiltinsTable", () => {
     expect(inputs.filter(input => input === n.rel(script))).toHaveLength(1);
     expect(edgeArgs(n, cpp)).toContain(`--javascriptcore=${checkout.javaScriptCore}`);
     expect(edgeArgs(n, cpp)).not.toContain("--prebuilt-generated");
-    expect(edgeArgs(n, cpp)).not.toContain("--require-verified");
   });
 
   test("with a prebuilt engine it is told where that engine's generated files lie", () => {
@@ -390,13 +389,12 @@ describe("emitBuiltinsTable", () => {
       sources: noSources(),
       o,
       dirStamp,
-      engine: { ...prebuilt, requiresVerifiedOverloads: true },
+      engine: prebuilt,
     });
 
     const args = edgeArgs(n, builtinTableRust(cfg));
     expect(args).toContain(`--prebuilt-generated=${prebuilt.builtinsGeneratedDirectory}`);
     expect(args).not.toContain("--javascriptcore=");
-    expect(args).toContain("--require-verified");
   });
 });
 

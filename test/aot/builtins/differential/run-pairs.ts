@@ -407,7 +407,8 @@ function freeze(completion: Completion): Completion {
   }
 }
 
-type StoreOutcome = "NoVerdict" | "Explained" | { message: string };
+type StoreDifference = { message: string; before: Completion; after: Completion };
+type StoreOutcome = "NoVerdict" | "Explained" | StoreDifference;
 
 // The call, a store to memory of the operand, and the call again, on operands that are made anew.
 async function callAroundStore(
@@ -446,11 +447,14 @@ async function callAroundStore(
   const message =
     `the call ${describeOutcome(second)}, and after a store to ${heaps.join(" or ")} of ${describeOperand(operand)} ` +
     `it ${describeOutcome(third)}`;
-  return { message };
+  return { message, before: second, after: third };
 }
 
-// A clock answers otherwise on its own, and now and then just behind the store.
+// A clock or a meter answers otherwise on its own, and now and then just behind the store. What a call reads of an operand, it reads
+// again of an operand that is made anew.
 const timesToShow = 3;
+const isSameDifference = (left: StoreDifference, right: StoreDifference) =>
+  hasSameOutcome(left.before, right.before) && hasSameOutcome(left.after, right.after);
 
 // A call that reads nothing that a store in between writes may be merged with an earlier call or moved across the store.
 async function checkReads(
@@ -471,7 +475,8 @@ async function checkReads(
       for (let index = 0; index < count; index++) {
         let outcome = await callAroundStore(realm, call, invocation, overload, set, operand, index);
         for (let time = 1; time < timesToShow && typeof outcome === "object"; time++) {
-          outcome = await callAroundStore(realm, call, invocation, overload, set, operand, index);
+          const again = await callAroundStore(realm, call, invocation, overload, set, operand, index);
+          outcome = typeof again === "object" && !isSameDifference(outcome, again) ? "NoVerdict" : again;
         }
         if (outcome === "NoVerdict") break;
         if (typeof outcome === "object") return [{ column: "reads", message: outcome.message, set: set.name }];

@@ -19,7 +19,6 @@ export interface EngineSources {
   builtinsGeneratedDirectory: string;
   builtinTableInputs: string[];
   builtinTableOutputs: string[];
-  requiresVerifiedOverloads: boolean;
 }
 
 export type BuiltinTableTarget = "Darwin" | "Linux" | "Windows" | "FreeBSD" | "Android";
@@ -301,7 +300,6 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
           ? `--prebuilt-generated=${engine.builtinsGeneratedDirectory}`
           : `--javascriptcore=${engine.javaScriptCore}`,
         typesOnlyFlag(cfg, sources),
-        ...(engine.requiresVerifiedOverloads ? ["--require-verified"] : []),
       ]),
     },
   });

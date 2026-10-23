@@ -26,6 +26,12 @@ export type Target = {
 export type Unreachable = { name: string; path: string; mode: CallMode; reason: string; isSkipped: boolean };
 
 const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
+  // The differential test calls these with the operands that their entries name. Here they would get everything.
+  [/^process\.(binding|_linkedBinding|chdir|_rawDebug|stdout|stderr)\b/, "it changes the state of the process or takes over a standard stream"],
+  [/^(alert|confirm|prompt)$/, "it waits for input"],
+  [/^Atomics\.(waitAsync|pause)$/, "it blocks the thread"],
+  [/^(fetch|postMessage)$/, "it starts a thread or opens a connection"],
+  [/^%ModuleRequire%/, "it loads whatever its operand names"],
   [/crash_handler\.rs|restartProcess|jsFunctionReportUncaughtException|Bun__setSyntheticAllocationLimitForTesting|DeclaredTypesForTesting/, "it ends the process or makes it fail"],
   [/BunDebugger\.cpp|console\.takeHeapSnapshot|jsFunction_(start|stop|collect)\w*(Profiler|Coverage)/, "it opens the inspector, waits for it or profiles the process"],
   [/spawnThreadsForTesting|createNodeWorker|jsFunctionPostMessage|^Bun\.WebView|^Bun\.Terminal$/, "it starts a thread, a process or a terminal"],

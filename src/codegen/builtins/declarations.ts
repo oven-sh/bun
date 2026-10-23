@@ -8,6 +8,7 @@ import type {
   ClassColumns,
   ClassName,
   EntryColumns,
+  FeatureName,
   FunctionRef,
   HostCallSpec,
   HostObjectFieldSpec,
@@ -283,6 +284,25 @@ export interface HostClassRoleDeclaration {
   name: ClassName;
 }
 
+/** Where the roles point that a host leaves out. Bun declares none, so there a role without an entry stops the build. The host that WebKit's own programs are linked with declares one. */
+export interface UnfilledHostRolesDeclaration {
+  declares: "UnfilledHostRoles";
+  path: BuiltinPath;
+  class: ClassName;
+}
+
+/** A function that the front end of the host compiles, declared by a host that has no front end. */
+export interface FrontEndFunctionDeclaration {
+  declares: "FrontEndFunction";
+  function: FunctionRef;
+}
+
+/** What of the engine an executable can be linked without, in the order of the numbers. */
+export interface EngineFeaturesDeclaration {
+  declares: "EngineFeatures";
+  names: readonly FeatureName[];
+}
+
 /** What the host does with an export of a module of the program. It takes the forms that the front end has a record for. */
 export type HostReadUse = Extract<HostUseSpec, { read: "Inspected" | "PassedTo" }> | { read: "Called" };
 
@@ -355,6 +375,9 @@ export type Declaration =
   | ExcludedFunctionDeclaration
   | HandwrittenFileDeclaration
   | HostRoleDeclaration
+  | UnfilledHostRolesDeclaration
+  | FrontEndFunctionDeclaration
+  | EngineFeaturesDeclaration
   | HostClassRoleDeclaration
   | HostReadDeclaration
   | HostObjectDeclaration

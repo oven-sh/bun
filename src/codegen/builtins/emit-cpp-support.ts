@@ -99,8 +99,28 @@ export function formatASCIILiteral(text: string): string {
   return `"${formatCharacters(text)}"_s`;
 }
 
+// AOTBuiltinTable.h declares these without a bound and code of the engine names them: a table defines each, whether or not it has a record.
+const arraysNamedByEngine: ReadonlySet<string> = new Set([
+  "builtinTableOverloads",
+  "builtinTableDispatches",
+  "builtinTableDispatchNodes",
+  "builtinTableTypes",
+  "builtinTableFeatureUses",
+  "builtinTableModuleLoads",
+  "builtinTableCalledFunctions",
+  "builtinTableStartupCalledFunctions",
+  "builtinTableHostObjects",
+  "builtinTableNamedMemberCalls",
+  "builtinTableHostMethodCalls",
+  "builtinTableForms",
+  "builtinTableClassesByMemberName",
+]);
+
 export function emitArray(declaration: string, elements: readonly string[]): string {
-  if (elements.length === 0) return "";
+  if (elements.length === 0) {
+    const name = declaration.slice(declaration.lastIndexOf(" ") + 1);
+    return arraysNamedByEngine.has(name) ? `${declaration}[] = {\n    { },\n};` : "";
+  }
   return `${declaration}[] = {\n${elements.map(element => `    ${element},`).join("\n")}\n};`;
 }
 

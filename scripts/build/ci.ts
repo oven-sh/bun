@@ -249,6 +249,7 @@ const TIMINGS_META_DATA = "timings:";
 //           ├── jsc[.exe]                (WebKit's shell, when shipped)
 //           ├── testaot[.exe]            (the engine's AoT test program, when shipped)
 //           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
+//           ├── verified-overloads.txt   (the engine's list for test/aot/builtins/differential.test.ts)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
 //           ├── bun-profile.map          (windows; with the above, what the
@@ -348,6 +349,8 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     cpSync(engineTests, staged, { recursive: true });
     files.push("aot-tests");
   }
+  const verifiedOverloads = webkitAotFile(cfg, "verified-overloads.txt");
+  if (existsSync(verifiedOverloads)) files.push(verifiedOverloads);
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);

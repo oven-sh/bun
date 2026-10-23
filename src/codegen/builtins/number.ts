@@ -18,7 +18,7 @@ import {
   type ModelType,
   type TableModel,
 } from "./model.ts";
-import { compareBytes, globalThisPath, joinPath, qualifiedTokenOf, tokenOf } from "./paths.ts";
+import { compareBytes, globalThisPath, joinPath, parsePath, qualifiedTokenOf, tokenOf } from "./paths.ts";
 import {
   callModes,
   iteratorRootClasses,
@@ -275,10 +275,13 @@ function namesOfCallsClosedOn(holder: ModelBuiltin, names: readonly ModelName[])
 
 const unfilledRole = "is a role of the host, which code of the engine names, and the host declares no such";
 
-function resolveHostRoles(builder: ModelBuilder): readonly ModelBuiltin[] {
+function resolveHostRoles(builder: ModelBuilder): TableModel["hostRoles"] {
+  const { unfilledHostRoles } = builder;
+  const standIn = unfilledHostRoles === null ? null : builder.resolve(unfilledHostRoles.path, unfilledHostRoles.source);
   return Object.freeze(
     builder.hostRoles.flatMap(({ path, source }) => {
       const builtin = builder.find(path);
+      if (builtin === undefined && standIn !== null) return [{ token: tokenOf(parsePath(path)), builtin: standIn }];
       if (builtin === undefined) builder.problems.add(source, `${path} ${unfilledRole} entry`);
       else if (builtin.origin === "Engine")
         builder.problems.add(source, `${path} is an entry of the engine, so it is no role of the host`);
@@ -287,20 +290,25 @@ function resolveHostRoles(builder: ModelBuilder): readonly ModelBuiltin[] {
           source,
           `${path} is a role of the host, and another entry has its token ${tokenOf(builtin.path)}`,
         );
-      else return [builtin];
+      else return [{ token: builtin.token, builtin }];
       return [];
     }),
   );
 }
 
-function resolveHostClassRoles(builder: ModelBuilder): readonly ModelClass[] {
+function resolveHostClassRoles(builder: ModelBuilder): TableModel["hostClassRoles"] {
+  const { unfilledHostRoles } = builder;
+  const standIn =
+    unfilledHostRoles === null ? null : builder.resolveClass(unfilledHostRoles.class, unfilledHostRoles.source);
   return Object.freeze(
     builder.hostClassRoles.flatMap(({ name, source }) => {
       const builtinClass = builder.findClass(name);
+      if (builtinClass === undefined && standIn !== null)
+        return [{ token: tokenOf(parsePath(name)), builtinClass: standIn }];
       if (builtinClass === undefined) builder.problems.add(source, `${name} ${unfilledRole} class`);
       else if (builtinClass.origin === "Engine")
         builder.problems.add(source, `${name} is a class of the engine, so it is no role of the host`);
-      else return [builtinClass];
+      else return [{ token: builtinClass.token, builtinClass }];
       return [];
     }),
   );

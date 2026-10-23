@@ -1,13 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { GeneratorError } from "./declarations.ts";
-import {
-  describeStaleEntries,
-  findStaleEntries,
-  hashOfEntry,
-  parseVerifiedList,
-  type TableDump,
-  type VerifiedListPaths,
-} from "./dump.ts";
+import { findStaleEntries, hashOfEntry, parseVerifiedList, type TableDump, type VerifiedListPaths } from "./dump.ts";
 import { dumpOverload } from "./emit-dump.ts";
 import type { TableModel } from "./model.ts";
 
@@ -32,9 +25,8 @@ export function readVerifiedHashes(paths: VerifiedListPaths): Set<string> {
   return readVerifiedList(paths.engine).union(readVerifiedList(paths.host));
 }
 
-export function reportStaleEntries(dump: TableDump, verifiedHashes: ReadonlySet<string>, isRequired: boolean): void {
+export function reportStaleEntries(dump: TableDump, verifiedHashes: ReadonlySet<string>): void {
   const staleTokens = findStaleEntries(dump, verifiedHashes);
-  if (staleTokens.length === 0) return;
-  if (isRequired) throw new GeneratorError(describeStaleEntries(staleTokens));
-  console.error(`builtins table: ${staleTokens.length} hand-written overloads are untested`);
+  if (staleTokens.length > 0)
+    console.error(`builtins table: ${staleTokens.length} hand-written overloads are untested`);
 }

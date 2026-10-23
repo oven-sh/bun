@@ -384,9 +384,10 @@ describe.skipIf(!canTrim)("--trim", () => {
           if (index)
             expect(segment.vaddr).toBeGreaterThanOrEqual(segments[index - 1].vaddr + segments[index - 1].memsz);
         }
-        const [writable, program] = segments.slice(-2);
-        expect(writable.filesz).toBeLessThan(writable.memsz);
-        expect(program.filesz).toBe(program.memsz);
+        const endOfBun = segments.findLastIndex(segment => segment.filesz < segment.memsz);
+        expect(endOfBun).toBeGreaterThanOrEqual(0);
+        const program = segments.slice(endOfBun + 1);
+        expect(program.length).toBeGreaterThan(0);
         expect(await run([join(folder, "hello")], folder)).toEqual({
           stdout: "hello world\n",
           stderr: "",

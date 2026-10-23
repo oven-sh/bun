@@ -3,6 +3,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { GeneratorError } from "../../../src/codegen/builtins/declarations";
+import type { TargetPlatform } from "../../../src/codegen/builtins/dump";
 import {
   formatAttributes,
   formatOwnProperties,
@@ -10,9 +12,7 @@ import {
   parseOwnProperties,
   type OwnProperty,
   type OwnPropertyLine,
-} from "../../../src/codegen/builtins/collect-modules";
-import { GeneratorError } from "../../../src/codegen/builtins/declarations";
-import type { TargetPlatform } from "../../../src/codegen/builtins/dump";
+} from "../../../src/codegen/builtins/own-properties";
 import { memberPathOf, parsePath, textOfPath } from "../../../src/codegen/builtins/paths";
 import { test } from "../supported";
 
@@ -136,7 +136,7 @@ test("parseOwnProperties rejects malformed text", () => {
     "A : @@@/wc\n",
   ]) {
     expect(() => parseOwnProperties(malformed)).toThrow(GeneratorError);
-    expect(() => parseOwnProperties(malformed)).toThrow(/^src\/codegen\/builtins\/data\/own-properties\.txt:\d+: /);
+    expect(() => parseOwnProperties(malformed)).toThrow(/^the list of own properties, line \d+: /);
   }
 });
 

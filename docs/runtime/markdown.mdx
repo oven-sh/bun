@@ -98,6 +98,22 @@ Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
 ```
 
+A heading ID is the text of the heading in lowercase. Letters, digits, and combining marks of every script stay. A run of spaces (U+0020) and hyphens becomes one hyphen. Bun drops every other character, such as punctuation, emoji, a tab, and a no-break space. Each letter becomes lowercase by itself, so a Greek `Σ` is always `σ`, as in GitHub's anchors.
+
+```ts
+Bun.markdown.html("## Über uns\n\n## 日本語 ガイド 🚀", { headings: { ids: true } });
+// '<h2 id="über-uns">Über uns</h2>\n<h2 id="日本語-ガイド">日本語 ガイド 🚀</h2>\n'
+```
+
+Each ID is unique in its document. When the ID of a heading is taken, Bun appends `-1`, or the next number that gives a free ID. A heading with no letter, digit, or combining mark gets an empty ID, and the next such heading gets `-1`.
+
+```ts
+Bun.markdown.html("## Foo\n\n## Foo\n\n## Foo 1", { headings: { ids: true } });
+// '<h2 id="foo">Foo</h2>\n<h2 id="foo-1">Foo</h2>\n<h2 id="foo-1-1">Foo 1</h2>\n'
+```
+
+These IDs are Bun's own, and some differ from the anchors that GitHub gives. GitHub keeps `_`, writes one hyphen for each space, and keeps a hyphen at the start or the end. `## A & B` gets `a-b` from Bun and `a--b` from GitHub. The [`markdown/no-missing-link-fragments`](/lint/rules/markdown/no-missing-link-fragments) rule of `bun lint` checks links against GitHub's anchors. To use other IDs, build them in the `heading` callback of `Bun.markdown.render()` or in a heading component of `Bun.markdown.react()`.
+
 ---
 
 ## `Bun.markdown.render()`

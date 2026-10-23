@@ -2,7 +2,7 @@
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
-use super::types::{self, FlagValues};
+use super::types::{FlagValues, Types};
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
@@ -221,7 +221,7 @@ struct RunOptions<'h> {
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
     physical_path_len: Option<usize>,
-    types: Option<&'h [u32]>,
+    types: Option<&'h Types>,
 }
 
 const PLUGIN_PROTOCOL_ERROR: &[u8] =
@@ -421,7 +421,7 @@ impl<'e> Host<'e> {
     ///
     /// Without types, the rules still get `parserServices` that look as if there were types. That shows, without a type
     /// check, whether a rule reads something that isn't known.
-    fn types_for<'a>(&self, file: &'a File<'a>, enabled: &[&Configured]) -> Option<Vec<u32>> {
+    fn types_for<'a>(&self, file: &'a File<'a>, enabled: &[&Configured]) -> Option<Types> {
         if !Self::hands_out_types(file) {
             return None;
         }
@@ -433,16 +433,20 @@ impl<'e> Host<'e> {
         if words[0] == 0 {
             return None;
         }
+        let mut types = Types {
+            words,
+            ..Types::default()
+        };
         if file.types.is_none() {
-            return Some(words);
+            return Some(types);
         }
         let is_before_6 = (self.numbers_type_flags_as_before_typescript_6).load(Ordering::Relaxed);
         let flag_values = match is_before_6 {
             true => FlagValues::BeforeTypeScript6,
             false => FlagValues::SinceTypeScript6,
         };
-        types::of_nodes(file, flag_values, &mut words);
-        Some(words)
+        types.add_nodes(file, flag_values);
+        Some(types)
     }
 
     /// The known plugins, each with its location: the `[directory, specifier, alias]` of [`Host::load`], or the
@@ -665,7 +669,7 @@ impl<'e> Host<'e> {
             enabled,
             wants_fixes,
             physical_path_len,
-            types: types.as_deref(),
+            types: types.as_ref(),
         };
         let size = file.text().len();
         let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
@@ -762,7 +766,8 @@ impl<'e> Host<'e> {
             }
             ask::REPORTS => reports::read(details, &offsets, &mut reported.borrow_mut()),
             ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
-            ask::TYPES => wire::words(out, types.unwrap_or_default()),
+            ask::TYPES => wire::words(out, types.map_or(&[][..], |it| &it.words)),
+            ask::TYPE_NAMES => out.extend_from_slice(types.map_or(&[][..], |it| &it.names)),
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {

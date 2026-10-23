@@ -99,6 +99,7 @@ const CONFIGURED = 3;
 const SELECTORS = 4;
 const LOADED = 10;
 const TYPES = 19;
+const TYPE_NAMES = 20;
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -388,10 +389,10 @@ function readTypes() {
   // Where the row of a node begins. The rows are sorted.
   const find = (start, end, type) => {
     let low = 0;
-    let high = (words.length - first) / 6;
+    let high = (words.length - first) / 7;
     while (low < high) {
       const middle = (low + high) >> 1;
-      const at = first + middle * 6;
+      const at = first + middle * 7;
       const order = words[at] - start || words[at + 1] - end || words[at + 2] - type;
       if (order === 0) return at;
       if (order < 0) low = middle + 1;
@@ -400,27 +401,54 @@ function readTypes() {
     return -1;
   };
   const signatures = count => Array.from({ length: count }, () => lookAlike("Signature", {}));
+  let names = null;
+  const symbol = number => {
+    if (number === 0) return undefined;
+    names ??= native.askText(TYPE_NAMES).split("\0");
+    const name = names[number - 1];
+    return lookAlike("Symbol", { name, getName: () => name });
+  };
+  const getTypeAtLocation = node => {
+    // The file is linted again, with types.
+    if (words[1] === 0) throw new Error("You have used a rule which requires type information.");
+    const at = find(node.range[0], node.range[1], native.typeId(node.type));
+    if (at === -1) refuse(`getTypeAtLocation(${node.type})`);
+    const flags = words[at + 3];
+    return lookAlike("Type", {
+      flags,
+      getFlags: () => flags,
+      getCallSignatures: () => signatures(words[at + 4]),
+      getConstructSignatures: () => signatures(words[at + 5]),
+      get symbol() {
+        return symbol(words[at + 6]);
+      },
+      getSymbol: () => symbol(words[at + 6]),
+    });
+  };
+  // A node of TypeScript's tree is only good for asking about it.
+  const nodes = new WeakMap();
+  const toTypeScript = new WeakMap();
+  const checker = lookAlike("TypeChecker", {
+    getTypeAtLocation: node => getTypeAtLocation(nodes.get(node) ?? refuse("TypeChecker.getTypeAtLocation(?)")),
+  });
   const services = {
     emitDecoratorMetadata: emitDecoratorMetadata === true,
     experimentalDecorators: experimentalDecorators === true,
     isolatedDeclarations: isolatedDeclarations === true,
-    program: lookAlike("Program", {}),
-    esTreeNodeToTSNodeMap: lookAlike("esTreeNodeToTSNodeMap", {}),
+    program: lookAlike("Program", { getTypeChecker: () => checker }),
+    esTreeNodeToTSNodeMap: lookAlike("esTreeNodeToTSNodeMap", {
+      get(node) {
+        let known = toTypeScript.get(node);
+        if (known === undefined) {
+          toTypeScript.set(node, (known = lookAlike("Node", {})));
+          nodes.set(known, node);
+        }
+        return known;
+      },
+    }),
     tsNodeToESTreeNodeMap: lookAlike("tsNodeToESTreeNodeMap", {}),
     getSymbolAtLocation: node => refuse(`getSymbolAtLocation(${node.type})`),
-    getTypeAtLocation(node) {
-      // The file is linted again, with types.
-      if (words[1] === 0) throw new Error("You have used a rule which requires type information.");
-      const at = find(node.range[0], node.range[1], native.typeId(node.type));
-      if (at === -1) refuse(`getTypeAtLocation(${node.type})`);
-      const flags = words[at + 3];
-      return lookAlike("Type", {
-        flags,
-        getFlags: () => flags,
-        getCallSignatures: () => signatures(words[at + 4]),
-        getConstructSignatures: () => signatures(words[at + 5]),
-      });
-    },
+    getTypeAtLocation,
   };
   return { asked: new Set(words.subarray(2, first)), services };
 }

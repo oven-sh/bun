@@ -2016,6 +2016,54 @@ it(Math.random() > 0 ? label : load);
       timeout,
     );
 
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3.
+    test.concurrent(
+      "a rule gets the name of a type's symbol, from the type checker",
+      async () => {
+        const reads = `(services, node) => {
+          const type = services.program.getTypeChecker().getTypeAtLocation(services.esTreeNodeToTSNodeMap.get(node));
+          return type.getSymbol()?.name + " " + type.symbol?.getName();
+        }`;
+        const names = {
+          "new Map<string, number>()": "Map",
+          "new Set([1])": "Set",
+          "new Store()": "Store",
+          "Store": "Store",
+          "shape": "Shape",
+          "{ a: 1 }": "__object",
+          "[1]": "Array",
+          "load": "load",
+          "() => {}": "__function",
+          '"a"': undefined,
+          "1": undefined,
+          "Color.Red": "Red",
+          "Color": "Color",
+          "either": undefined,
+          "Promise.resolve(1)": "Promise",
+          "undefined": undefined,
+          "class {}": "__class",
+          "Math": "Math",
+        };
+        const declarations = `declare function it(title: unknown): void;
+class Store {}
+interface Shape { a: 1 }
+enum Color { Red }
+function load() {}
+declare const shape: Shape;
+declare const either: Shape | Store;
+`;
+        const calls = Object.keys(names).map(it => `it(${it});\n`);
+        const { raw, exitCode } = await lint({ ...typed(reads), "a.ts": declarations + calls.join("") }, [
+          "-f",
+          "json",
+          "a.ts",
+        ]);
+        expect(messagesOf(raw)).toEqual(Object.values(names).map(it => `${it} ${it}`));
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
     test.concurrent(
       "a rule that hasn't asked for types gets the same as without them",
       async () => {
@@ -2040,7 +2088,7 @@ it(Math.random() > 0 ? label : load);
       async () => {
         const [usable, unusable, never] = await Promise.all([
           lint({ ...typed(facts), ...twenty }, ["-f", "unix", "--timing", "."]),
-          lint({ ...typed("services => services.program.getTypeChecker()"), ...twenty }, [
+          lint({ ...typed("services => services.program.getCompilerOptions()"), ...twenty }, [
             "-f",
             "unix",
             "--timing",
@@ -2062,7 +2110,7 @@ it(Math.random() > 0 ? label : load);
           exitCode: 1,
         });
         expect(unusable.stdout).toBe("");
-        expect(unusable.stderr).toContain("demo/title (Program.getTypeChecker)");
+        expect(unusable.stderr).toContain("demo/title (Program.getCompilerOptions)");
         expect({ files: withTypes(unusable.stderr), exitCode: unusable.exitCode }).toEqual({ files: 0, exitCode: 2 });
         expect({ files: withTypes(never.stderr), exitCode: never.exitCode }).toEqual({ files: 0, exitCode: 0 });
       },
@@ -2106,11 +2154,11 @@ it(Math.random() > 0 ? label : load);
         ["gets none under espree", facts, `"demo/title": "error"`, "a.js", [], noTypes + "demo/title"],
         [
           "reads what isn't known",
-          "services => services.program.getTypeChecker()",
+          "services => services.program.getCompilerOptions()",
           `"demo/title": "error"`,
           "a.ts",
           [],
-          notKnown + "demo/title (Program.getTypeChecker)",
+          notKnown + "demo/title (Program.getCompilerOptions)",
         ],
         [
           "asks on its second run",
@@ -2230,15 +2278,25 @@ it(Math.random() > 0 ? label : load);
     );
 
     test.concurrent.each([
-      ["(services, node) => services.getTypeAtLocation(node).symbol", "Type.symbol"],
+      ["(services, node) => services.getTypeAtLocation(node).getProperties()", "Type.getProperties"],
+      ["(services, node) => services.getTypeAtLocation(node).symbol.flags", "Symbol.flags"],
       [
         "(services, node) => services.getTypeAtLocation(node).getCallSignatures()[0].getReturnType()",
         "Signature.getReturnType",
       ],
       ["(services, node) => services.getTypeAtLocation(node.parent.parent)", "getTypeAtLocation(ExpressionStatement)"],
       ["(services, node) => services.getSymbolAtLocation(node)", "getSymbolAtLocation(Identifier)"],
-      ["(services, node) => services.program.getTypeChecker()", "Program.getTypeChecker"],
-      ["(services, node) => services.esTreeNodeToTSNodeMap.get(node)", "esTreeNodeToTSNodeMap.get"],
+      ["(services, node) => services.program.getCompilerOptions()", "Program.getCompilerOptions"],
+      [
+        "(services, node) => services.program.getTypeChecker().getSymbolAtLocation(node)",
+        "TypeChecker.getSymbolAtLocation",
+      ],
+      [
+        "(services, node) => services.program.getTypeChecker().getTypeAtLocation(node)",
+        "TypeChecker.getTypeAtLocation(?)",
+      ],
+      ["(services, node) => services.esTreeNodeToTSNodeMap.get(node).kind", "Node.kind"],
+      ["(services, node) => services.tsNodeToESTreeNodeMap.get(node)", "tsNodeToESTreeNodeMap.get"],
     ])(
       "a rule that reads anything else is skipped, and the error says what it read: %s",
       async (reads, named) => {

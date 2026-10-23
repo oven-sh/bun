@@ -1,4 +1,4 @@
-//! What a JavaScript rule can learn from `parserServices.getTypeAtLocation(node)`.
+//! What a JavaScript rule can learn from `parserServices.getTypeAtLocation(node)` and `checker.getTypeAtLocation(node)`.
 //!
 //! A rule runs on a thread that has a realm, and the type checker belongs to the thread that checked the file. So the
 //! answers are computed up front, for every expression of a file on which a rule runs that has asked for types before.
@@ -9,6 +9,7 @@ use super::ast;
 use crate::ast::File;
 use crate::types::TypeFlags;
 use bun_core::strings::Utf16OffsetTable;
+use rustc_hash::FxHashMap;
 
 /// `ts.TypeFlags` before TypeScript 6, by the bit of [`TypeFlags`], which has the values of TypeScript 6 and later.
 const FLAGS_BEFORE_TYPESCRIPT_6: [(TypeFlags, u32); 29] = [
@@ -62,26 +63,48 @@ impl FlagValues {
     }
 }
 
-/// Appends six words for each expression and import specifier of `file`, which has types: the start and the end of its
-/// `range`, its [`NodeType`](crate::estree::NodeType), `type.flags`, and the lengths of `type.getCallSignatures()` and
-/// `type.getConstructSignatures()`. They're sorted.
-pub(super) fn of_nodes<'a>(file: &'a File<'a>, flag_values: FlagValues, words: &mut Vec<u32>) {
-    let offsets = Utf16OffsetTable::without_bom(file.text());
-    let writer = ast::walk(file, &offsets, &[]);
-    let mut rows: Vec<[u32; 6]> = (writer.view().nodes.iter())
-        .filter_map(|node| {
-            let ty = node.type_at_location()?;
-            let (node_type, span) = node.type_and_span();
-            Some([
-                offsets.to_utf16(span.start),
-                offsets.to_utf16(span.end),
-                node_type as u32,
-                flag_values.of(ty.flags()),
-                ty.get_call_signatures().len() as u32,
-                ty.get_construct_signatures().len() as u32,
-            ])
-        })
-        .collect();
-    rows.sort_unstable();
-    words.extend(rows.iter().flatten());
+/// What rules can learn about the types in a file.
+#[derive(Default)]
+pub(super) struct Types {
+    /// The answer to [`ask::TYPES`](super::wire::ask::TYPES).
+    pub(super) words: Vec<u32>,
+    /// The answer to [`ask::TYPE_NAMES`](super::wire::ask::TYPE_NAMES).
+    pub(super) names: Vec<u8>,
+}
+
+impl Types {
+    /// Appends seven words for each expression and import specifier of `file`, which has types: the start and the end
+    /// of its `range`, its [`NodeType`](crate::estree::NodeType), `type.flags`, the lengths of
+    /// `type.getCallSignatures()` and `type.getConstructSignatures()`, and which of the names `type.symbol.name` is,
+    /// counted from 1, or 0 without a symbol. They're sorted.
+    pub(super) fn add_nodes<'a>(&mut self, file: &'a File<'a>, flag_values: FlagValues) {
+        let offsets = Utf16OffsetTable::without_bom(file.text());
+        let writer = ast::walk(file, &offsets, &[]);
+        let mut numbers: FxHashMap<&[u8], u32> = FxHashMap::default();
+        let mut rows: Vec<[u32; 7]> = (writer.view().nodes.iter())
+            .filter_map(|node| {
+                let ty = node.type_at_location()?;
+                let (node_type, span) = node.type_and_span();
+                let name = ty.symbol().map_or(0, |symbol| {
+                    let next = numbers.len() as u32 + 1;
+                    *numbers.entry(symbol.name()).or_insert_with(|| {
+                        self.names.extend_from_slice(symbol.name());
+                        self.names.push(0);
+                        next
+                    })
+                });
+                Some([
+                    offsets.to_utf16(span.start),
+                    offsets.to_utf16(span.end),
+                    node_type as u32,
+                    flag_values.of(ty.flags()),
+                    ty.get_call_signatures().len() as u32,
+                    ty.get_construct_signatures().len() as u32,
+                    name,
+                ])
+            })
+            .collect();
+        rows.sort_unstable();
+        self.words.extend(rows.iter().flatten());
+    }
 }

@@ -3418,6 +3418,88 @@ snapshots:
     expect(exitCode).toBe(0);
   });
 
+  // pnpm-lock.yaml has `hasBin: true` for a package with bins, not the bins, and nothing about install scripts. For a
+  // tarball or a git repository only its own package.json has them. The install that places the package reads it.
+  describe.each(["hoisted", "isolated"])("bun install --linker %s reads the package.json of", linker => {
+    // The second name and its path are too long for a lockfile string to hold them inline.
+    const bin = { tool: "cli.js", "tool-with-a-long-name": "bin/tool-with-a-long-name.js" };
+    const files = {
+      "package.json": JSON.stringify({ name: "tool", version: "1.0.0", bin, scripts: { postinstall: "exit 0" } }),
+      "cli.js": "#!/usr/bin/env node\n",
+      "bin/tool-with-a-long-name.js": "#!/usr/bin/env node\n",
+    };
+    const lockfile = (version: string, resolution: string) => `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      tool:
+        specifier: ${version.split("#")[0]}
+        version: ${version}
+
+packages:
+
+  tool@${version}:
+    resolution: ${resolution}
+    version: 1.0.0
+    hasBin: true
+
+snapshots:
+
+  tool@${version}: {}
+`;
+    async function installed(dir: string, env: Record<string, string>) {
+      const { stdout, stderr, exitCode } = await runWithEnv(dir, env, "install", "--linker", linker);
+      const names = readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, ""));
+      return {
+        errors: stderr.split("\n").filter(line => line.startsWith("error")),
+        bins: [...new Set(names)].sort(),
+        blocked: stdout.includes("Blocked 1 postinstall"),
+        row: (Bun.JSONC.parse(await bunLockOf(dir)) as { packages: Record<string, unknown[]> }).packages.tool[1],
+        exitCode,
+      };
+    }
+    const complete = {
+      errors: [],
+      bins: Object.keys(bin),
+      blocked: true,
+      row: { hasInstallScript: true, bin },
+      exitCode: 0,
+    };
+
+    test.concurrent("a tarball resolution", async () => {
+      const tarball = await githubTarball("package", files);
+      const requests: string[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(new URL(req.url).pathname);
+          return new Response(tarball);
+        },
+      });
+      const url = `${server.url.origin}/tool.tgz`;
+      using dir = tempDir("pnpm-v9-tarball-bin", {
+        "package.json": JSON.stringify({ name: "tarball-bin", dependencies: { tool: url } }),
+        "pnpm-lock.yaml": lockfile(url, `{tarball: ${url}}`),
+      });
+
+      expect(await installed(String(dir), {})).toEqual(complete);
+      expect(requests).toEqual(["/tool.tgz"]);
+    });
+
+    test.concurrent("a git resolution", async () => {
+      const url = "https://git.example.com/me/tool.git";
+      using repo = await hostedGitRepository([url], files);
+      using dir = tempDir("pnpm-v9-git-bin", {
+        "package.json": JSON.stringify({ name: "git-bin", dependencies: { tool: `git+${url}` } }),
+        "pnpm-lock.yaml": lockfile(`git+${url}#${repo.sha}`, `{commit: ${repo.sha}, repo: ${url}, type: git}`),
+      });
+
+      expect(await installed(String(dir), repo.env)).toEqual(complete);
+    });
+  });
+
   // [`repo` as pnpm writes it, the version of the importer, the URL in bun.lock]; LOCAL is the repository's file: URL.
   test.concurrent.each([
     ["LOCAL", "git+LOCAL", "git+LOCAL"],

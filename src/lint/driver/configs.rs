@@ -22,7 +22,7 @@ use crate::cli::{Options, Override, Tool, Wildcard, merge};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files, GitIgnores};
 use crate::print_config::object;
-use crate::run::{Environment, Fatal};
+use crate::run::{Environment, Fatal, WITHOUT_COLORS, format_of, reports_to_terminal};
 use crate::{Linter, eslintrc, evaluate, fs, native, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -40,7 +40,7 @@ use bun_lint::rule::{Frameworks, Plugin, minor_of};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::borrow::Cow;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Once, OnceLock};
 
 /// The parsed `package.json` of the package that `specifier` names, found in `node_modules` from `directory` up. `None`
 /// if `specifier` is a path.
@@ -485,6 +485,8 @@ pub(crate) struct Loader<'l> {
     has_eslint_config_file: OnceLock<bool>,
     /// [`Loader::lacks_file`]
     lacks_file: OnceLock<bool>,
+    /// [`Loader::prepare_realms`]
+    prepares_realms: Once,
     /// [`Loader::name`]
     named: Guarded<Vec<Vec<u8>>>,
     /// [`Loader::refused`]
@@ -832,6 +834,7 @@ impl<'l> Loader<'l> {
             has_oxlint_config: Default::default(),
             has_eslint_config_file: OnceLock::new(),
             lacks_file: OnceLock::new(),
+            prepares_realms: Once::new(),
             named: Default::default(),
             refused: OnceLock::new(),
             mistake: OnceLock::new(),
@@ -1503,6 +1506,7 @@ impl<'l> Loader<'l> {
     /// Loads the plugins listed in bunfig.toml's `plugins` and in `--plugin`. They're added to whatever configuration
     /// is used.
     fn named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, Fatal> {
+        self.prepare_realms(flavor == Flavor::Oxlint, flavor == Flavor::BuiltIn);
         let checked = self.load_named_plugins(flavor).and_then(|plugins| {
             // Problems with their rules in bunfig.toml are reported against bunfig.toml. ESLint 8 is more lenient than
             // the others: it accepts any options for a rule without a schema, and it reports a rule that doesn't exist
@@ -1514,6 +1518,20 @@ impl<'l> Loader<'l> {
             Ok(plugins)
         });
         checked.map_err(|it| self.fatal(it))
+    }
+
+    /// Turns colors off for the code in every realm if the report escapes. Only the first call counts.
+    pub(crate) fn prepare_realms(&self, is_oxlint: bool, is_native: bool) {
+        self.prepares_realms.call_once(|| {
+            let (options, environment) = (self.options, self.environment);
+            let to_terminal = reports_to_terminal(options, environment);
+            let escapes = format_of(options, environment, is_oxlint, is_native)
+                .is_ok_and(|format| format.escapes(to_terminal));
+            environment.js_engine.set_variables(match escapes {
+                true => &WITHOUT_COLORS,
+                false => &[],
+            });
+        });
     }
 
     fn load_named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, native::Mistake> {

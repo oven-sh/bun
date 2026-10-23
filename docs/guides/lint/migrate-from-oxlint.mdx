@@ -152,7 +152,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
-- **In a terminal, `-f stylish` shows control characters as text.** A file name, a message, or a rule name can contain a character that a terminal acts on, such as ESC. Bun prints `\x1b` in its place. Piped output and `-o` files have what oxlint prints.
+- **In a terminal, `-f stylish` shows control characters as text.** A file name, a message, or a rule name can contain a character that a terminal acts on, such as ESC. Bun prints `\x1b` in its place. Piped output and `-o` files have what oxlint prints. JS plugins then run with `NO_COLOR=1` and `FORCE_COLOR=0`, so a color library returns plain messages.
 - **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.
 
 ---

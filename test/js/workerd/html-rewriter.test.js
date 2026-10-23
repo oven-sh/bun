@@ -3606,12 +3606,16 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
   //
   // `Bun.spawn({ stdin: "pipe" })` hands the child a socket pair. With `kernelPipe`, `cat`
   // sits in between and the fixture reads a pipe that hangs up with bytes still in it.
+  // A test cannot wait there for a chunk to be seen. busybox `cat` copies with sendfile(),
+  // and the kernel holds the pipe's lock while that call waits for more input. Until the
+  // test writes again or closes its end, the fixture cannot read what is in the pipe.
   //
   // `ready` is the line the fixture prints once the document may be sent.
   async function run(
     script,
     { input = inputs.alone, writes = [[html, "chunk"]], kernelPipe = false, ready = "wired" } = {},
   ) {
+    if (kernelPipe && writes.some(([, seen]) => seen)) throw new Error("kernelPipe: a write cannot wait to be seen");
     const fixture = `${prelude} const input = () => ${input}; ${script}; console.error("wired");`;
     await using proc = Bun.spawn({
       cmd: kernelPipe ? ["sh", "-c", 'cat | "$BUN" -e "$FIXTURE"'] : [bunExe(), "-e", fixture],
@@ -3727,22 +3731,23 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
   });
 
   // A document of 300,000 bytes arrives in many chunks, and each delivery has a checkpoint
-  // of its own. The <b> is the last element, so the pipe is closed only once the fixture has
-  // read up to it. The second pipe is `cat page.html | bun filter.mjs`.
-  it.concurrent.each([["the pipe that Bun.spawn gives", false], ...(isWindows ? [] : [["a pipe from cat", true]])])(
-    "text() of a 300,000 byte document on %s",
-    async (_, kernelPipe) => {
-      const tail = "<b>tail</b>";
-      const document = "<p>" + Buffer.alloc(300_000 - 7 - tail.length, "a").toString() + "</p>" + tail;
-      const script = `
-        rewriter().transform(input()).text()
-          .then(text => print({ length: text.length, tail: text.slice(text.lastIndexOf("</p>")) }));
-      `;
-      expect(await run(script, { writes: [[document, "chunk"]], kernelPipe })).toEqual(
-        ran({ length: document.length + 9, tail: '</p><b seen="1">tail</b>' }),
-      );
-    },
-  );
+  // of its own. The <b> is the last element. The pipe that Bun.spawn gives is closed only
+  // once the fixture has read up to it. The second pipe is `cat page.html | bun filter.mjs`,
+  // and `cat` closes it as soon as the document is copied.
+  it.concurrent.each([
+    ["the pipe that Bun.spawn gives", false, "chunk"],
+    ...(isWindows ? [] : [["a pipe from cat", true, undefined]]),
+  ])("text() of a 300,000 byte document on %s", async (_, kernelPipe, seen) => {
+    const tail = "<b>tail</b>";
+    const document = "<p>" + Buffer.alloc(300_000 - 7 - tail.length, "a").toString() + "</p>" + tail;
+    const script = `
+      rewriter().transform(input()).text()
+        .then(text => print({ length: text.length, tail: text.slice(text.lastIndexOf("</p>")) }));
+    `;
+    expect(await run(script, { writes: [[document, seen]], kernelPipe })).toEqual(
+      ran({ length: document.length + 9, tail: '</p><b seen="1">tail</b>' }),
+    );
+  });
 
   // The shape that was reported: the pipe is a child's stdout, and the child is unref'd.
   // The child copies the fixture's own stdin, so the test still decides when the document arrives.

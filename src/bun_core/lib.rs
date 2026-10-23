@@ -2760,7 +2760,7 @@ pub mod ffi {
     ///
     /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
     /// at every callback trampoline that smuggles a generic `H: Fn*` through C
-    /// (`uws_sys::thunk`, `sql_jsc::IntoJSHostFn`, `server_body::route_thunk`).
+    /// (`uws_sys::thunk`, `server_body::route_thunk`).
     #[inline(always)]
     pub fn conjure_zst<H>() -> H {
         const {

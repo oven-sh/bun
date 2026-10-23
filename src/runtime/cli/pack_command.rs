@@ -1436,24 +1436,6 @@ fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
     glob_segments.next().is_some()
 }
 
-/// Tag names for `bun_core::FileKind`.
-fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
-    use bun_core::FileKind as K;
-    match kind {
-        K::BlockDevice => "block_device",
-        K::CharacterDevice => "character_device",
-        K::Directory => "directory",
-        K::NamedPipe => "named_pipe",
-        K::SymLink => "sym_link",
-        K::File => "file",
-        K::UnixDomainSocket => "unix_domain_socket",
-        K::Whiteout => "whiteout",
-        K::Door => "door",
-        K::EventPort => "event_port",
-        K::Unknown => "unknown",
-    }
-}
-
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
 /// `root_path` is the path `root_dir` was opened from.
@@ -3036,30 +3018,37 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 pub(crate) mod bindings {
     use super::*;
     use bun_core::String as BunString;
-    use bun_jsc::{
-        CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
-    };
+    use bun_jsc::bindgen::{self, JsHeap};
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_read_tarball(
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = call_frame.arguments();
-        if args.len() < 1 || !args[0].is_string() {
-            return Err(global.throw(format_args!("expected tarball path string argument")));
+    use crate::generated_bindgen::pack_command::{Tarball, TarballEntry, TarballEntryKind};
+
+    fn tarball_entry_kind(kind: bun_sys::FileKind) -> TarballEntryKind {
+        use bun_sys::FileKind as K;
+        match kind {
+            K::BlockDevice => TarballEntryKind::BlockDevice,
+            K::CharacterDevice => TarballEntryKind::CharacterDevice,
+            K::Directory => TarballEntryKind::Directory,
+            K::NamedPipe => TarballEntryKind::NamedPipe,
+            K::SymLink => TarballEntryKind::SymLink,
+            K::File => TarballEntryKind::File,
+            K::UnixDomainSocket => TarballEntryKind::UnixDomainSocket,
+            K::Whiteout => TarballEntryKind::Whiteout,
+            K::Door => TarballEntryKind::Door,
+            K::EventPort => TarballEntryKind::EventPort,
+            K::Unknown => TarballEntryKind::Unknown,
         }
+    }
 
-        let tarball_path_str = args[0].to_bun_string(global)?;
-
-        let tarball_path = tarball_path_str.to_utf8();
-
-        let tarball_file = match bun_sys::open_file(tarball_path.slice(), Default::default()) {
+    pub(crate) fn read_tarball<'a>(
+        heap: &JsHeap<'a>,
+        tarball_path: &[u8],
+    ) -> bindgen::Result<'a, Tarball> {
+        let tarball_file = match bun_sys::open_file(tarball_path, Default::default()) {
             Ok(f) => f,
             Err(err) => {
-                return Err(global.throw(format_args!(
+                return Err(heap.error(format_args!(
                     "failed to open tarball file \"{}\": {}",
-                    bstr::BStr::new(tarball_path.slice()),
+                    bstr::BStr::new(tarball_path),
                     crate::Error::from(err).name(),
                 )));
             }
@@ -3069,9 +3058,9 @@ pub(crate) mod bindings {
             Ok(b) => b,
             Err(err) => {
                 let _ = tarball_file.close();
-                return Err(global.throw(format_args!(
+                return Err(heap.error(format_args!(
                     "failed to read tarball contents \"{}\": {}",
-                    bstr::BStr::new(tarball_path.slice()),
+                    bstr::BStr::new(tarball_path),
                     crate::Error::from(err).name(),
                 )));
             }
@@ -3091,80 +3080,55 @@ pub(crate) mod bindings {
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball);
         sha512.r#final(&mut sha512_digest);
-        let base64_buf = bun_base64::encode_alloc(&sha512_digest);
-        let integrity_value = bun_string_jsc::create_utf8_for_js(global, &base64_buf)?;
+        let integrity = bun_base64::encode_alloc(&sha512_digest);
 
-        struct EntryInfo {
-            pathname: BunString,
-            kind: bun_sys::FileKind,
-            perm: bun_sys::Mode,
-            contents: Option<BunString>,
-        }
-        let mut entries_info: Vec<EntryInfo> = Vec::new();
+        let mut entries: Vec<TarballEntry> = Vec::new();
 
         let mut reader = bun_archive::open_memory(&tarball, false)
-            .map_err(|err| global.throw(format_args!("failed to read tarball: {err}")))?;
+            .map_err(|err| heap.error(format_args!("failed to read tarball: {err}")))?;
         let mut read_buf: Vec<u8> = Vec::new();
 
         loop {
-            let entry = match reader.next_entry() {
+            let archive_entry = match reader.next_entry() {
                 Ok(None) => break,
                 Ok(Some(entry)) => entry,
                 Err(err) => {
-                    return Err(global.throw(format_args!("failed to read archive header: {err}")));
+                    return Err(heap.error(format_args!("failed to read archive header: {err}")));
                 }
             };
-            let pathname_string = BunString::clone_utf8(&bun_core::handle_oom(
-                bun_archive::display_path(entry).map_err(|_| bun_alloc::AllocError),
+            let pathname = BunString::clone_utf8(&bun_core::handle_oom(
+                bun_archive::display_path(archive_entry).map_err(|_| bun_alloc::AllocError),
             ));
 
-            let kind = bun_archive::entry_kind(entry);
-            let size: usize = usize::try_from(entry.size()).expect("int cast");
-            let mut entry_info = EntryInfo {
-                pathname: pathname_string,
-                kind,
-                perm: entry.perm() as bun_sys::Mode,
+            let kind = bun_archive::entry_kind(archive_entry);
+            let size: usize = usize::try_from(archive_entry.size()).expect("int cast");
+            let mut entry = TarballEntry {
+                pathname,
+                kind: tarball_entry_kind(kind),
+                perm: f64::from(archive_entry.perm()),
                 contents: None,
             };
 
             if kind == bun_sys::FileKind::File {
                 if let Err(err) = reader.read_data(size, &mut read_buf) {
-                    let pathname_utf8 = entry_info.pathname.to_utf8();
-                    return Err(global.throw(format_args!(
+                    let pathname_utf8 = entry.pathname.to_utf8();
+                    return Err(heap.error(format_args!(
                         "failed to read archive entry \"{}\": {err}",
                         bstr::BStr::new(pathname_utf8.slice()),
                     )));
                 }
-                entry_info.contents = Some(BunString::clone_utf8(&read_buf));
+                entry.contents = Some(BunString::clone_utf8(&read_buf));
                 read_buf.clear();
             }
 
-            entries_info.push(entry_info);
+            entries.push(entry);
         }
 
-        let entries = JSArray::create_empty(global, entries_info.len())?;
-
-        for (i, entry) in entries_info.into_iter().enumerate() {
-            let obj = JSValue::create_empty_object(global, 0);
-            obj.put(global, b"pathname", entry.pathname.into_js(global)?);
-            let kind = match entry.kind {
-                bun_sys::FileKind::Unknown => global.common_strings().unknown(),
-                kind => BunString::static_(file_kind_tag(kind)).to_js(global)?,
-            };
-            obj.put(global, b"kind", kind);
-            obj.put(global, b"perm", JSValue::js_number(f64::from(entry.perm)));
-            if let Some(contents) = entry.contents {
-                obj.put(global, b"contents", contents.into_js(global)?);
-            }
-            entries.put_index(global, u32::try_from(i).expect("int cast"), obj)?;
-        }
-
-        let result = JSValue::create_empty_object(global, 4);
-        result.put(global, b"entries", entries);
-        result.put(global, b"size", JSValue::js_number(tarball.len() as f64));
-        result.put(global, b"shasum", shasum_str.into_js(global)?);
-        result.put(global, b"integrity", integrity_value);
-
-        Ok(result)
+        Ok(Tarball {
+            entries,
+            size: tarball.len(),
+            shasum: shasum_str,
+            integrity,
+        })
     }
 }

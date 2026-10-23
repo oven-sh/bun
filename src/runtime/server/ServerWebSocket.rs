@@ -899,7 +899,7 @@ impl ServerWebSocket {
                 // BackRef invariant (pointee outlives the temporary) holds.
                 let sig = bun_ptr::BackRef::from(sig);
                 if !sig.aborted() {
-                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
+                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed)?;
                 }
             }
 
@@ -929,7 +929,7 @@ impl ServerWebSocket {
             // BackRef invariant (pointee outlives the temporary) holds.
             let sig = bun_ptr::BackRef::from(sig);
             if !sig.aborted() {
-                sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
+                sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed)?;
             }
         }
         Ok(())

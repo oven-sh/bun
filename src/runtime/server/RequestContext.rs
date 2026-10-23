@@ -429,8 +429,8 @@ mod shim {
         g: &JSGlobalObject,
         r: jsc::CommonAbortReason,
     ) {
-        // See `signal_aborted` — counted ref keeps pointee live.
-        bun_ptr::BackRef::from(s).signal(g, r)
+        // See `signal_aborted` — counted ref keeps pointee live. The teardown that fires the signal goes on.
+        crate::dispatch::fold(bun_ptr::BackRef::from(s).signal(g, r))
     }
     /// Release BOTH refcounts the request holds on its AbortSignal.
     /// `pending_activity_unref()` drops the GC-visibility count and `unref()`

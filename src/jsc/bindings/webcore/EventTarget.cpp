@@ -39,7 +39,6 @@
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
-#include "JSErrorHandler.h"
 #include "JSEventListener.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
@@ -167,7 +166,6 @@ void EventTarget::setAttributeEventListener(const AtomString& eventType, JSC::JS
         addEventListener(eventType, JSMaybeErrorEventListener::create(*asObject(listener), jsEventTarget, true, isolatedWorld), {});
 }
 
-template void EventTarget::setAttributeEventListener<JSErrorHandler>(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
 template void EventTarget::setAttributeEventListener<JSEventListener>(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
 
 JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
@@ -285,8 +283,12 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         JSC::EnsureStillAliveScope jsFunctionProtector(registeredListener->callback().jsFunction());
 
         // Do this before invocation to avoid reentrancy issues.
-        if (registeredListener->isOnce())
+        if (registeredListener->isOnce()) {
+            // A termination that unwinds beneath script: no listener is entered over it, so this one stays registered.
+            if (context->vm().hasPendingTerminationException()) [[unlikely]]
+                break;
             removeEventListener(event.type(), registeredListener->callback(), registeredListener->useCapture());
+        }
 
         if (registeredListener->isPassive())
             event.setInPassiveListener(true);

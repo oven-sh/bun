@@ -151,7 +151,7 @@ extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 // hub's deferred cross-thread deliveries: node's bootstrap runs the synchronous CJS main before any
 // port delivery, so a routed message must not observe "no listeners" while the entry that registers
 // them is still loading. Runs on every post-evaluation path so a buffered postMessageToThread never
-// leaves its sender's Atomics.waitAsync unresolved.
+// leaves its sender's Atomics.waitAsync unresolved, unless the worker has stopped: then it stays pending, as in Node.
 extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
 {
     // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe).
@@ -165,11 +165,11 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     // can't observe it and shutdown reports it either way.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException())
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm))
         return;
     JSC::MarkedArgumentBuffer args;
     JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
-    CLEAR_IF_EXCEPTION(scope);
+    (void)Bun::clearExceptionOrTakeTermination(vm, scope);
 }
 
 extern "C" void WebWorker__workerThreadStarted(WorkerMessagingProxy* proxy)
@@ -204,8 +204,9 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
+    auto forParent = proxy->serializeErrorForWorkerObject(*globalObject, error);
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
+    proxy->postErrorToWorkerObject(messageStr, WTF::move(forParent));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

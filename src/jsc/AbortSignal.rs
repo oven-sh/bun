@@ -2,7 +2,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
+use crate::{
+    CommonAbortReason, JSGlobalObject, JSValue, JsResult, VirtualMachineRef as VirtualMachine,
+};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
@@ -86,9 +88,16 @@ impl AbortSignal {
         WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 
-    pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
+    /// `Err`: an abort algorithm or an 'abort' listener left the VM's termination pending.
+    pub fn signal(
+        &self,
+        global_object: &JSGlobalObject,
+        reason: CommonAbortReason,
+    ) -> JsResult<()> {
         bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
-        WebCore__AbortSignal__signal(self, global_object, reason)
+        crate::host_fn::from_js_host_call_generic(global_object, || {
+            WebCore__AbortSignal__signal(self, global_object, reason)
+        })
     }
 
     pub fn pending_activity_ref(&self) {
@@ -409,7 +418,12 @@ impl Timeout {
         // centralised non-null deref proof. `signalAbort()` takes
         // `Ref protectedThis` internally so `signal_ptr` stays valid for the
         // whole dispatch even though abort listeners can trigger GC.
-        AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
+        let global = vm.global();
+        if let Err(err) =
+            AbortSignal::opaque_ref(signal_ptr).signal(global, CommonAbortReason::Timeout)
+        {
+            let _ = crate::task::report_error_or_terminate(global, err);
+        }
     }
 
     // This may run inside the "signal" call.

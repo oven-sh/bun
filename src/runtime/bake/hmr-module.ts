@@ -8,7 +8,6 @@
 // This was done to make incremental updates as isolated as possible.
 import {
   __callDispose,
-  __copyProps,
   __EARLY_RETURN_SENTINEL,
   __legacyDecorateClassTS,
   __legacyDecorateParamTS,
@@ -879,16 +878,30 @@ class AsyncImportError extends Error {
 
 /** See `runtime.js`'s `__toCommonJS`. This omits the cache. */
 function toCommonJS(from: any) {
-  return __copyProps(Object.defineProperty({}, "__esModule", { value: true }), from);
+  var desc,
+    entry = Object.defineProperty({}, "__esModule", { value: true });
+  if ((from && typeof from === "object") || typeof from === "function")
+    Object.getOwnPropertyNames(from).map(
+      key =>
+        !Object.prototype.hasOwnProperty.call(entry, key) &&
+        Object.defineProperty(entry, key, {
+          get: () => from[key],
+          enumerable: !(desc = Object.getOwnPropertyDescriptor(from, key)) || desc.enumerable,
+        }),
+    );
+  return entry;
 }
 
-/**
- * See `runtime.js`'s `__toESM`. `export * from` a CommonJS module spreads this
- * object when the re-exporting module loads, so it re-exports only the names
- * that are enumerable here.
- */
 function toESM(mod: any) {
-  return __copyProps(Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true }), mod);
+  const to = Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
+  if ((mod && typeof mod === "object") || typeof mod === "function")
+    for (let key of Object.getOwnPropertyNames(mod))
+      if (!Object.prototype.hasOwnProperty.call(to, key))
+        Object.defineProperty(to, key, {
+          get: () => mod[key],
+          enumerable: true,
+        });
+  return to;
 }
 
 function registerSynthetic(id: Id, esmExports) {

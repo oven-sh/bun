@@ -326,39 +326,27 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
     });
 };
 
-// Gives `to` (and `second`) a getter for each own property name of `from`
-// that reads the property from `from`. The getter of a non-enumerable getter
-// is non-enumerable, so a spread or a `for in` does not call it. Every other
-// getter stays enumerable: a non-enumerable data property is an export too
-// (https://github.com/oven-sh/bun/issues/4432).
-//
-// This must not read a data property of `from` by name, its descriptor
-// included: the read builds a lazy property of a host object (`process.stdout`,
-// `console._stdout`, each interface of `window`). Object.keys() lists the
-// enumerable names in the order of getOwnPropertyNames(), so a cursor finds
-// them, and __lookupGetter__() answers for the other names without a read.
-export var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => {
-  // "module.exports" may be null, undefined, or a primitive; only objects and
-  // functions have named exports.
+// Gives `to` (and `second`) a getter for each own property name of `from`. The getter of a non-enumerable getter is
+// non-enumerable, so a spread does not call it. A non-enumerable data property stays listed (#4432).
+// Reads no data property by name, nor its descriptor: that builds a lazy property of a host object (`process.stdout`).
+var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => {
+  // "module.exports" may be null, undefined, or a primitive.
   if ((from && typeof from === "object") || typeof from === "function") {
     names = __getOwnPropNames(from);
     try {
       enumerableKeys = Object.keys(from);
     } catch {
-      // A module namespace object throws while one of its bindings is
-      // uninitialized. All of its names are enumerable.
+      // A module namespace object throws while a binding is uninitialized. All of its names are enumerable.
       enumerableKeys = names;
     }
     i = 0;
     for (let key of names) {
+      // Object.keys() lists the enumerable names in the order of getOwnPropertyNames().
       let enumerable = key === enumerableKeys[i];
       if (enumerable) {
         i++;
       } else {
-        // __lookupGetter__() also answers with an inherited getter when the
-        // own property is a native data property (`arguments` of a function
-        // in Node 22), so the descriptor decides. A getter has no value to
-        // build.
+        // __lookupGetter__() can return an inherited getter for an own data property (`arguments` in Node 22).
         enumerable =
           !Object.prototype.__lookupGetter__?.call(from, key) ||
           !(desc = __getOwnPropDesc(from, key)) ||

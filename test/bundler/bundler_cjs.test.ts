@@ -1371,8 +1371,8 @@ describe("bundler", () => {
 
   // Test 68: a CommonJS entry point copies the names of `export *` to
   // module.exports too (the third argument of __reExport). `bun run` exports a
-  // non-enumerable data property of that bundle by name and does not call the
-  // non-enumerable getter when it imports the bundle.
+  // non-enumerable data property of that bundle by name. It does not export
+  // the non-enumerable getter, and does not call it, as for dep.cjs itself.
   itBundled("cjs/__reExport_non_enumerable_getter_cjs_entry_point", {
     files: {
       "/entry.mjs": /* js */ `export * from "./dep.cjs";`,
@@ -1380,12 +1380,21 @@ describe("bundler", () => {
     },
     runtimeFiles: {
       "/describe.mjs": describeNamespace,
+      "/legacy-from-bundle.mjs": /* js */ `import { legacy } from "./out.cjs";`,
+      "/legacy-from-source.mjs": /* js */ `import { legacy } from "./dep.cjs";`,
       "/run.mjs": /* js */ `
         import { hidden } from "./out.cjs";
         import { createRequire } from "node:module";
         import { describeNamespace } from "./describe.mjs";
         const callsAtImport = globalThis.legacyCalls || 0;
-        console.log(hidden, callsAtImport, describeNamespace(createRequire(import.meta.url)("./out.cjs")));
+        const linkResult = specifier => import(specifier).then(() => "links", error => error.name);
+        console.log(
+          hidden,
+          callsAtImport,
+          await linkResult("./legacy-from-bundle.mjs"),
+          await linkResult("./legacy-from-source.mjs"),
+          describeNamespace(createRequire(import.meta.url)("./out.cjs")),
+        );
       `,
     },
     format: "cjs",
@@ -1395,7 +1404,7 @@ describe("bundler", () => {
     },
     run: {
       file: "/run.mjs",
-      stdout: "2 0 " + reExportDescription,
+      stdout: "2 0 SyntaxError SyntaxError " + reExportDescription,
     },
   });
 

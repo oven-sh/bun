@@ -16,6 +16,7 @@ use bun_http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
 pub(crate) use crate::webcore::InternalBlob;
+use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
@@ -2089,6 +2090,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         };
         // encoder dropped at end of scope (replaces defer encoder.deinit())
 
+        // The bytes of a file or of an S3 object are not in memory before a read.
+        if let AnyBlob::Blob(source) = &blob
+            && (source.needs_to_read_file() || source.is_s3())
+        {
+            let promise = FormDataBodyRead::start(global_object, callframe, source, encoding);
+            blob.detach();
+            return promise;
+        }
+
         let js_value =
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
                 Ok(v) => v,
@@ -2099,12 +2109,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 Err(err) => {
                     blob.detach();
-                    return Ok(global_object
-                        .err(
-                            jsc::ErrorCode::FORMDATA_PARSE_ERROR,
-                            format_args!("FormData parse error {}", err.name()),
-                        )
-                        .reject());
+                    let error = form_data_parse_error(global_object, &err);
+                    return Ok(JSPromise::rejected_promise(global_object, error).to_js());
                 }
             };
         blob.detach();
@@ -2191,6 +2197,77 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
     fn get_blob_without_call_frame(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.get_blob_with_this_value(global_object, JSValue::ZERO)
+    }
+}
+
+/// What `get_form_data` rejects with when the bytes that it parses are not form data.
+fn form_data_parse_error(global_object: &JSGlobalObject, err: &crate::Error) -> JSValue {
+    global_object
+        .err(
+            jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+            format_args!("FormData parse error {}", err.name()),
+        )
+        .to_js()
+}
+
+/// `formData()` of a body in a file or in S3: reads the bytes, then parses them.
+struct FormDataBodyRead {
+    encoding: webcore::form_data::Encoding,
+    promise: jsc::JSPromiseStrong,
+    global: bun_ptr::BackRef<JSGlobalObject>,
+}
+
+impl FormDataBodyRead {
+    #[cold]
+    #[inline(never)]
+    fn start(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        source: &Blob,
+        encoding: webcore::form_data::Encoding,
+    ) -> JsResult<JSValue> {
+        let promise = jsc::JSPromiseStrong::init(global);
+        let promise_value = promise.value();
+        let read = bun_core::heap::into_raw(Box::new(FormDataBodyRead {
+            encoding,
+            promise,
+            global: bun_ptr::BackRef::new(global),
+        }));
+        // SAFETY: `read` was leaked on the line above and is not used again
+        // here. `read_bytes_to_handler` hands it to `on_read_bytes` exactly
+        // once, also when it returns `Err`.
+        unsafe { source.read_bytes_to_handler(read, &global.js_thread_of_caller(callframe)) }?;
+        Ok(promise_value)
+    }
+}
+
+impl ReadBytesHandler for FormDataBodyRead {
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
+        // SAFETY: `this` is the Box that `start` leaked into
+        // `read_bytes_to_handler`, which hands it back exactly once (trait
+        // contract). Nothing else points at it.
+        let FormDataBodyRead {
+            encoding,
+            mut promise,
+            global,
+        } = *unsafe { bun_core::heap::take(this) };
+        let global = global.get();
+        match result {
+            ReadBytesResult::Ok(bytes) => {
+                jsc::AnyPromise::Normal(promise.swap()).wrap(global, |global| {
+                    match webcore::form_data::FormData::to_js(global, &bytes, &encoding) {
+                        Ok(form_data) => Ok(form_data),
+                        Err(crate::Error::JSError) => Err(jsc::JsError::Thrown),
+                        Err(err) => Ok(form_data_parse_error(global, &err)),
+                    }
+                })
+            }
+            // Also a failed S3 request, and the read that a stopping VM cancels.
+            ReadBytesResult::Err(err) => {
+                let reason = err.to_error_instance_with_async_stack(global, promise.get());
+                promise.reject(global, Ok(reason))
+            }
+        }
     }
 }
 

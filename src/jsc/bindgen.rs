@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_core::EncodedSlice;
 
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
-    JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
+    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -65,6 +65,38 @@ impl<'a> JsHeap<'a> {
                 should_have_exception,
             )
         }
+    }
+
+    /// An array of what `convert`, a function of [`to_js`], makes of each item.
+    #[inline]
+    pub fn create_array<I: IntoIterator>(
+        &self,
+        items: I,
+        mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        let global = self.global_object();
+        // A short array is made with one call. A longer one takes a call per element.
+        let mut short = [JSValue::ZERO; 8];
+        let mut items = items.into_iter();
+        for count in 0..short.len() {
+            let Some(item) = items.next() else {
+                // SAFETY: `count` initialized values.
+                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+                    extern_types::Bun__Bindgen__constructArrayFromValues(
+                        self.global_ptr(),
+                        short.as_ptr(),
+                        count,
+                    )
+                }));
+            };
+            short[count] = convert(self, item)?.0;
+        }
+        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
+        let rest = items.map(|item| convert(self, item).map(|value| value.0));
+        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
+            array.put_index(global, index as u32, value?)?;
+        }
+        Ok(JsLocal::from_raw(array))
     }
 
     #[inline]
@@ -935,34 +967,23 @@ pub mod to_js {
     }
 
     #[inline]
+    pub fn string_array<'a>(
+        heap: &JsHeap<'a>,
+        strings: impl AsRef<[bun_core::String]>,
+    ) -> Result<'a, JsLocal<'a>> {
+        JsLocal::from_js_result(crate::bun_string_jsc::to_js_array(
+            heap.global_object(),
+            strings.as_ref(),
+        ))
+    }
+
+    #[inline]
     pub fn array<'a, I: IntoIterator>(
         heap: &JsHeap<'a>,
         items: I,
-        mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+        convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a>> {
-        let global = heap.global_object();
-        // A short array is made with one call. A longer one takes a call per element.
-        let mut short = [JSValue::ZERO; 8];
-        let mut items = items.into_iter();
-        for count in 0..short.len() {
-            let Some(item) = items.next() else {
-                // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
-                    extern_types::Bun__Bindgen__constructArrayFromValues(
-                        heap.global_ptr(),
-                        short.as_ptr(),
-                        count,
-                    )
-                }));
-            };
-            short[count] = convert(heap, item)?.0;
-        }
-        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
-        let rest = items.map(|item| convert(heap, item).map(|value| value.0));
-        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
-            array.put_index(global, index as u32, value?)?;
-        }
-        Ok(JsLocal::from_raw(array))
+        heap.create_array(items, convert).map(JsLocal::as_value)
     }
 
     /// A key that comes again keeps its place and takes the new value. The inline room is the upper `size_hint`.

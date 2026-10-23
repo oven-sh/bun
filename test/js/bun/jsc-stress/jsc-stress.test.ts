@@ -64,6 +64,9 @@ const jsFixtures = [
   // FTL - RegExp
   "ftl-regexp-exec.js",
   "ftl-regexp-test.js",
+  // Yarr (a quantified group with a fixed-width body, oven-sh/WebKit#856)
+  "regexp-fixed-width-loop.js",
+  "regexp-fixed-width-loop-interpreter.js",
   // FTL - Arguments
   "ftl-getmyargumentslength.js",
   "ftl-getmyargumentslength-inline.js",

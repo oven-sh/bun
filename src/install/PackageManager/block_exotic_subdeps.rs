@@ -4,8 +4,6 @@
 //! of the root and of workspace packages are exempt. Modeled on pnpm:
 //! https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
 
-use std::borrow::Cow;
-
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
 use bun_core::{Output, fmt as bun_fmt, strings};
@@ -176,35 +174,46 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
     count
 }
 
-/// The version the resolver used for this edge: the root's override when one
-/// applies (gate and realname-keyed hash mirror
-/// `enqueue_dependency_with_main_and_success_fn`), else the edge's own.
-fn effective_version(
-    manager: &PackageManager,
-    dep_id: DependencyID,
-) -> Cow<'_, dependency::Version> {
+/// The version the resolver read for this edge: the root's override when
+/// one applies, then the catalog entry it names. Mirrors the override and
+/// catalog steps of `PackageManagerEnqueue`.
+fn effective_version(manager: &PackageManager, dep_id: DependencyID) -> &dependency::Version {
     let lockfile = &manager.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
-    let name_hash = match dep.version.tag {
-        dependency::Tag::DistTag
-        | dependency::Tag::Git
-        | dependency::Tag::Github
-        | dependency::Tag::Npm
-        | dependency::Tag::Tarball
-        | dependency::Tag::Workspace => {
-            StringBuilder::string_hash(dep.realname().slice(string_buf))
+    if dep.behavior.is_workspace() {
+        return &dep.version;
+    }
+    let is_alias = dep.version.tag == dependency::Tag::Npm && dep.version.npm().is_alias;
+    let rule_name_hash = if is_alias {
+        dep.name_hash
+    } else {
+        match dep.version.tag {
+            dependency::Tag::DistTag
+            | dependency::Tag::Git
+            | dependency::Tag::Github
+            | dependency::Tag::Npm
+            | dependency::Tag::Tarball
+            | dependency::Tag::Workspace => {
+                StringBuilder::string_hash(dep.realname().slice(string_buf))
+            }
+            _ => dep.name_hash,
         }
-        _ => dep.name_hash,
     };
-    let overridable = !dep.behavior.is_workspace()
-        && (dep.version.tag != dependency::Tag::Npm || !dep.version.npm().is_alias);
-    if overridable {
-        if let Some(version) = lockfile.overrides.get(lockfile, dep_id, name_hash) {
-            return Cow::Owned(version);
+    let rule = lockfile
+        .overrides
+        .lookup_declared(lockfile, dep_id, rule_name_hash, &dep.version)
+        .map(|rule| rule.dep());
+    let (name, declared) = rule.map_or((dep.name, &dep.version), |rule| (rule.name, &rule.version));
+    if declared.tag == dependency::Tag::Catalog {
+        if let Some(entry) = lockfile
+            .catalogs
+            .get_ref(string_buf, *declared.catalog(), name)
+        {
+            return &entry.version;
         }
     }
-    Cow::Borrowed(&dep.version)
+    declared
 }
 
 /// A plain range or a dist-tag: the specifier names no source.

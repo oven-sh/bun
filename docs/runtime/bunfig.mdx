@@ -1235,7 +1235,12 @@ any other non-registry package is refused, also when the root asks for the
 same range. Bun judges a range where the dependency tree of `bun.lock`
 places it. A peer range that dedupes onto the root's own copy of that
 package installs nothing of its own and is not refused, even when the
-lockfile still binds it to a package the root moved away from.
+lockfile still binds it to a package the root moved away from. An install
+that leaves out rows of that tree (`--production`, `--filter`, a platform
+that skips an optional dependency, a self-contained workspace, or the
+isolated linker) can still place such a binding from an edited `bun.lock`.
+The option guards against what registry packages declare, not against an
+edited lockfile.
 
 Root `overrides`/`resolutions` replace the nested specifier before the
 check runs: an override pointing a transitive dependency at a registry

@@ -654,6 +654,33 @@ blockExoticSubdeps = true
     expect(exitCode).toBe(1);
   });
 
+  test("blocks a lockfile entry that binds the root's `catalog:` range to a tarball", async () => {
+    await using registry = await serveRegistry([{ name: "lib", version: "1.0.0" }]);
+    using dir = tempDir("block-exotic-lockfile-row-catalog", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { lib: "catalog:" },
+        workspaces: { catalog: { lib: "^1.0.0" } },
+      }),
+      "bunfig.toml": bunfigWithRegistry(registry.origin),
+    });
+
+    expect(await install(String(dir))).toEqual({
+      stderr: expect.not.stringContaining("blockExoticSubdeps"),
+      exitCode: 0,
+    });
+    const lockfile = join(String(dir), "bun.lock");
+    const recorded = await Bun.file(lockfile).text();
+    const row = /"lib": \["lib@1\.0\.0", [^\n]*\],/;
+    expect(recorded).toMatch(row);
+    await Bun.write(lockfile, recorded.replace(row, `"lib": ["lib@${registry.origin}/lib.tgz", {}],`));
+
+    const { stderr, exitCode } = await install(String(dir), "--frozen-lockfile");
+    expect(stderr).toContain("root depends on lib@^1.0.0 via remote_tarball source");
+    expect(exitCode).toBe(1);
+  });
+
   test("blocks a tarball URL that a registry package depends on", async () => {
     await using registry = await serveRegistry(
       [

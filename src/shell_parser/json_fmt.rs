@@ -264,6 +264,13 @@ fn write_simple_atom(w: &mut impl Write, s: &SimpleAtom<'_>) -> fmt::Result {
         SimpleAtom::VarArgv(n) => {
             write!(w, "{{\"VarArgv\":{}", n)?;
         }
+        SimpleAtom::QuotedVar(v) => {
+            w.write_str("{\"QuotedVar\":")?;
+            encode_json_string(w, v)?;
+        }
+        SimpleAtom::QuotedVarArgv(n) => {
+            write!(w, "{{\"QuotedVarArgv\":{}", n)?;
+        }
         SimpleAtom::Text(t) => {
             w.write_str("{\"Text\":")?;
             encode_json_string(w, t)?;

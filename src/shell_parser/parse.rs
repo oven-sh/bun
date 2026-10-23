@@ -658,12 +658,24 @@ pub mod ast {
                 Atom::Compound(c) => c.brace_expansion_hint,
             }
         }
+
+        /// A word with a double-quoted expansion stays one word when it expands to nothing.
+        pub fn has_quoted_expansion(&self) -> bool {
+            match self {
+                Atom::Simple(s) => s.is_quoted_expansion(),
+                Atom::Compound(c) => c.atoms.iter().any(SimpleAtom::is_quoted_expansion),
+            }
+        }
     }
 
     #[derive(Clone)]
     pub enum SimpleAtom<'arena> {
         Var(&'arena [u8]),
         VarArgv(u8),
+        /// `"$VAR"`. A variant, because a `bool` on `Var` grows `SimpleAtom` from 24 to 32 bytes.
+        QuotedVar(&'arena [u8]),
+        /// `"$N"`: expands like `VarArgv`.
+        QuotedVarArgv(u8),
         Text(&'arena [u8]),
         /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
         /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
@@ -687,7 +699,29 @@ pub mod ast {
         pub(crate) fn glob_hint(&self) -> bool {
             matches!(self, SimpleAtom::Asterisk | SimpleAtom::DoubleAsterisk)
         }
+
+        /// `"$VAR"`, `"$N"` or `"$(cmd)"`. No wildcard arm: a new atom kind must say which it is.
+        pub fn is_quoted_expansion(&self) -> bool {
+            match self {
+                SimpleAtom::QuotedVar(_) | SimpleAtom::QuotedVarArgv(_) => true,
+                SimpleAtom::CmdSubst(c) => c.quoted,
+                SimpleAtom::Var(_)
+                | SimpleAtom::VarArgv(_)
+                | SimpleAtom::Text(_)
+                | SimpleAtom::QuotedEmpty
+                | SimpleAtom::Asterisk
+                | SimpleAtom::DoubleAsterisk
+                | SimpleAtom::BraceBegin
+                | SimpleAtom::BraceEnd
+                | SimpleAtom::Comma
+                | SimpleAtom::Tilde => false,
+            }
+        }
     }
+
+    // The parser allocates one `SimpleAtom` for each part of each word.
+    const _: () = assert!(size_of::<SimpleAtom<'static>>() == 24);
+    const _: () = assert!(size_of::<Atom<'static>>() == 32);
 
     #[derive(Copy, Clone)]
     pub struct CompoundAtom<'arena> {
@@ -1601,10 +1635,14 @@ impl<'bump> Parser<'bump> {
                             }
                         }
                     }
-                    Token::Var(txtrng) => {
+                    Token::Var(txtrng, quoted) => {
                         let _ = self.expect(TokenTag::Var);
                         let txt = self.text(txtrng);
-                        atoms.push(ast::SimpleAtom::Var(txt));
+                        atoms.push(if quoted {
+                            ast::SimpleAtom::QuotedVar(txt)
+                        } else {
+                            ast::SimpleAtom::Var(txt)
+                        });
                         if next_delimits {
                             let _ = self.r#match(TokenTag::Delimit);
                             if should_break {
@@ -1612,9 +1650,13 @@ impl<'bump> Parser<'bump> {
                             }
                         }
                     }
-                    Token::VarArgv(int) => {
+                    Token::VarArgv(int, quoted) => {
                         let _ = self.expect(TokenTag::VarArgv);
-                        atoms.push(ast::SimpleAtom::VarArgv(int));
+                        atoms.push(if quoted {
+                            ast::SimpleAtom::QuotedVarArgv(int)
+                        } else {
+                            ast::SimpleAtom::VarArgv(int)
+                        });
                         if next_delimits {
                             let _ = self.r#match(TokenTag::Delimit);
                             if should_break {
@@ -2019,8 +2061,9 @@ pub enum Token {
     OpenParen,
     CloseParen,
 
-    Var(TextRange),
-    VarArgv(u8),
+    /// The `bool` is true inside double quotes (`"$VAR"`, `"$N"`).
+    Var(TextRange, bool),
+    VarArgv(u8, bool),
     Text(TextRange),
     /// Quotation information is lost from the lexer -> parser stage and it is
     /// helpful to disambiguate from regular text and quoted text
@@ -2034,6 +2077,9 @@ pub enum Token {
     Delimit,
     Eof,
 }
+
+// The lexer pushes one `Token` for each part of each word.
+const _: () = assert!(size_of::<Token>() == 12);
 
 #[derive(Clone, Copy)]
 pub struct TextRange {
@@ -2077,8 +2123,8 @@ impl Token {
             Token::CmdSubstEnd => b"`)`",
             Token::OpenParen => b"`(`",
             Token::CloseParen => b"`)",
-            Token::Var(r) => &strpool[r.start as usize..r.end as usize],
-            Token::VarArgv(n) => VARARGV_STRINGS[n as usize],
+            Token::Var(r, _) => &strpool[r.start as usize..r.end as usize],
+            Token::VarArgv(n, _) => VARARGV_STRINGS[n as usize],
             Token::Text(r) => &strpool[r.start as usize..r.end as usize],
             Token::SingleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::DoubleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
@@ -2643,6 +2689,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
                             // Handle variable
                             self.break_word(AddDelimiter::No)?;
+                            let quoted = self.chars.state == CharState::Double;
                             let var_tok = self.eat_var()?;
 
                             match var_tok.len() {
@@ -2653,13 +2700,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 1 => 'blk: {
                                     let c = self.strpool[var_tok.start as usize];
                                     if c >= b'0' && c <= b'9' {
-                                        self.tokens.push(Token::VarArgv(c - b'0'));
+                                        self.tokens.push(Token::VarArgv(c - b'0', quoted));
                                         break 'blk;
                                     }
-                                    self.tokens.push(Token::Var(var_tok));
+                                    self.tokens.push(Token::Var(var_tok, quoted));
                                 }
                                 _ => {
-                                    self.tokens.push(Token::Var(var_tok));
+                                    self.tokens.push(Token::Var(var_tok, quoted));
                                 }
                             }
                             self.word_start = self.j;

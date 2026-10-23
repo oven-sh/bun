@@ -1,7 +1,8 @@
+import type { BuildConfig, BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -522,6 +523,364 @@ console.log("About manifest:", aboutHtml);
       expect(aboutHref).toBe(homeHref);
       expect(home.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([homeHref]);
       expect(about.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([aboutHref]);
+    },
+  });
+
+  // The pages that server code imports are entry points in the order of the
+  // imports, so the first of them names the stylesheet that they share. The
+  // scripts of the two pages import x.js and y.js in opposite orders.
+  const page = (name: string, stylesheet = "shared.css") =>
+    `<!DOCTYPE html><html><head><link rel="stylesheet" href="./${stylesheet}"></head><body>${name}<script type="module" src="./${name}.client.js"></script></body></html>`;
+  const twoPages = {
+    "home.html": page("home"),
+    "about.html": page("about"),
+    "home.client.js": `import "./x.js"; import "./y.js";`,
+    "about.client.js": `import "./y.js"; import "./x.js";`,
+    "x.js": `console.log("x");`,
+    "y.js": `console.log("y");`,
+    "shared.css": `body { margin: 0; }`,
+  };
+  /** Two files import one page each, so the scan can find the pages in either order. */
+  const pagePerRoute = (first: string, second: string) => ({
+    "server.js": `
+      import { ${first} } from "./routes/${first}.js";
+      import { ${second} } from "./routes/${second}.js";
+      console.log(${first}.index, ${second}.index);
+    `,
+    "routes/home.js": `import home from "../home.html"; export { home };`,
+    "routes/about.js": `import about from "../about.html"; export { about };`,
+    ...twoPages,
+  });
+  const rooted = (files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([name, contents]) => ["/" + name, contents]));
+  /** Holds the files `held` until the scan has found every file that it can find without them. */
+  function findLast(...held: string[]): BunPlugin {
+    return {
+      name: "find-last",
+      setup(builder) {
+        builder.onLoad({ filter: /\.(js|mjs|ts)$/ }, async ({ path, defer }) => {
+          if (held.includes(basename(path))) await defer();
+          return undefined;
+        });
+      },
+    };
+  }
+  /** Per manifest: the page and the `[name]` of each of its stylesheets. */
+  function stylesheets(manifests: Manifest[]) {
+    return manifests.map(manifest =>
+      manifest.files
+        .filter(file => file.loader === "css")
+        .map(file => ({ input: file.input, name: basename(file.path).replace(/-[^-]+$/, "") })),
+    );
+  }
+  /** The names of the output files without their hashes, sorted. */
+  const outputNames = (api: BundlerTestBundleAPI) =>
+    readdirSync(api.join("out"))
+      .map(name => name.replace(/-[^-.]+\./, "."))
+      .sort();
+
+  // The scan finds the page of the second import first.
+  for (const [first, second] of [
+    ["home", "about"],
+    ["about", "home"],
+  ]) {
+    itBundled(`html-import/shared-css-chunk-is-named-for-the-first-import (${first} first)`, {
+      outdir: "out/",
+      target: "bun",
+      chunkNaming: "[name]-[hash].[ext]",
+      entryPoints: ["/server.js"],
+      files: rooted(pagePerRoute(first, second)),
+      plugins: [findLast(first + ".js")],
+      onAfterBundle(api) {
+        expect(stylesheets(readManifests(api, "out/server.js"))).toEqual([
+          [{ input: first + ".html", name: first }],
+          [{ input: first + ".html", name: first }],
+        ]);
+      },
+    });
+
+    // Each page has its own entry point, and the scan finds the page of the second one first.
+    itBundled(`html-import/shared-css-chunk-is-named-for-the-first-entry-point (${first} first)`, {
+      outdir: "out/",
+      target: "bun",
+      chunkNaming: "[name]-[hash].[ext]",
+      entryPoints: [`/routes/${first}.js`, `/routes/${second}.js`],
+      files: rooted(pagePerRoute(first, second)),
+      plugins: [findLast(first + ".js")],
+      onAfterBundle(api) {
+        expect(outputNames(api).filter(name => name.endsWith(".css"))).toEqual([first + ".css"]);
+      },
+    });
+  }
+
+  // The whole output is the same, whichever page the scan finds first.
+  for (const [name, options] of Object.entries({
+    "default": {},
+    "splitting": { splitting: true },
+    "minify": { minify: true },
+    "sourcemap": { sourcemap: "linked" },
+  } satisfies Record<string, Partial<BuildConfig>>)) {
+    test(`html-import/outputs-do-not-depend-on-the-page-that-is-found-first (${name})`, async () => {
+      using dir = tempDir("html-import-found-first", pagePerRoute("home", "about"));
+      const builds: [string, string, string][][] = [];
+      for (const held of ["about.js", "home.js"]) {
+        const build = await Bun.build({
+          entrypoints: [join(dir, "server.js")],
+          outdir: join(dir, "out-" + held),
+          target: "bun",
+          plugins: [findLast(held)],
+          ...options,
+        });
+        const outputs = build.outputs.map(async (output): Promise<[string, string, string]> => [
+          basename(output.path),
+          output.kind,
+          await output.text(),
+        ]);
+        builds.push(await Promise.all(outputs));
+      }
+      expect(builds[1]).toEqual(builds[0]);
+    });
+  }
+
+  // One file imports both pages. Neither the directory of the project nor the
+  // names of the pages decide which page is first.
+  test("html-import/shared-css-chunk-is-named-for-the-first-import-in-every-directory", async () => {
+    const directories = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const firstIn = (directory: string) => (directories.indexOf(directory) % 2 === 0 ? "home" : "about");
+    const project = (first: string) => ({
+      "server.js": `
+        import ${first} from "./${first}.html";
+        import ${first === "home" ? "about" : "home"} from "./${first === "home" ? "about" : "home"}.html";
+        console.log(home.index, about.index);
+      `,
+      ...twoPages,
+    });
+    using dir = tempDir(
+      "html-import-directories",
+      Object.fromEntries(
+        directories.flatMap(directory =>
+          Object.entries(project(firstIn(directory))).map(([name, contents]) => [directory + "/" + name, contents]),
+        ),
+      ),
+    );
+    const names = await Promise.all(
+      directories.map(async directory => {
+        const build = await Bun.build({
+          entrypoints: [join(dir, directory, "server.js")],
+          outdir: join(dir, directory, "out"),
+          target: "bun",
+          naming: { chunk: "[name]-[hash].[ext]" },
+        });
+        const stylesheets = build.outputs.filter(output => output.path.endsWith(".css"));
+        return stylesheets.map(output => basename(output.path).split("-")[0]);
+      }),
+    );
+    expect(names).toEqual(directories.map(directory => [firstIn(directory)]));
+  });
+
+  // A page that is also in the list of entry points keeps its place in the list.
+  for (const [entryPoints, imports] of [
+    [
+      ["/server.js", "/about.html"],
+      ["home", "about"],
+    ],
+    [["/about.html", "/server.js"], ["about"]],
+  ]) {
+    itBundled(`html-import/page-that-is-also-an-entry-point-keeps-its-place (${entryPoints.join(" ")})`, {
+      outdir: "out/",
+      target: "bun",
+      chunkNaming: "[name]-[hash].[ext]",
+      entryPoints,
+      files: rooted({
+        "server.js": imports
+          .map(name => `import ${name} from "./${name}.html"; console.log(${name}.index);`)
+          .join("\n"),
+        ...twoPages,
+      }),
+      onAfterBundle(api) {
+        expect(stylesheets(readManifests(api, "out/server.js"))).toEqual(
+          imports.map(() => [{ input: "about.html", name: "about" }]),
+        );
+      },
+    });
+  }
+
+  // `import "pkg"` and `require("pkg")` both take main.cjs, so module.mjs and the
+  // pages that it imports are not in the bundle. Such a page comes after the
+  // pages of the bundle, and two of them are in the order of their paths. The
+  // scan finds aaa.html before home.html, and bravo.html before alpha.html.
+  itBundled("html-import/pages-outside-the-bundle-come-last-in-the-order-of-their-paths", {
+    outdir: "out/",
+    target: "bun",
+    chunkNaming: "[name]-[hash].[ext]",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `
+        import pkg from "pkg";
+        import { home } from "./routes/home.js";
+        console.log(home.index, pkg === require("pkg"));
+      `,
+      "/routes/home.js": `import home from "../home.html"; export { home };`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "./main.cjs", module: "./module.mjs" }),
+      "/node_modules/pkg/main.cjs": `module.exports = {};`,
+      "/node_modules/pkg/module.mjs": `import a from "./a.mjs"; import b from "./b.mjs"; import c from "./c.mjs"; export default [a, b, c];`,
+      "/node_modules/pkg/a.mjs": `import alpha from "../../alpha.html"; export default alpha;`,
+      "/node_modules/pkg/b.mjs": `import bravo from "../../bravo.html"; export default bravo;`,
+      "/node_modules/pkg/c.mjs": `import aaa from "../../aaa.html"; export default aaa;`,
+      "/home.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>home</body></html>`,
+      "/aaa.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>aaa</body></html>`,
+      "/alpha.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./outside.css"></head><body>alpha</body></html>`,
+      "/bravo.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./outside.css"></head><body>bravo</body></html>`,
+      "/shared.css": `body { margin: 0; }`,
+      "/outside.css": `body { padding: 0; }`,
+    },
+    plugins: [findLast("home.js", "a.mjs")],
+    onAfterBundle(api) {
+      expect(outputNames(api).filter(name => name.endsWith(".css"))).toEqual(["alpha.css", "home.css"]);
+    },
+  });
+
+  // a.js asks the barrel for charlie and b.js for alpha. The scan finds the
+  // page of the second one when it takes up that record of the barrel again.
+  itBundled("html-import/shared-css-chunk-is-named-for-the-first-import-of-a-barrel", {
+    outdir: "out/",
+    target: "bun",
+    chunkNaming: "[name]-[hash].[ext]",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `import "./a.js"; import "./b.js";`,
+      "/a.js": `import { charlie } from "ui"; console.log(charlie.index);`,
+      "/b.js": `import { alpha } from "ui"; console.log(alpha.index);`,
+      "/node_modules/ui/package.json": JSON.stringify({ name: "ui", main: "./index.js", sideEffects: false }),
+      "/node_modules/ui/index.js": `
+        export { default as alpha } from "./alpha.html";
+        export { default as bravo } from "./bravo.html";
+        export { default as charlie } from "./charlie.html";
+      `,
+      "/node_modules/ui/alpha.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>alpha</body></html>`,
+      "/node_modules/ui/bravo.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>bravo</body></html>`,
+      "/node_modules/ui/charlie.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>charlie</body></html>`,
+      "/node_modules/ui/shared.css": `body { margin: 0; }`,
+    },
+    plugins: [findLast("b.js")],
+    onAfterBundle(api) {
+      expect(stylesheets(readManifests(api, "out/server.js"))).toEqual([
+        [{ input: "node_modules/ui/alpha.html", name: "alpha" }],
+        [{ input: "node_modules/ui/alpha.html", name: "alpha" }],
+      ]);
+    },
+  });
+
+  // An entry point that an onResolve plugin answers after the scan found the
+  // page still comes before the page.
+  test("html-import/pages-come-after-an-entry-point-that-onResolve-answers-late", async () => {
+    using dir = tempDir("html-import-late-entry-point", {
+      "server.js": `import home from "./home.html"; console.log(home.index);`,
+      "second.js": `console.log("second");`,
+      ...twoPages,
+    });
+    const pageIsFound = Promise.withResolvers<void>();
+    const build = await Bun.build({
+      entrypoints: [join(dir, "server.js"), "second-entry"],
+      outdir: join(dir, "out"),
+      target: "bun",
+      plugins: [
+        {
+          name: "late-entry-point",
+          setup(builder) {
+            builder.onLoad({ filter: /home\.html$/ }, () => {
+              pageIsFound.resolve();
+              return undefined;
+            });
+            builder.onResolve({ filter: /^second-entry$/ }, async () => {
+              await pageIsFound.promise;
+              return { path: join(dir, "second.js") };
+            });
+          },
+        },
+      ],
+    });
+    const entryPoints = build.outputs.filter(output => output.kind === "entry-point");
+    expect(entryPoints.map(output => basename(output.path).replace(/-[^-.]+\./, "."))).toEqual([
+      "server.js",
+      "second.js",
+      "chunk.js",
+      "home.html",
+    ]);
+  });
+
+  // What an onLoad plugin makes of the page does not decide if the page is an entry point.
+  test("html-import/page-that-a-plugin-loads-with-another-loader-is-an-entry-point", async () => {
+    using dir = tempDir("html-import-plugin-loader", {
+      "server.js": `import tpl from "./tpl.html"; console.log(tpl);`,
+      "tpl.html": `<!DOCTYPE html><html><body>tpl</body></html>`,
+    });
+    const outputs: Record<string, string[]> = {};
+    for (const loader of ["js", "text", "file"] as const) {
+      const build = await Bun.build({
+        entrypoints: [join(dir, "server.js")],
+        outdir: join(dir, "out-" + loader),
+        target: "bun",
+        plugins: [
+          {
+            name: "tpl",
+            setup(builder) {
+              builder.onLoad({ filter: /tpl\.html$/ }, () => ({ contents: `export default "tpl";`, loader }));
+            },
+          },
+        ],
+      });
+      outputs[loader] = build.outputs.map(output => basename(output.path).replace(/-[^-.]+\./, ".")).sort();
+    }
+    expect(outputs).toEqual({
+      js: ["server.js", "tpl.js"],
+      text: ["server.js", "tpl.js"],
+      file: ["server.js", "tpl.html", "tpl.js"],
+    });
+  });
+
+  // The pages of the `files` option are in one order too, whichever page the scan finds first.
+  test("html-import/pages-of-the-files-option-do-not-depend-on-the-page-that-is-found-first", async () => {
+    using dir = tempDir("html-import-files-option", {});
+    const files = Object.fromEntries(
+      Object.entries(pagePerRoute("home", "about")).map(([name, contents]) => [join(dir, name), contents]),
+    );
+    const names: string[][] = [];
+    for (const held of ["about.js", "home.js"]) {
+      const build = await Bun.build({
+        entrypoints: [join(dir, "server.js")],
+        outdir: join(dir, "out-" + held),
+        target: "bun",
+        naming: { chunk: "[name]-[hash].[ext]" },
+        files,
+        plugins: [findLast(held)],
+      });
+      names.push(build.outputs.map(output => basename(output.path)));
+    }
+    expect(names[0].filter(name => name.endsWith(".css"))).toHaveLength(1);
+    expect(names[1]).toEqual(names[0]);
+  });
+
+  // Browser code imports frame.htm as a file before the server imports it as a
+  // page. The browser graph has that file already, and it is not an entry point.
+  itBundled("html-import/file-that-browser-code-imports-first-is-not-an-entry-point", {
+    outdir: "out/",
+    target: "bun",
+    entryPoints: ["/server.ts"],
+    files: {
+      "/server.ts": `
+        import page from "./page.html";
+        import { frame } from "./later.ts";
+        console.log(page.index, frame.index);
+      `,
+      "/later.ts": `import frame from "./frame.htm" with { type: "html" }; export { frame };`,
+      "/page.html": `<!DOCTYPE html><html><body><script type="module" src="./client.ts"></script></body></html>`,
+      "/client.ts": `import url from "./frame.htm"; console.log(url);`,
+      "/frame.htm": `<!DOCTYPE html><html><body>frame</body></html>`,
+    },
+    plugins: [findLast("later.ts")],
+    onAfterBundle(api) {
+      expect(outputNames(api)).toEqual(["frame.htm", "page.html", "page.js", "server.js"]);
     },
   });
 

@@ -60,13 +60,6 @@ static size_t getKeyLengthFromHash(CryptoAlgorithmIdentifier hash)
     }
 }
 
-CryptoKeyHMAC::CryptoKeyHMAC(const Vector<uint8_t>& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
-    : CryptoKey(CryptoAlgorithmIdentifier::HMAC, CryptoKeyType::Secret, extractable, usage)
-    , m_hash(hash)
-    , m_key(key)
-{
-}
-
 CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
     : CryptoKey(CryptoAlgorithmIdentifier::HMAC, CryptoKeyType::Secret, extractable, usage)
     , m_hash(hash)
@@ -75,13 +68,6 @@ CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier ha
 }
 
 CryptoKeyHMAC::~CryptoKeyHMAC() = default;
-
-RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generateFromBytes(void* data, size_t byteLength, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
-{
-
-    Vector<uint8_t> vec_data(std::span { (uint8_t*)data, byteLength });
-    return adoptRef(new CryptoKeyHMAC(vec_data, hash, extractable, usages));
-}
 
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
 {

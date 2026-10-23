@@ -56,6 +56,11 @@ impl Expr {
             // https://github.com/oven-sh/bun/issues/2594
             Data::ESpread(_) => false,
             Data::EMissing(_) => false,
+            // `[[a?.b]][0]?.[0].c` must not become `a?.b.c`: inlining would
+            // splice this chain onto the parent's `?.` continuation.
+            Data::EDot(e) => e.optional_chain.is_none(),
+            Data::EIndex(e) => e.optional_chain.is_none(),
+            Data::ECall(e) => e.optional_chain.is_none(),
             _ => true,
         }
     }
@@ -107,15 +112,19 @@ impl Expr {
 }
 
 impl Expr {
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
+    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, crate::Error> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
-        self.deep_clone_no_detach(bump)
+        self.deep_clone_no_detach(bump, bun_core::StackCheck::init())
     }
     #[inline]
-    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Expr, AllocError> {
+    pub fn deep_clone_no_detach(
+        &self,
+        bump: &Bump,
+        stack_check: bun_core::StackCheck,
+    ) -> Result<Expr, crate::Error> {
         Ok(Expr {
             loc: self.loc,
-            data: self.data.deep_clone_no_detach(bump)?,
+            data: self.data.deep_clone_no_detach(bump, stack_check)?,
         })
     }
 
@@ -129,16 +138,6 @@ pub struct Query {
     pub expr: Expr,
     pub loc: Loc,
     pub i: u32,
-}
-
-impl Default for Query {
-    fn default() -> Self {
-        Self {
-            expr: Expr::EMPTY,
-            loc: Loc::EMPTY,
-            i: 0,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -371,130 +370,6 @@ impl Expr {
 
     // toJS alias deleted — `to_js` lives in `bun_js_parser_jsc::expr_jsc` extension trait.
 
-    /// Only use this for pretty-printing JSON. Do not use in transpiler.
-    ///
-    /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
-        match &self.data {
-            Data::EArray(array) => {
-                if index >= array.items.len_u32() {
-                    return None;
-                }
-                Some(array.items.slice()[index as usize])
-            }
-            Data::EArrayJSON(array) => {
-                let items = array.get().items();
-                let item = items.get(index as usize)?;
-                Some(Expr::from_json_value(item, self.loc))
-            }
-            Data::EObjectJSON(object) => object
-                .get()
-                .properties()
-                .iter()
-                .find(|p| p.key.slice() == index_str)
-                .map(|p| Expr::from_json_value(&p.value, p.key_loc)),
-            Data::EObject(object) => {
-                for prop in object.properties.slice_const() {
-                    let Some(key) = &prop.key else { continue };
-                    match &key.data {
-                        Data::EString(str) => {
-                            if str.eql_bytes(index_str) {
-                                return prop.value;
-                            }
-                        }
-                        Data::ENumber(num) => {
-                            if num.to_u32() == index {
-                                return prop.value;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                None
-            }
-            Data::EString(str) => {
-                let mut str = *str;
-                if str.len() > index as usize {
-                    let slice = str.slice(bump);
-                    // TODO: this is not correct since .length refers to UTF-16 code units and not UTF-8 bytes
-                    // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
-                    if slice.len() > index as usize {
-                        return Some(Expr::init(
-                            E::String {
-                                data: Str::new(&slice[index as usize..][..1]),
-                                ..Default::default()
-                            },
-                            self.loc,
-                        ));
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// This supports lookups like:
-    /// - `foo`
-    /// - `foo.bar`
-    /// - `foo[123]`
-    /// - `foo[123].bar`
-    /// - `foo[123].bar[456]`
-    /// - `foo[123].bar[456].baz`
-    /// - `foo[123].bar[456].baz.qux` // etc.
-    ///
-    /// This is not intended for use by the transpiler, instead by pretty printing JSON.
-    // The arena is threaded explicitly because get_by_index allocates an
-    // E.String slice into &Bump.
-    pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
-        if name.is_empty() {
-            return None;
-        }
-
-        if let Some(idx) = bun_core::strings::index_of_any(name, b"[.") {
-            match name[idx] {
-                b'[' => {
-                    let end_idx = bun_core::strings::index_of_char_usize(name, b']')? as usize;
-                    let mut base_expr = *self;
-                    if idx > 0 {
-                        let key = &name[..idx];
-                        base_expr = base_expr.get(key)?;
-                    }
-
-                    let index_str: &[u8] = &name[idx + 1..end_idx];
-                    // Path segments are bytes, not UTF-8.
-                    let index: u32 = bun_core::parse_unsigned(index_str, 10).ok()?;
-                    let rest: &[u8] = if name.len() > end_idx {
-                        &name[end_idx + 1..]
-                    } else {
-                        b""
-                    };
-                    let result = base_expr.get_by_index(index, index_str, bump)?;
-                    if !rest.is_empty() {
-                        return result.get_path_may_be_index(bump, rest);
-                    }
-                    return Some(result);
-                }
-                b'.' => {
-                    let key = &name[..idx];
-                    let sub_expr = self.get(key)?;
-                    let subpath: &[u8] = if name.len() > idx {
-                        &name[idx + 1..]
-                    } else {
-                        b""
-                    };
-                    if !subpath.is_empty() {
-                        return sub_expr.get_path_may_be_index(bump, subpath);
-                    }
-                    return Some(sub_expr);
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        self.get(name)
-    }
-
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
@@ -584,20 +459,6 @@ impl Expr {
             },
         );
         Ok(())
-    }
-
-    pub fn get_string<'b>(
-        &self,
-        bump: &'b Bump,
-        name: &[u8],
-    ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
-        let expr = self;
-        if let Some(q) = expr.as_property(name) {
-            if let Some(str) = q.expr.as_string(bump) {
-                return Ok(Some((str, q.expr.loc)));
-            }
-        }
-        Ok(None)
     }
 
     pub fn get_number(&self, name: &[u8]) -> Option<(f64, Loc)> {
@@ -704,7 +565,7 @@ impl Expr {
     }
 
     #[inline]
-    pub fn as_string_hash(
+    pub(crate) fn as_string_hash(
         &self,
         bump: &Bump,
         hash_fn: fn(&[u8]) -> u64,
@@ -727,6 +588,8 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
+    /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
+    AfterQuestionAndBeforeColon,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.
@@ -1167,7 +1030,7 @@ impl Tag {
         )
     }
 
-    pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(tag: Tag) -> Option<&'static [u8]> {
         // This must only return `Some` when the operand is guaranteed to have
         // no side effects. Array/object/class literals are omitted because
         // their elements, properties, and static initializers can run code.
@@ -1239,34 +1102,10 @@ impl fmt::Display for Tag {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl Expr {
-    pub fn is_boolean(&self) -> bool {
-        match self.data {
-            Data::EBoolean(_) | Data::EBranchBoolean(_) => true,
-            Data::EIf(ex) => ex.yes.is_boolean() && ex.no.is_boolean(),
-            Data::EUnary(ex) => ex.op == crate::OpCode::UnNot || ex.op == crate::OpCode::UnDelete,
-            Data::EBinary(ex) => match ex.op {
-                crate::OpCode::BinStrictEq
-                | crate::OpCode::BinStrictNe
-                | crate::OpCode::BinLooseEq
-                | crate::OpCode::BinLooseNe
-                | crate::OpCode::BinLt
-                | crate::OpCode::BinGt
-                | crate::OpCode::BinLe
-                | crate::OpCode::BinGe
-                | crate::OpCode::BinInstanceof
-                | crate::OpCode::BinIn => true,
-                crate::OpCode::BinLogicalOr => ex.left.is_boolean() && ex.right.is_boolean(),
-                crate::OpCode::BinLogicalAnd => ex.left.is_boolean() && ex.right.is_boolean(),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
+    pub(crate) fn at<T: IntoExprData>(&self, t: T) -> Expr {
         Expr::init(t, self.loc)
     }
 
@@ -1274,7 +1113,7 @@ impl Expr {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
+    pub(crate) fn not(&self, bump: &Bump) -> Expr {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
@@ -1374,7 +1213,7 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub(crate) fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1441,7 +1280,7 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
+    pub(crate) fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
         if right_known == PrimitiveType::Unknown || left_known == PrimitiveType::Unknown {
             return PrimitiveType::Unknown;
         }
@@ -1649,11 +1488,6 @@ impl Data {
             None
         }
     }
-    /// True if this is an `EString`.
-    #[inline]
-    pub fn is_e_string(&self) -> bool {
-        matches!(self, Data::EString(_))
-    }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
     // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
@@ -1844,7 +1678,8 @@ fn json_value_deep_clone(
     value: &E::JsonValue,
     loc: Loc,
     bump: &Bump,
-) -> Result<Expr, bun_alloc::AllocError> {
+    stack_check: bun_core::StackCheck,
+) -> Result<Expr, crate::Error> {
     Ok(match value {
         E::JsonValue::String(s) => {
             let bytes: &[u8] = bump.alloc_slice_copy(s.slice());
@@ -1852,11 +1687,11 @@ fn json_value_deep_clone(
         }
         E::JsonValue::Object(o) => Expr {
             loc,
-            data: Data::EObjectJSON(*o).deep_clone_no_detach(bump)?,
+            data: Data::EObjectJSON(*o).deep_clone_no_detach(bump, stack_check)?,
         },
         E::JsonValue::Array(a) => Expr {
             loc,
-            data: Data::EArrayJSON(*a).deep_clone_no_detach(bump)?,
+            data: Data::EArrayJSON(*a).deep_clone_no_detach(bump, stack_check)?,
         },
         _ => Expr::from_json_value(value, loc),
     })
@@ -1871,7 +1706,7 @@ impl Data {
 
     // Per-variant `as_*` accessors live alongside the enum decl above
     // (`e_string`/`e_object`/...).
-    pub fn as_e_identifier(&self) -> Option<E::Identifier> {
+    pub(crate) fn as_e_identifier(&self) -> Option<E::Identifier> {
         if let Data::EIdentifier(i) = self {
             Some(*i)
         } else {
@@ -1884,29 +1719,20 @@ impl Data {
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
 
 impl Data {
-    /// Deep-clone this subtree into `bump`.
-    ///
-    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
-    /// allocate via `AstAlloc`, which reads the thread's active allocation
-    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
-    /// is bulk-freed while the cloned tree (e.g. `WorkspacePackageJSONCache`)
-    /// still references the buffers — UAF. This entry point installs a
-    /// [`DetachAstHeap`] guard so
-    /// those vecs land on global mimalloc. The guard is installed once here
-    /// and at [`Expr::deep_clone`]; the recursive body goes through
-    /// `*_no_detach` so we don't pay 3 TLS ops per node.
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
-        self.deep_clone_no_detach(bump)
-    }
-
-    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Data, AllocError> {
+    fn deep_clone_no_detach(
+        &self,
+        bump: &Bump,
+        stack_check: bun_core::StackCheck,
+    ) -> Result<Data, crate::Error> {
+        if !stack_check.is_safe_to_recurse() {
+            return Err(crate::Error::StackOverflow);
+        }
         let this = *self;
         match &this {
             Data::EArray(el) => {
                 let items = el
                     .items
-                    .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?;
+                    .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?;
                 let item = bump.alloc(E::Array {
                     items,
                     comma_after_spread: el.comma_after_spread,
@@ -1932,7 +1758,12 @@ impl Data {
                             E::EString::init(key_bytes),
                             row.key_loc,
                         )),
-                        value: Some(json_value_deep_clone(&row.value, value_loc, bump)?),
+                        value: Some(json_value_deep_clone(
+                            &row.value,
+                            value_loc,
+                            bump,
+                            stack_check,
+                        )?),
                         kind: G::PropertyKind::Normal,
                         initializer: None,
                         ..Default::default()
@@ -1954,7 +1785,7 @@ impl Data {
                     Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
                 for (i, value) in rows.iter().enumerate() {
                     let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
-                    items.push(json_value_deep_clone(value, loc, bump)?);
+                    items.push(json_value_deep_clone(value, loc, bump, stack_check)?);
                 }
                 let item = bump.alloc(E::Array {
                     items,
@@ -1967,7 +1798,7 @@ impl Data {
             Data::EUnary(el) => {
                 let item = bump.alloc(E::Unary {
                     op: el.op,
-                    value: el.value.deep_clone_no_detach(bump)?,
+                    value: el.value.deep_clone_no_detach(bump, stack_check)?,
                     flags: el.flags,
                 });
                 Ok(Data::EUnary(StoreRef::from_bump(item)))
@@ -1975,8 +1806,8 @@ impl Data {
             Data::EBinary(el) => {
                 let item = bump.alloc(E::Binary {
                     op: el.op,
-                    left: el.left.deep_clone_no_detach(bump)?,
-                    right: el.right.deep_clone_no_detach(bump)?,
+                    left: el.left.deep_clone_no_detach(bump, stack_check)?,
+                    right: el.right.deep_clone_no_detach(bump, stack_check)?,
                 });
                 Ok(Data::EBinary(StoreRef::from_bump(item)))
             }
@@ -1985,7 +1816,7 @@ impl Data {
                 let src_props: &[G::Property] = el.properties.slice();
                 let mut properties = bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {
-                    properties.push(prop.deep_clone(bump)?);
+                    properties.push(prop.deep_clone(bump, stack_check)?);
                 }
                 let properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut());
 
@@ -1993,10 +1824,10 @@ impl Data {
                     class_keyword: el.class_keyword,
                     ts_decorators: el
                         .ts_decorators
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     class_name: el.class_name,
                     extends: match &el.extends {
-                        Some(e) => Some(e.deep_clone_no_detach(bump)?),
+                        Some(e) => Some(e.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
                     body_loc: el.body_loc,
@@ -2004,15 +1835,16 @@ impl Data {
                     properties,
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
+                    inner_class_ref: el.inner_class_ref,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))
             }
             Data::ENew(el) => {
                 let item = bump.alloc(E::New {
-                    target: el.target.deep_clone_no_detach(bump)?,
+                    target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     args: el
                         .args
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     close_parens_loc: el.close_parens_loc,
                 });
@@ -2020,16 +1852,16 @@ impl Data {
             }
             Data::EFunction(el) => {
                 let item = bump.alloc(E::Function {
-                    func: el.func.deep_clone(bump)?,
+                    func: el.func.deep_clone(bump, stack_check)?,
                 });
                 Ok(Data::EFunction(StoreRef::from_bump(item)))
             }
             Data::ECall(el) => {
                 let item = bump.alloc(E::Call {
-                    target: el.target.deep_clone_no_detach(bump)?,
+                    target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     args: el
                         .args
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     optional_chain: el.optional_chain,
                     is_direct_eval: el.is_direct_eval,
                     close_paren_loc: el.close_paren_loc,
@@ -2040,27 +1872,29 @@ impl Data {
             }
             Data::EDot(el) => {
                 let item = bump.alloc(E::Dot {
-                    target: el.target.deep_clone_no_detach(bump)?,
+                    target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     name: el.name,
                     name_loc: el.name_loc,
                     optional_chain: el.optional_chain,
                     can_be_removed_if_unused: el.can_be_removed_if_unused,
                     call_can_be_unwrapped_if_unused: el.call_can_be_unwrapped_if_unused,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EDot(StoreRef::from_bump(item)))
             }
             Data::EIndex(el) => {
                 let item = bump.alloc(E::Index {
-                    target: el.target.deep_clone_no_detach(bump)?,
-                    index: el.index.deep_clone_no_detach(bump)?,
+                    target: el.target.deep_clone_no_detach(bump, stack_check)?,
+                    index: el.index.deep_clone_no_detach(bump, stack_check)?,
                     optional_chain: el.optional_chain,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
             Data::EArrow(el) => {
                 let mut args = bun_alloc::ArenaVec::with_capacity_in(el.args.len(), bump);
                 for i in 0..el.args.len() {
-                    args.push(el.args[i].deep_clone(bump)?);
+                    args.push(el.args[i].deep_clone(bump, stack_check)?);
                 }
                 let item = bump.alloc(E::Arrow {
                     args: crate::StoreSlice::new(args.into_bump_slice()),
@@ -2078,13 +1912,15 @@ impl Data {
             Data::EJsxElement(el) => {
                 let item = bump.alloc(E::JSXElement {
                     tag: match &el.tag {
-                        Some(tag) => Some(tag.deep_clone_no_detach(bump)?),
+                        Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
-                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump))?,
+                    properties: el
+                        .properties
+                        .try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
                     children: el
                         .children
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     key_prop_index: el.key_prop_index,
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,
@@ -2093,7 +1929,9 @@ impl Data {
             }
             Data::EObject(el) => {
                 let item = bump.alloc(E::Object {
-                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump))?,
+                    properties: el
+                        .properties
+                        .try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
                     comma_after_spread: el.comma_after_spread,
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
@@ -2104,14 +1942,14 @@ impl Data {
             }
             Data::ESpread(el) => {
                 let item = bump.alloc(E::Spread {
-                    value: el.value.deep_clone_no_detach(bump)?,
+                    value: el.value.deep_clone_no_detach(bump, stack_check)?,
                 });
                 Ok(Data::ESpread(StoreRef::from_bump(item)))
             }
             Data::ETemplate(el) => {
                 let item = bump.alloc(E::Template {
                     tag: match &el.tag {
-                        Some(tag) => Some(tag.deep_clone_no_detach(bump)?),
+                        Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
                     parts: el.parts,
@@ -2130,14 +1968,14 @@ impl Data {
             }
             Data::EAwait(el) => {
                 let item = bump.alloc(E::Await {
-                    value: el.value.deep_clone_no_detach(bump)?,
+                    value: el.value.deep_clone_no_detach(bump, stack_check)?,
                 });
                 Ok(Data::EAwait(StoreRef::from_bump(item)))
             }
             Data::EYield(el) => {
                 let item = bump.alloc(E::Yield {
                     value: match &el.value {
-                        Some(value) => Some(value.deep_clone_no_detach(bump)?),
+                        Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
                     is_star: el.is_star,
@@ -2146,17 +1984,18 @@ impl Data {
             }
             Data::EIf(el) => {
                 let item = bump.alloc(E::If {
-                    test_: el.test_.deep_clone_no_detach(bump)?,
-                    yes: el.yes.deep_clone_no_detach(bump)?,
-                    no: el.no.deep_clone_no_detach(bump)?,
+                    test: el.test.deep_clone_no_detach(bump, stack_check)?,
+                    yes: el.yes.deep_clone_no_detach(bump, stack_check)?,
+                    no: el.no.deep_clone_no_detach(bump, stack_check)?,
                 });
                 Ok(Data::EIf(StoreRef::from_bump(item)))
             }
             Data::EImport(el) => {
                 let item = bump.alloc(E::Import {
-                    expr: el.expr.deep_clone_no_detach(bump)?,
-                    options: el.options.deep_clone_no_detach(bump)?,
+                    expr: el.expr.deep_clone_no_detach(bump, stack_check)?,
+                    options: el.options.deep_clone_no_detach(bump, stack_check)?,
                     import_record_index: el.import_record_index,
+                    namespace_ref: el.namespace_ref,
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))
             }
@@ -2172,6 +2011,7 @@ impl Data {
                     end: el.end,
                     rope_len: el.rope_len,
                     is_utf16: el.is_utf16,
+                    toml_datetime: el.toml_datetime,
                 });
                 Ok(Data::EString(StoreRef::from_bump(item)))
             }
@@ -2199,6 +2039,22 @@ impl Data {
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
     {
+        self.write_to_hasher_with_check(hasher, symbol_table, bun_core::StackCheck::init());
+    }
+
+    fn write_to_hasher_with_check<H, S>(
+        &self,
+        hasher: &mut H,
+        symbol_table: &mut S,
+        stack_check: bun_core::StackCheck,
+    ) where
+        H: bun_core::Hasher + ?Sized,
+        S: crate::base::SymbolTable + ?Sized,
+    {
+        if !stack_check.is_safe_to_recurse() {
+            return;
+        }
+
         // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
         // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
         // we cannot extend that trait from this crate-file scope. `NoUninit`
@@ -2228,18 +2084,42 @@ impl Data {
                 raw(hasher, e.was_originally_macro);
                 raw(hasher, e.items.len_u32());
                 for item in e.items.slice() {
-                    item.data.write_to_hasher(hasher, symbol_table);
+                    item.data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 }
             }
             Data::EUnary(e) => {
                 raw(hasher, e.flags.bits());
                 raw(hasher, e.op as u8);
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EBinary(e) => {
-                raw(hasher, e.op as u8);
-                e.left.data.write_to_hasher(hasher, symbol_table);
-                e.right.data.write_to_hasher(hasher, symbol_table);
+                // Not recursive on the left: the parser builds `a + b + …` in a loop, to any depth.
+                let mut node = *e;
+                let mut parents: Vec<StoreRef<E::Binary>> = Vec::new();
+                loop {
+                    raw(hasher, node.op as u8);
+                    let Data::EBinary(left) = node.left.data else {
+                        break;
+                    };
+                    raw(hasher, node.left.data.tag() as u8);
+                    parents.push(node);
+                    node = left;
+                }
+                node.left
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                node.right
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                while let Some(parent) = parents.pop() {
+                    parent
+                        .right
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                }
             }
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}
@@ -2267,13 +2147,19 @@ impl Data {
                 // the prior raw-byte reinterpretation produced.
                 raw(hasher, e.optional_chain.map_or(2u8, |c| c as u8));
                 raw(hasher, e.name.len());
-                e.target.data.write_to_hasher(hasher, symbol_table);
+                e.target
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 hasher.update(&e.name);
             }
             Data::EIndex(e) => {
                 raw(hasher, e.optional_chain.map_or(2u8, |c| c as u8));
-                e.target.data.write_to_hasher(hasher, symbol_table);
-                e.index.data.write_to_hasher(hasher, symbol_table);
+                e.target
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                e.index
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EArrow(_) => {}
             Data::EJsxElement(_e) => {
@@ -2283,17 +2169,23 @@ impl Data {
                 // autofix
             }
             Data::ESpread(e) => {
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EAwait(e) => {
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EYield(e) => {
                 // Hash the `Option` discriminant, then recurse into the value.
                 raw(hasher, e.is_star);
                 raw(hasher, e.value.is_some());
                 if let Some(value) = &e.value {
-                    value.data.write_to_hasher(hasher, symbol_table);
+                    value
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 }
             }
             Data::ETemplate(_e) => {
@@ -2342,7 +2234,9 @@ impl Data {
             }
             Data::EInlinedEnum(e) => {
                 // pretend there is no comment
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             // no data
             Data::ERequireCallTarget
@@ -2364,7 +2258,7 @@ impl Data {
     /// "const values" here refers to expressions that can participate in constant
     /// inlining, as they have no side effects on instantiation, and there would be
     /// no observable difference if duplicated. This is a subset of canBeMoved()
-    pub fn can_be_const_value(&self) -> bool {
+    pub(crate) fn can_be_const_value(&self) -> bool {
         match self {
             Data::ENumber(_)
             | Data::EBoolean(_)
@@ -2382,7 +2276,7 @@ impl Data {
     /// Expressions that can be moved are those that do not have side
     /// effects on their own. This is used to determine what can be moved
     /// outside of a module wrapper (__esm/__commonJS).
-    pub fn can_be_moved(&self) -> bool {
+    pub(crate) fn can_be_moved(&self) -> bool {
         match self {
             // TODO: identifiers can be removed if unused, however code that
             // moves expressions around sometimes does so incorrectly when
@@ -2657,7 +2551,7 @@ impl Data {
         }
     }
 
-    pub fn extract_numeric_value(&self) -> Option<f64> {
+    pub(crate) fn extract_numeric_value(&self) -> Option<f64> {
         match self {
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
@@ -2668,7 +2562,7 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
+    pub(crate) fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
         match data {
             Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
@@ -2691,36 +2585,26 @@ impl Data {
 // Equality
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
-pub struct Equality {
-    pub equal: bool,
-    pub ok: bool,
-
-    /// This extra flag is unfortunately required for the case of visiting the expression
-    /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
-    ///
-    /// We want to replace this with the dedicated import_meta_main node, which:
-    /// - Stops this module from having p.require_ref, allowing conversion to ESM
-    /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
-    pub is_require_main_and_module: bool,
+#[derive(Clone, Copy)]
+pub enum Equality {
+    /// Nothing is known about the equality of the two operands.
+    Unknown,
+    Equal,
+    NotEqual,
+    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
+    /// caller rewrites this to an import_meta_main node.
+    RequireMainAndModule,
 }
 
-impl Equality {
-    pub const TRUE: Equality = Equality {
-        ok: true,
-        equal: true,
-        is_require_main_and_module: false,
-    };
-    pub const FALSE: Equality = Equality {
-        ok: true,
-        equal: false,
-        is_require_main_and_module: false,
-    };
-    pub const UNKNOWN: Equality = Equality {
-        ok: false,
-        equal: false,
-        is_require_main_and_module: false,
-    };
+impl From<bool> for Equality {
+    #[inline]
+    fn from(equal: bool) -> Self {
+        if equal {
+            Equality::Equal
+        } else {
+            Equality::NotEqual
+        }
+    }
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
@@ -2751,9 +2635,6 @@ pub trait EqlParser {
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
 impl Data {
-    // Returns "equal, ok". If "ok" is false, then nothing is known about the two
-    // values. If "ok" is true, the equality or inequality of the two values is
-    // stored in "equal".
     pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality {
         // https://dorey.github.io/JavaScript-Equality-Table/
         match left {
@@ -2763,113 +2644,76 @@ impl Data {
 
             Data::ENull(_) | Data::EUndefined(_) => {
                 let right_tag = right.tag();
-                let ok = matches!(right_tag, Tag::ENull | Tag::EUndefined)
-                    || right_tag.is_primitive_literal();
-
-                if !K::STRICT {
-                    return Equality {
-                        equal: matches!(right_tag, Tag::ENull | Tag::EUndefined),
-                        ok,
-                        ..Default::default()
-                    };
+                if !matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                    && !right_tag.is_primitive_literal()
+                {
+                    return Equality::Unknown;
                 }
-
-                return Equality {
-                    equal: right_tag == left.tag(),
-                    ok,
-                    ..Default::default()
-                };
+                return Equality::from(if K::STRICT {
+                    right_tag == left.tag()
+                } else {
+                    matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                });
             }
             Data::EBoolean(l) | Data::EBranchBoolean(l) => match right {
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value == r.value,
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value == r.value);
                 }
                 Data::ENumber(num) => {
                     if K::STRICT {
                         // "true === 1" is false
                         // "false === 0" is false
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
-                    return Equality {
-                        ok: true,
-                        equal: if l.value {
-                            num.value() == 1.0
-                        } else {
-                            num.value() == 0.0
-                        },
-                        ..Default::default()
-                    };
+                    return Equality::from(if l.value {
+                        num.value() == 1.0
+                    } else {
+                        num.value() == 0.0
+                    });
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::ENumber(l) => match right {
                 Data::ENumber(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value() == r.value(),
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value() == r.value());
                 }
                 Data::EInlinedEnum(r) => {
                     if let Data::ENumber(rn) = &r.value.data {
-                        return Equality {
-                            ok: true,
-                            equal: l.value() == rn.value(),
-                            ..Default::default()
-                        };
+                        return Equality::from(l.value() == rn.value());
                     }
                 }
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
                     if !K::STRICT {
-                        return Equality {
-                            ok: true,
-                            // "1 == true" is true
-                            // "0 == false" is true
-                            equal: if r.value {
-                                l.value() == 1.0
-                            } else {
-                                l.value() == 0.0
-                            },
-                            ..Default::default()
-                        };
+                        // "1 == true" is true
+                        // "0 == false" is true
+                        return Equality::from(if r.value {
+                            l.value() == 1.0
+                        } else {
+                            l.value() == 0.0
+                        });
                     }
                     // "1 === true" is false
                     // "0 === false" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
                     // "(not null or undefined) == undefined" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::EBigInt(l) => {
-                if let Data::EBigInt(r) = right {
-                    return match E::BigInt::check_equality(&l.value, &r.value) {
-                        Some(equal) => Equality {
-                            ok: true,
-                            equal,
-                            ..Default::default()
-                        },
-                        None => Equality {
-                            ok: false,
-                            ..Default::default()
-                        },
-                    };
-                } else {
-                    return Equality {
-                        ok: matches!(right, Data::ENull(_) | Data::EUndefined(_)),
-                        equal: false,
-                        ..Default::default()
-                    };
-                }
+                return match right {
+                    Data::EBigInt(r) => match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality::from(equal),
+                        None => Equality::Unknown,
+                    },
+                    Data::ENull(_) | Data::EUndefined(_) => Equality::NotEqual,
+                    _ => Equality::Unknown,
+                };
             }
             Data::EString(l) => {
                 // `StoreRef<EString>` is a Copy pointer; rebind mutably so
@@ -2880,40 +2724,32 @@ impl Data {
                         let mut r = *r;
                         r.resolve_rope_if_needed(p.arena());
                         l.resolve_rope_if_needed(p.arena());
-                        return Equality {
-                            ok: true,
-                            equal: r.eql_string(&l),
-                            ..Default::default()
-                        };
+                        return Equality::from(r.eql_string(&l));
                     }
                     Data::EInlinedEnum(inlined) => {
                         if let Data::EString(r) = inlined.value.data {
                             let mut r = r;
                             r.resolve_rope_if_needed(p.arena());
                             l.resolve_rope_if_needed(p.arena());
-                            return Equality {
-                                ok: true,
-                                equal: r.eql_string(&l),
-                                ..Default::default()
-                            };
+                            return Equality::from(r.eql_string(&l));
                         }
                     }
                     Data::ENull(_) | Data::EUndefined(_) => {
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
                     Data::ENumber(r) => {
                         if !K::STRICT {
                             l.resolve_rope_if_needed(p.arena());
                             if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             if r.value() == 1.0 && l.eql_comptime(b"1") {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
-                            return Equality::UNKNOWN;
+                            return Equality::Unknown;
                         } else {
-                            return Equality::FALSE;
+                            return Equality::NotEqual;
                         }
                     }
                     _ => {}
@@ -2926,18 +2762,14 @@ impl Data {
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
                         if id.ref_.eql(p.module_ref()) {
-                            return Equality {
-                                ok: true,
-                                equal: true,
-                                is_require_main_and_module: true,
-                            };
+                            return Equality::RequireMainAndModule;
                         }
                     }
                 }
             }
         }
 
-        Equality::UNKNOWN
+        Equality::Unknown
     }
 }
 
@@ -2994,7 +2826,8 @@ pub use data::Store;
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
+/// `Number(str)`.
+pub fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // +"" -> 0
     if str.is_empty() {
         return 0.0;

@@ -32,8 +32,9 @@
 #include "config.h"
 #include "HTTPHeaderMap.h"
 
+#include "StringSizeLimit.h"
+#include "VectorSizeLimit.h"
 #include <utility>
-#include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
 extern "C" size_t highway_index_of_first_ascii_upper(const uint8_t* input, size_t len);
@@ -56,12 +57,12 @@ String lowercaseHeaderName(const String& name)
     if (name.is8Bit()) {
         auto span = name.span8();
         size_t length = span.size();
-        if (highway_index_of_first_ascii_upper(span.data(), length) == length)
+        if (highway_index_of_first_ascii_upper(byteCast<uint8_t>(span.data()), length) == length)
             return name;
 
         std::span<Latin1Character> data;
         String result = String::createUninitialized(static_cast<unsigned>(length), data);
-        highway_lower_ascii(span.data(), length, data.data());
+        highway_lower_ascii(byteCast<uint8_t>(span.data()), length, byteCast<uint8_t>(data.data()));
         return result;
     }
 
@@ -78,24 +79,6 @@ String lowercaseHeaderName(const String& name)
 
 HTTPHeaderMap::HTTPHeaderMap()
 {
-}
-
-HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const&
-{
-    HTTPHeaderMap map;
-    map.m_commonHeaders = crossThreadCopy(m_commonHeaders);
-    map.m_uncommonHeaders = crossThreadCopy(m_uncommonHeaders);
-    map.m_setCookieHeaders = crossThreadCopy(m_setCookieHeaders);
-    return map;
-}
-
-HTTPHeaderMap HTTPHeaderMap::isolatedCopy() &&
-{
-    HTTPHeaderMap map;
-    map.m_commonHeaders = crossThreadCopy(WTF::move(m_commonHeaders));
-    map.m_uncommonHeaders = crossThreadCopy(WTF::move(m_uncommonHeaders));
-    map.m_setCookieHeaders = crossThreadCopy(WTF::move(m_setCookieHeaders));
-    return map;
 }
 
 String HTTPHeaderMap::get(const StringView name) const
@@ -133,27 +116,6 @@ String HTTPHeaderMap::getUncommonHeader(const StringView name) const
     });
     return index != notFound ? m_uncommonHeaders[index].value : String();
 }
-
-#if USE(CF)
-
-void HTTPHeaderMap::set(CFStringRef name, const String& value)
-{
-    // Fast path: avoid constructing a temporary String in the common header case.
-    if (auto* nameCharacters = CFStringGetCStringPtr(name, kCFStringEncodingASCII)) {
-        unsigned length = CFStringGetLength(name);
-        HTTPHeaderName headerName;
-        if (findHTTPHeaderName(StringView(nameCharacters, length), headerName))
-            set(headerName, value);
-        else
-            setUncommonHeader(String(nameCharacters, length), value);
-
-        return;
-    }
-
-    set(String(name), value);
-}
-
-#endif // USE(CF)
 
 void HTTPHeaderMap::set(const String& name, const String& value)
 {
@@ -218,30 +180,6 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
-void HTTPHeaderMap::append(const String& name, const String& value)
-{
-    ASSERT(!contains(name));
-
-    HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName)) {
-        if (headerName == HTTPHeaderName::SetCookie)
-            m_setCookieHeaders.append(value);
-        else
-            m_commonHeaders.append(CommonHeader { headerName, value });
-    } else {
-        m_uncommonHeaders.append(UncommonHeader { name, value });
-    }
-}
-
-bool HTTPHeaderMap::addIfNotPresent(HTTPHeaderName headerName, const String& value)
-{
-    if (contains(headerName))
-        return false;
-
-    m_commonHeaders.append(CommonHeader { headerName, value });
-    return true;
-}
-
 bool HTTPHeaderMap::contains(const StringView name) const
 {
     HTTPHeaderName headerName;
@@ -275,27 +213,41 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     });
 }
 
+std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
+{
+    unsigned count = m_setCookieHeaders.size();
+    switch (count) {
+    case 0:
+        return String();
+    case 1:
+        return m_setCookieHeaders[0];
+    default:
+        break;
+    }
+
+    uint64_t length = 2 * static_cast<uint64_t>(count - 1);
+    for (const auto& header : m_setCookieHeaders)
+        length += header.length();
+    if (Bun::exceedsStringLimit(length)) [[unlikely]]
+        return std::nullopt;
+
+    StringBuilder builder { OverflowPolicy::RecordOverflow };
+    builder.reserveCapacity(static_cast<unsigned>(length));
+    builder.append(m_setCookieHeaders[0]);
+    for (unsigned i = 1; i < count; ++i) {
+        builder.append(", "_s);
+        builder.append(m_setCookieHeaders[i]);
+    }
+    if (builder.hasOverflowed()) [[unlikely]]
+        return std::nullopt;
+    return builder.toString();
+}
+
 String HTTPHeaderMap::get(HTTPHeaderName name) const
 {
-    if (name == HTTPHeaderName::SetCookie) {
-        unsigned count = m_setCookieHeaders.size();
-        switch (count) {
-        case 0:
-            return String();
-        case 1:
-            return m_setCookieHeaders[0];
-        default: {
-            StringBuilder builder;
-            builder.reserveCapacity(m_setCookieHeaders[0].length() * count + (count - 1));
-            builder.append(m_setCookieHeaders[0]);
-            for (unsigned i = 1; i < count; ++i) {
-                builder.append(", "_s);
-                builder.append(m_setCookieHeaders[i]);
-            }
-            return builder.toString();
-        }
-        }
-    }
+    // If the joined value exceeds the max string length, treat the header as absent. FetchHeaders::get() throws instead.
+    if (name == HTTPHeaderName::SetCookie)
+        return tryJoinSetCookieHeaders().value_or(String());
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
@@ -378,6 +330,11 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
     return m_commonHeaders.removeFirstMatching([&](auto& header) {
         return header.key == name;
     });
+}
+
+bool HTTPHeaderMap::tryAddSetCookie(const String& value)
+{
+    return m_setCookieHeaders.size() < Bun::maxVectorSize<String>() && m_setCookieHeaders.tryAppend(value);
 }
 
 void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)

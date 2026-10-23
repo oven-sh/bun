@@ -1,4 +1,4 @@
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -10,14 +10,17 @@ describe("require(specifier)", () => {
   it.failing("has an empty prototype", () => expect(require.prototype).toEqual({}));
 
   describe("when specifier is a path to a non js/ts/etc file", () => {
-    it.each(["obj.toml", "obj.json", "obj.jsonc"])("require('%s') synchronously produces an object", file => {
-      const result = require(fixture(file));
-      expect(result).toEqual({
-        foo: {
-          bar: "baz",
-        },
-      });
-    });
+    it.each(["obj.toml", "obj.json", "obj.jsonc", "obj.xml"])(
+      "require('%s') synchronously produces an object",
+      file => {
+        const result = require(fixture(file));
+        expect(result).toEqual({
+          foo: {
+            bar: "baz",
+          },
+        });
+      },
+    );
 
     // note: toml does not support top-level arrays
     it.each(["arr.json", "arr.jsonc"])("require('%s') synchronously produces an array", file => {
@@ -42,6 +45,56 @@ describe("require(specifier)", () => {
     it.todo("require('*.db') wraps a sqlite file in a Database object and exports it");
   });
 
+  describe("when the module throws after its require.cache entry was deleted", () => {
+    const evictsItself = {
+      "thrower.cjs": `
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        delete require.cache[__filename];
+        throw new Error("boom " + globalThis.runs);
+      `,
+    };
+    const evictedByChild = {
+      "thrower.cjs": `
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        require("./child.cjs");
+        throw new Error("boom " + globalThis.runs);
+      `,
+      "child.cjs": `delete require.cache[module.parent.filename];`,
+    };
+    it.concurrent.each([
+      ["by the module itself", evictsItself, "index.cjs"],
+      ["by a module it required", evictedByChild, "index.cjs"],
+      // A Bun.ModuleGraph has its own require.cache.
+      ["by the module itself, inside a Bun.ModuleGraph", evictsItself, "in-graph.mjs"],
+    ])("%s, the error is catchable and the next require() runs the module again", async (_, files, entry) => {
+      using dir = tempDir("bun-test-require-evicted", {
+        ...files,
+        "index.cjs": `
+          const id = require.resolve("./thrower.cjs");
+          for (let i = 0; i < 2; i++) {
+            try {
+              require(id);
+              console.log("no error");
+            } catch (e) {
+              console.log(e.message, id in require.cache, Bun.ModuleGraph.current !== undefined);
+            }
+          }
+        `,
+        "in-graph.mjs": `
+          import path from "node:path";
+          await new Bun.ModuleGraph().import(path.join(import.meta.dirname, "index.cjs"));
+        `,
+      });
+      const inGraph = entry === "in-graph.mjs";
+      expect(await bunRun(path.join(String(dir), entry))).toEqual({
+        stdout: `boom 1 false ${inGraph}\nboom 2 false ${inGraph}`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
   describe("require.main", () => {
     let dir: string;
 
@@ -59,10 +112,11 @@ describe("require(specifier)", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    it.failing("is a Module object when a file is run directly", () => {
+    it.failing("is a Module object when a file is run directly", async () => {
       const file = path.join(dir, "index.js");
-      const { stdout, stderr } = bunRun(file);
+      const { stdout, stderr, exitCode } = await bunRun(file);
       expect(stderr).toBeEmpty();
+      expect(exitCode).toBe(0);
 
       // FIXME: most of these properties exist, but are non-enumerable and are
       // not present as keys when stringified

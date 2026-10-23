@@ -26,21 +26,11 @@ use crate::{Chunk, CompileResult, Index};
 /// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
 /// for the full contract. The signature matches `ThreadPoolLib::Task::callback`
 /// (`unsafe fn(*mut Task)`).
-pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
+pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
-
-    #[cfg(feature = "show_crash_trace")]
-    // RAII: `ActionGuard` restores the previous `CURRENT_ACTION` on drop.
-    let _prev_action_guard = {
-        // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
-        // borrows for the crash-trace vtable only.
-        let (c, chunk): (&LinkerContext, &Chunk) =
-            (part_range.ctx.c.get(), part_range.ctx.chunk.get());
-        crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
-    };
 
     // CONCURRENCY: the CSS impl is read-only over `c`/`chunk` (the
     // `bytesInOutput` bump goes through `&AtomicUsize`), so form `&` — never

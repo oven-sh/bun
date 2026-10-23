@@ -3,8 +3,8 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
-    pub spawn_sync_blocking: i32,
-    pub spawn_memfd: i32,
+    pub(crate) spawn_sync_blocking: i32,
+    pub(crate) spawn_memfd: i32,
 }
 
 impl Counters {

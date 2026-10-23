@@ -1,11 +1,8 @@
 //! HTML `FormData` parsing + JS bridge.
 
 use bun_core::{self, declare_scope, scoped_log};
-use bun_core::{ZigString, ZigStringSlice, strings};
-use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
-    ZigStringJsc as _,
-};
+use bun_core::{EncodedSlice, Utf8Bytes, strings};
+use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
@@ -14,34 +11,19 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData {}
+pub(crate) struct FormData {}
 
-// `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
-// lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
-// without depending on `bun_runtime`. Re-exported here so `crate::webcore::
-// form_data::*` callers see the same nominal types.
-pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
+pub(crate) use bun_core::form_data::{AsyncFormData, Encoding};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
-pub trait AsyncFormDataExt {
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated>;
+pub(crate) trait AsyncFormDataExt {
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // Only a VM-termination error can escape
-    // (JS exceptions are routed into the promise rejection above).
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated> {
+    /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(
@@ -50,7 +32,7 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    ZigString::init(b"FormData missing boundary").to_error_instance(global),
+                    global.create_error_instance(format_args!("FormData missing boundary")),
                 )?;
                 return Ok(());
             }
@@ -58,6 +40,10 @@ impl AsyncFormDataExt for AsyncFormData {
 
         let js_value = match FormData::to_js(global, data, &self.encoding) {
             Ok(v) => v,
+            Err(crate::Error::JSError) => {
+                promise.reject(global, global.take_error(JsError::Thrown))?;
+                return Ok(());
+            }
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
                 promise.reject(
@@ -75,13 +61,13 @@ impl AsyncFormDataExt for AsyncFormData {
 /// Raw slice into the input buffer. Not using `bun.Semver.String` because
 /// file bodies are binary data that can contain null bytes, which
 /// Semver.String's inline storage treats as terminators.
-pub struct Field<'a> {
+pub(crate) struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub filename: bun_semver::String,
-    pub content_type: bun_semver::String,
-    pub is_file: bool,
-    pub zero_count: u8,
+    pub(crate) filename: bun_semver::String,
+    pub(crate) content_type: bun_semver::String,
+    pub(crate) is_file: bool,
+    pub(crate) zero_count: u8,
 }
 
 impl Default for Field<'_> {
@@ -97,14 +83,14 @@ impl Default for Field<'_> {
 }
 
 impl FormData {
-    pub fn to_js(
+    pub(crate) fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
         encoding: &Encoding,
     ) -> crate::Result<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = ZigString::from_utf8(strings::without_utf8_bom(input));
+                let str = EncodedSlice::utf8(strings::without_utf8_bom(input));
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
                 DOMFormData::create_from_url_query(global, &str).map_err(|_| crate::Error::JSError)
@@ -115,9 +101,9 @@ impl FormData {
 }
 
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [input_value, boundary_value] = frame.arguments_as_array::<2>();
-    let boundary_slice: ZigStringSlice;
+    let boundary_slice: Utf8Bytes;
 
     let mut encoding = Encoding::URLEncoded;
 
@@ -131,7 +117,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
                 encoding = Encoding::Multipart(Box::from(array_buffer.byte_slice()));
             }
         } else if boundary_value.is_string() {
-            boundary_slice = boundary_value.to_slice_or_null(global)?;
+            boundary_slice = boundary_value.to_utf8(global)?;
             if !boundary_slice.slice().is_empty() {
                 encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
             }
@@ -141,7 +127,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             )));
         }
     }
-    let input_slice: ZigStringSlice;
+    let input_slice: Utf8Bytes;
     // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
     let input_array_buffer;
     let input: &[u8];
@@ -150,7 +136,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         input_array_buffer = array_buffer;
         input = input_array_buffer.byte_slice();
     } else if input_value.is_string() {
-        input_slice = input_value.to_slice_or_null(global)?;
+        input_slice = input_value.to_utf8(global)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
         input = blob.shared_view();
@@ -162,12 +148,11 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
-        Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }
 
-pub fn to_js_from_multipart_data(
+pub(crate) fn to_js_from_multipart_data(
     global: &JSGlobalObject,
     input: &[u8],
     boundary: &[u8],
@@ -182,18 +167,23 @@ pub fn to_js_from_multipart_data(
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
         form: &'a mut DOMFormData,
+        /// True after an append throws. The remaining entries are skipped.
+        threw: bool,
     }
 
     impl<'a> Wrapper<'a> {
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+            if wrap.threw {
+                return;
+            }
             let value_str: &[u8] = field.value;
-            let key = ZigString::init_utf8(name.slice(buf));
+            let key = EncodedSlice::utf8(name.slice(buf));
 
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
                 let mut blob = Blob::create(value_str, wrap.global, false);
-                let filename = ZigString::init_utf8(filename_str);
+                let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
@@ -221,7 +211,7 @@ pub fn to_js_from_multipart_data(
                     }
                 }
 
-                wrap.form.append_blob(
+                let result = wrap.form.append_blob(
                     wrap.global,
                     &key,
                     (&raw mut blob).cast::<c_void>(),
@@ -229,8 +219,9 @@ pub fn to_js_from_multipart_data(
                 );
                 // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
+                wrap.threw = result.is_err();
             } else {
-                let value = ZigString::init_utf8(
+                let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not
                     // > contain a `filename` parameter must be parsed into an
                     // > entry whose value is the UTF-8 decoded without BOM
@@ -240,15 +231,23 @@ pub fn to_js_from_multipart_data(
                     // > `charset` parameter.
                     strings::without_utf8_bom(value_str),
                 );
-                wrap.form.append(&key, &value);
+                wrap.threw = wrap.form.append(wrap.global, &key, &value).is_err();
             }
         }
     }
 
     {
-        let mut wrap = Wrapper { global, form };
+        let mut wrap = Wrapper {
+            global,
+            form,
+            threw: false,
+        };
 
-        if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
+        let parsed = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry);
+        if wrap.threw {
+            return Err(crate::Error::JSError);
+        }
+        if let Err(e) = parsed {
             scoped_log!(FormData, "failed to parse multipart data");
             return Err(e);
         }
@@ -257,7 +256,7 @@ pub fn to_js_from_multipart_data(
     Ok(form_data_value)
 }
 
-pub fn for_each_multipart_entry<C>(
+pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,

@@ -63,7 +63,7 @@ impl SyntaxString {
     }
 
     /// Parses a syntax string.
-    pub(crate) fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
+    fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         let mut trimmed_input = strings::trim_left(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
@@ -219,12 +219,12 @@ impl SyntaxString {
 /// may repeat during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxComponent {
-    pub kind: SyntaxComponentKind,
-    pub multiplier: Multiplier,
+    pub(crate) kind: SyntaxComponentKind,
+    pub(crate) multiplier: Multiplier,
 }
 
 impl SyntaxComponent {
-    pub(crate) fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponent, ()> {
+    fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponent, ()> {
         let kind = SyntaxComponentKind::parse_string(input)?;
 
         // Pre-multiplied types cannot have multipliers.
@@ -247,7 +247,7 @@ impl SyntaxComponent {
         Ok(SyntaxComponent { kind, multiplier })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.kind.to_css(dest)?;
         match self.multiplier {
             Multiplier::None => Ok(()),
@@ -298,7 +298,7 @@ pub enum SyntaxComponentKind {
 }
 
 impl SyntaxComponentKind {
-    pub(crate) fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponentKind, ()> {
+    fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponentKind, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
         *input = strings::trim_left(*input, SPACE_CHARACTERS);
         if strings::starts_with_char(*input, b'<') {
@@ -347,7 +347,7 @@ impl SyntaxComponentKind {
         }
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             SyntaxComponentKind::Length => dest.write_str("<length>"),
             SyntaxComponentKind::Number => dest.write_str("<number>"),
@@ -428,13 +428,13 @@ pub enum ParsedComponent {
 pub struct Repeated {
     /// The components to repeat.
     // PERF: `Vec` until `'bump` is threaded into BumpVec.
-    pub components: Vec<ParsedComponent>,
+    pub(crate) components: Vec<ParsedComponent>,
     /// A multiplier describing how the components repeat.
-    pub multiplier: Multiplier,
+    pub(crate) multiplier: Multiplier,
 }
 
 impl Repeated {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // Hand-expanded `css.implementDeepClone` (field-wise reflection):
         // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
         Repeated {

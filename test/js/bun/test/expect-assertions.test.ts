@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("expect.assertions causes the test to fail when it should", async () => {
-  const dir = tempDirWithFiles("expect-assertions", {
+  await using dir = tempDir("expect-assertions", {
     "expect-assertions.test.ts": await Bun.file(path.join(import.meta.dir, "expect-assertions-fixture.ts")).text(),
     "package.json": JSON.stringify({
       name: "expect-assertions",
@@ -17,7 +17,7 @@ test("expect.assertions causes the test to fail when it should", async () => {
 
   const $$ = new Bun.$.Shell();
   $$.nothrow();
-  $$.cwd(dir);
+  $$.cwd(String(dir));
   $$.env(bunEnv);
   const result = await $$`${bunExe()} test`;
 

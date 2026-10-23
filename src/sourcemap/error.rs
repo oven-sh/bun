@@ -18,8 +18,6 @@ pub enum Error {
     InvalidOriginalColumnValue,
     #[error("InvalidNameIndexDelta")]
     InvalidNameIndexDelta,
-    #[error("Unknown")]
-    Unknown,
     #[error("InvalidBase64")]
     InvalidBase64,
     #[error("UnsupportedFormat")]
@@ -37,6 +35,28 @@ pub enum Error {
 }
 
 impl Error {
+    /// What a `ParseFail` reports to the user.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::MissingGeneratedColumnValue => "Missing generated column value",
+            Self::InvalidGeneratedColumnValue => "Invalid generated column value",
+            Self::InvalidSourceIndexDelta => "Invalid source index delta",
+            Self::InvalidSourceIndexValue => "Invalid source index value",
+            Self::MissingOriginalLine => "Missing original line",
+            Self::InvalidOriginalLineValue => "Invalid original line value",
+            Self::MissingOriginalColumnValue => "Missing original column value",
+            Self::InvalidOriginalColumnValue => "Invalid original column value",
+            Self::InvalidNameIndexDelta => "Invalid name index delta",
+            Self::InvalidBase64 => "Invalid base64",
+            Self::UnsupportedFormat => "Unsupported source map format",
+            Self::InvalidJSON => "Invalid source map JSON",
+            Self::UnsupportedVersion => "Unsupported source map version",
+            Self::InvalidSourceMap => "Invalid source map",
+            Self::Alloc(_) => "Out of memory",
+            Self::Core(e) => e.name(),
+        }
+    }
+
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
@@ -49,7 +69,6 @@ impl Error {
             Self::MissingOriginalColumnValue => "MissingOriginalColumnValue",
             Self::InvalidOriginalColumnValue => "InvalidOriginalColumnValue",
             Self::InvalidNameIndexDelta => "InvalidNameIndexDelta",
-            Self::Unknown => "Unknown",
             Self::InvalidBase64 => "InvalidBase64",
             Self::UnsupportedFormat => "UnsupportedFormat",
             Self::InvalidJSON => "InvalidJSON",

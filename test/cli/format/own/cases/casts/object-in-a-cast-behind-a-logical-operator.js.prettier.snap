@@ -1,0 +1,49 @@
+------------------
+{ printWidth: 80 }
+------------------
+const state =
+  this.state_ ||
+  /** @type {?} */ ({
+    layer: this,
+    managed: managed === undefined ? true : managed,
+  });
+state =
+  this.state_ ||
+  /** @type {?} */ ([
+    layerrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr,
+    thisssssssssssssssssssssssssssssssssssssss,
+  ]);
+foo(
+  this.state_ ||
+    /** @type {?} */ ({
+      layer: this,
+      managed: managed === undefined ? true : managed,
+    }),
+);
+const a = b || /** @type {?} */ ({});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const state =
+  this.state_ ||
+  /** @type {?} */ ({
+    layer: this,
+    managed: managed === undefined ? true : managed,
+  });
+state =
+  this.state_ ||
+  /** @type {?} */ ([
+    layerrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr,
+    thisssssssssssssssssssssssssssssssssssssss,
+  ]);
+foo(
+  this.state_ ||
+    /** @type {?} */ ({
+      layer: this,
+      managed: managed === undefined ? true : managed,
+    }),
+);
+const a = b || /** @type {?} */ ({});
+
+===================== End =====================

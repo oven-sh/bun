@@ -1,11 +1,12 @@
 use bstr::BStr;
 
 use bun_core::ZBox;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -22,19 +23,19 @@ const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct Scripts {
-    pub preinstall: SemverString,
-    pub install: SemverString,
-    pub postinstall: SemverString,
-    pub preprepare: SemverString,
-    pub prepare: SemverString,
-    pub postprepare: SemverString,
-    pub filled: bool,
+    pub(crate) preinstall: SemverString,
+    pub(crate) install: SemverString,
+    pub(crate) postinstall: SemverString,
+    pub(crate) preprepare: SemverString,
+    pub(crate) prepare: SemverString,
+    pub(crate) postprepare: SemverString,
+    pub(crate) filled: bool,
 }
 
 impl Scripts {
     /// (name, getter) table used by debug JSON serialization in place of
     /// field reflection.
-    pub const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
+    pub(crate) const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
         (LockfileScripts::NAMES[0], |s| &s.preinstall),
         (LockfileScripts::NAMES[1], |s| &s.install),
         (LockfileScripts::NAMES[2], |s| &s.postinstall),
@@ -46,7 +47,7 @@ impl Scripts {
     /// Helper: indexed access matching `Lockfile.Scripts.names` order.
     /// The 6 hooks are tabulated explicitly (no field-by-name reflection).
     #[inline]
-    pub fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
+    pub(crate) fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
         [
             &self.preinstall,
             &self.install,
@@ -58,7 +59,7 @@ impl Scripts {
     }
 
     #[inline]
-    pub fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
+    pub(crate) fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
         [
             &mut self.preinstall,
             &mut self.install,
@@ -69,7 +70,7 @@ impl Scripts {
         ]
     }
 
-    pub fn eql(&self, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
+    pub(crate) fn eql(&self, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
         self.preinstall.eql(r.preinstall, l_buf, r_buf)
             && self.install.eql(r.install, l_buf, r_buf)
             && self.postinstall.eql(r.postinstall, l_buf, r_buf)
@@ -79,7 +80,11 @@ impl Scripts {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone`.
-    pub fn clone_into(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) -> Scripts {
+    pub(crate) fn clone_into(
+        &self,
+        buf: &[u8],
+        builder: &mut LockfileStringBuilder<'_>,
+    ) -> Scripts {
         if !self.filled {
             return Scripts::default();
         }
@@ -93,13 +98,13 @@ impl Scripts {
         scripts
     }
 
-    pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
+    pub(crate) fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         for hook in self.hooks() {
             builder.count(hook.slice(buf));
         }
     }
 
-    pub fn has_any(&self) -> bool {
+    pub(crate) fn has_any(&self) -> bool {
         for hook in self.hooks() {
             if !hook.is_empty() {
                 return true;
@@ -108,10 +113,28 @@ impl Scripts {
         false
     }
 
+    /// npm's rule for the default `node-gyp rebuild` script. Pass `None` to read `gypfile` from
+    /// disk only if it matters.
+    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Option<bool>) -> bool {
+        if !self.install.is_empty() || !self.preinstall.is_empty() {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let binding_gyp = join_abs_string_buf_z_checked::<platform::Auto>(
+            package_dir,
+            &mut buf.0,
+            &[b"binding.gyp"],
+        );
+        if !binding_gyp.is_some_and(bun_sys::exists_z) {
+            return false;
+        }
+        gypfile.unwrap_or_else(|| read_gypfile(package_dir, &mut buf.0))
+    }
+
     /// return: (first_index, total, entries)
     /// Takes only `lockfile_buf` (not the whole `Lockfile`) so callers can
     /// split-borrow `lockfile.{packages, scripts}`.
-    pub fn get_script_entries(
+    pub(crate) fn get_script_entries(
         &self,
         lockfile_buf: &[u8],
         resolution_tag: ResolutionTag,
@@ -140,7 +163,7 @@ impl Scripts {
                     first_script_index = i8::try_from(script_index).expect("int cast");
                 }
                 scripts[script_index as usize] =
-                    Some(Box::<[u8]>::from(self.preinstall.slice(lockfile_buf)));
+                    Some(Box::<[u8]>::from(self.postinstall.slice(lockfile_buf)));
                 counter += 1;
             }
             script_index += 1;
@@ -193,21 +216,19 @@ impl Scripts {
         (first_script_index, counter, scripts)
     }
 
-    pub fn create_list(
+    pub(crate) fn create_list(
         &self,
-        lockfile: &Lockfile,
         lockfile_buf: &[u8],
         cwd_: &mut bun_paths::AutoAbsPath,
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
     ) -> Option<List> {
-        let _ = lockfile;
         let (first_index, total, scripts) =
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
             #[cfg(windows)]
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
             #[cfg(not(windows))]
             let cwd: &[u8] = cwd_.slice();
@@ -235,6 +256,10 @@ impl Scripts {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
                 total,
+                is_dependency: !matches!(
+                    resolution_tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                ),
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
@@ -247,7 +272,7 @@ impl Scripts {
     // Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
+    pub(crate) fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
@@ -264,7 +289,11 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
+    pub(crate) fn parse_alloc<B: bun_semver::StringBuilder>(
+        &mut self,
+        builder: &mut B,
+        json: Expr,
+    ) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
@@ -279,6 +308,8 @@ impl Scripts {
         }
     }
 
+    /// Runs on the isolated linker's task threads. Pass `trusted: true` to also list the scripts
+    /// that would run.
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
@@ -286,50 +317,41 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
+        trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
-        if self.has_any() {
-            let add_node_gyp_rebuild_script =
-                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
-                    && self.install.is_empty()
-                    && self.preinstall.is_empty()
-                {
-                    // `defer save.restore()` — `save()` returns an RAII guard that
-                    // restores the path length on Drop and derefs to the path.
-                    let mut save = folder_path.save();
-                    let _ = save.append(b"binding.gyp");
-
-                    bun_sys::exists(save.slice())
-                } else {
-                    false
-                };
-
-            return Ok(self.create_list(
-                lockfile,
-                lockfile.buffers.string_bytes.as_slice(),
-                folder_path,
-                folder_name,
-                resolution.tag,
-                add_node_gyp_rebuild_script,
-            ));
-        } else if !self.filled {
-            return self.create_from_package_json(
-                log,
-                lockfile,
-                folder_path,
-                folder_name,
-                resolution.tag,
-            );
+        if !self.has_any() && !self.filled {
+            let list = self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
+            // A `link:` dependency may point to a directory without a package.json.
+            if resolution.tag == ResolutionTag::Symlink
+                && matches!(list, Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)))
+            {
+                return Ok(None);
+            }
+            return list;
         }
 
-        Ok(None)
+        let add_node_gyp_rebuild_script =
+            trusted && self.wants_default_node_gyp(folder_path.slice(), None);
+
+        Ok(self.create_list(
+            lockfile.buffers.string_bytes.as_slice(),
+            folder_path,
+            folder_name,
+            resolution.tag,
+            add_node_gyp_rebuild_script,
+        ))
     }
 
-    pub fn fill_from_package_json(
+    /// Also returns the `gypfile` setting for `wants_default_node_gyp`.
+    pub(crate) fn fill_from_package_json(
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<bool, crate::Error> {
+        if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -350,13 +372,12 @@ impl Scripts {
         string_builder.allocate()?;
         self.parse_alloc(string_builder, json);
         self.filled = true;
-        Ok(())
+        Ok(gypfile_from_json(json))
     }
 
-    pub fn create_from_package_json(
+    pub(crate) fn create_from_package_json(
         &mut self,
         log: &mut bun_ast::Log,
-        lockfile: &Lockfile,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
@@ -365,21 +386,12 @@ impl Scripts {
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
         // auto-drop suffices; Lockfile has no `impl Drop`.
         let mut builder = tmp.string_builder();
-        self.fill_from_package_json(&mut builder, log, folder_path)?;
+        let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
-            let mut save = folder_path.save();
-            let _ = save.append(b"binding.gyp");
-
-            bun_sys::exists(save.slice())
-        } else {
-            false
-        };
+        let add_node_gyp_rebuild_script =
+            self.wants_default_node_gyp(folder_path.slice(), Some(gypfile));
 
         Ok(self.create_list(
-            lockfile,
             tmp.buffers.string_bytes.as_slice(),
             folder_path,
             folder_name,
@@ -389,12 +401,33 @@ impl Scripts {
     }
 }
 
+/// The `gypfile` property of a package.json. Only a literal `false` opts out.
+pub(crate) fn gypfile_from_json(json: Expr) -> bool {
+    json.get(b"gypfile").and_then(|value| value.as_bool()) != Some(false)
+}
+
+/// An unreadable package.json keeps the default script.
+fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
+    let Some(path) =
+        join_abs_string_buf_z_checked::<platform::Auto>(package_dir, buf, &[b"package.json"])
+    else {
+        return true;
+    };
+    let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
+        return true;
+    };
+    let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
+    let mut log = bun_ast::Log::init();
+    initialize_store();
+    bun_json::ParsedJson::parse_package_json(&json_src, &mut log)
+        .map_or(true, |parsed| gypfile_from_json(parsed.root))
+}
+
 // ─── Scripts.List ────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PrintFormat {
     Completed,
-    Info,
     Untrusted,
 }
 
@@ -405,11 +438,13 @@ pub enum PrintFormat {
 #[derive(Clone)]
 pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
-    pub first_index: u8,
+    pub(crate) first_index: u8,
     pub total: u8,
+    /// True if these aren't the project's or a workspace's own scripts.
+    pub(crate) is_dependency: bool,
     // Owned NUL-terminated heap string, not a borrow.
-    pub cwd: ZBox,
-    pub package_name: Box<[u8]>,
+    pub(crate) cwd: ZBox,
+    pub(crate) package_name: Box<[u8]>,
 }
 
 impl List {
@@ -419,21 +454,23 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
+        let resolution =
+            bun_core::fmt::for_terminal(resolution.fmt(resolution_buf, PathSep::Posix));
         let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
-                BStr::new(strings::without_trailing_slash(
+                escape_control_chars(strings::without_trailing_slash(
                     &self.cwd.as_bytes()[i + 1..]
                 )),
-                resolution.fmt(resolution_buf, PathSep::Posix),
+                resolution,
             );
         } else {
             bun_core::pretty!(
                 "<d>{s} @{f}<r>\n",
-                BStr::new(strings::without_trailing_slash(self.cwd.as_bytes())),
-                resolution.fmt(resolution_buf, PathSep::Posix),
+                escape_control_chars(strings::without_trailing_slash(self.cwd.as_bytes())),
+                resolution,
             );
         }
 
@@ -444,31 +481,21 @@ impl List {
                     PrintFormat::Completed => bun_core::pretty!(
                         " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
-                        BStr::new(script),
+                        escape_control_chars(script),
                     ),
                     PrintFormat::Untrusted => bun_core::pretty!(
                         " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
-                        BStr::new(script),
-                    ),
-                    PrintFormat::Info => bun_core::pretty!(
-                        " [{s}]<d>:<r> <cyan>{s}<r>\n",
-                        BStr::new(name),
-                        BStr::new(script),
+                        escape_control_chars(script),
                     ),
                 }
             }
         }
     }
 
-    pub fn first(&self) -> &[u8] {
-        debug_assert!(self.items[self.first_index as usize].is_some());
-        self.items[self.first_index as usize].as_ref().unwrap()
-    }
-
     // No manual deinit: `Box<[u8]>` fields drop automatically.
 
-    pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
+    pub(crate) fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {
             if let Some(script) = maybe_script {
                 bun_output::scoped_log!(

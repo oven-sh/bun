@@ -1031,7 +1031,7 @@ fn codegen_terminal(
                     None => StmtNodeList::EMPTY,
                 };
                 switch_cases.push(Case {
-                    loc: stmt_loc,
+                    loc: convert_loc(case.loc),
                     value: test,
                     body: consequent,
                 });
@@ -1126,6 +1126,8 @@ fn codegen_terminal(
             block,
             handler_binding,
             handler,
+            handler_loc,
+            handler_body_loc,
             loc,
             ..
         } => {
@@ -1146,10 +1148,10 @@ fn codegen_terminal(
                     body_loc: stmt_loc,
                     body: leak_stmts(try_block),
                     catch: Some(Catch {
-                        loc: stmt_loc,
+                        loc: convert_loc(*handler_loc),
                         binding: catch_param,
                         body: leak_stmts(handler_block),
-                        body_loc: stmt_loc,
+                        body_loc: convert_loc(*handler_body_loc),
                     }),
                     finally: None,
                 },

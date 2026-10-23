@@ -58,7 +58,9 @@ test.skipIf(isWindows)(
       await using proc = Bun.spawn({
         cmd: [bunExe(), "fixture.mjs"],
         cwd: String(dir),
-        env: bunEnv,
+        // A collection that marks under 2 MB is one pause now, so its end phase lands where it began. With the
+        // threshold at 0 every collection resumes the mutator while it marks, and ends at a later safepoint.
+        env: { ...bunEnv, BUN_JSC_minimumBytesMarkedForParallelMarking: "0" },
         stdio: ["ignore", "pipe", "pipe"],
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

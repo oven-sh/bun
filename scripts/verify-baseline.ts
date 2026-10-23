@@ -234,8 +234,11 @@ if (values["skip-emulation"]) {
   console.log("--- Skipping emulated runs (--skip-emulation)");
 } else {
   // Phase 1: SIMD code path verification
+  // The emulator is here for the instructions, not for the time. Under Intel SDE this file takes 20 s (0.06 s natively),
+  // and how long a test takes depends on which JIT tier its code is in by then: the first JPEG test takes 5 ms natively
+  // and 1.9 to 5.5 s here. So a test gets 30 s, not the 5 s of `bun test`.
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-  await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
+  await runTest("SIMD baseline tests", ["test", "--timeout", "30000", simdTestPath], { live: true });
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

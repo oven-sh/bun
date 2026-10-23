@@ -147,7 +147,9 @@ test.skipIf(isWindows)(
     async function run() {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "--experimental-vm-modules", "fixture.mjs"],
-        env: bunEnv,
+        // A collection that marks under 2 MB is one pause now, so its end phase lands where it began. With the
+        // threshold at 0 every collection resumes the mutator while it marks, and ends at a later safepoint.
+        env: { ...bunEnv, BUN_JSC_minimumBytesMarkedForParallelMarking: "0" },
         cwd: String(dir),
         stderr: "pipe",
         stdout: "pipe",
@@ -203,7 +205,8 @@ test.skipIf(isWindows)(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "--experimental-vm-modules", "stress.mjs"],
-      env: bunEnv,
+      // As above: the finalizer has to run at a later safepoint than the one where its collection began.
+      env: { ...bunEnv, BUN_JSC_minimumBytesMarkedForParallelMarking: "0" },
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",

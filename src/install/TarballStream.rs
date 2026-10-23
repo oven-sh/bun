@@ -637,7 +637,7 @@ impl Extraction {
         if self.want_first_dirname {
             self.want_first_dirname = false;
             // GitHub's first entry is the folder `repo-sha/`. A mirror's may be `repo-sha/file`.
-            let root = bun_archive::first_path_component(&pathname[..]);
+            let root = bun_archive::first_path_component(pathname);
             #[cfg(windows)]
             {
                 let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
@@ -679,7 +679,7 @@ impl Extraction {
         // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
         // NUL-terminated slice) so there is no need to reconstruct an
         // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..], self.npm_mode);
+        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname, self.npm_mode);
 
         let mut norm_buf = bun_paths::os_path_buffer_pool::get();
         if rest.len() >= norm_buf.len() {

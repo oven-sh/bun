@@ -96,7 +96,7 @@ fn run_async<A: FsArgument>(
     let cx = cx.js_thread();
     let global = cx.global();
     let (callback, arguments) = split_callback(global, args, arm)?;
-    let args = match parse_async_args::<A>(global, arguments)? {
+    let args = match parse_async_args::<A>(global, arguments, arm)? {
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
@@ -114,9 +114,11 @@ enum ParsedAsyncArgs<A> {
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     arguments: &[JSValue],
+    arm: AsyncArm,
 ) -> JsResult<ParsedAsyncArgs<A>> {
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, arguments);
+    slice.from_fs_promises = matches!(arm, AsyncArm::Promise);
     let args = A::from_js_async(global, &mut slice)?;
 
     if A::HAVE_ABORT_SIGNAL {
@@ -173,10 +175,13 @@ impl Binding {
         let cx = cx.js_thread();
         let global = cx.global();
         let arguments = JsLocal::to_js_slice(args);
-        let cp_args = match parse_async_args::<args::Cp<'static>>(global, arguments)? {
-            ParsedAsyncArgs::Args(args) => args,
-            ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
-        };
+        let cp_args =
+            match parse_async_args::<args::Cp<'static>>(global, arguments, AsyncArm::Promise)? {
+                ParsedAsyncArgs::Args(args) => args,
+                ParsedAsyncArgs::Rejected(error) => {
+                    return reject_before_schedule(global, None, error);
+                }
+            };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
     }
@@ -220,7 +225,7 @@ impl Binding {
         let cx = cx.js_thread();
         let global = cx.global();
         let (callback, arguments) = split_callback(global, args, arm)?;
-        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
+        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments, arm)? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
                 return reject_before_schedule(global, callback, error);

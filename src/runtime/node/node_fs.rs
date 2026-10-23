@@ -3362,6 +3362,11 @@ pub(crate) mod args {
         Ok(default)
     }
 
+    /// The one option value `JSValue::get_truthy` drops besides undefined and null.
+    fn is_empty_string(value: JSValue) -> bool {
+        value.is_string() && !value.to_boolean()
+    }
+
     /// Consume the next positional argument as a Node.js fs `encoding` option.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
@@ -4243,9 +4248,7 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
-                    }
+                    let flag_value = arg.get(ctx, "flag")?;
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4256,6 +4259,19 @@ pub(crate) mod args {
                                 b"AbortSignal",
                                 value,
                             ));
+                        }
+                    }
+                    if let Some(flag_) = flag_value {
+                        // Node checks the signal first, and an aborted async call never converts the flag: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L449-L452
+                        let aborted = arguments.will_be_async
+                            && abort_signal.as_ref().is_some_and(|signal| signal.aborted());
+                        // `''` stays the default for fs.promises.readFile (`options.flag || 'r'`), for an fd (Node converts its flag only in the sync UTF-8 fast path), and for the `cb` that `fs.readFile(path, cb)` passes as the options.
+                        let is_default = is_empty_string(flag_)
+                            && (arguments.from_fs_promises
+                                || matches!(path, PathOrFileDescriptor::Fd(_))
+                                || arg.is_callable());
+                        if !aborted && !is_default {
+                            flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                         }
                     }
                 }
@@ -4341,9 +4357,11 @@ pub(crate) mod args {
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
-                    if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
+                    // `fs.writeFile(path, data, cb)` passes `cb` as the options, and Node gives a function the default mode.
+                    let mode_value = match arg.get(ctx, "mode")? {
+                        Some(mode_) if is_empty_string(mode_) && arg.is_callable() => None,
+                        mode_value => mode_value,
+                    };
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4356,6 +4374,11 @@ pub(crate) mod args {
                             ));
                         }
                     }
+                    // Node's appendFile parses the mode before writeFile checks flush: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L3081
+                    let is_append = default_flag == FileSystemFlags::A;
+                    if is_append && let Some(mode_) = mode_value {
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                    }
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
@@ -4364,6 +4387,9 @@ pub(crate) mod args {
                                 ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
                             );
                         }
+                    }
+                    if !is_append && let Some(mode_) = mode_value {
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                 }
             }

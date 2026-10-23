@@ -56,7 +56,7 @@ describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
 
     it("server.close() inside 'connection', then listen", async () => {
       const { promise, resolve, reject } = Promise.withResolvers<string>();
-      const server = createServer(socket => {
+      await using server = createServer(socket => {
         socket.on("error", () => {});
         socket.destroy();
         const port = (server.address() as any).port;
@@ -76,7 +76,7 @@ describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
     it("dgram close() inside 'message', then bind", async () => {
       const type = host.includes(":") ? "udp6" : "udp4";
       const { promise, resolve, reject } = Promise.withResolvers<string>();
-      const socket = dgram.createSocket(type);
+      await using socket = dgram.createSocket(type);
       socket.once("error", reject);
       socket.once("message", () => {
         const port = socket.address().port;
@@ -86,9 +86,9 @@ describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
         probe.bind(port, host, () => probe.close(() => resolve("bound")));
       });
       await once(socket.bind(0, host), "listening");
-      const sender = dgram.createSocket(type);
+      await using sender = dgram.createSocket(type);
       sender.once("error", reject);
-      sender.send("x", socket.address().port, host, error => (error ? reject(error) : sender.close()));
+      sender.send("x", socket.address().port, host, error => error && reject(error));
       expect(await promise).toBe("bound");
     });
   },

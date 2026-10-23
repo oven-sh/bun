@@ -1386,10 +1386,7 @@ impl<'a> Parser<'a> {
                     let symbol = &p.symbols[ns_ref.inner_index() as usize];
                     // `must_not_be_renamed` / `contains_direct_eval` cover
                     // direct `eval()` (or `with`) in scope, which can read the
-                    // namespace by name without a tracked property access. A
-                    // linked symbol was merged with another declaration (a
-                    // hoisted `var`, a parameter), so its own use count says
-                    // nothing.
+                    // namespace by name without a tracked property access.
                     let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
                     // A source-visible local escapes when it has uses nobody
                     // accounted for; the synthetic per-`import()` ref (never
@@ -1399,7 +1396,6 @@ impl<'a> Parser<'a> {
                     } else {
                         tracked == 0
                     }) || symbol.must_not_be_renamed()
-                        || symbol.has_link()
                         || scope.is_some_and(|s| s.contains_direct_eval)
                         || p.dynamic_import_escaped_records
                             .contains_key(&import_record_id)
@@ -1428,7 +1424,7 @@ impl<'a> Parser<'a> {
                     if local.is_valid() {
                         let symbol = &p.symbols[local.inner_index() as usize];
                         if symbol.use_count_estimate == 0
-                            && !symbol.has_link()
+                            && !symbol.shares_variable()
                             && !symbol.must_not_be_renamed()
                         {
                             continue;
@@ -1443,20 +1439,15 @@ impl<'a> Parser<'a> {
                         .is_some_and(|record| crate::p::is_require_marker(record, key));
                     // A read off `ns` (an item already), or a local a pattern
                     // binds. Assigning to either, or reaching the local through
-                    // a hoisting merge or a direct `eval`, keeps the read as
-                    // written.
+                    // a direct `eval`, keeps the read as written.
                     let is_item = local.is_valid()
                         && !is_require_marker
                         && (p.is_import_item.contains_key(&local)
                             || p.dynamic_import_destructured_locals.contains_key(&local))
                         && !p.symbols[ns_ref.inner_index() as usize].has_been_assigned_to()
-                        && p.dynamic_import_namespace_locals
-                            .get(&ns_ref)
-                            .is_none_or(|records| records.len() == 1)
                         && {
                             let symbol = &p.symbols[local.inner_index() as usize];
                             !symbol.has_been_assigned_to()
-                                && !symbol.has_link()
                                 && !symbol.must_not_be_renamed()
                                 && !p.named_imports.contains(&local)
                         };

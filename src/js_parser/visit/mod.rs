@@ -454,7 +454,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 self.note_tracked_namespace_use(namespace_ref);
                                 // Another `var` declaration is the same variable.
-                                if kind != LocalKind::KVar && !is_export {
+                                // A pattern off a local binds only where `ns.a` would.
+                                if kind != LocalKind::KVar
+                                    && !is_export
+                                    && (matches!(val.data, ExprData::EAwait(_))
+                                        || self
+                                            .namespace_local_item_record(namespace_ref)
+                                            .is_some())
+                                {
                                     self.note_destructured_locals(obj.properties());
                                 }
                             }

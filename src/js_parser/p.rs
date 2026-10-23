@@ -331,7 +331,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// `const x = require()` locals in `maybe_rewrite_property_access`.
     pub(crate) dynamic_import_namespace_locals: HashMap<Ref, Vec<u32>>,
     /// Import records whose namespace is known to escape regardless of use
-    /// counts (one local bound to two records).
+    /// counts (one local bound to two records, a local another declaration shares).
     pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
     /// Import records with a use the printer can't rewrite to a direct read
     /// of an export, so the linker must keep the namespace object.
@@ -1144,9 +1144,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The import record `ns.name` reads an export of, when `ns` holds that one
-    /// module's namespace, so the read can become an import item.
-    pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
+    /// The record whose namespace `ns` is. A `{...rest}` copy is its own object, and a conditional local may be null.
+    pub(crate) fn namespace_local_item_record(&self, ns: Ref) -> Option<u32> {
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
             || self.dynamic_import_copied_locals.contains_key(&ns)
@@ -1156,9 +1155,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let &[record] = self.dynamic_import_namespace_locals.get(&ns)?.as_slice() else {
             return None;
         };
-        if self.dynamic_import_needs_object.contains_key(&record)
-            || is_require_marker(&self.import_records.items()[record as usize], name)
-        {
+        if self.dynamic_import_needs_object.contains_key(&record) {
+            return None;
+        }
+        Some(record)
+    }
+
+    /// The import record `ns.name` reads an export of, when `ns` holds that one
+    /// module's namespace, so the read can become an import item.
+    pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
+        let record = self.namespace_local_item_record(ns)?;
+        if is_require_marker(&self.import_records.items()[record as usize], name) {
             return None;
         }
         // A destructure of `ns` already holds the name with its own local.
@@ -1171,7 +1178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `const { a, b: c } = …` or `.then(({ a }) => …)`: the locals may become
     /// import items. One already read (before its declaration, or from a
     /// function above it) stays a local, since that read must not see the
-    /// export.
+    /// export. So does one that another declaration shares.
     pub(crate) fn note_destructured_locals(&mut self, properties: &[bun_ast::B::Property]) {
         // The dev server does not link, so nothing would bind them. A bound
         // name leaves the pattern, and `...rest` would then collect it.
@@ -1188,7 +1195,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let bun_ast::binding::Data::BIdentifier(id) = prop.value.data
                 && prop.default_value.is_none()
                 && !prop.flags.contains(bun_ast::flags::Property::IsSpread)
-                && self.symbols[id.r#ref.inner_index() as usize].use_count_estimate == 0
+                && {
+                    let symbol = &self.symbols[id.r#ref.inner_index() as usize];
+                    symbol.use_count_estimate == 0 && !symbol.shares_variable()
+                }
             {
                 self.dynamic_import_destructured_locals.insert(id.r#ref, ());
             }
@@ -1216,9 +1226,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         records: &[u32],
     ) {
         // One local re-bound to another namespace later (`var {..., ...r} = `
-        // twice, or an unwrap-cjs require local): accesses can't be
-        // attributed, all escape.
-        if self.import_items_for_namespace.contains_key(&local) {
+        // twice, or an unwrap-cjs require local), or one that another
+        // declaration shares (`.then(ns => { { var ns; } })`): accesses can't
+        // be attributed, all escape.
+        if self.import_items_for_namespace.contains_key(&local)
+            || self.symbols[local.inner_index() as usize].shares_variable()
+        {
             if let Some(others) = self.dynamic_import_namespace_locals.get(&local) {
                 for r in others.clone() {
                     self.dynamic_import_escaped_records.insert(r, ());
@@ -3585,6 +3598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                self.symbols[existing_idx].set_has_redeclaration(true);
                                 if self.symbols[symbol_idx].must_not_be_renamed() {
                                     self.set_must_not_be_renamed_through_links(
                                         member_in_scope.ref_,
@@ -5080,6 +5094,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[symbol_idx].link.set(ref_);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
+                    // An import that TypeScript lets a local replace is a type. It has no value to share.
+                    if existing_kind != js_ast::symbol::Kind::Import {
+                        self.symbols[ref_.inner_index() as usize].set_has_redeclaration(true);
+                    }
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);

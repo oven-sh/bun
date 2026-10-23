@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1235,4 +1235,296 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // The named exports of `format: "cjs"`, `target: "node"` output, as Node's ESM
+  // loader sees them
+  //
+  // Node takes the named exports of a CommonJS file from a scan of its text,
+  // made before it runs the file. The output names them in a statement that
+  // never runs: `0 && (module.exports = { add: null, version: null });`.
+  // Bun's runtime does not need that statement, so the importers run in Node.
+  // ============================================================================
+
+  // Prints the names Node's ESM loader gives for `file`, and the names that
+  // `require(file)` has at run time.
+  const logExportNames = (file: string) => /* js */ `
+    import { createRequire } from "node:module";
+    import * as star from "${file}";
+    const names = ns => Object.keys(ns).filter(key => key !== "default" && key !== "module.exports").sort();
+    const dynamic = await import("${file}");
+    const required = createRequire(import.meta.url)("${file}");
+    console.log(JSON.stringify({ star: names(star), dynamic: names(dynamic), required: names(required) }));
+  `;
+  const sameExportNames = (...names: string[]) => JSON.stringify({ star: names, dynamic: names, required: names });
+  // Prints only the names Node's ESM loader gives for each file.
+  const logScannedNames = (...files: string[]) => /* js */ `
+    const names = ns => Object.keys(ns).filter(key => key !== "default" && key !== "module.exports").sort();
+    console.log(JSON.stringify([${files.map(file => `names(await import("${file}"))`).join(", ")}]));
+  `;
+
+  for (const backend of ["cli", "api"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`cjs/NodeReadsExportNames_${backend}${minify ? "_minify" : ""}`, {
+        files: {
+          "/entry.mjs": /* js */ `
+            export function add(a, b) { return a + b; }
+            export const version = "1.2.3";
+            export default "the default";
+          `,
+        },
+        runtimeFiles: {
+          "/named.mjs": /* js */ `
+            import lib, { add, version } from "./out.cjs";
+            console.log(add(1, 2), version, lib.default);
+          `,
+          "/names.mjs": logExportNames("./out.cjs"),
+        },
+        outfile: "/out.cjs",
+        format: "cjs",
+        target: "node",
+        backend,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        minifyIdentifiers: minify,
+        run: [
+          { file: "/named.mjs", runtime: "node", stdout: "3 1.2.3 the default" },
+          { file: "/names.mjs", runtime: "node", stdout: sameExportNames("add", "version") },
+        ],
+      });
+    }
+  }
+
+  // Every name is written as `name: null`, as a JSON string unless it is an
+  // ASCII identifier, and not as the shorthand `{ add, version }` that esbuild
+  // writes. merve 1.0 (Node 24.14, 25.6 to 25.8) stops at a shorthand `get`,
+  // cjs-module-lexer stops at a bare identifier newer than its Unicode tables,
+  // and Bun's own loader rejects a shorthand `await`, so Bun loads the file
+  // here too.
+  itBundled("cjs/NodeReadsExportNamesThatAreNotPlainIdentifiers", {
+    files: {
+      "/entry.mjs": /* js */ `
+        "use strict";
+        const x = 1;
+        export { x as class, x as let, x as static, x as await, x as get, x as "c-d", x as ünï, x as plain, x as "a\\"b\\\\c" };
+      `,
+    },
+    runtimeFiles: {
+      "/names.mjs": logExportNames("./out.cjs"),
+    },
+    outfile: "/out.cjs",
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.cjs")).toEndWith(
+        `0 && (module.exports = { "a\\"b\\\\c": null, await: null, "c-d": null, class: null, get: null, let: null, plain: null, static: null, "ünï": null });\n`,
+      );
+    },
+    run: ["node", "bun"].map(runtime => ({
+      file: "/names.mjs",
+      runtime: runtime as "node" | "bun",
+      stdout: sameExportNames('a"b\\c', "await", "c-d", "class", "get", "let", "plain", "static", "ünï"),
+    })),
+  });
+
+  // An entry point that something require()s gets an ESM wrapper, and the end
+  // of the file calls that wrapper. The names follow the call.
+  for (const minify of [false, true]) {
+    itBundled(`cjs/NodeReadsExportNamesOfWrappedEntry${minify ? "_minify" : ""}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          export const value = [1, 2, 3].map(n => n * 2);
+          export function self() { return require("./entry.mjs"); }
+        `,
+      },
+      runtimeFiles: {
+        "/names.mjs": logExportNames("./out.cjs"),
+      },
+      outfile: "/out.cjs",
+      format: "cjs",
+      target: "node",
+      minifyWhitespace: minify,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.cjs")).toEndWith(
+          minify
+            ? `init_entry();0&&(module.exports={self:null,value:null});\n`
+            : `init_entry();\n// Annotate the CommonJS export names for ESM import in node:\n0 && (module.exports = { self: null, value: null });\n`,
+        );
+      },
+      run: { file: "/names.mjs", runtime: "node", stdout: sameExportNames("self", "value") },
+    });
+  }
+
+  // The file of one entry point can print in the output of another. Each output
+  // names the exports of its own entry point only.
+  itBundled("cjs/NodeReadsExportNamesOfEachEntryPoint", {
+    files: {
+      "/a.ts": `import { b } from "./b.ts"; export const a = b + 1;`,
+      "/b.ts": `export const b = 1; export const other = 2;`,
+    },
+    runtimeFiles: {
+      "/names.mjs": logScannedNames("./out/a.js", "./out/b.js"),
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    target: "node",
+    run: { file: "/names.mjs", runtime: "node", stdout: `[["a"],["b","other"]]` },
+  });
+
+  // `export * from "ext"` of an external is `...require("ext")` in the
+  // statement. Node then scans that file for its names.
+  const externalStarFiles = {
+    "/node_modules/ext/index.js": `exports.fromExt = 1;`,
+    "/node_modules/ext2/index.js": `exports.fromExt2 = 2;`,
+    "/names.mjs": logExportNames("./out.cjs"),
+  };
+  itBundled("cjs/NodeReadsExportNamesThroughExternalExportStar", {
+    files: {
+      "/entry.mjs": `export * from "ext"; export * from "ext2"; export const own = 1;`,
+    },
+    runtimeFiles: externalStarFiles,
+    external: ["ext", "ext2"],
+    outfile: "/out.cjs",
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.cjs")).toEndWith(
+        `0 && (module.exports = { own: null, ...require("ext"), ...require("ext2") });\n`,
+      );
+    },
+    run: { file: "/names.mjs", runtime: "node", stdout: sameExportNames("fromExt", "fromExt2", "own") },
+  });
+  for (const minify of [false, true]) {
+    itBundled(`cjs/NodeReadsExportNamesThroughExternalExportStarOnly${minify ? "_minify" : ""}`, {
+      files: {
+        "/entry.mjs": `export * from "ext"; export * from "ext2"; export default 5;`,
+      },
+      runtimeFiles: externalStarFiles,
+      external: ["ext", "ext2"],
+      outfile: "/out.cjs",
+      format: "cjs",
+      target: "node",
+      minifyWhitespace: minify,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.cjs")).toEndWith(
+          minify
+            ? `0&&(module.exports={...require("ext"),...require("ext2")});\n`
+            : `0 && (module.exports = { ...require("ext"), ...require("ext2") });\n`,
+        );
+      },
+      run: { file: "/names.mjs", runtime: "node", stdout: sameExportNames("fromExt", "fromExt2") },
+    });
+  }
+  // The specifier is a JSON string too.
+  itBundled("cjs/ExportNamesStatementQuotesSpecifier", {
+    files: {
+      "/entry.mjs": `export * from 'we"ird'; export const own = 1;`,
+    },
+    external: ['we"ird'],
+    backend: "api",
+    outfile: "/out.cjs",
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.cjs")).toEndWith(`0 && (module.exports = { own: null, ...require("we\\"ird") });\n`);
+    },
+  });
+  // Each output has its own statement, also when the build bundles nothing.
+  itBundled("cjs/ExportNamesStatementOfEachEntryPointWithAllExternal", {
+    files: {
+      "/a.ts": `export * from "pkg-a"; export * from "pkg-b"; export const a = 1;`,
+      "/b.ts": `export * from "pkg-b";`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    external: ["*"],
+    treeShaking: false,
+    backend: "api",
+    outdir: "/out",
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toEndWith(
+        `0 && (module.exports = { a: null, ...require("pkg-a"), ...require("pkg-b") });\n`,
+      );
+      expect(api.readFile("/out/b.js")).toEndWith(`0 && (module.exports = { ...require("pkg-b") });\n`);
+    },
+  });
+
+  // The names that `export *` of a bundled CommonJS file adds are only known at
+  // run time. The statement names the rest.
+  itBundled("cjs/NodeReadsOwnExportNamesNextToBundledCommonJSExportStar", {
+    files: {
+      "/entry.mjs": `export * from "./dep.cjs"; export const own = 1;`,
+      "/dep.cjs": `exports.fromDep = 1;`,
+    },
+    runtimeFiles: {
+      "/names.mjs": logScannedNames("./out.cjs"),
+    },
+    outfile: "/out.cjs",
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.cjs");
+      expect(out).toContain("__reExport(exports_entry, ");
+      expect(out).toEndWith(`0 && (module.exports = { own: null });\n`);
+    },
+    run: { file: "/names.mjs", runtime: "node", stdout: `[["own"]]` },
+  });
+
+  // Node adds the names `default` and `module.exports` itself. Node 23.0 to 23.9
+  // aborts when the scan gives it a second `module.exports`.
+  itBundled("cjs/ExportNamesStatementLeavesOutModuleExports", {
+    files: {
+      "/entry.mjs": `export * from "./dep.mjs"; export const own = 1;`,
+      "/dep.mjs": `const P = 1; export { P as "module.exports", P as depName };`,
+    },
+    runtimeFiles: {
+      "/names.mjs": logScannedNames("./out.cjs"),
+    },
+    outfile: "/out.cjs",
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.cjs")).toEndWith(`0 && (module.exports = { depName: null, own: null });\n`);
+    },
+    run: { file: "/names.mjs", runtime: "node", stdout: `[["depName","own"]]` },
+  });
+
+  // No statement when there is nothing to name, and none for another target.
+  for (const [name, options] of Object.entries({
+    DefaultOnly: { files: { "/entry.mjs": `export default function f() { return 1; }` } },
+    ModuleExportsOnly: { files: { "/entry.mjs": `const f = 1; export default f; export { f as "module.exports" };` } },
+    NoExports: { files: { "/entry.mjs": `console.log("side effect");` } },
+    CommonJSEntry: { files: { "/entry.cjs": `exports.a = 1; module.exports.b = 2;` } },
+    TargetBrowser: { files: { "/entry.mjs": `export const a = 1;` }, target: "browser" },
+  } as const)) {
+    itBundled(`cjs/NoExportNamesStatement_${name}`, {
+      outfile: "/out.cjs",
+      format: "cjs",
+      target: "node",
+      ...options,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.cjs")).not.toContain("0 && (module.exports");
+      },
+    });
+  }
+
+  // Node cannot load a chunk that has the `@bun-cjs` wrapper, so that chunk
+  // gets no statement. A chunk for Node without the wrapper gets one.
+  for (const [name, options] of Object.entries({
+    TargetBun: { target: "bun" },
+    BunHashbang: { target: "node", files: { "/entry.mjs": `#!/usr/bin/env bun\nexport const a = 1;` } },
+  } as const)) {
+    itBundled(`cjs/ExportNamesStatementOnlyWithoutBunWrapper_${name}`, {
+      files: { "/entry.mjs": `export const a = 1;` },
+      outfile: "/out.cjs",
+      format: "cjs",
+      ...options,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.cjs");
+        expect(out.includes("0 && (module.exports")).toBe(!out.includes("// @bun @bun-cjs"));
+      },
+    });
+  }
 });

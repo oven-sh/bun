@@ -3190,6 +3190,18 @@ describe("flags", () => {
     });
   });
 
+  it.concurrent("rejects two CA stores, also when there is nothing to install", async () => {
+    using box = sandbox();
+    addLocalBin(box.cwd, "local-tool", `console.log("local");`);
+
+    expect(await box.run(["--use-openssl-ca", "--use-bundled-ca", "local-tool"])).toEqual({
+      stdout: "",
+      stderr: "error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n",
+      exitCode: 1,
+      requests: [],
+    });
+  });
+
   it.concurrent.each(["--no", "--no-yes", "--yes=false", "--yes false", "-n", "--offline"])(
     "npm's %s means --no-install",
     async flag => {

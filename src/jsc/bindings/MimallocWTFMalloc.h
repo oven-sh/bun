@@ -68,13 +68,6 @@ struct MimallocMalloc {
 #endif
     }
 
-    static void* alignedMalloc(std::size_t size, std::size_t alignment)
-    {
-        void* result = tryAlignedMalloc(size, alignment);
-        if (!result) CRASH();
-        return result;
-    }
-
     static void* tryAlignedMalloc(std::size_t size, std::size_t alignment)
     {
         ASSERT(alignment > 0);

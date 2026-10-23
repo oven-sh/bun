@@ -15,6 +15,7 @@ const programs = [
   "type-rules/loop-bounds-that-arrive-boxed.ts",
   "structural-types/typed-arrays-are-read-past-their-end-into-an-int32.ts",
   "typed-objects/null-checks-of-narrow-references.ts",
+  "language/a-shift-of-32-bits-is-no-part-of-a-64-bit-sum.ts",
   "language/a-value-of-32-bits-feeds-a-phi-of-64-bits-in-the-same-frame-slot.ts",
   "language/equalities-joined-by-or-and-switches-within-64-values.ts",
   "language/int32-read-once-used-variously.ts",

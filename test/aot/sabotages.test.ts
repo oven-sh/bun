@@ -10,7 +10,7 @@
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
 import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isGlibc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isGlibc, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { registry } from "./harness/registry";
 import { built, slot, spawned, told, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
@@ -41,7 +41,8 @@ const rooms = (...programs: string[]): Row => ({
 // A program notices an inner cell that kept its header only through a word that an earlier frame left on the stack. Which words are left hangs on the
 // frames of Bun and of the system's libraries and on the registers the architecture saves: the programs below have shown it in every run of a Bun linked with LTO
 // for glibc on x64, as CI links it, and nowhere else: not in a Bun for the same machine without LTO either.
-const leavesStaleWordsOnTheStack = isGlibc && !isArm64;
+// With AddressSanitizer every other cell is never allocated, and nothing comes to lie where the cell that was let go lay.
+const leavesStaleWordsOnTheStack = isGlibc && !isArm64 && !isASAN;
 
 /** The programs under ./programs that must notice each sabotage. */
 const noticedBy: Record<string, Row> = {

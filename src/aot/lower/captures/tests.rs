@@ -7,7 +7,9 @@ use super::{
     Capture, CaptureInput, CapturePlan, CapturedBinding, compute_captures, is_initialized_before,
     max_captures,
 };
-use crate::compile::testing::lower_program_with_limits;
+use crate::compile::testing::{
+    default_settings, lower_and_link_program, lower_program_with_limits,
+};
 use crate::ir::FunctionKey;
 use crate::ir::generated::LayoutKind;
 use crate::lower::scope::{
@@ -718,4 +720,26 @@ fn copies_of_too_many_scopes_come_in_one_object_too() {
     let (captures, fields) = lower_nested_functions(&read(max_captures() + 3));
     assert_eq!(captures, max_captures());
     assert_eq!(fields, max_captures() + 2);
+}
+
+#[test]
+fn function_that_is_left_out_copies_a_constant_that_is_left_out_with_it() {
+    let files = [
+        (
+            "main.cjs",
+            "const k = require('./k.cjs'); console.log(k.read());",
+        ),
+        (
+            "k.cjs",
+            "'use strict';\n\
+            class OnlyMadeInUnread {}\n\
+            function choose() { return Object; }\n\
+            class Unread extends choose() { make() { return new OnlyMadeInUnread(); } }\n\
+            exports.Unread = Unread;\n\
+            exports.read = () => 1;",
+        ),
+    ];
+    let settings = default_settings();
+    let entry_count = lower_and_link_program(&files, &settings, |program, _| program.entries.len());
+    assert_eq!(entry_count, 1);
 }

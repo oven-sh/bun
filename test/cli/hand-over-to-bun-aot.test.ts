@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, copyFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // `bun` is built without the ahead-of-time compiler and `bun-aot` with it. The API does not hand over, so it tells them apart.
@@ -82,3 +82,66 @@ test("a Bun without the compiler that finds no bun-aot and cannot fetch one says
     expect(stderr).toContain("ahead-of-time compilation runs in ");
   }
 });
+
+// Every way to ask for the compiler. bunEnv forbids the download, so this is what the rest of the tests meet in a Bun without it.
+test.skipIf(await hasCompiler())(
+  "a Bun without the compiler that finds no bun-aot and may not fetch one says that it has none",
+  async () => {
+    using dir = tempDir("hand-over-nothing-to-fetch", {
+      "hello.ts": "console.log(1);\n",
+      "hello.test.ts": 'import { test } from "bun:test";\ntest("runs", () => {});\n',
+      "build.ts": 'await Bun.build({ entrypoints: ["hello.ts"], compile: { outfile: "hello", aot: true } });\n',
+    });
+    const bun = join(String(dir), isWindows ? "bun.exe" : "bun");
+    copyFileSync(bunExe(), bun);
+    chmodSync(bun, 0o755);
+    const files = readdirSync(String(dir)).sort();
+    let requests = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        requests++;
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    for (const [subject, ...command] of [
+      ["ahead-of-time compilation", "compile", "hello.ts"],
+      ["--aot", "build", "--compile", "--aot", "hello.ts"],
+      ["--aot", "run", "--aot", "hello.ts"],
+      ["--aot", "test", "--aot"],
+      ["--aot", "check", "--aot", "hello.ts"],
+      ["compile.aot", "build.ts"],
+    ]) {
+      await using proc = Bun.spawn({
+        cmd: [bun, ...command],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          BUN_AOT_DISABLE_DOWNLOAD: "1",
+          BUN_COMPILE_TARGET_TARBALL_URL: new URL("bun-aot.tgz", server.url).href,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        command: command.join(" "),
+        stdout: stdout.replace(/^bun test v.*\n/, ""),
+        said: stderr.split("\n", 1)[0],
+        exitCode,
+        signal: proc.signalCode,
+        stderr: exitCode === 1 ? "" : stderr,
+      }).toEqual({
+        command: command.join(" "),
+        stdout: "",
+        said: `error: ${subject} isn't available in this build of Bun`,
+        exitCode: 1,
+        signal: null,
+        stderr: "",
+      });
+    }
+    expect({ requests, files: readdirSync(String(dir)).sort() }).toEqual({ requests: 0, files });
+  },
+);

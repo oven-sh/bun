@@ -8,6 +8,8 @@
 //   typed-object-mutations the same in TypeScript that the checker accepts: the object is looked at through a reference of a declared type (typed-object-mutations.ts)
 //   changing-buffers a typed array, a DataView or a Buffer whose memory is detached, shrinks, grows or moves while something reads or writes through it (changing-buffers.ts)
 //   many-live-values functions with much control flow and many values of several kinds alive at once (many-live-values.ts)
+//   a-throw-at-every-call the same, and each function runs again while its first, second, third .. call that the compiler cannot look through throws (a-throw-at-every-call.ts)
+//   values-across-joins values of every width and kind that many paths hand on to one place, behind calls, throws and waits (values-across-joins.ts)
 //   unsound-types a hole of TypeScript's type system that needs no cast, a type, a value that arrives, a place, a time and uses, drawn at random (unsound-types.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -100,8 +102,8 @@ const generated =
   (seed, bed) => {
     const random = new Random(seed);
     if (source === "many-of-one-thing" && bed.name !== "product") return;
-    if ((source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || source === "many-live-values") && bed.name !== "product") return;
-    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || source === "many-live-values" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
+    if ((source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || source === "many-live-values" || source === "a-throw-at-every-call" || source === "values-across-joins") && bed.name !== "product") return;
+    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || source === "many-live-values" || source === "a-throw-at-every-call" || source === "values-across-joins" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
     const program: Program = { text: generate(random, typed, { library: bed.name === "product" }), extension: typed ? "ts" : "js" };
     return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
   };
@@ -119,6 +121,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       return { source: "unsound-types", seed, text, extension: "ts", notes: parts.map(each => each.join(", ")).join(" | "), group: hole, alone, isForTypeScript: true };
     };
   }
-  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values", "a-throw-at-every-call", "values-across-joins"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

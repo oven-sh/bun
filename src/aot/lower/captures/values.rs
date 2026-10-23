@@ -107,7 +107,7 @@ pub(in crate::lower) fn capture_positions(
 
 fn list_positions(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Vec<DeclaredType> {
     let captures: CaptureList = SmallVec::from_slice(file.scopes.captures(key));
-    let is_left_out = matches!(key, FunctionKey::Source(source) if file.inputs.library_functions.is_left_out(source));
+    let is_left_out = is_left_out(file, key);
     let positions = captures.into_iter().map(|capture| match capture {
         Capture::Environment(scope) => {
             let layout = scope::environment_layout(file, scope);
@@ -133,7 +133,7 @@ pub(in crate::lower) fn collect_capture_values(
             Capture::Value(binding) if is_entry_capture(lowering.file, key, binding) => {
                 home.expect("a method that uses super is created with its home object")
             }
-            Capture::Value(binding) => get_copied_value(lowering, binding),
+            Capture::Value(binding) => get_copied_value(lowering, key, binding),
         });
     }
     let Some(layout) = find_pack_layout(lowering.file, key) else {
@@ -180,13 +180,19 @@ fn is_entry_capture(
     }
 }
 
+fn is_left_out(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> bool {
+    matches!(key, FunctionKey::Source(source) if file.inputs.library_functions.is_left_out(source))
+}
+
 fn get_copied_value(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    key: FunctionKey,
     binding: BindingRef,
 ) -> ValueId {
     let local = lowering.scopes.find_local(binding);
     debug_assert!(
-        local.is_none_or(|local| local.dead_zone != DeadZone::Uninitialized),
+        is_left_out(lowering.file, key)
+            || local.is_none_or(|local| local.dead_zone != DeadZone::Uninitialized),
         "a copied binding is initialized before the closure is created"
     );
     let copy = find_captured_value(lowering, Capture::Value(binding));

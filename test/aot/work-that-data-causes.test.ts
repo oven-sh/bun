@@ -2,7 +2,7 @@
 // Each form of work-that-data-causes/forms.js and typed-forms.ts runs on the same input compiled and in plain Bun. What is judged is the ratio of the two times and how the
 // compiled time grows with the input, never seconds: a table that such data fills must not make the work quadratic.
 import { afterAll, expect } from "bun:test";
-import { bunExe, isLinux, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
@@ -22,10 +22,11 @@ const many = 30_000;
 // Below this many milliseconds a time says more about the machine than about the work.
 const floor = 40;
 
-describe("compile/aot/work that data causes", () => {
+// A ratio of times says nothing where every load and store is checked.
+describe.skipIf(isASAN || isDebug)("compile/aot/work that data causes", () => {
   const dir = tempDir("aot-work-that-data-causes", {});
   const cwd = String(dir);
-  const compiled = (source: string) => join(cwd, source.replace(/\.\w+$/, ""));
+  const compiled = (source: string) => join(cwd, source.replace(/\.\w+$/, isWindows ? ".exe" : ""));
   afterAll(() => dir[Symbol.dispose]());
 
   beforeAll(async () => {

@@ -9,15 +9,19 @@ if (isMainThread) {
   for (let round = 0; round < 2; round++) {
     const worker = new Worker(new URL(import.meta.url), { env: SHARE_ENV });
     console.log(process.env === before[0], Bun.env === before[1], process.env === Bun.env, read());
+    worker.postMessage("go");
     const said = await new Promise(resolve => worker.once("message", resolve));
     await new Promise(resolve => worker.once("exit", resolve));
     console.log(said, read());
     process.env.SHARED = "main again";
   }
   const own = new Worker(new URL(import.meta.url), { env: { SHARED: "its own" } });
+  own.postMessage("go");
   console.log(await new Promise(resolve => own.once("message", resolve)), read());
 } else {
-  const found = read();
-  process.env.SHARED = "worker";
-  parentPort!.postMessage(found + " > " + read());
+  parentPort!.once("message", () => {
+    const found = read();
+    process.env.SHARED = "worker";
+    parentPort!.postMessage(found + " > " + read());
+  });
 }

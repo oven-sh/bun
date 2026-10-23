@@ -8,7 +8,10 @@ import { built, slot, spawned, told, unsupported } from "./run-programs";
 const host = join(import.meta.dir, "typed-packages", "react-reconciler-host");
 const typedVersion = join(host, "typed-bundle");
 const typedFile = "node_modules/react-reconciler/cjs/react-reconciler.production.ts";
-const typedModulePath = isWindows ? "B:\\~BUN\\root\\" + typedFile.replaceAll("/", "\\") : "/$bunfs/root/" + typedFile;
+// As the map file has it, where a backslash is written twice.
+const typedModulePath = isWindows
+  ? "B:\\\\~BUN\\\\root\\\\" + typedFile.replaceAll("/", "\\\\")
+  : "/$bunfs/root/" + typedFile;
 const flags = ["--define", `process.env.NODE_ENV="production"`, "--outfile", "app"];
 
 describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {

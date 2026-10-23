@@ -62,7 +62,7 @@ export function functionsOf(map: string): CompiledFunction[] {
   for (const line of map.split("\n")) {
     const fields = line.split("\t");
     if (fields[0] === "F") {
-      const isApplication = fields[10].startsWith("/$bunfs/root/") || fields[10].startsWith("B:\\~BUN\\root\\");
+      const isApplication = fields[10].startsWith("/$bunfs/root/") || fields[10].startsWith("B:\\\\~BUN\\\\root\\\\");
       const name =
         fields[8] === "entry" || fields[8] === "module" ? "module code" : fields[7] || "a function without a name";
       functions.push({

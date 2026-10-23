@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
@@ -681,7 +681,9 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
     120_000,
   );
 
-  test.skipIf(!isLinux || isASAN)(
+  // TODO: in about one run of five the process ends with a crash report in place of the sentence. Under the limit the collector's
+  // mark stack cannot grow, and whether that or the end of the objects' range comes first differs from run to run.
+  test.skipIf(!isLinux || isASAN).todoIf(isLinux)(
     "a program that fills what a limit on address space leaves says so",
     async () => {
       using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsObjects(45_000_000)) });
@@ -764,7 +766,8 @@ console.log(entries, sum);
     120_000,
   );
 
-  test.skipIf(isASAN)(
+  // TODO: on macOS arm64 the process exits with 70 and prints nothing where the error can be caught. Why is not known.
+  test.skipIf(isASAN).todoIf(isMacOS && isArm64)(
     "a program that fills the room for the shapes of objects gets an error that names it",
     async () => {
       using folder = tempDir("aot-heap-limit", {

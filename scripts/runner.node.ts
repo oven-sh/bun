@@ -12,6 +12,8 @@ import { createHash } from "node:crypto";
 import {
   accessSync,
   appendFileSync,
+  chmodSync,
+  copyFileSync,
   existsSync,
   constants as fs,
   linkSync,
@@ -312,6 +314,11 @@ const { values: options, positionals: filters } = parseArgs({
       default: undefined,
     },
     ["build-id"]: {
+      type: "string",
+      default: undefined,
+    },
+    /** The step that built `bun-aot`, or a path to it. It is laid beside the Bun under test, as a release lays it. */
+    ["bun-aot-step"]: {
       type: "string",
       default: undefined,
     },
@@ -732,6 +739,14 @@ async function runTests(): Promise<TestResult[]> {
 
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
+
+  if (options["bun-aot-step"]) {
+    const built = await getExecPathFromBuildkite(options["bun-aot-step"], options["build-id"], "release-aot");
+    const beside = join(dirname(execPath), isWindows ? "bun-aot.exe" : "bun-aot");
+    copyFileSync(built, beside);
+    chmodSync(beside, 0o755);
+    !isQuiet && console.log("bun-aot:", beside, getRevision(beside));
+  }
 
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);
@@ -2915,12 +2930,12 @@ function getExecPath(bunExe: string): string {
   throw new Error(`Could not find executable: ${bunExe}`, { cause: error });
 }
 
-async function getExecPathFromBuildkite(target: string, buildId?: string): Promise<string> {
+async function getExecPathFromBuildkite(target: string, buildId?: string, folder = "release"): Promise<string> {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
 
-  const releasePath = join(cwd, "release");
+  const releasePath = join(cwd, folder);
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath: string | undefined;
@@ -3002,7 +3017,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(/ - test-(?:bun|aot)$/, "");
+  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hand-over)$/, "");
 }
 
 /**

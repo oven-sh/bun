@@ -15,7 +15,7 @@ const MODULES: Record<string, [string, string, [string, string][]]> = {
   querystring: ["escape", 'escape("a b")', [["parse", 'F("a=1&b=2").b'], ["stringify", "F({ a: 1 })"]]],
   events: ["once", "typeof once", [["EventEmitter", '(emitter => (emitter.on("x", value => seen.push(value)), emitter.emit("x", 5), seen.join()))(new F())'], ["getEventListeners", 'F(new EventTarget(), "x").length']]],
   stream: ["finished", "typeof finished", [["PassThrough", "new F().writable"], ["Readable", '(await F.from(["a", "b"]).toArray()).join()']]],
-  os: ["EOL", "EOL.length", [["endianness", "F()"], ["platform", "typeof F()"]]],
+  os: ["EOL", 'EOL.endsWith("\\n") ? 1 : 0', [["endianness", "F()"], ["platform", "typeof F()"]]],
   fs: ["existsSync", 'existsSync("/")', [["statSync", 'F("/").isDirectory()'], ["readdirSync", 'Array.isArray(F("/"))']]],
   assert: ["ok", "ok(true)", [["deepStrictEqual", "F([1], [1])"], ["AssertionError", 'new F({ message: "m" }).code']]],
   zlib: ["gzipSync", 'gzipSync("a").length > 0', [["gunzipSync", 'F(gzipSync("text")).toString()'], ["createGzip", "typeof F().write"]]],

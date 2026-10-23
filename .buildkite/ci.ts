@@ -880,6 +880,8 @@ interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
   aot?: AotTests | undefined;
+  /** `bun` with the `bun-aot` of the same build beside it, as a release lays them out. */
+  handOver?: boolean | undefined;
 }
 
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
@@ -1004,16 +1006,19 @@ function getAotParallelism(platform: Platform, aot: AotTests): number {
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
-  const { buildId, testFiles, aot } = testOptions;
+  const { buildId, testFiles, aot, handOver } = testOptions;
 
   // The tests of --aot run on the build that has the compiler.
-  const buildKey = `${getTargetKey(aot && !profile ? { ...platform, profile: "aot" } : platform)}-build-bun`;
+  const aotBuildKey = `${getTargetKey({ ...platform, profile: "aot" })}-build-bun`;
+  const buildKey = aot && !profile ? aotBuildKey : `${getTargetKey(platform)}-build-bun`;
   const args = [`--step=${buildKey}`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (aot) {
+  if (handOver) {
+    args.push(`--bun-aot-step=${aotBuildKey}`, "--include=cli/hand-over-to-the-real-bun-aot", "--vendor=false");
+  } else if (aot) {
     args.push(...aotTests.map(group => `--include=${group}`));
     args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
     // TODO: until all code that is generated directly has been seen to run on arm64 (test/aot/joined-programs.ts).
@@ -1036,11 +1041,13 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   const depends: string[] = [];
   if (!buildId) {
     depends.push(buildKey);
+    if (handOver) depends.push(aotBuildKey);
   }
 
+  const kind = handOver ? "hand-over" : aot ? "aot" : "bun";
   return {
-    key: `${getPlatformKey(platform)}-test-${aot ? "aot" : "bun"}`,
-    label: `${getPlatformLabel(platform)} - test-${aot ? "aot" : "bun"}`,
+    key: `${getPlatformKey(platform)}-test-${kind}`,
+    label: `${getPlatformLabel(platform)} - test-${kind}`,
     depends_on: depends,
     agents: getTestAgent(platform),
 
@@ -1057,7 +1064,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // PR's own build, and a cancel clears it.
     parallelism: aot
       ? getAotParallelism(platform, aot)
-      : platform.tier === "beta"
+      : platform.tier === "beta" || handOver
         ? 1
         : os === "darwin"
           ? 2
@@ -1998,6 +2005,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           const aot = getAotTests(target, options);
           const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
           if (aotStep) testStepKeys.push(aotStep.key);
+          // The asan build has the compiler itself.
+          const handOverStep = aot && !target.profile && getTestBunStep(target, options, { buildId, handOver: true });
+          if (handOverStep) testStepKeys.push(handOverStep.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -2005,7 +2015,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             {
               key: getPlatformKey(target),
               group: getPlatformLabel(target),
-              steps: aotStep ? [step, aotStep] : [step],
+              steps: [step, aotStep, handOverStep].filter((step): step is CommandStep => !!step),
             },
             ...dependsOn,
           );

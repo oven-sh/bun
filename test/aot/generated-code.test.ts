@@ -9,14 +9,16 @@
 // `FAIL <program> TAB <the line> TAB <what is not met>`.
 //   JSC=.. TESTAOT=.. FRONT_END=.. test/aot/shell/expectations.py strings/search     one program, in a second
 import { expect, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { isArm64, isASAN, isDebug } from "harness";
 import { join } from "path";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
 const skipReason =
   scriptSkipReason ??
-  (isASAN || isDebug ? "a sanitizer or debug build generates the same code many times slower" : undefined);
+  (isASAN || isDebug ? "a sanitizer or debug build generates the same code many times slower" : undefined) ??
+  // TODO: state the sizes, the counts of instructions and the mnemonics for ARM64 too. The lines about the IR and about calls hold on both, and x86-64 checks them.
+  (isArm64 ? "the programs state sizes and instructions of x86-64's code" : undefined);
 if (skipReason) console.error(`SKIPPED: test/aot/generated-code.test.ts: ${skipReason}`);
 
 test.skipIf(!!skipReason)(

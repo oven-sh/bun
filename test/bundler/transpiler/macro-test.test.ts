@@ -138,6 +138,85 @@ test("namespace import", () => {
 //   expect(identity(`©${""}`)).toBe("©");
 // });
 
+// A macro result is inlined as a constant. Not into a `var` that a nested
+// block declares again: the block can store another value.
+test("a macro result is not inlined into a var that a nested block declares again", async () => {
+  using dir = tempDir("macro-var-redeclared", {
+    "entry.ts": `
+      import { identity } from "./macro.ts" with { type: "macro" };
+
+      var storedInBlock = identity(42);
+      if (globalThis.process) {
+        var storedInBlock: any = 7;
+        console.log(storedInBlock);
+      }
+
+      var storedOneBlockDeeper = identity(42);
+      if (globalThis.process) {
+        {
+          var storedOneBlockDeeper: any = 7;
+        }
+        console.log(storedOneBlockDeeper);
+      }
+
+      var readInBlock = identity(42);
+      {
+        var readInBlock: any;
+        console.log(readInBlock);
+      }
+
+      if (globalThis.process) {
+        var inTwoBlocks = identity(42);
+      }
+      if (globalThis.process) {
+        var inTwoBlocks: any = 7;
+      }
+      console.log(inTwoBlocks);
+
+      if (globalThis.process) {
+        var inBlockOfItsBlock = identity(42);
+        if (globalThis.process) {
+          var inBlockOfItsBlock: any = 7;
+        }
+      }
+      console.log(inBlockOfItsBlock);
+
+      function inFunction(stores: boolean) {
+        var local = identity(42);
+        if (stores) {
+          var local: any = 7;
+        }
+        return local;
+      }
+      console.log(inFunction(true), inFunction(false));
+    `,
+    "macro.ts": `
+      export function identity(arg: any) {
+        return arg;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A debug build logs each macro call to stdout.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .filter(line => !line.startsWith("[macro]"));
+  expect({ lines, stderr, exitCode }).toEqual({
+    lines: ["7", "7", "42", "7", "7", "7 42"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });

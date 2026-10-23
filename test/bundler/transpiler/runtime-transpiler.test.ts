@@ -193,6 +193,36 @@ describe("with statement", () => {
 
     expect(exitCode).toBe(0);
   });
+
+  test("keeps a read of a var that the body declares again", async () => {
+    using dir = tempDir("with-var-redeclared", {
+      "index.cjs": `
+        var x = { v: "outer" };
+        var obj = {
+          get x() {
+            console.log("getter");
+            return { v: "obj" };
+          },
+        };
+        with (obj) {
+          var x;
+          x;
+        }
+        console.log(x.v);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "getter\nouter\n", stderr: "", exitCode: 0 });
+  });
 });
 
 test("math.pow", () => {

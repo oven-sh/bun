@@ -3310,6 +3310,732 @@ describe("bundler", () => {
       { file: "/out/function3.js", stdout: "3\n3" },
     ],
   });
+  // A `var` in a nested block at the top level is the same variable as a
+  // top-level declaration of that name. A read inside the block has to keep
+  // that declaration: tree shaking dropped a removable initializer, and the
+  // block then read `undefined`.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`dce/VarRedeclaredInNestedBlock/${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          var a = { v: "if" };
+          if (globalThis.process) {
+            var a;
+            console.log(a.v);
+          }
+
+          var b = { v: "switch" };
+          switch (1) {
+            case 1:
+              var b;
+              console.log(b.v);
+          }
+
+          var c = { v: "block" };
+          {
+            {
+              var c;
+              console.log(c.v);
+            }
+          }
+
+          var d = { v: "label" };
+          label: {
+            var d;
+            console.log(d.v);
+          }
+
+          var e = { v: "try" };
+          try {
+            var e;
+            console.log(e.v);
+          } finally {
+          }
+
+          var f = { v: "do" };
+          do {
+            var f;
+            console.log(f.v);
+          } while (false);
+
+          var g = { v: "closure" };
+          {
+            var g;
+            (() => console.log(g.v))();
+          }
+
+          var h = { v: "two blocks" };
+          if (globalThis.process) {
+            var h;
+          }
+          if (globalThis.process) {
+            var h;
+            console.log(h.v);
+          }
+
+          var i = { v: "third declaration" };
+          if (globalThis.process) {
+            var i;
+            console.log(i.v);
+          }
+          var i;
+
+          var j = { v: "own initializer" };
+          if (globalThis.process) {
+            var j = j || { v: "lost" };
+            console.log(j.v);
+          }
+
+          var k = { v: "closure called later" };
+          var later;
+          {
+            var k;
+            later = () => k.v;
+          }
+          console.log(later());
+
+          if (globalThis.process) {
+            var l;
+            console.log(typeof l);
+          }
+          var l = { v: "declared after the first block" };
+          if (globalThis.process) {
+            var l;
+            console.log(l.v);
+          }
+
+          var m = { v: "block in a block that declares it too" };
+          if (globalThis.process) {
+            var m;
+            if (globalThis.process) {
+              var m;
+              console.log(m.v);
+            }
+          }
+
+          var n = { v: "outside the catch" };
+          try {
+            throw { v: "catch parameter" };
+          } catch (n) {
+            var n;
+            console.log(n.v);
+          }
+          console.log(n.v);
+        `,
+      },
+      format,
+      run: {
+        stdout: [
+          "if",
+          "switch",
+          "block",
+          "label",
+          "try",
+          "do",
+          "closure",
+          "two blocks",
+          "third declaration",
+          "own initializer",
+          "closure called later",
+          "undefined",
+          "declared after the first block",
+          "block in a block that declares it too",
+          "catch parameter",
+          "outside the catch",
+        ].join("\n"),
+      },
+    });
+  }
+  itBundled("dce/VarRedeclaredInLoopHead", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var i: number = 10;
+        for (var i: number; i < 12; i++) console.log(i);
+
+        var key: any = { a: 1, b: 2 };
+        for (var key in key) console.log(key);
+
+        var item: any = ["x", "y"];
+        for (var item of item) console.log(item);
+      `,
+    },
+    backend: "cli",
+    run: {
+      stdout: "10\n11\na\nb\nx\ny",
+    },
+  });
+  itBundled("dce/VarRedeclaredInNestedBlockOfImportedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./esm.js";
+        console.log(require("./cjs.js"));
+      `,
+      "/esm.js": /* js */ `
+        export var x = { v: "esm" };
+        if (globalThis.process) {
+          var x;
+          console.log(x.v);
+        }
+      `,
+      "/cjs.js": /* js */ `
+        var x = { v: "cjs" };
+        if (globalThis.process) {
+          var x;
+          module.exports = x.v;
+        }
+      `,
+    },
+    run: {
+      stdout: "esm\ncjs",
+    },
+  });
+  // These files are wrapped in `__esm`, which moves a top-level `var x = value`
+  // above the wrapper if the value has no side effects.
+  itBundled("dce/VarRedeclaredInNestedBlockOfWrappedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./required.js");
+        await import("./imported.js");
+      `,
+      "/required.js": /* js */ `
+        export var x = { v: "required" };
+        if (globalThis.process) {
+          var x;
+          console.log(x.v);
+        }
+      `,
+      "/imported.js": /* js */ `
+        export var moved = function () {};
+        if (globalThis.process) {
+          var moved;
+          console.log(typeof moved);
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: "required\nfunction",
+    },
+  });
+  // Not fixed: the value that `__esm` moves above the wrapper is there before
+  // the declaration runs, so this read prints "function". The same file
+  // without the block's `var` prints that too.
+  itBundled("dce/VarReadInNestedBlockBeforeItsDeclarationOfWrappedFile", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        await import("./imported.js");
+      `,
+      "/imported.js": /* js */ `
+        if (globalThis.process) {
+          var early;
+          console.log(typeof early);
+        }
+        export var early = function () {};
+      `,
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  itBundled("dce/VarRedeclaredInNestedBlockMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        var first = { v: "first" };
+        var second = { v: "second" };
+        if (globalThis.process) {
+          var first;
+          let local = first.v;
+          {
+            var second;
+            console.log(local, second.v);
+          }
+        }
+      `,
+    },
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    run: {
+      stdout: "first second",
+    },
+  });
+  itBundled("dce/VarRedeclaredInNestedBlockSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import "./shared.js";
+        console.log("a");
+      `,
+      "/b.js": /* js */ `
+        import "./shared.js";
+        console.log("b");
+      `,
+      "/shared.js": /* js */ `
+        var x = { v: "shared" };
+        if (globalThis.process) {
+          var x;
+          console.log(x.v);
+        }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "shared\na" },
+      { file: "/out/b.js", stdout: "shared\nb" },
+    ],
+  });
+  // A direct `eval` reads the name as it is written. The block has no symbol of
+  // its own for the `var`, so the top-level symbol keeps that name.
+  itBundled("dce/VarRedeclaredInNestedBlockReadByDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        export var y = { v: "read by eval" };
+        if (globalThis.process) {
+          var y;
+          console.log(eval("y.v"));
+        }
+      `,
+    },
+    run: {
+      stdout: "read by eval",
+    },
+  });
+  // A direct `eval` pins the names of the scope that it is in. The pin does not
+  // reach the top-level `y` of each file, so the two files keep two variables.
+  itBundled("dce/VarRedeclaredInNestedBlockWithDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        import { readA } from "./a.js";
+        import { readB } from "./b.js";
+        console.log(readA(), readB());
+      `,
+      "/a.js": /* js */ `
+        export var y = { v: "a" };
+        if (globalThis.process) {
+          var y;
+          eval("1");
+          console.log(y.v);
+        }
+        export function readA() {
+          return y.v;
+        }
+      `,
+      "/b.js": /* js */ `
+        export var y = { v: "b" };
+        if (globalThis.process) {
+          var y;
+          eval("1");
+          console.log(y.v);
+        }
+        export function readB() {
+          return y.v;
+        }
+      `,
+    },
+    run: {
+      stdout: "a\nb\na b",
+    },
+  });
+  // The block's own `var stored = value` is not a use of the top-level symbol,
+  // so the first initializer is still removed. Every other mention of the name
+  // in the block is a use, a plain store too, as it is without the block's `var`.
+  itBundled("dce/VarStoredInNestedBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        var stored = { v: "removed" };
+        if (globalThis.process) {
+          var stored = { v: "stored" };
+        }
+
+        var assigned = { v: "kept" };
+        if (globalThis.process) {
+          var assigned;
+          assigned = { v: "assigned" };
+        }
+
+        var read = { v: "read" };
+        if (globalThis.process) {
+          var read;
+          console.log(read.v);
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("removed");
+      api.expectFile("/out.js").toContain("kept");
+    },
+    run: {
+      stdout: "read",
+    },
+  });
+  // Module code rejects `function f() {}` beside `var f`, so a bundle of a file
+  // with such a pair loads only while tree shaking drops the pair. The file
+  // keeps its old output: a read of `x` in the block would keep `var x = f`,
+  // and with it the pair.
+  for (const [name, source] of [
+    [
+      "VarAtTopLevel",
+      `
+        function f() { return 1; }
+        var f;
+        var x = f;
+        if (globalThis.process) { var x = 5; console.log(x); }
+      `,
+    ],
+    [
+      "VarInBlockBeforeTheRead",
+      `
+        function f() { return 1; }
+        if (globalThis.process) { var f; }
+        var x = f;
+        if (globalThis.process) { var x = 5; console.log(x); }
+      `,
+    ],
+    [
+      "VarInBlockAfterTheRead",
+      `
+        function f() { return 1; }
+        var x = f;
+        if (globalThis.process) { var x = 5; console.log(x); }
+        if (globalThis.process) { var f; }
+      `,
+    ],
+  ] as const) {
+    itBundled(`dce/VarRedeclaredInNestedBlockOfFileWithFunctionAndVarOfOneName/${name}`, {
+      files: {
+        "/entry.js": source,
+      },
+      format: "esm",
+      run: {
+        stdout: "5",
+      },
+    });
+  }
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`dce/VarRedeclaredInNestedBlockWithFunctionOfTheSameName/${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function i() {}
+          var i;
+          for (var i = 0; i < 2; i++) console.log(i);
+        `,
+      },
+      format,
+      run: {
+        stdout: "0\n1",
+      },
+    });
+  }
+  // An IIFE bundle is a function body, where `function f() {}` beside `var f`
+  // is legal.
+  itBundled("dce/VarRedeclaredInNestedBlockOfFileWithFunctionAndVarOfOneName/iife", {
+    files: {
+      "/entry.js": /* js */ `
+        var before = { v: "before" };
+        if (globalThis.process) {
+          var before;
+          console.log(before.v);
+        }
+
+        function f() {}
+        if (globalThis.process) {
+          var f;
+        }
+
+        function i() {}
+        var i;
+
+        var after = { v: "after" };
+        if (globalThis.process) {
+          var after;
+          console.log(after.v);
+        }
+      `,
+    },
+    format: "iife",
+    run: {
+      stdout: "before\nafter",
+    },
+  });
+  // Not fixed: a function declaration that a block declares again as a `var`.
+  // The bundle drops the function, and `f()` throws "f is not a function".
+  itBundled("dce/FunctionRedeclaredAsVarInNestedBlock", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        function f() {
+          return "function";
+        }
+        if (globalThis.process) {
+          var f;
+          console.log(f());
+        }
+      `,
+    },
+    format: "cjs",
+    run: {
+      stdout: "function",
+    },
+  });
+  // Not fixed: the loop head keeps its `var i` inside the `__esm` wrapper, where
+  // it is another variable. The bundle prints nothing.
+  itBundled("dce/VarRedeclaredInLoopHeadOfWrappedFile", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        await import("./imported.js");
+      `,
+      "/imported.js": /* js */ `
+        export var i = 10;
+        for (var i; i < 12; i++) console.log(i);
+      `,
+    },
+    run: {
+      stdout: "10\n11",
+    },
+  });
+  // The importer of an `__esm`-wrapped file reads the first value of a `var`
+  // that the file declares again. A `for` head without initializer and a body
+  // without braces keep their own `var` inside the wrapper, so a store that
+  // stays in the wrapper does not reach the export.
+  itBundled("dce/VarRedeclaredInStatementThatKeepsItsVarOfWrappedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        const imported = await import("./imported.js");
+        console.log(imported.inLoopHead, imported.inBodyWithoutBraces);
+      `,
+      "/imported.js": /* js */ `
+        export var inLoopHead = 10;
+        for (var inLoopHead; false; );
+
+        export var inBodyWithoutBraces = "kept";
+        if (globalThis.process) {
+          var inBodyWithoutBraces;
+        }
+        while (!globalThis.once) var inBodyWithoutBraces = ((globalThis.once = true), inBodyWithoutBraces);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: "10 kept",
+    },
+  });
+  // The block-level function keeps its own symbol, so the `var` below it is
+  // still an error.
+  itBundled("dce/VarBelowBlockLevelFunctionOfTheSameName", {
+    files: {
+      "/entry.js": /* js */ `
+        var f = 1;
+        {
+          function f() {}
+          {
+            var f;
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": [`f has already been declared`],
+    },
+  });
+  // A read in a `with` body can run a getter of the object, so it stays.
+  itBundled("dce/VarRedeclaredInWithBody", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = { v: "outer" };
+        var obj = {
+          get x() {
+            console.log("getter");
+            return { v: "obj" };
+          },
+        };
+        with (obj) {
+          var x;
+          x;
+        }
+        console.log(x.v);
+      `,
+    },
+    format: "cjs",
+    run: {
+      stdout: "getter\nouter",
+    },
+  });
+  // Not fixed: the body's `var` is the only declaration, so the body keeps
+  // its symbol and the read is removed. The bundle prints only "declared in the body".
+  itBundled("dce/VarDeclaredOnlyInWithBody", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        var obj = {
+          get x() {
+            console.log("getter");
+            return 1;
+          },
+        };
+        with (obj) {
+          var x;
+          x;
+        }
+        console.log("declared in the body");
+      `,
+    },
+    format: "cjs",
+    run: {
+      stdout: "getter\ndeclared in the body",
+    },
+  });
+  // `module` and `exports` of an ES module are plain variables.
+  itBundled("dce/ModuleAndExportsRedeclaredInNestedBlockOfESModule", {
+    files: {
+      "/entry.js": /* js */ `
+        export {};
+        var module = { exports: { a: 1 }, id: "mine" };
+        if (globalThis.process) {
+          var module;
+          console.log(module.exports.a, module.id);
+        }
+        var exports = { b: 2 };
+        {
+          var exports;
+          console.log(exports.b);
+        }
+      `,
+    },
+    run: {
+      stdout: "1 mine\n2",
+    },
+  });
+  // The block scope stores up to 4 names, up to 8 names, and more, in three ways.
+  for (const count of [3, 6, 12]) {
+    const names = Array.from({ length: count }, (_, i) => "v" + i);
+    itBundled(`dce/VarsRedeclaredInNestedBlock/${count}`, {
+      files: {
+        "/entry.js":
+          names.map(name => `var ${name} = { v: "${name}" };`).join("\n") +
+          `\nif (globalThis.process) { var ${names.join(", ")}; console.log(${names.map(name => name + ".v").join(", ")}); }`,
+      },
+      run: {
+        stdout: names.join(" "),
+      },
+    });
+  }
+  // A function that a block declares again as a `var` keeps the block's own
+  // symbol. The block does not run here.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`dce/FunctionRedeclaredAsVarInNestedBlockThatDoesNotRun/${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function f() {
+            return 1;
+          }
+          if (globalThis.neverTrue) {
+            var f;
+            console.log(f());
+          }
+          console.log("ok");
+        `,
+      },
+      format,
+      run: {
+        stdout: "ok",
+      },
+    });
+  }
+  // A macro result is inlined as a constant. Not into a `var` that a nested
+  // block declares again: the block can store another value.
+  itBundled("dce/MacroVarRedeclaredInNestedBlock", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { answer, answers, list } from "./macro.ts" with { type: "macro" };
+
+        var storedInBlock = answer();
+        if (globalThis.process) {
+          var storedInBlock: number = 7;
+          console.log(storedInBlock);
+        }
+
+        var storedOneBlockDeeper = answer();
+        if (globalThis.process) {
+          {
+            var storedOneBlockDeeper: number = 7;
+          }
+          console.log(storedOneBlockDeeper);
+        }
+
+        var macroInBlock: number;
+        {
+          var macroInBlock = answer();
+          console.log(macroInBlock);
+        }
+
+        var readInBlock = answer();
+        {
+          var readInBlock: number;
+          console.log(readInBlock);
+        }
+
+        var { fromObject, nested: { fromNested } } = answers();
+        var [fromArray] = list();
+        if (globalThis.process) {
+          var fromObject: number = 1, fromNested: number = 2, fromArray: number = 3;
+          console.log(fromObject, fromNested, fromArray);
+        }
+
+        if (globalThis.process) {
+          var inTwoBlocks = answer();
+        }
+        if (globalThis.process) {
+          var inTwoBlocks: number = 7;
+        }
+        console.log(inTwoBlocks);
+
+        if (!globalThis.process) {
+          var inIfAndElse = answer();
+        } else {
+          var inIfAndElse: number = 7;
+        }
+        console.log(inIfAndElse);
+
+        if (globalThis.process) {
+          var inBlockOfItsBlock = answer();
+          if (globalThis.process) {
+            var inBlockOfItsBlock: number = 7;
+          }
+        }
+        console.log(inBlockOfItsBlock);
+
+        function inFunction(stores: boolean) {
+          var local = answer();
+          if (stores) {
+            var local: number = 7;
+          }
+          return local;
+        }
+        console.log(inFunction(true), inFunction(false));
+      `,
+      "/macro.ts": /* ts */ `
+        export function answer() {
+          return 42;
+        }
+        export function answers() {
+          return { fromObject: 42, nested: { fromNested: 42 } };
+        }
+        export function list() {
+          return [42];
+        }
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "7\n7\n42\n42\n1 2 3\n7\n7\n7\n7 42",
+    },
+  });
   itBundled("dce/PureCallsWithSpread", {
     todo: true,
     files: {

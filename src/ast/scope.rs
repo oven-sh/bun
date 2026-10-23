@@ -72,6 +72,18 @@ impl<const N: usize> InlineMembers<N> {
         i
     }
 
+    /// The members after it keep their order.
+    fn remove(&mut self, hash: u32, name: &[u8]) {
+        let Some(i) = self.find(hash, name) else {
+            return;
+        };
+        let len = self.len as usize;
+        self.hashes.copy_within(i + 1..len, i);
+        self.members.copy_within(i + 1..len, i);
+        self.names.copy_within(i + 1..len, i);
+        self.len -= 1;
+    }
+
     fn grow<const M: usize>(&self) -> InlineMembers<M> {
         let mut out = InlineMembers::<M>::new();
         let n = self.len as usize;
@@ -310,6 +322,21 @@ impl Members {
                             }
                         }
                     };
+                }
+            }
+        }
+    }
+
+    pub fn remove_hashed(&mut self, hash: u32, name: &[u8]) {
+        match self {
+            Members::Empty => {}
+            Members::Small(inline) => inline.remove(hash, name),
+            Members::Inline(inline) => inline.remove(hash, name),
+            Members::Table(table) => {
+                if let Ok(entry) = table.find_entry(Self::table_hash(hash), |e| {
+                    e.hash == hash && e.name.slice() == name
+                }) {
+                    entry.remove();
                 }
             }
         }

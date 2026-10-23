@@ -302,6 +302,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
+    /// The scope members that `hoist_symbols` removed: "var foo; { var foo; }".
+    pub(crate) redeclared_var_members: Vec<(js_ast::StoreRef<Scope>, js_ast::scope::Member)>,
+
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
@@ -2132,6 +2135,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// See `SymbolFlags::REDECLARED_IN_NESTED_SCOPE`, which is on the root of the link chain.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_redeclared_in_nested_scope(&self, ref_: Ref) -> bool {
+        let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        self.symbols[root.inner_index() as usize].redeclared_in_nested_scope()
+    }
+
     /// The renamer follows links before it reads the flag, so pin the whole chain.
     pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
         let mut ref_ = ref_;
@@ -3321,6 +3332,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.hoist_symbols(self.module_scope_ref());
+        if !self.redeclared_var_members.is_empty() {
+            self.keep_block_symbols_beside_function_merged_with_var();
+        }
 
         let mut generated_symbols_count: u32 = 3;
 
@@ -3421,6 +3435,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// A top-level `var` of this name is the CommonJS wrapper's argument, whose uses are rewritten.
+    fn is_commonjs_wrapper_argument(&self, name: &[u8]) -> bool {
+        !self.has_es_module_syntax && (name == b"exports" || name == b"module")
+    }
+
+    /// Module code rejects `function f() {}` beside `var f`: such a bundle loads only while tree shaking drops the pair.
+    #[cold]
+    #[inline(never)]
+    fn keep_block_symbols_beside_function_merged_with_var(&mut self) {
+        let removed = core::mem::take(&mut self.redeclared_var_members);
+        if !self.has_top_level_function_merged_with_var
+            || !self.options.bundle
+            // Bun reads a CommonJS bundle that has no CommonJS syntax as module code.
+            || !matches!(
+                self.options.output_format,
+                options::Format::Esm | options::Format::Cjs
+            )
+        {
+            return;
+        }
+        for (mut scope, member) in removed {
+            let name = self.symbols[member.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            // SAFETY: `name` is a symbol's `original_name`.
+            unsafe { scope.members.put(name, member) };
+        }
+        let module_scope = self.module_scope_ref();
+        for (_, member) in module_scope.members.iter() {
+            self.symbols[member.ref_.inner_index() as usize].set_redeclared_in_nested_scope(false);
+        }
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of
@@ -3434,7 +3481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
         // immutable bits (kind/parent/strict_mode/members snapshot) up front; the
-        // only later access is the `scope.generated` push (DerefMut, after the
+        // only later access is a write to `scope` in the loop (DerefMut, after the
         // shared borrow is dropped) and the post-loop `children` walk.
         let scope_ref = &*scope;
         if !scope_ref.kind_stops_hoisting() {
@@ -3457,7 +3504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     v
                 };
                 // `scope_ref` (shared borrow of the `StoreRef` local) must end
-                // before the `DerefMut` write to `scope.generated` inside the
+                // before the `DerefMut` writes to `scope` inside the
                 // loop; NLL drops it at last use (the snapshot block above).
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
@@ -3598,6 +3645,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     _scope.get_or_put_member_with_hash(name, hash.unwrap())
                                 }
                                 .value_ptr = member_in_scope;
+
+                                // "var foo = {}; { var foo; foo }"
+                                if !is_sloppy_mode_block_level_fn_stmt
+                                    && self.symbols[symbol_idx].kind
+                                        == js_ast::symbol::Kind::Hoisted
+                                    && existing_kind == js_ast::symbol::Kind::Hoisted
+                                {
+                                    let root = if self.symbols[existing_idx].has_link() {
+                                        let root = js_ast::symbol::follow_symbols(
+                                            &self.symbols,
+                                            member_in_scope.ref_,
+                                        );
+                                        root.inner_index() as usize
+                                    } else {
+                                        existing_idx
+                                    };
+                                    self.symbols[root].set_redeclared_in_nested_scope(true);
+                                    // The block then resolves the name to the symbol that tree shaking looks up.
+                                    if _scope_ptr == self.module_scope
+                                        && !self.is_commonjs_wrapper_argument(name)
+                                    {
+                                        self.redeclared_var_members.push((scope, value));
+                                        scope.members.remove_hashed(hash.unwrap(), name);
+                                    }
+                                }
 
                                 // "function foo() {} { var foo; }"
                                 if _scope_ptr == self.module_scope
@@ -4924,7 +4996,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.symbols[_member.ref_.inner_index() as usize].kind
                 == js_ast::symbol::Kind::Hoisted
                 && kind == js_ast::symbol::Kind::Hoisted
-                && !self.has_es_module_syntax
+                && self.is_commonjs_wrapper_argument(name)
             {
                 return Ok(_member.ref_);
             }
@@ -7836,6 +7908,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(ref_) => {
+                // The parse pass resolved this name before `hoist_symbols` ran.
+                let ref_ = if self.is_redeclared_in_nested_scope(ref_) {
+                    js_ast::symbol::follow_symbols(&self.symbols, ref_)
+                } else {
+                    ref_
+                };
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
                     self.note_import_use(ref_, IdentifierOpts::new());
@@ -9732,6 +9810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
+            redeclared_var_members: Vec::new(),
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

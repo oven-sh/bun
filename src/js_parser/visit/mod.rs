@@ -402,12 +402,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
                                     if let Some(unwrapped_id) = req.unwrapped_id.get() {
-                                        let deferred = &mut self.imports_to_convert_from_require
-                                            [unwrapped_id.get_usize()];
-                                        deferred.namespace.ref_ = ref_;
-                                        self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::default());
-                                        continue 'outer;
+                                        if self.is_redeclared_in_nested_scope(ref_) {
+                                            // Another declaration can assign it, as `x = require()` does.
+                                            decl.value = Some(Expr::init_identifier(
+                                                self.imports_to_convert_from_require
+                                                    [unwrapped_id.get_usize()]
+                                                .namespace
+                                                .ref_,
+                                                value.loc,
+                                            ));
+                                        } else {
+                                            let deferred = &mut self
+                                                .imports_to_convert_from_require
+                                                [unwrapped_id.get_usize()];
+                                            deferred.namespace.ref_ = ref_;
+                                            self.import_items_for_namespace
+                                                .insert(ref_, ImportItemForNamespaceMap::default());
+                                            continue 'outer;
+                                        }
                                     }
                                 }
                             }
@@ -677,6 +689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         _ => {
                                             if self.options.features.inlining {
                                                 if let BData::BIdentifier(id) = property.value.data
+                                                    && !self.is_redeclared_in_nested_scope(id.r#ref)
                                                 {
                                                     self.const_values
                                                         .put(id.r#ref, query.expr)
@@ -719,7 +732,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             BData::BIdentifier(id) => {
-                if self.options.features.inlining {
+                if self.options.features.inlining && !self.is_redeclared_in_nested_scope(id.r#ref) {
                     self.const_values.put(id.r#ref, expr).expect("oom");
                 }
             }
@@ -739,7 +752,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let id_ref = id.r#ref;
                 if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
-                        if val.can_be_const_value() {
+                        // Another declaration of a macro-initialized `var` can assign it.
+                        if val.can_be_const_value()
+                            && !(could_be_macro && self.is_redeclared_in_nested_scope(id_ref))
+                        {
                             self.const_values.put(id_ref, val).expect("oom");
                         }
                     }

@@ -43,6 +43,35 @@ const liveBindingTest = devTest("live bindings with `var`", {
     await dev.fetch("/").equals("Value: -2");
   },
 });
+devTest("exported `var` that a nested block declares again", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var read = 1;
+      export var seen = [];
+      if (globalThis.process) {
+        var read;
+        seen.push(read);
+      }
+      export var stored = 1;
+      if (globalThis.process) {
+        var stored;
+        stored = 2;
+      }
+      export var counted = 1;
+      for (var counted = 0; counted < 3; counted++) {}
+    `,
+    "routes/index.ts": `
+      import { read, seen, stored, counted } from '../state';
+      export default function(req, meta) {
+        return new Response(JSON.stringify({ read, seen, stored, counted }));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals('{"read":1,"seen":[1],"stored":2,"counted":3}');
+  },
+});
 devTest("live bindings through export clause", {
   framework: minimalFramework,
   files: {

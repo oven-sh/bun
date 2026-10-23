@@ -1,8 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
+import { join } from "node:path";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -79,9 +80,14 @@ it("tmpdir", () => {
     }
     expect(realpathSync(os.tmpdir())).toBe(realpathSync(dir));
 
-    process.env.TMPDIR = "/boop";
-    expect(os.tmpdir()).toBe("/boop");
-    process.env.TMPDIR = originalEnv;
+    try {
+      process.env.TMPDIR = "/boop";
+      expect(os.tmpdir()).toBe("/boop");
+    } finally {
+      // An assignment of undefined stores the string "undefined".
+      if (originalEnv === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalEnv;
+    }
   }
 });
 
@@ -141,6 +147,111 @@ it("cpus", () => {
     expect(typeof cpu.times.sys === "number").toBe(true);
     expect(typeof cpu.times.user === "number").toBe(true);
   }
+});
+
+// Runs the real os.cpus() in a child whose opens of /proc/stat, /proc/cpuinfo and
+// /sys/devices/system/cpu/ go to staged files. Each staged file gives every CPU id
+// its own value, so an entry that is filled from the wrong id fails.
+const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+
+// Compiles redirect-open.c. `path` is undefined on a host that cannot run it.
+// `error` is the compiler output when the file does not compile.
+async function buildRedirectOpen() {
+  const dir = tempDir("os-cpus-redirect-open", {});
+  const path = join(String(dir), "redirect-open");
+  const run = async cmd => {
+    try {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, exitCode };
+    } catch {
+      // The file cannot be executed, for example from a directory that is mounted noexec.
+      return { output: "", exitCode: 126 };
+    }
+  };
+  const compile = await run([cc, "-O1", "-o", path, join(import.meta.dir, "redirect-open.c")]);
+  if (compile.exitCode === 126) return { dir };
+  if (compile.exitCode !== 0) return { dir, error: compile.output };
+  // redirect-open exits 126 when the kernel or a sandbox does not permit ptrace.
+  const probe = await run([path, "/proc/stat", "--", "true"]);
+  return { dir, path: probe.exitCode === 126 ? undefined : path };
+}
+// describe.skipIf needs the answer when the file loads, so this cannot wait for beforeAll.
+const redirectOpen = cc ? await buildRedirectOpen() : undefined;
+
+afterAll(() => {
+  redirectOpen?.dir[Symbol.dispose]();
+});
+
+// A compile error fails the tests below. Only a host that cannot run the supervisor skips them.
+const canRedirectOpen = redirectOpen?.path !== undefined || redirectOpen?.error !== undefined;
+
+describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
+  beforeAll(() => {
+    expect(redirectOpen.error).toBeUndefined();
+  });
+
+  const statFile = lines =>
+    "cpu  100 0 100 1000 0 0 0 0 0 0\n" +
+    lines.map(line => line + "\n").join("") +
+    "intr 0\nctxt 1\nbtime 1700000000\nprocesses 1\nprocs_running 1\nprocs_blocked 0\n";
+  const statLine = id => `cpu${id} ${id + 1} 0 10 100 0 0 0 0 0 0`;
+  const modelOf = id => `EPYC 7713 (kind ${id % 8})`;
+
+  function layout({ stat, cpuinfo = stat, cpufreq = stat, ...files }) {
+    files["proc/stat"] ??= statFile(stat.map(statLine));
+    if (cpuinfo) {
+      files["proc/cpuinfo"] ??= cpuinfo
+        .map(id => `processor\t: ${id}\nvendor_id\t: AuthenticAMD\nmodel name\t: ${modelOf(id)}\n\n`)
+        .join("");
+    }
+    for (const id of cpufreq || []) {
+      files[`sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`] ??= `${(id + 1) * 1000}\n`;
+    }
+    return files;
+  }
+
+  const cpu = (id, { model = modelOf(id), speed = id + 1, user = (id + 1) * 10 } = {}) => ({
+    model,
+    speed,
+    times: { user, nice: 0, sys: 100, idle: 1000, irq: 0 },
+  });
+
+  async function cpusOn(layouts) {
+    using root = tempDir("os-cpus", layouts);
+    // LeakSanitizer cannot stop the threads of a process that is already traced.
+    const asanOptions = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    await using proc = Bun.spawn({
+      cmd: [
+        redirectOpen.path,
+        "/proc/stat",
+        "/proc/cpuinfo",
+        "/sys/devices/system/cpu/",
+        "--",
+        bunExe(),
+        join(import.meta.dir, "cpus-fixture.ts"),
+        ...Object.keys(layouts).map(name => join(String(root), name)),
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: asanOptions, LSAN_OPTIONS: "detect_leaks=0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("[redirect-open] redirected opens:");
+    expect(exitCode, stderr).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent("reads each CPU from the files", async () => {
+    const seen = await cpusOn({
+      four: layout({ stat: [0, 1, 2, 3] }),
+      bare: layout({ stat: [0, 1], cpuinfo: null, cpufreq: null }),
+    });
+    expect(seen).toEqual({
+      four: [cpu(0), cpu(1), cpu(2), cpu(3)],
+      bare: [cpu(0, { model: "unknown", speed: 0 }), cpu(1, { model: "unknown", speed: 0 })],
+    });
+  });
 });
 
 it("networkInterfaces", () => {

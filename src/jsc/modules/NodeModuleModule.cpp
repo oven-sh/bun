@@ -899,10 +899,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t portable, BunString* outDirectory, BunString* outMessage);
+extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, bool portable, bool disabled, BunString* outDirectory, BunString* outMessage);
 extern "C" BunString Bun__NodeCompileCache__getDir();
 extern "C" void Bun__NodeCompileCache__flush();
 
+// Native half of the `enableCompileCache` builtin in NodeModuleObject.ts.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -910,36 +911,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Accepts `undefined`, a string, or `{ directory?, portable? }`.
-    JSValue options = callFrame->argument(0);
-    JSValue directoryValue = options;
-    int32_t portable = -1; // -1 = unspecified, Rust falls back to the env var
-    if (options.isObject() && !options.isCallable()) {
-        auto* optionsObject = options.getObject();
-        directoryValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue portableValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!portableValue.isUndefined()) {
-            portable = portableValue.toBoolean(globalObject) ? 1 : 0;
-        }
+    JSValue directoryValue = callFrame->argument(0);
+    if (!directoryValue.isString()) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "cacheDir should be a string"_s);
+        return {};
     }
-
-    WTF::String directory;
-    if (!directoryValue.isUndefined()) {
-        if (!directoryValue.isString()) {
-            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "cacheDir should be a string"_s);
-            return {};
-        }
-        directory = directoryValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    WTF::String directory = directoryValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool portable = callFrame->argument(1).toBoolean(globalObject);
+    bool disabled = callFrame->argument(2).toBoolean(globalObject);
 
     BunString directoryStr = Bun::toString(directory);
     BunString outDirectory = { BunStringTag::Empty, {} };
     BunString outMessage = { BunStringTag::Empty, {} };
-    int32_t status = Bun__NodeCompileCache__enable(
-        directory.isNull() ? nullptr : &directoryStr, portable, &outDirectory, &outMessage);
+    int32_t status = Bun__NodeCompileCache__enable(&directoryStr, portable, disabled, &outDirectory, &outMessage);
 
     auto* result = JSC::constructEmptyObject(globalObject);
     Bun::putDirectNamed(vm, result, "status"_s, JSC::jsNumber(status));
@@ -1000,7 +985,7 @@ _stat                   &Bun::Bindgen::Generated::NodeModuleModule::jsStat Funct
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
-enableCompileCache      jsFunctionEnableCompileCache      Function 1
+enableCompileCache      JSBuiltin                         Function|Builtin 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
 flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0

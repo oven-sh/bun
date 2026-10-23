@@ -24,3 +24,26 @@ export function _initPaths() {
   const M = require("node:module");
   M.globalPaths = paths;
 }
+
+// `require('node:module').enableCompileCache`, mirroring Node's lib/internal/modules/helpers.js.
+export function enableCompileCache(options) {
+  let portable;
+  let directory;
+
+  if (typeof options === "object" && options !== null) {
+    ({ directory, portable } = options);
+  } else {
+    directory = options;
+  }
+  const env = process.env;
+  if (directory === undefined) {
+    directory = env.NODE_COMPILE_CACHE || require("node:path").join(require("node:os").tmpdir(), "node-compile-cache");
+  }
+  if (portable === undefined) {
+    portable = env.NODE_COMPILE_CACHE_PORTABLE === "1";
+  }
+  const disabled = env.NODE_DISABLE_COMPILE_CACHE !== undefined;
+
+  const nativeEnableCompileCache = $newCppFunction("NodeModuleModule.cpp", "jsFunctionEnableCompileCache", 3);
+  return nativeEnableCompileCache(directory, portable === true, disabled);
+}

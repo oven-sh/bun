@@ -448,6 +448,119 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  // Node resolves NODE_DISABLE_COMPILE_CACHE, NODE_COMPILE_CACHE and
+  // NODE_COMPILE_CACHE_PORTABLE from process.env when enableCompileCache() is
+  // called, so a .env line, a --preload script or a process.env write before a
+  // tool (eslint, vite, tsc) enables the cache is honored.
+  async function runEnableCompileCache({ files = {}, args = [], env = {}, code }) {
+    using dir = tempDir("compile-cache-env", files);
+    const cacheDir = path.join(String(dir), "cc");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "-e", code.replaceAll("CACHE_DIR", JSON.stringify(cacheDir))],
+      env: { ...compileCacheEnv, ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, stderr).toStartWith("{");
+    expect(exitCode).toBe(0);
+    return { result: JSON.parse(stdout), stderr, cacheDirExists: fs.existsSync(cacheDir) };
+  }
+  const disabledResult = {
+    status: Module.constants.compileCacheStatus.DISABLED,
+    message: "Disabled by NODE_DISABLE_COMPILE_CACHE",
+  };
+  const reportEnable = `process.stdout.write(JSON.stringify(require("module").enableCompileCache(CACHE_DIR)));`;
+
+  test("enableCompileCache honors process.env.NODE_DISABLE_COMPILE_CACHE set in the script", async () => {
+    expect(
+      await runEnableCompileCache({
+        code: `process.env.NODE_DISABLE_COMPILE_CACHE = "1"; ${reportEnable}`,
+      }),
+    ).toEqual({ result: disabledResult, stderr: "", cacheDirExists: false });
+  });
+
+  test("enableCompileCache honors an empty NODE_DISABLE_COMPILE_CACHE like Node (presence check)", async () => {
+    expect(
+      await runEnableCompileCache({
+        code: `process.env.NODE_DISABLE_COMPILE_CACHE = ""; ${reportEnable}`,
+      }),
+    ).toEqual({ result: disabledResult, stderr: "", cacheDirExists: false });
+  });
+
+  test("enableCompileCache honors NODE_DISABLE_COMPILE_CACHE set by a --preload script", async () => {
+    expect(
+      await runEnableCompileCache({
+        files: { "preload.js": `process.env.NODE_DISABLE_COMPILE_CACHE = "1";` },
+        args: ["--preload", "./preload.js"],
+        code: reportEnable,
+      }),
+    ).toEqual({ result: disabledResult, stderr: "", cacheDirExists: false });
+  });
+
+  test("enableCompileCache honors NODE_DISABLE_COMPILE_CACHE from an auto-loaded .env file", async () => {
+    expect(
+      await runEnableCompileCache({
+        files: { ".env": "NODE_DISABLE_COMPILE_CACHE=1\n" },
+        code: reportEnable,
+      }),
+    ).toEqual({ result: disabledResult, stderr: "", cacheDirExists: false });
+  });
+
+  test("enableCompileCache enables when the script deletes an inherited NODE_DISABLE_COMPILE_CACHE", async () => {
+    const { result, stderr, cacheDirExists } = await runEnableCompileCache({
+      env: { NODE_DISABLE_COMPILE_CACHE: "1" },
+      code: `delete process.env.NODE_DISABLE_COMPILE_CACHE; ${reportEnable}`,
+    });
+    expect(stderr).toBe("");
+    expect(result).toEqual({ status: Module.constants.compileCacheStatus.ENABLED, directory: expect.any(String) });
+    expect(cacheDirExists).toBe(true);
+  });
+
+  test("enableCompileCache defaults the directory from process.env.NODE_COMPILE_CACHE at call time", async () => {
+    const { result, stderr } = await runEnableCompileCache({
+      code: `process.env.NODE_COMPILE_CACHE = CACHE_DIR;
+        const m = require("module");
+        process.stdout.write(JSON.stringify({ result: m.enableCompileCache(), dir: m.getCompileCacheDir() }));`,
+    });
+    expect(stderr).toBe("");
+    expect(result.result).toEqual({
+      status: Module.constants.compileCacheStatus.ENABLED,
+      directory: expect.any(String),
+    });
+    expect(path.dirname(result.dir)).toBe(result.result.directory);
+    expect(path.basename(result.result.directory)).toBe("cc");
+  });
+
+  test("enableCompileCache defaults portable mode from process.env.NODE_COMPILE_CACHE_PORTABLE at call time", async () => {
+    // Portable mode keys entries on the path relative to the cache directory,
+    // which the COMPILE_CACHE debug log reports on load.
+    const { result, stderr } = await runEnableCompileCache({
+      files: { "dep.js": "module.exports = 7;" },
+      env: { NODE_DEBUG_NATIVE: "COMPILE_CACHE" },
+      code: `process.env.NODE_COMPILE_CACHE_PORTABLE = "1";
+        const r = require("module").enableCompileCache(CACHE_DIR);
+        require("./dep.js");
+        process.stdout.write(JSON.stringify(r));`,
+    });
+    expect(result).toEqual({ status: Module.constants.compileCacheStatus.ENABLED, directory: expect.any(String) });
+    expect(stderr).toContain("using relative path");
+  });
+
+  test("enableCompileCache treats only portable: true as portable like Node", async () => {
+    const { result, stderr } = await runEnableCompileCache({
+      files: { "dep.js": "module.exports = 7;" },
+      env: { NODE_DEBUG_NATIVE: "COMPILE_CACHE" },
+      code: `const r = require("module").enableCompileCache({ directory: CACHE_DIR, portable: "1" });
+        require("./dep.js");
+        process.stdout.write(JSON.stringify(r));`,
+    });
+    expect(result).toEqual({ status: Module.constants.compileCacheStatus.ENABLED, directory: expect.any(String) });
+    // dep.js went through the cache, keyed on its absolute path.
+    expect(stderr).toMatch(/code cache for CommonJS .*dep\.js was not initialized/);
+    expect(stderr).not.toContain("using relative path");
+  });
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;

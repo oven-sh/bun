@@ -329,12 +329,10 @@ fn init_logging_once() {
     ONCE.call_once(init_logging);
 }
 
-/// `module.enableCompileCache(dir | {directory, portable})`. `None` values
-/// resolve like Node: dir from `NODE_COMPILE_CACHE` else the tmpdir default;
-/// portable from `NODE_COMPILE_CACHE_PORTABLE=1`.
-pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResult {
+/// `module.enableCompileCache()`; the JS builtin resolves the arguments from `process.env`.
+pub fn enable(dir: &[u8], portable: bool, disabled: bool) -> EnableResult {
     init_logging_once();
-    if env_var::NODE_DISABLE_COMPILE_CACHE::get().is_some() {
+    if disabled {
         cclog!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.\n");
         // A previously-uninitialized state stays off.
         let _ = ENABLED.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
@@ -353,49 +351,8 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
         };
     }
 
-    let default_buf: Vec<u8>;
-    let dir: &[u8] = match explicit_dir {
-        // "" resolves to cwd, like Node's path.resolve("").
-        Some(d) => d,
-        None => match env_var::NODE_COMPILE_CACHE::get_not_empty() {
-            Some(d) => d,
-            None => {
-                let tmp = platform_tmp_dir();
-                let mut buf = Vec::with_capacity(tmp.len() + 20);
-                buf.extend_from_slice(tmp);
-                buf.push(SEP);
-                buf.extend_from_slice(b"node-compile-cache");
-                default_buf = buf;
-                &default_buf
-            }
-        },
-    };
-    enable_with_dir(dir, portable.unwrap_or_else(portable_from_env))
-}
-
-/// Node's `os.tmpdir()` order: TEMP -> TMP on Windows, TMPDIR -> TMP ->
-/// TEMP -> /tmp on POSIX; trailing separator stripped.
-fn platform_tmp_dir() -> &'static [u8] {
-    #[cfg(windows)]
-    let candidate = env_var::TEMP::get_not_empty().or_else(env_var::TMP::get_not_empty);
-    #[cfg(not(windows))]
-    let candidate = env_var::TMPDIR::get_not_empty()
-        .or_else(env_var::TMP::get_not_empty)
-        .or_else(env_var::TEMP::get_not_empty);
-    if let Some(dir) = candidate {
-        if dir.len() > 1 && dir[dir.len() - 1] == SEP {
-            return &dir[..dir.len() - 1];
-        }
-        return dir;
-    }
-    #[cfg(windows)]
-    {
-        b"C:\\Windows\\Temp"
-    }
-    #[cfg(not(windows))]
-    {
-        b"/tmp"
-    }
+    // "" resolves to cwd, like Node's path.resolve("").
+    enable_with_dir(dir, portable)
 }
 
 fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
@@ -1214,25 +1171,16 @@ pub fn persist_now() {
 
 #[unsafe(no_mangle)]
 /// # Safety
-/// `dir` is null or a live `BunString`; both out-params are valid for write.
+/// `dir` is a live `BunString`; both out-params are valid for write.
 pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
-    dir: *const BunString,
-    // -1 = not specified (fall back to NODE_COMPILE_CACHE_PORTABLE).
-    portable: i32,
+    dir: &BunString,
+    portable: bool,
+    disabled: bool,
     out_directory: *mut BunString,
     out_message: *mut BunString,
 ) -> i32 {
-    // SAFETY: C++ passes null or a live BunString plus valid out-params.
-    let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
-    let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
-    let result = enable(
-        dir_slice,
-        if portable < 0 {
-            None
-        } else {
-            Some(portable != 0)
-        },
-    );
+    let dir_utf8 = dir.to_utf8();
+    let result = enable(dir_utf8.slice(), portable, disabled);
     if let Some(directory) = result.directory {
         // SAFETY: out-param is valid for write per fn contract.
         unsafe { out_directory.write(BunString::clone_utf8(&directory)) };

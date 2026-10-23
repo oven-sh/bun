@@ -28,7 +28,7 @@ const flagValue = (flag: string) =>
 const engineFunctions = flagValue("--engine-functions=");
 if (!/^--debug=(OFF|ON)$/.test(process.argv[2] ?? "") || !output || output.startsWith("--") || !engineFunctions) {
   console.error(
-    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json>",
+    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> [--engine-directory=<Source/JavaScriptCore/aot>]",
   );
   process.exit(1);
 }

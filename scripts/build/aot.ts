@@ -335,6 +335,7 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
         manifest,
         archive,
         `--engine-functions=${engineFunctionsJson(cfg)}`,
+        `--engine-directory=${engine.directory}`,
       ]),
     },
   });

@@ -419,35 +419,20 @@ fn find_playwright_shell() -> Option<ZBox> {
         return None;
     }
 
-    // Build the binary path. Possible subdir layouts:
-    //   cft:     chrome-headless-shell-<plat>-<arch>/chrome-headless-shell
+    // Build the binary path. Possible subdir layouts, per Playwright's registry (no arch suffix on linux x64):
+    // https://github.com/microsoft/playwright/blob/26a9e470a7b3c7822084b09fb7f13902c5f37b51/packages/playwright-core/src/server/registry/index.ts#L75
+    //   cft mac:   chrome-headless-shell-mac-<arch>/chrome-headless-shell
+    //   cft linux: chrome-headless-shell-linux64/chrome-headless-shell
     //   windows: chrome-headless-shell-win64/chrome-headless-shell.exe
-    //   non-cft: chrome-linux/headless_shell   (linux arm64 only)
+    //   non-cft: chrome-linux/headless_shell   (linux arm64 only, no CfT build; fallback below)
     #[cfg(windows)]
     let subdir_cft: &[u8] = b"chrome-headless-shell-win64/chrome-headless-shell.exe";
-    #[cfg(not(windows))]
-    let subdir_cft_owned: Vec<u8> = {
-        let arch: &str = if cfg!(target_arch = "aarch64") {
-            "arm64"
-        } else {
-            "x64"
-        };
-        let plat: &str = if cfg!(target_os = "macos") {
-            "mac"
-        } else {
-            "linux"
-        };
-        let mut v: Vec<u8> = Vec::new();
-        write!(
-            &mut v,
-            "chrome-headless-shell-{}-{}/chrome-headless-shell",
-            plat, arch
-        )
-        .ok()?;
-        v
-    };
-    #[cfg(not(windows))]
-    let subdir_cft: &[u8] = &subdir_cft_owned;
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let subdir_cft: &[u8] = b"chrome-headless-shell-mac-arm64/chrome-headless-shell";
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+    let subdir_cft: &[u8] = b"chrome-headless-shell-mac-x64/chrome-headless-shell";
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let subdir_cft: &[u8] = b"chrome-headless-shell-linux64/chrome-headless-shell";
 
     let cache_dir: &[u8] = &cache_dir[..];
     let mut bin_buf = path_buffer_pool::get();

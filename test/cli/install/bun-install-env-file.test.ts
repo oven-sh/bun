@@ -292,9 +292,9 @@ describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   });
 });
 
-// The security scanner runs in a child `bun` that starts in the project root.
-// Left alone that child loads the default `.env*` files of `bun run` by itself.
-// Like a lifecycle script it gets the environment install resolved, and nothing else.
+// The security scanner runs in a child `bun` that starts in the project root. By default, that child would load the
+// same `.env*` files as `bun run`. Like a lifecycle script, it gets the environment that the install resolved, and
+// nothing else.
 const scannerProbeKeys = ["SCAN_DOTENV", "SCAN_MODE", "SCAN_CUSTOM", "SCAN_SHELL", "BUN_FEATURE_FLAG_NO_ORPHANS"];
 
 // Records which of the probe variables the scanner process has, and whether a

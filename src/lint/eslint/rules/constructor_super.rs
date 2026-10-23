@@ -16,8 +16,8 @@ const BAD_SUPER: Message = Message::new(
     "Unexpected 'super()' because 'super' is not a constructor.",
 );
 
-/// What oxlint's `is_invalid_super_class` does not hold for: everything but what is known to be a primitive value, so
-/// `(A as B)` too, which ESLint knows nothing about.
+/// The negation of oxlint's `is_invalid_super_class`: true for everything that isn't known to be a primitive value.
+/// That includes `(A as B)`, which ESLint's version doesn't know about.
 fn oxlint_is_possible_constructor(mut e: Expr<'_>) -> bool {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
@@ -40,7 +40,7 @@ fn oxlint_is_possible_constructor(mut e: Expr<'_>) -> bool {
     }
 }
 
-/// The one `null` that oxlint knows in an `extends`.
+/// The only form of `null` that oxlint recognizes in an `extends`: without parentheses.
 fn is_plain_null(e: Expr<'_>) -> bool {
     e.tag() == ExprTag::Null && !e.is_parenthesized()
 }
@@ -49,13 +49,13 @@ fn is_super_call(e: Expr<'_>) -> bool {
     e.as_call().is_some_and(|call| call.callee().tag() == ExprTag::Super)
 }
 
-/// Whether `e` is all of a statement, without parentheses.
+/// True if `e` is a whole statement, without parentheses.
 fn is_statement(e: Expr<'_>) -> bool {
     !e.is_parenthesized() && matches!(e.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Expr)
 }
 
-/// Of `a ? super() : b;` the `super()` that oxlint finds, which is the first of two, and the other branch. It takes it
-/// for called whatever `a` is.
+/// For `a ? super() : b;`, returns the `super()` that oxlint finds, which is the first if there are two, and the other
+/// branch. oxlint treats it as called whatever `a` is.
 fn oxlint_branches(cond: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     let ExprKind::Cond { yes, no, .. } = cond.kind() else {
         return None;
@@ -68,8 +68,8 @@ fn oxlint_branches(cond: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     }
 }
 
-/// Whether oxlint finds the `super()` that `e` is: it looks at the statements and at the tests, not into expressions.
-/// `super(), a();`, `(super());` and `return super();` are without one for it.
+/// True if oxlint finds `e`, which is a `super()`. It looks at statements and tests but not inside expressions, so it
+/// misses the call in `super(), a();`, `(super());` and `return super();`.
 fn oxlint_finds(e: Expr<'_>) -> bool {
     if e.is_parenthesized() {
         return false;
@@ -94,7 +94,7 @@ fn oxlint_finds(e: Expr<'_>) -> bool {
     }
 }
 
-/// A loop that only a `break` ends. oxlint has a way past it as past every other.
+/// True for a loop that only a `break` can end. oxlint assumes there's a path past it, as with any other loop.
 fn is_endless(statement: Stmt<'_>) -> bool {
     match statement.kind() {
         StmtKind::For { test, .. } => test.is_none_or(|test| test.tag() == ExprTag::True),
@@ -143,7 +143,7 @@ fn is_possible_constructor(mut e: Expr<'_>) -> bool {
                 Some(_) => return false,
             },
             ExprKind::Binary { op, left, right } => match op {
-                // If `&&` yields its left side, that is falsy.
+                // If `&&` yields its left side, that side is falsy.
                 BinOp::And | BinOp::Comma => right,
                 BinOp::Or | BinOp::Nullish if is_possible_constructor(right) => return true,
                 BinOp::Or | BinOp::Nullish => left,
@@ -156,8 +156,8 @@ fn is_possible_constructor(mut e: Expr<'_>) -> bool {
     }
 }
 
-/// The first statement directly in the body of `constructor` that is a `super(..)` and nothing else,
-/// with what precedes it and the call.
+/// Finds the first statement directly in `constructor`'s body that's just a `super(..)` call. Returns the statements
+/// before it, and the call.
 pub fn first_super_statement<'a>(constructor: Func<'a>) -> Option<(impl Iterator<Item = Stmt<'a>>, Call<'a>)> {
     let body = constructor.body_statements()?;
     let (at, call) = body.iter().enumerate().find_map(|(at, statement)| match statement.kind() {
@@ -167,9 +167,10 @@ pub fn first_super_statement<'a>(constructor: Func<'a>) -> Option<(impl Iterator
     Some((body.iter().take(at), call))
 }
 
-/// Whether ESLint can lose a `super()` that is called before `statement`. It starts a segment from those before it
-/// that it has seen: a `do` or a `for (;;)` can be one segment that is before itself, a `default` that is not the
-/// last case is reached from the last test, and a `finally` has segments of its own for what leaves the `try` early.
+/// True if ESLint can lose track of a `super()` called before `statement`. It initializes a segment from the previous
+/// segments it has already seen. But a `do` or `for (;;)` can be a single segment that precedes itself, a `default`
+/// that isn't the last case is reached from the last test, and a `finally` has separate segments for code that leaves
+/// the `try` early.
 fn is_winding(statement: Stmt<'_>) -> bool {
     match statement.kind() {
         StmtKind::DoWhile { .. } => true,
@@ -182,8 +183,8 @@ fn is_winding(statement: Stmt<'_>) -> bool {
     }
 }
 
-/// Whether one of `sorted`, which are in source order, starts in `within` and is in `function` itself, not in a
-/// function in it.
+/// True if one of `sorted`, which is in source order, starts in `within` and belongs to `function` itself rather than
+/// to a nested function.
 fn has_own<'a, T: Copy>(sorted: &[T], within: Span, function: Func<'a>, node: impl Fn(T) -> Node<'a>) -> bool {
     let start = |it: &T| node(*it).span().start;
     let mut rest = sorted.get(sorted.partition_point(|it| start(it) < within.start)..).unwrap_or_default();
@@ -191,7 +192,7 @@ fn has_own<'a, T: Copy>(sorted: &[T], within: Span, function: Func<'a>, node: im
         && start(&first) < within.end
     {
         match node(first).enclosing_function() {
-            // All that is in a function in it is passed over at once.
+            // Skip everything inside the nested function in one step.
             Some(inner) if inner != function => {
                 let end = inner.span().end;
                 rest = after.get(after.partition_point(|it| start(it) < end)..).unwrap_or_default();
@@ -202,15 +203,15 @@ fn has_own<'a, T: Copy>(sorted: &[T], within: Span, function: Func<'a>, node: im
     false
 }
 
-/// Whether it can be told from the statements of the body alone that `super()` is called exactly once on every way
-/// through `constructor`: it is a statement of its own there, no `return` precedes it, there is no other, and nothing
-/// after it [is winding](is_winding). What is in a function or in the constructor of a class in it is not its own.
+/// True if the body's statements alone show that `super()` is called exactly once on every path through `constructor`:
+/// the call is a statement directly in the body, no `return` comes before it, there's no other call, and nothing after
+/// it [is winding](is_winding). Code in a nested function, or in the constructor of a nested class, doesn't count.
 fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSuper>) -> bool {
     let Some((_, call)) = first_super_statement(constructor) else {
         return false;
     };
     let (file, callee, whole) = (constructor.file(), call.callee().span(), constructor.span());
-    // oxlint finds none in parentheses, and none that is not reached, which only a `throw` can be the cause of here.
+    // oxlint doesn't find a parenthesized call or an unreachable one. Here only a `throw` can make it unreachable.
     if file.language().is_oxlint
         && let Node::Expr(e) = call.callee().parent()
         && (e.is_parenthesized()
@@ -248,14 +249,14 @@ fn is_update_of_for(node: Node<'_>) -> bool {
     parent.as_for().is_some_and(|(_, _, update, _)| update == Some(e))
 }
 
-/// On which of the paths that lead through a segment `super()` is called.
+/// Tracks on which paths through a segment `super()` is called.
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 struct Called {
     in_every_path: bool,
     in_some_paths: bool,
 }
 
-/// What the segments before a segment that have been seen say.
+/// The combined state of a segment's previous segments that have already been seen.
 struct Before {
     any: bool,
     called: Called,
@@ -263,12 +264,12 @@ struct Before {
 
 struct SegmentInfo<'a> {
     called: Called,
-    /// The `super()` calls that have been found valid, which a loop can make duplicates.
+    /// The `super()` calls considered valid so far. A loop can still turn them into duplicates.
     valid_nodes: SmallVec<[Expr<'a>; 1]>,
 }
 
 struct FuncInfo<'a> {
-    /// It is the constructor of a class that has an `extends`.
+    /// True for the constructor of a class with an `extends`.
     has_extends: bool,
     super_is_constructor: bool,
     code_path: CodePath<'a>,
@@ -276,27 +277,28 @@ struct FuncInfo<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The constructor that is checked. Those of the classes in it are checked on their own.
+    /// The constructor being checked. Constructors of nested classes are checked separately.
     constructor: Option<Func<'a>>,
-    /// For each of the code paths around the current node, the innermost last.
+    /// One entry per code path around the current node, innermost last.
     func_infos: Vec<FuncInfo<'a>>,
-    /// By `Segment::id`, for the segments of the constructors that are checked.
+    /// Keyed by `Segment::id`, for the segments of the checked constructors.
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
-    /// The `super` of each `super()` of the file, in source order, once a constructor asks.
+    /// The `super` of each `super()` in the file, in source order. Built the first time a constructor needs it.
     super_callees: Option<Vec<Expr<'a>>>,
-    /// The statements of the file that [are winding](is_winding), in source order, once a constructor asks.
+    /// The file's statements that [are winding](is_winding), in source order. Built the first time a constructor needs
+    /// it.
     winding: Option<Vec<Stmt<'a>>>,
-    /// With a configuration of oxlint, which reports when it has seen all of the constructor: the `super()` that it
-    /// finds and that can be reached, in source order.
+    /// With an oxlint config: the reachable `super()` calls that oxlint finds, in source order. oxlint reports only
+    /// after it has seen the whole constructor.
     found: Vec<Expr<'a>>,
-    /// There is a way past one of them that the segments do not have.
-    is_passed_over: bool,
-    /// One of them is called after another, or again.
+    /// oxlint sees a path around one of them that the segments don't have.
+    can_be_bypassed: bool,
+    /// One of them runs after another one, or more than once.
     is_repeated: bool,
 }
 
 impl<'a> State<'a> {
-    /// The innermost code path, if it is one to check.
+    /// Returns the innermost code path, if it's one to check.
     fn constructor(&self) -> Option<&FuncInfo<'a>> {
         self.func_infos.last().filter(|it| it.has_extends)
     }
@@ -327,8 +329,8 @@ impl<'a> State<'a> {
         Before { any, called }
     }
 
-    /// Marks the current segments that are reachable as having called `super()`. Returns the id of
-    /// the last of them, and whether one of them had called it before.
+    /// Marks the reachable current segments as having called `super()`. Returns the last one's id, and whether any of
+    /// them had already called it.
     fn mark_current_segments(&mut self, code_path: CodePath<'a>) -> (Option<u32>, bool) {
         let (mut last, mut is_duplicate) = (None, false);
         for segment in code_path.current_segments() {
@@ -363,7 +365,7 @@ impl ConstructorSuper {
         }
         cx.state.seg_info_map.clear();
         cx.state.found.clear();
-        cx.state.is_passed_over = false;
+        cx.state.can_be_bypassed = false;
         cx.state.is_repeated = false;
     }
 
@@ -411,7 +413,7 @@ impl ConstructorSuper {
     ) {
         let found = std::mem::take(&mut cx.state.found);
         let Some((first, rest)) = found.split_first() else {
-            // Where it finds none it does not ask how the constructor ends, but after `extends null`.
+            // If oxlint finds no call, it doesn't check how the constructor ends, except after `extends null`.
             let is_expected = super_is_constructor
                 || super_class_of(func).is_some_and(is_plain_null)
                     && !func.returns().any(|it| matches!(it.as_return(), Some(Some(_))));
@@ -424,7 +426,7 @@ impl ConstructorSuper {
             return;
         }
         let returned_segments = code_path.returned_segments();
-        if cx.state.is_passed_over || !returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
+        if cx.state.can_be_bypassed || !returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
             cx.report(func.owner(), MISSING_SOME);
         }
         if cx.state.is_repeated {
@@ -439,9 +441,9 @@ impl ConstructorSuper {
         if cx.state.constructor().is_none() {
             return;
         }
-        // As upstream, it has been seen before those before it are looked at. One of them is itself if it is all of a
-        // loop, as in `do { a(); } while (b);`: then `super()` is never called on every path to it, and to what
-        // follows.
+        // Like upstream, mark the segment as seen before looking at its previous segments. It's its own previous
+        // segment if it's a whole loop, as in `do { a(); } while (b);`. Then `super()` never counts as called on every
+        // path to it or to what follows.
         let unknown = SegmentInfo {
             called: Called::default(),
             valid_nodes: SmallVec::new(),
@@ -449,22 +451,22 @@ impl ConstructorSuper {
         let id = segment.id();
         cx.state.seg_info_map.insert(id, unknown);
         let before = cx.state.seen_prev_segments(segment);
-        let is_beside_call = cx.language().is_oxlint
+        let is_other_branch_of_call = cx.language().is_oxlint
             && matches!((node, node.parent()), (Node::Expr(e), Node::Expr(parent))
                 if oxlint_branches(parent).is_some_and(|(_, other)| other == e));
         let called = Called {
-            // The segment of the update of a `for` is made in advance, before what precedes it is
-            // seen. It is never the only one before another: this makes the others decide.
-            in_every_path: before.any && before.called.in_every_path || is_update_of_for(node) || is_beside_call,
-            in_some_paths: before.any && before.called.in_some_paths || is_beside_call,
+            // A `for` loop's update segment is created early, before its previous segments are seen. It's never the
+            // only previous segment of another one, so `true` here lets the others decide.
+            in_every_path: before.any && before.called.in_every_path || is_update_of_for(node) || is_other_branch_of_call,
+            in_some_paths: before.any && before.called.in_some_paths || is_other_branch_of_call,
         };
         if let Some(info) = cx.state.seg_info_map.get_mut(&id) {
             info.called = called;
         }
     }
 
-    /// ESLint goes through the segments from the start of the loop again at each way back to it, and through all that
-    /// follow in the function, which it leaves out.
+    /// At each jump back to a loop's start, ESLint traverses the segments again from there. That traversal also reaches
+    /// everything after the loop, which it skips.
     fn on_segment_loop<'a>(
         &self,
         from_segment: Segment<'a>,
@@ -476,15 +478,15 @@ impl ConstructorSuper {
             return;
         };
         code_path.traverse_segments_between(Some(to_segment), Some(from_segment), |segment, controller| {
-            // What has not been seen is after the loop.
+            // A segment that hasn't been seen yet is after the loop.
             match cx.state.seg_info_map.contains_key(&segment.id()) {
-                true => Self::go_through_again(segment, cx),
+                true => Self::revisit_segment(segment, cx),
                 false => controller.skip(),
             }
         });
     }
 
-    fn go_through_again<'a>(segment: Segment<'a>, cx: &mut Cx<'a, Self>) {
+    fn revisit_segment<'a>(segment: Segment<'a>, cx: &mut Cx<'a, Self>) {
         let before = cx.state.seen_prev_segments(segment);
         let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) else {
             return;
@@ -496,8 +498,8 @@ impl ConstructorSuper {
         if before.called.in_some_paths {
             let again = std::mem::take(&mut info.valid_nodes);
             if cx.language().is_oxlint {
-                // For oxlint a loop runs not at all or several times.
-                cx.state.is_passed_over |= !again.is_empty();
+                // oxlint assumes a loop runs either zero times or several times.
+                cx.state.can_be_bypassed |= !again.is_empty();
                 cx.state.is_repeated |= !again.is_empty();
             } else {
                 for node in again {
@@ -528,13 +530,13 @@ impl ConstructorSuper {
         };
         if is_oxlint {
             let constructor = cx.state.constructor.map(Node::Func);
-            // What a `for`-`in` goes through is in the loop for it.
+            // oxlint treats the expression that a `for`-`in` iterates over as part of the loop.
             let is_in_head = matches!(e.parent(), Node::Stmt(it) if matches!(it.tag(), StmtTag::ForIn | StmtTag::ForOf));
-            let mut around = node.ancestors().take_while(|it| Some(*it) != constructor);
+            let mut enclosing_nodes = node.ancestors().take_while(|it| Some(*it) != constructor);
             cx.state.found.push(e);
             cx.state.is_repeated |= is_duplicate || is_in_head;
-            cx.state.is_passed_over |= is_in_head
-                || !is_duplicate && around.any(|it| matches!(it, Node::Stmt(it) if is_endless(it)));
+            cx.state.can_be_bypassed |= is_in_head
+                || !is_duplicate && enclosing_nodes.any(|it| matches!(it, Node::Stmt(it) if is_endless(it)));
         }
         if is_duplicate && !is_oxlint {
             cx.report(e, DUPLICATE);
@@ -582,7 +584,7 @@ impl Rule for ConstructorSuper {
             return;
         };
         let is_constructor = |it: &Member<'a>| it.kind() == MemberKind::Constructor && !it.flags().contains(Flags::STATIC);
-        // oxlint looks at the first, which is without a body where there are overloads.
+        // oxlint only looks at the first constructor, which has no body if there are overloads.
         let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
         let constructors = class.members().iter().filter(is_constructor).take(count);
         for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {

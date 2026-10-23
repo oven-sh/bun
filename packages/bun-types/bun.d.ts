@@ -2884,10 +2884,7 @@ declare module "bun" {
    * @param data The data to hash.
    * @param seed The seed to use.
    */
-  const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number | bigint,
-  ) => number | bigint) &
+  const hash: ((data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number | bigint) => bigint) &
     Hash;
 
   interface Hash {
@@ -5405,7 +5402,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null`; it is garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
+  function mmap(path: string, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout
@@ -5864,6 +5861,11 @@ declare module "bun" {
    */
   abstract class CryptoHashInterface<T> {
     /**
+     * The number of bytes the hash produces
+     */
+    readonly byteLength: number;
+
+    /**
      * Update the hash with data
      *
      * @param data Data to add to the hash
@@ -6197,7 +6199,7 @@ declare module "bun" {
      *
      * A value of `1` uses minimum memory but is slow and reduces compression ratio.
      *
-     * A value of `9` uses maximum memory for optimal speed. The default is `8`.
+     * A value of `9` uses maximum memory for optimal speed. The default is `8`. Any other value throws.
      */
     memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     /**
@@ -6215,13 +6217,13 @@ declare module "bun" {
     windowBits?:
       -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
     /**
-     * Tunes the compression algorithm.
+     * Tunes the compression algorithm. One of these `constants` of `node:zlib`; any other value throws.
      *
-     * - `Z_DEFAULT_STRATEGY`: For normal data **(Default)**
-     * - `Z_FILTERED`: For data produced by a filter or predictor
-     * - `Z_HUFFMAN_ONLY`: Force Huffman encoding only (no string match)
-     * - `Z_RLE`: Limit match distances to one (run-length encoding)
-     * - `Z_FIXED` prevents the use of dynamic Huffman codes
+     * - `Z_DEFAULT_STRATEGY` (`0`): For normal data **(Default)**
+     * - `Z_FILTERED` (`1`): For data produced by a filter or predictor
+     * - `Z_HUFFMAN_ONLY` (`2`): Force Huffman encoding only (no string match)
+     * - `Z_RLE` (`3`): Limit match distances to one (run-length encoding)
+     * - `Z_FIXED` (`4`): Prevents the use of dynamic Huffman codes
      *
      * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
      *
@@ -8175,15 +8177,15 @@ declare module "bun" {
       /**
        * User CPU time used by the process, in microseconds.
        */
-      user: number;
+      user: bigint;
       /**
        * System CPU time used by the process, in microseconds.
        */
-      system: number;
+      system: bigint;
       /**
        * Total CPU time used by the process, in microseconds.
        */
-      total: number;
+      total: bigint;
     };
     /**
      * The maximum resident set size (in bytes) used by the process during its lifetime.
@@ -9178,6 +9180,21 @@ declare module "bun" {
     [Symbol.dispose](): void;
   }
 
+  /** Options for the {@link FileSystemRouter} constructor. */
+  interface FileSystemRouterOptions {
+    /**
+     * The root directory containing the files to route
+     */
+    dir: string;
+    style: "nextjs";
+
+    /** The base path to use when routing */
+    assetPrefix?: string;
+    origin?: string;
+    /** Limit the pages to those with particular file extensions. */
+    fileExtensions?: string[];
+  }
+
   /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
@@ -9200,29 +9217,19 @@ declare module "bun" {
      * @param options.dir The root directory containing the files to route
      * @param options.style The style of router to use (only "nextjs" is supported)
      */
-    constructor(options: {
-      /**
-       * The root directory containing the files to route
-       */
-      dir: string;
-      style: "nextjs";
-
-      /** The base path to use when routing */
-      assetPrefix?: string;
-      origin?: string;
-      /** Limit the pages to those with particular file extensions. */
-      fileExtensions?: string[];
-    });
+    constructor(options: FileSystemRouterOptions);
 
     // todo: URL
     match(input: string | Request | Response): MatchedRoute | null;
 
-    readonly assetPrefix: string;
-    readonly origin: string;
-    readonly style: string;
+    /** The `assetPrefix` option, or `null` if it was absent or empty */
+    readonly assetPrefix: string | null;
+    /** The `origin` option, or `null` if it was absent or empty */
+    readonly origin: string | null;
+    readonly style: "nextjs";
     readonly routes: Record<string, string>;
 
-    reload(): void;
+    reload(): this;
   }
 
   interface MatchedRoute {
@@ -9249,6 +9256,8 @@ declare module "bun" {
     readonly name: string;
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
+    /** @deprecated Use {@link src} */
+    readonly scriptSrc: string;
   }
 
   /**
@@ -9467,6 +9476,8 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * A lower limit also lowers how much a compressed PNG chunk, such as an
+       * ICC profile, may inflate to before the image is refused.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;

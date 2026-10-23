@@ -3,45 +3,45 @@
 use super::super::symbols::AliasTarget;
 use super::*;
 
-/// What makes a symbol the one it is.
+/// A symbol's identity.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Key<'p> {
-    /// `getMergedSymbol` of a symbol of the binder.
+    /// `getMergedSymbol` of a binder symbol.
     Symbol(Sym),
-    /// What `instantiateSymbol` made of that member for the table of that type.
+    /// The copy `instantiateSymbol` makes of this member for this type's member table.
     Instantiated(Sym, TypeId),
-    /// A property that has no symbol of the binder, as it is read with that mapper.
+    /// A property without a binder symbol, as read with this mapper.
     Property(&'p PropSource<'p>, Atom, MapperId),
-    /// `IndexInfo.indexSymbol` of the index signature of that type.
+    /// `IndexInfo.indexSymbol` of this type's index signature.
     Index(TypeId, (FileId, MemberId)),
-    /// `signature.thisParameter` of that function.
+    /// `signature.thisParameter` of this function.
     ThisParameter(FileId, FnId),
-    /// `__object`, `__type`, `__function`: the symbol that only that node declares.
+    /// `__object`, `__type`, `__function`: the symbol that only this node declares.
     Anonymous(FileId, Node),
-    /// What that member of an object literal declares. The property of the type of the literal is
-    /// another symbol, which `checkObjectLiteral` makes.
+    /// The symbol this object literal member declares. The property of the literal's type is a
+    /// different symbol, created by `checkObjectLiteral`.
     LiteralMember(FileId, PropId),
     /// `signature.parameters[index]`
     Parameter(SigId, u32),
-    /// The `prototype` of that class.
+    /// This class's `prototype`.
     Prototype(Sym),
-    /// The `default` that `createDefaultPropertyWrapperForModule` creates for that module.
+    /// The `default` that `createDefaultPropertyWrapperForModule` creates for this module.
     SyntheticDefault(Sym),
-    /// A symbol without declarations that is known by its name: `arguments`, `require`, a type
-    /// name that does not resolve.
+    /// A symbol without declarations, identified by its name: `arguments`, `require`, a type name
+    /// that doesn't resolve.
     Undeclared(Atom),
-    /// One that is the same as no other.
+    /// A symbol that's equal only to itself.
     Unique(u32),
 }
 
 pub(super) struct Entry<'p> {
     pub(super) key: Key<'p>,
-    /// The property that it was found as, and the mapper to read it with.
+    /// The property it was found as, and the mapper to read it with.
     pub(super) prop: Option<(&'p Prop<'p>, MapperId)>,
-    /// `symbol.name`, where it is not that of the key: of a late bound member, of a type name that
-    /// does not resolve.
+    /// `symbol.name` where it differs from the key's name: for a late-bound member or a type name
+    /// that doesn't resolve.
     pub(super) name: Atom,
-    /// What `symbol_info` and `declarations` have answered.
+    /// Cached results of `symbol_info` and `declarations`.
     info: Option<SymbolInfo<'p>>,
     declarations: Option<&'p [NodeRef]>,
 }
@@ -94,13 +94,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         id
     }
 
-    /// The symbol that `symbol` is, or is merged into.
+    /// The ref for `symbol`, or for the symbol it's merged into.
     pub(super) fn symbol(&mut self, symbol: Sym) -> SymbolRef {
         let symbol = self.c.files().canonical(symbol);
         self.intern_symbol(Key::Symbol(symbol), None)
     }
 
-    /// The same with the name `name`.
+    /// `intern_symbol`, then sets the symbol's name to `name`.
     pub(super) fn named_symbol(&mut self, key: Key<'c>, name: Atom) -> SymbolRef {
         let id = self.intern_symbol(key, None);
         if let Some(entry) = self.symbols.get_mut(id.0 as usize) {
@@ -115,7 +115,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.intern_symbol(key, None)
     }
 
-    /// The symbol that the property `prop` is, where `mapper` is what came with it.
+    /// The ref for property `prop`. `mapper` is the mapper it was found with.
     pub(super) fn symbol_of_prop(&mut self, prop: &'c Prop<'c>, mapper: MapperId) -> SymbolRef {
         let key = match prop.source {
             PropSource::Symbol(symbol) => {
@@ -126,7 +126,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     None => Key::Symbol(symbol),
                 }
             }
-            ref source => Key::Property(source, prop.name, self.c.compose(prop.mapper, mapper)),
+            ref source => {
+                let own = self.c.mapper_of_prop(prop);
+                Key::Property(source, prop.name, self.c.compose(own, mapper))
+            }
         };
         self.intern_symbol(key, Some((prop, mapper)))
     }
@@ -138,7 +141,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             .map(|entry| (entry.key, entry.prop))
     }
 
-    /// The symbol of the binder, if it is one.
+    /// The binder symbol, if `symbol` is one.
     pub(super) fn sym_of(&self, symbol: SymbolRef) -> Option<Sym> {
         match self.entry(symbol)?.0 {
             Key::Symbol(symbol) | Key::Instantiated(symbol, _) => Some(symbol),
@@ -146,7 +149,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// The property that `symbol` is, made up from its declaration if it was not found as one.
+    /// `symbol` as a property, synthesized from its declaration if it wasn't found as one.
     fn prop_of(&mut self, symbol: SymbolRef) -> Option<(&'c Prop<'c>, MapperId)> {
         let (key, prop) = self.entry(symbol)?;
         if prop.is_some() {
@@ -196,8 +199,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some((prop, MapperId::IDENTITY))
     }
 
-    /// `symbol.name`, spelled as TypeScript spells it.
-    fn name_as_in_typescript(&self, name: Atom) -> &'c [u8] {
+    /// `symbol.name`, spelled the way TypeScript spells it.
+    fn typescript_symbol_name(&self, name: Atom) -> &'c [u8] {
         let internal: &'static [u8] = match name {
             Atom::NONE => b"",
             known::anonymous_function => b"__function",
@@ -254,8 +257,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match key {
             Key::Symbol(sym) | Key::Instantiated(sym, _) => {
                 let files = self.c.files();
-                info.name = self.name_as_in_typescript(match prop {
-                    // A late bound member has the name of the property.
+                info.name = self.typescript_symbol_name(match prop {
+                    // A late-bound member takes the property's name.
                     Some((prop, _)) if prop.name.is_some() => prop.name,
                     _ => files.symbol(sym).name,
                 });
@@ -280,7 +283,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 if info.name.is_empty() && flags.contains(SymFlags::CLASS) {
                     info.name = b"__class";
                 }
-                // The name of a module that is a file or has a string for its name is in quotes.
+                // A module that's a file or is named by a string has its name in quotes.
                 if flags.intersects(SymFlags::MODULE) {
                     match files.decls_of(sym).first() {
                         Some(&(file, Decl::File)) => {
@@ -300,7 +303,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Key::Property(source, name, _) => {
                 info.name = match name {
                     Atom::NONE => b"__computed",
-                    name => self.name_as_in_typescript(name),
+                    name => self.typescript_symbol_name(name),
                 };
                 info.flags = SymbolFlags::PROPERTY;
                 match source {
@@ -334,7 +337,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let member = &self.c.hir(file)[p];
                 info.flags = flags_of_literal_member(member.kind);
                 info.name = match self.c.declared_member_name(file, member.key) {
-                    Some(name) => self.name_as_in_typescript(name),
+                    Some(name) => self.typescript_symbol_name(name),
                     None => b"__computed",
                 };
             }
@@ -362,9 +365,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.flags = SymbolFlags::FUNCTION_SCOPED_VARIABLE;
                 if let Some(parameter) = self.c.sig_params(signature).get(index as usize) {
                     info.name = match parameter.name {
-                        // `bindParameter`: one whose name is a pattern.
+                        // `bindParameter`'s name for a parameter whose name is a pattern.
                         Atom::NONE => self.list(format!("__{index}").as_bytes()),
-                        name => self.name_as_in_typescript(name),
+                        name => self.typescript_symbol_name(name),
                     };
                     if parameter.declaration.is_none() {
                         info.flags |= SymbolFlags::TRANSIENT;
@@ -382,7 +385,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.name = b"default";
                 info.flags = SymbolFlags::PROPERTY | SymbolFlags::TRANSIENT;
             }
-            Key::Undeclared(name) => info.name = self.name_as_in_typescript(name),
+            Key::Undeclared(name) => info.name = self.typescript_symbol_name(name),
             Key::Unique(_) => {
                 info.name = b"__index";
                 info.flags = SymbolFlags::SIGNATURE | SymbolFlags::TRANSIENT;
@@ -394,7 +397,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             .map(|entry| entry.name)
             .filter(|name| name.is_some())
         {
-            info.name = self.name_as_in_typescript(name);
+            info.name = self.typescript_symbol_name(name);
             // `getUnresolvedSymbolForEntityName`
             if matches!(key, Key::Undeclared(_)) {
                 info.flags = SymbolFlags::TYPE_ALIAS | SymbolFlags::TRANSIENT;
@@ -406,7 +409,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 Key::Symbol(_) | Key::Instantiated(..) | Key::LiteralMember(..)
             ) || matches!(prop.source, PropSource::Literal(..));
             if !is_declared && prop.flags.contains(PropFlags::METHOD) {
-                // `createUnionOrIntersectionProperty` makes a property of methods.
+                // `createUnionOrIntersectionProperty` creates a property symbol even when the parts
+                // are methods.
                 match info.check_flags.contains(CheckFlags::SYNTHETIC_PROPERTY) {
                     true => {
                         info.check_flags = (info.check_flags - CheckFlags::SYNTHETIC_PROPERTY)
@@ -442,7 +446,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         info
     }
 
-    /// The `?` of the member or the parameter property that declares `sym`.
+    /// True if the member or parameter property that declares `sym` has a `?`.
     fn is_optional_declaration(&mut self, sym: Sym) -> bool {
         match self.c.files().value_declaration(sym) {
             Some((file, Decl::Member(member))) => {
@@ -488,7 +492,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 out.extend(declarations.iter().map(|&it| self.node_of_declaration(it)));
             }
             PropSource::Symbol(symbol) => self.push_declarations_of_sym(*symbol, out),
-            // `propSet` has a symbol once.
+            // `propSet` deduplicates the symbols.
             PropSource::Intersected(_, parts) if parts.len() > MANY => {
                 let mut seen = crate::util::FxHashSet::default();
                 for part in parts.iter().filter(|&part| seen.insert(part)) {
@@ -618,8 +622,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let Some(parameter) = parameters.get(index as usize) else {
                     return TypeId::ERROR;
                 };
-                // What the signature has is `getTypeOfParameter`, which adds `undefined` for an
-                // initializer. The variable does not have it.
+                // The signature stores `getTypeOfParameter`, which adds `undefined` for an
+                // initializer. The variable's type doesn't include it.
                 if let Some((file, declaration)) = parameter.declaration
                     && self.c.hir(file)[declaration].default.is_some()
                 {
@@ -663,7 +667,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// that reference. Otherwise `getNonMissingTypeOfSymbol`.
     pub fn type_of_symbol_at_location(&mut self, symbol: SymbolRef, node: NodeRef) -> TypeId {
         if let Some((hir, at)) = self.valid(node) {
-            // The name of a property access stands for the access.
+            // A property access's name represents the whole access.
             let reference = match (hir.kind(at), hir.kind(hir.parent(at))) {
                 (Kind::Identifier | Kind::PrivateIdentifier, Kind::PropertyAccessExpression)
                     if hir.name(hir.parent(at)) == at =>
@@ -756,16 +760,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.sym_of(symbol) == Some(self.c.files().unknown_symbol)
     }
 
-    pub fn symbol_to_string(&mut self, symbol: SymbolRef) -> Vec<u8> {
-        match self.entry(symbol) {
-            Some((Key::Symbol(sym) | Key::Instantiated(sym, _), None)) => {
-                self.c.symbol_to_string(sym)
-            }
-            Some((_, Some((prop, _)))) => self.c.prop_to_string(prop),
-            _ => self.symbol_info(symbol).name.to_vec(),
-        }
-    }
-
     // ───────────────────────────── members of types ─────────────────────────────
 
     pub fn properties_of_type(&mut self, ty: TypeId) -> &'c [SymbolRef] {
@@ -782,7 +776,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let Some(members) = self.c.members(ty) else {
             return &[];
         };
-        let shape: &'p Shape<'p> = members.shape();
+        let shape: &'p Listed<'p> = members.shape();
         let mut symbols = Vec::with_capacity(shape.props.len());
         for prop in shape.props.iter() {
             symbols.push(self.symbol_of_prop(prop, members.mapper));
@@ -796,9 +790,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.symbol_of_prop(prop, mapper))
     }
 
-    /// The atom of the name of a property. `__@iterator` is the name of the property whose key is
-    /// `Symbol.iterator`. The name of a late bound member is spelled nowhere before the members of
-    /// its type are resolved.
+    /// The atom for a property name. `__@iterator` is the name of the property whose key is
+    /// `Symbol.iterator`. The name is interned, not looked up, because a late-bound member's name
+    /// doesn't exist as an atom until its type's members are resolved.
     fn property_name(&self, name: &[u8]) -> Atom {
         match name.strip_prefix(b"__@") {
             Some(symbol) => self.c.atoms().symbol_name(symbol),

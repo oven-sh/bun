@@ -1499,4 +1499,12 @@ describe("JSC option environment variables", () => {
     expect(stderr).not.toContain("thresholdForJITAfterWarmUp=77");
     expect(exitCode).toBe(0);
   });
+  test.concurrent.each(["BUN_JSC_useJIT", "BUN_JSC_useBBQJIT"])(
+    "rejects %s=0 with BUN_JSC_useWasmIPInt=0 as an invalid option",
+    async name => {
+      const { stderr, exitCode } = await dumpOptions({ [name]: "0", BUN_JSC_useWasmIPInt: "0" });
+      expect(stderr).toContain("invalid JSC environment variable\n\n    BUN_JSC_useWasmIPInt=0");
+      expect(exitCode).toBe(1);
+    },
+  );
 });

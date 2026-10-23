@@ -213,10 +213,6 @@ impl String {
         Self::wrap(Tag::EncodedSlice, EncodedSlice::utf8(s))
     }
     #[inline]
-    pub fn borrow_utf16(s: &[u16]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::utf16(s))
-    }
-    #[inline]
     pub fn ascii(s: &[u8]) -> Self {
         Self::wrap(Tag::EncodedSlice, EncodedSlice::latin1(s))
     }

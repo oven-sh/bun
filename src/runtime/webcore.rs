@@ -31,19 +31,12 @@ pub(crate) mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub(crate) use cookie_map::{CookieMap, CookieMapRef};
 pub(crate) use s3_client::S3Client;
-pub(crate) use s3_stat::S3Stat;
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub(crate) mod object_url_registry;
 pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
 pub(crate) mod jsc {
     pub(crate) use crate::jsc::*;
     pub(crate) use bun_jsc::virtual_machine::VirtualMachine;

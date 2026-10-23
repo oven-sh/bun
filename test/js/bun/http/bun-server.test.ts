@@ -408,6 +408,27 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch(url, { headers }) copies a Headers object", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.headers.get("x-i") ?? "none");
+      },
+    });
+    const url = `http://${server.hostname}:${server.port}/`;
+    const kept: Headers[] = [];
+    for (let i = 0; i < 200; i++) {
+      const headers = new Headers({ "x-i": String(i) });
+      const response = await server.fetch(url, { headers });
+      expect(await response.text()).toBe(String(i));
+      if (i % 2 === 0) kept.push(headers);
+      if (i % 50 === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
+    // The Requests that server.fetch() created have been collected.
+    expect(kept.map(h => h.get("x-i"))).toEqual(kept.map((_, i) => String(i * 2)));
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,
@@ -3020,17 +3041,17 @@ test.concurrent("should be able to redirect when using empty streams #15320", as
   }).toEqual({ status: 200, redirected: true, url: `http://localhost:${server.port}/`, text: "Hello, World" });
 });
 
-test("HEAD request for a Response with an S3 file body reports the object size and the server keeps serving", async () => {
-  // Answering a HEAD request whose Response body is an S3-backed Blob resolves
-  // the object size with an async S3 stat before writing headers. Run the
-  // server in a subprocess so a crash on that completion path shows up as a
-  // non-zero exit code instead of taking down the test runner.
+test("HEAD request for new Response(s3file) follows the redirect to the object and the server keeps serving", async () => {
+  // `new Response(s3file)` is a 302 to a presigned URL. fetch() follows it, so
+  // the S3 origin answers the HEAD with the object size. Run the server in a
+  // subprocess so a crash shows up as a non-zero exit code instead of taking
+  // down the test runner.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        // Fake S3 origin: answers the stat (HEAD) with a fixed Content-Length.
+        // Fake S3 origin: answers HEAD with a fixed Content-Length.
         const s3Origin = Bun.serve({
           port: 0,
           fetch(req) {
@@ -3096,6 +3117,54 @@ test("HEAD request for a Response with an S3 file body reports the object size a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("s3-head-ok");
+  expect(exitCode).toBe(0);
+});
+
+test("HEAD for a Response with an S3-backed Blob body doesn't wait for S3", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let s3Requests = 0;
+        const { promise: s3Asked, resolve: onS3Asked } = Promise.withResolvers();
+        const { promise: gate, resolve: openGate } = Promise.withResolvers();
+        using s3Origin = Bun.serve({
+          port: 0,
+          async fetch() {
+            s3Requests++;
+            onS3Asked();
+            await gate;
+            return new Response("0123456789");
+          },
+        });
+        const s3 = new Bun.S3Client({
+          accessKeyId: "test",
+          secretAccessKey: "test",
+          bucket: "my-bucket",
+          endpoint: s3Origin.url.href,
+        });
+        using app = Bun.serve({
+          port: 0,
+          fetch: () => fetch(URL.createObjectURL(s3.file("object.txt"))),
+        });
+        const head = fetch(app.url, { method: "HEAD" });
+        // If the server waits for S3 before responding, the Response is unreferenced and the GC can collect it.
+        await Promise.race([s3Asked, head]);
+        Bun.gc(true);
+        openGate();
+        const res = await head;
+        console.log(res.status, res.headers.get("content-length"), s3Requests);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("200 0 0\n");
   expect(exitCode).toBe(0);
 });
 

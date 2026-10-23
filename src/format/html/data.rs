@@ -1,17 +1,16 @@
-//! What is known about the elements of HTML: `ml_parser/html_tags.ts` of `angular-html-parser`, and the tables
-//! that Prettier takes from `html-ua-styles`, `@prettier/html-tags`, `html-element-attributes` and
-//! `@prettier/html-event-attributes`.
+//! Facts about HTML elements: `ml_parser/html_tags.ts` in `angular-html-parser`, and the tables that Prettier takes
+//! from `html-ua-styles`, `@prettier/html-tags`, `html-element-attributes` and `@prettier/html-event-attributes`.
 
 use super::lexer::ContentType;
 
-/// The value of the CSS property `display`, as far as anything depends on it.
+/// The value of the CSS `display` property, reduced to the distinctions that matter here.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Display {
     None,
     Block,
     ListItem,
     InlineBlock,
-    /// It starts with `table` and is not `table-cell`.
+    /// Starts with `table` and isn't `table-cell`.
     Table,
     TableCell,
     /// `inline` and everything else.
@@ -19,7 +18,7 @@ pub(crate) enum Display {
 }
 
 impl Display {
-    /// The display that a comment asks for.
+    /// Parses the display that a `<!-- display: .. -->` comment requests.
     pub(crate) fn from_name(name: &[u8]) -> Display {
         match name {
             b"none" => Display::None,
@@ -61,7 +60,7 @@ impl TagDefinition {
     }
 }
 
-/// `name` and its length as a number. 0: it is empty, or has more than 15 bytes.
+/// Packs `name` and its length into a number. Returns 0 if it's empty or longer than 15 bytes.
 const fn key(name: &[u8]) -> u128 {
     let mut bytes = [0; 16];
     if name.len() < bytes.len() {
@@ -71,7 +70,7 @@ const fn key(name: &[u8]) -> u128 {
     u128::from_be_bytes(bytes)
 }
 
-/// Whether the keys of `table` grow, and none is 0.
+/// True if the keys of `table` are strictly increasing and none is 0.
 const fn is_sorted<T>(table: &[(u128, T)]) -> bool {
     let (mut at, mut previous) = (0, 0);
     while at < table.len() {
@@ -84,7 +83,7 @@ const fn is_sorted<T>(table: &[(u128, T)]) -> bool {
     true
 }
 
-/// What `table`, which is sorted, has for `name`.
+/// Looks up `name` in `table`, which must be sorted.
 fn lookup<T: Copy>(table: &[(u128, T)], name: &[u8]) -> Option<T> {
     let at = table
         .binary_search_by_key(&key(name), |entry| entry.0)
@@ -92,7 +91,7 @@ fn lookup<T: Copy>(table: &[(u128, T)], name: &[u8]) -> Option<T> {
     table.get(at).map(|entry| entry.1)
 }
 
-/// Of an element that Angular's schema has, and that has no definition of its own.
+/// For an element that's in Angular's schema but doesn't have its own definition.
 const KNOWN: TagDefinition = TagDefinition {
     closed_by_children: &[],
     implicit_namespace_prefix: None,
@@ -189,7 +188,7 @@ const RAW: TagDefinition = content(ContentType::RawText, false);
 const TITLE: TagDefinition = content(ContentType::EscapableRawText, false);
 const TEXTAREA: TagDefinition = content(ContentType::EscapableRawText, true);
 
-/// What `getHtmlTagDefinition` knows, sorted by the keys.
+/// The entries of `getHtmlTagDefinition`, sorted by key.
 const TAG_DEFINITIONS: &[(u128, &TagDefinition)] = &[
     (key(b"[element]"), &KNOWN),
     (key(b"[htmlelement]"), &KNOWN),
@@ -342,7 +341,7 @@ pub(crate) fn is_event_attribute(name: &[u8]) -> bool {
     name.starts_with(b"on") && HTML_EVENT_ATTRIBUTES.binary_search(&name).is_ok()
 }
 
-/// Whether the element with the name `element` is known, and has an attribute with the name `attribute`.
+/// True if `element` is a known element that has an attribute named `attribute`.
 pub(crate) fn is_attribute_of_element(element: &[u8], attribute: &[u8]) -> bool {
     attributes_of_element(element).is_some_and(|attributes| {
         attributes.binary_search(&attribute).is_ok()
@@ -351,7 +350,7 @@ pub(crate) fn is_attribute_of_element(element: &[u8], attribute: &[u8]) -> bool 
     })
 }
 
-/// `CSS_DISPLAY_TAGS`, sorted by the keys.
+/// `CSS_DISPLAY_TAGS`, sorted by key.
 const CSS_DISPLAY_TAGS: &[(u128, Display)] = &[
     (key(b"address"), Display::Block),
     (key(b"area"), Display::None),
@@ -445,7 +444,7 @@ pub(crate) fn css_display_of_tag(name: &[u8]) -> Option<Display> {
     lookup(CSS_DISPLAY_TAGS, name)
 }
 
-/// Whether `CSS_WHITE_SPACE_TAGS[name]` starts with `pre`.
+/// True if `CSS_WHITE_SPACE_TAGS[name]` starts with `pre`.
 pub(crate) fn is_pre_tag(name: &[u8]) -> bool {
     matches!(
         name,
@@ -702,7 +701,7 @@ const HTML_EVENT_ATTRIBUTES: [&[u8]; 90] = [
     b"onwheel",
 ];
 
-/// `html-element-attributes`: the attributes of the element with the name, sorted. `*`: of all elements.
+/// `html-element-attributes`: the sorted attributes of the element `name`. `*` has the attributes of all elements.
 fn attributes_of_element(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     Some(match name {
         b"*" => &[

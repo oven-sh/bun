@@ -25,7 +25,7 @@ impl Rule for PreferLogicalOperatorOverTernary {
         let Some((test, consequent, alternate)) = e.as_cond() else {
             return;
         };
-        // What is on the left of the `||` and what is on the right, each with whether its parentheses stay.
+        // The left and right operands of the `||`, each with whether it keeps its parentheses.
         let (left, right) = if is_same_node(test, consequent) {
             // `foo ? foo : bar`
             let preferred = if test.is_parenthesized() { consequent } else { test };
@@ -34,7 +34,7 @@ impl Rule for PreferLogicalOperatorOverTernary {
             && !test.is_parenthesized()
             && is_same_node(argument, alternate)
         {
-            // `!bar ? foo : bar`. Of `!!bar ? foo : !bar` it is `bar`.
+            // `!bar ? foo : bar`. For `!!bar ? foo : !bar` it's `bar`.
             let preferred = match argument.kind() {
                 ExprKind::Unary { op: UnOp::Not, operand } if !argument.is_parenthesized() => operand,
                 _ => alternate,
@@ -63,7 +63,7 @@ impl Rule for PreferLogicalOperatorOverTernary {
     }
 }
 
-/// What two expressions are, if both are the same: what is in them is compared.
+/// The kind that two expressions share. Their operands are compared next.
 enum Both<'a> {
     /// `a && b`, `a || b`, `a ?? b`: whether the operator is the same, and the `b`s.
     Logical(bool, Expr<'a>, Expr<'a>),
@@ -80,9 +80,9 @@ fn is_update(op: UnOp) -> bool {
     matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
 }
 
-/// oxlint asks `is_same_expression` at every level on the way down, which takes quadratic time for `a && a && ..` and
-/// `!!!..a`. Here it is asked at the bottom, and the answer for each level is made of the one below. It calls itself
-/// for the operands on the right, which are nested only by precedence and by parentheses.
+/// oxlint calls `is_same_expression` at every level on the way down, which takes quadratic time for `a && a && ..` and
+/// `!!!..a`. This calls it once at the bottom and derives each level's answer from the level below. It only recurses
+/// into right operands, which are nested only by precedence and by parentheses.
 fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
     // `a.b` can be `a["b"]`, and `"a"` can be `` `a` ``.
     let kind = |e: Expr| match e.tag() {
@@ -120,7 +120,7 @@ fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
         };
     }
     let are_updates = matches!((left.kind(), right.kind()), (ExprKind::Unary { .. }, ExprKind::Unary { .. }));
-    // `is_same_node`, and `is_same_expression` of what is in `as T` and the like.
+    // `is_same` is `is_same_node`. `is_same_inner` is `is_same_expression` after unwrapping `as T` and the like.
     let mut is_same = is_same_expression(left, right) || !are_updates && left.text() == right.text();
     let mut is_same_inner = !levels.is_empty() && is_same_inner_expression(left, right);
     while let Some(level) = levels.pop() {

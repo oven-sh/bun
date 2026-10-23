@@ -1,12 +1,13 @@
-//! Which listeners are called with which node of a file, in ESLint's order, so that `worker/main.js` only has to go through a list.
+//! Computes which listeners are called with which node of a file, in ESLint's order, so `worker/main.js` only has to
+//! walk a list.
 //!
-//! The listeners of a file are in groups. A group has the listeners of all rules for one key, such as `Identifier`,
-//! `CallExpression:exit`, `:matches(a, b) > c` or `onCodePathStart`. The list has two words for each call of a group: the number
-//! of the node, or [`EVENT`] and the index of an event of the code path analysis, then the index of the group.
+//! A file's listeners are grouped. A group holds every rule's listeners for one key, such as `Identifier`,
+//! `CallExpression:exit`, `:matches(a, b) > c` or `onCodePathStart`. The list has two words per call of a group: the
+//! node's number, or [`EVENT`] and the index of a code path analysis event, then the group's index.
 //!
-//! ESLint enters a node, goes through what is in it, and leaves it. Where several keys match a node, the less specific comes first:
-//! fewer attributes, then fewer identifiers, then the lesser text. The events of the code path analysis come before the step that
-//! `code_path/estree.rs` gives them.
+//! ESLint enters a node, visits its children, and leaves it. If several keys match a node, the less specific one comes
+//! first: fewer attributes, then fewer identifiers, then the smaller text. Code path analysis events come before the
+//! step that `code_path/estree.rs` assigns them.
 
 use super::ast::{self, Numbered};
 use super::layouts;
@@ -19,22 +20,22 @@ use crate::utils::sort;
 use bun_core::strings::Utf16OffsetTable;
 
 const NONE: u32 = u32::MAX;
-/// In the first word of a call: the rest is the index of an event.
+/// Set in a call's first word if the rest of the word is an event's index.
 pub(super) const EVENT: u32 = 1 << 31;
 
-/// What the listeners of a group listen for.
+/// A group's key: the thing its listeners listen for.
 #[derive(Copy, Clone)]
 enum Key<'s> {
     Enter(u8),
     Exit(u8),
-    /// With the nodes that match it, in the order of their numbers.
+    /// With the nodes that match it, ordered by number.
     Selector(&'s Selector, &'s [u32]),
-    /// The kind of an event: see `code_path/estree.rs`.
+    /// The event's kind. See `code_path/estree.rs`.
     Event(u8),
 }
 
 impl Key<'_> {
-    /// What ESLint sorts the keys that match a node by.
+    /// The key ESLint uses to sort the keys that match a node.
     fn specificity(&self) -> (u32, u32, Vec<u8>) {
         let name = |node_type: u8| {
             (NodeType::ALL.get(usize::from(node_type))).map_or(&b""[..], |it| it.name().as_bytes())
@@ -54,7 +55,7 @@ impl Key<'_> {
 
 /// The groups that match a node when it's entered, or when it's left.
 struct Phase {
-    /// By the number of a type: the group for it, or [`NONE`].
+    /// Indexed by type number: the type's group, or [`NONE`].
     by_type: [u32; 256],
     /// `(node, rank, group)` for the selectors, sorted.
     matches: Vec<(u32, u32, u32)>,
@@ -99,10 +100,10 @@ impl Phase {
     }
 }
 
-/// Appends the calls. `events`: those of `code_path::estree::analyze`, four words each, if a group listens for one.
-/// `wants_all_events`: also those that no group listens for, with [`NONE`] for the group.
+/// Appends the calls. `events` are the events from `code_path::estree::analyze`, four words each, if a group listens
+/// for one. `wants_all_events` also includes the events that no group listens for, with [`NONE`] as the group.
 fn write(tree: Tree, keys: &[Key], events: &[u32], wants_all_events: bool, out: &mut Vec<u32>) {
-    // Where each group comes among those that match the same node.
+    // Each group's rank among the groups that match the same node.
     let mut sorted: Vec<u32> = (0..keys.len() as u32).collect();
     sort::sort_by_cached_key(&mut sorted, |&it| keys[it as usize].specificity());
     let mut ranks = vec![0; keys.len()];
@@ -149,7 +150,7 @@ fn write(tree: Tree, keys: &[Key], events: &[u32], wants_all_events: bool, out: 
         return;
     }
 
-    // By the number of a node: the last node that is in it, or itself.
+    // Indexed by node number: the node's last descendant, or the node itself.
     let mut last: Vec<u32> = (0..count).collect();
     for id in (1..count as usize).rev() {
         let parent = tree.parents[id] as usize;
@@ -169,7 +170,7 @@ fn write(tree: Tree, keys: &[Key], events: &[u32], wants_all_events: bool, out: 
         step += 1;
     };
     let mut twice = tree.twice.iter().copied().peekable();
-    // The nodes that have been entered and are still to be left.
+    // The nodes that have been entered but not left yet.
     let mut open: Vec<u32> = Vec::new();
     let leave = |id: u32, out: &mut Vec<u32>, emit: &mut dyn FnMut(&mut Vec<u32>)| {
         emit(out);
@@ -197,20 +198,20 @@ fn write(tree: Tree, keys: &[Key], events: &[u32], wants_all_events: bool, out: 
     emit(out);
 }
 
-/// The numbers of the selectors in the words that come with [`ask::LISTEN`].
+/// The selector numbers in the words sent with [`ask::LISTEN`].
 pub(super) fn selector_numbers(words: &[u32]) -> impl Iterator<Item = u32> {
     let groups = words.get(1..).unwrap_or_default().as_chunks::<2>().0;
     groups.iter().filter(|it| it[0] == 2).map(|it| it[1])
 }
 
-/// What earlier questions about the file have left.
+/// State kept from earlier requests about the file.
 pub(super) struct Known<'k, 'a> {
     pub(super) nodes: &'k mut Option<Numbered<'a>>,
-    /// What [`estree::analyze`] says.
+    /// The result of [`estree::analyze`].
     pub(super) code_paths: &'k mut Option<Vec<u32>>,
 }
 
-/// Answers [`ask::LISTEN`]. `selectors`: those of [`selector_numbers`].
+/// Answers [`ask::LISTEN`]. `selectors` are the selectors for [`selector_numbers`].
 pub(super) fn listen<'a>(
     file: &'a File<'a>,
     offsets: &Utf16OffsetTable,
@@ -223,7 +224,7 @@ pub(super) fn listen<'a>(
         return;
     };
     let Known { nodes, code_paths } = known;
-    // The nodes get the same numbers each time.
+    // The nodes get the same numbers on every walk.
     let needs_walk = nodes.is_none()
         || !selectors.is_empty()
         || flags & (ask::LACKS_TREE | ask::WANTS_TREE) != 0;

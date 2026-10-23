@@ -1,4 +1,5 @@
-//! A pack is hostile input: nothing reaches the cache before the whole pack is verified.
+//! A pack is untrusted input, so nothing is written to the cache until the whole pack has been
+//! verified.
 
 use core::fmt;
 
@@ -16,11 +17,13 @@ use crate::package_manager_real::package_manager_options::LogLevel;
 use crate::repository::is_safe_resolved_tag;
 use crate::resolution::Tag as ResolutionTag;
 
-/// Then records, little endian: u8 kind | u32 path_len | path | u32 mode | u64 size | size bytes.
+/// Followed by records, little endian: u8 kind | u32 path_len | path | u32 mode | u64 size | size
+/// bytes.
 const MAGIC: &[u8; 16] = b"BUNCACHEPACK\0v1\n";
 
 const KIND_END: u8 = 0;
-/// path = cache folder name, ascending; bytes = its records: (2 | 3 | 4)*, then one 5.
+/// The path is the cache folder's name, in ascending order. The bytes are the package's records:
+/// any number of kinds 2, 3 and 4, then one kind 5.
 const KIND_PACKAGE: u8 = 1;
 const KIND_FILE: u8 = 2;
 const KIND_SYMLINK: u8 = 3;
@@ -29,7 +32,8 @@ const KIND_DIRECTORY: u8 = 4;
 /// bytes = u64 wyhash of the folder name, then of the package's bytes up to here.
 const KIND_CHECKSUM: u8 = 5;
 
-/// Longest record path or symlink target; with its NUL it fits a `PathBuffer`.
+/// The longest allowed record path or symlink target. With its NUL terminator, it fits in a
+/// `PathBuffer`.
 const MAX_PACK_PATH_LEN: usize = if bun_core::MAX_PATH_BYTES < 4096 {
     bun_core::MAX_PATH_BYTES - 1
 } else {
@@ -51,14 +55,15 @@ pub struct UnpackSummary {
     pub packages: u32,
     pub created: u32,
     pub already_cached: u32,
-    /// Something is at the entry's name that the installer would not accept; left as it is.
+    /// Entries where something that the installer wouldn't accept already exists under that name.
+    /// They're left alone.
     pub incomplete: u32,
     pub bytes: u64,
 }
 
 pub enum Error {
     Sys(sys::Error),
-    /// Not something `pack` wrote: damaged, cut short, or made to do harm.
+    /// The file isn't something that `pack` wrote: it's damaged, truncated or malicious.
     Pack {
         reason: &'static str,
         record: u64,
@@ -126,7 +131,8 @@ fn is_safe_windows_component(component: &[u8]) -> bool {
         })
 }
 
-/// The one check on every path in a pack: joined to a directory, it names something below it.
+/// The check that every path in a pack goes through: joined to a directory, the path has to stay
+/// below that directory.
 fn is_safe_relative_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_any(path, b"\\\0")
@@ -174,7 +180,8 @@ fn is_npm_entry_version(mut s: &[u8]) -> bool {
     }
 }
 
-/// `[@scope/]name`. No second `@`: the scope must not be a `@T@…`, `@G@…` or `@GH@…` entry.
+/// Matches `[@scope/]name`. A second `@` isn't allowed, so that the scope can't be a `@T@…`, `@G@…`
+/// or `@GH@…` entry.
 fn is_npm_entry_package_name(name: &[u8]) -> bool {
     dependency::is_safe_lockfile_package_name(name)
         && name[0] != b'.'
@@ -215,9 +222,10 @@ struct LockfileEntry {
     expected: bool,
 }
 
-/// Unpatched names: both linkers look those up first and make the `_patch_hash=` copy from them.
+/// Returns the unpatched names, because both linkers look those up first and create the
+/// `_patch_hash=` copy from them.
 fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
-    // A bundled dependency comes inside its parent's entry and has none of its own.
+    // A bundled dependency ships inside its parent's entry and doesn't have its own.
     let anywhere = reachable::Options {
         bundled: false,
         ..reachable::Options::all(0)
@@ -247,7 +255,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
             continue;
         }
         let integrity = pm.lockfile.packages.items_meta()[i].integrity;
-        // Has no entry name until an install records what it extracted.
+        // It has no entry name until an install records what it extracted.
         if resolution.tag.is_tarball() && !integrity.tag.is_supported() {
             continue;
         }
@@ -286,7 +294,8 @@ fn tmpname(prefix: &[u8]) -> ZBox {
     ZBox::from_bytes(name.expect("unreachable").as_bytes())
 }
 
-/// Written next to the destination and renamed over it; removed unless that happened.
+/// Written next to the destination and then renamed over it. Removed on drop if the rename didn't
+/// happen.
 struct TempOutput {
     dir: Dir,
     name: ZBox,
@@ -316,7 +325,7 @@ impl TempOutput {
     }
 
     fn commit(mut self, destination: &[u8]) -> sys::Maybe<()> {
-        // Windows: closed before it is renamed.
+        // Windows requires the file to be closed before it's renamed.
         self.file = None;
         let basename = ZBox::from_bytes(bun_paths::basename(destination));
         sys::renameat(self.dir.fd(), &self.name, self.dir.fd(), &basename)?;
@@ -339,7 +348,8 @@ struct Writer<'a> {
     file: Option<&'a File>,
     buf: Box<[u8]>,
     len: usize,
-    /// Bytes already in `file`. Writes name their offset: `patch_u64` must not move a position.
+    /// The number of bytes already written to `file`. Writes pass an explicit offset, so that
+    /// `patch_u64` doesn't move the file position.
     flushed: u64,
     hasher: Wyhash,
 }
@@ -390,7 +400,7 @@ impl<'a> Writer<'a> {
         self.write(&size.to_le_bytes())
     }
 
-    /// `false`: `file` ended before `size` bytes.
+    /// Returns false if `file` ended before `size` bytes were read.
     fn copy_from(&mut self, file: &File, mut size: u64) -> sys::Maybe<bool> {
         while size > 0 {
             if self.len == self.buf.len() {
@@ -599,7 +609,7 @@ impl Reader {
         }
     }
 
-    /// The next unread bytes, at most `max` of them: hashed and consumed.
+    /// Returns the next unread bytes, at most `max` of them. They're hashed and consumed.
     fn next_chunk(&mut self, max: u64) -> Result<&[u8], Error> {
         if self.start == self.end {
             let n = sys::pread(self.file.handle(), &mut self.buf, self.pos as i64)?;
@@ -681,7 +691,8 @@ impl Reader {
     }
 }
 
-/// Our own directory in the temporary one; the `n`th new package is staged as `<name>/<n>`.
+/// A private directory inside the temporary directory. The `n`th new package is staged as
+/// `<name>/<n>`.
 struct Staging {
     parent: Fd,
     name: ZBox,
@@ -708,7 +719,7 @@ impl Staging {
 
 impl Drop for Staging {
     fn drop(&mut self) {
-        // Windows: closed before it is removed.
+        // Windows requires the directory to be closed before it's removed.
         self.dir = None;
         let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
     }
@@ -736,7 +747,7 @@ fn unpack_package(
 
     let mut path: Vec<u8> = Vec::new();
     let mut target: Vec<u8> = Vec::new();
-    // Made last: while files are written, no path can lead through a link.
+    // Symlinks are created last, so that no path can go through one while files are being written.
     #[cfg(unix)]
     let mut links: Vec<bun_libarchive::DeferredSymlink> = Vec::new();
     #[cfg(unix)]
@@ -821,7 +832,7 @@ fn unpack_package(
     if bun_libarchive::create_deferred_symlinks(dir.fd(), &links, false) as usize != links.len() {
         return Err(r.refuse("symlink collides with another entry", name.as_bytes()));
     }
-    // Windows: closed before it is renamed.
+    // Windows requires the directory to be closed before it's renamed.
     drop(dir);
     if !directories::is_package_in_cache_at(staging, staged, tag) {
         return Err(r.refuse("package is incomplete", name.as_bytes()));
@@ -829,11 +840,12 @@ fn unpack_package(
     Ok(())
 }
 
-/// `false`: something is at `to` already, and stays.
+/// Returns false if something already exists at `to`. It's left alone.
 #[cfg(not(windows))]
 fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::Maybe<bool> {
     let result = match sys::renameat2(from_dir, from, to_dir, to, sys::RenameMode::NoReplace) {
-        // No such flag here; rename(2) itself never replaces a directory that has anything in it.
+        // This platform doesn't have the flag, but rename(2) itself never replaces a directory that
+        // isn't empty.
         Err(err)
             if err.get_errno() == E::ENOSYS
                 || err.get_errno() == E::EINVAL
@@ -851,12 +863,12 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
     }
 }
 
-/// `false`: something is at `to` already, and stays.
+/// Returns false if something already exists at `to`. It's left alone.
 #[cfg(windows)]
 fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::Maybe<bool> {
     let mut to_buf = bun_paths::w_path_buffer_pool::get();
     let to_w = bun_paths::strings::to_wpath_normalized(&mut to_buf, to.as_bytes());
-    // A scanner or indexer may hold the new files open; see `cache_publish::RenameRetry`.
+    // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
         let dir = sys::open_dir_at_windows_a(
@@ -970,7 +982,8 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
             result => result,
         }?;
         if !created {
-            // Judged only now: what another process publishes meanwhile is there, and whole.
+            // Only checked now, so that an entry another process published in the meantime is
+            // found, and is complete.
             if directories::is_package_in_cache_at(cache_dir, name, *tag) {
                 summary.already_cached += 1;
             } else {
@@ -992,7 +1005,8 @@ fn plural(n: u64) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// `positionals` is `["cache", "pack" | "unpack", ...]`; for `pack`, the lockfile is loaded.
+/// `positionals` is `["cache", "pack" | "unpack", ...]`. For `pack`, the lockfile is already
+/// loaded.
 pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
     let verb = bstr::BStr::new(pm.options.positionals[1]);
     let is_pack = pm.options.positionals[1] == b"pack";

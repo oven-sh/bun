@@ -1,8 +1,8 @@
 //! The lookup table from a node to the ids of the comments attached to it.
 //!
-//! Almost every node that is looked up has no comments, so there is one bit per node that says whether it has any. Only if the
-//! bit is set is a list searched, which is sorted by [`Node::index`](bun_lint::ast::Node::index). The HIR stores which
-//! expressions are parenthesized the same way.
+//! Almost every node that's looked up has no comments, so a bitset has one bit per node that tells whether it has any.
+//! Only if the bit is set do we search a list sorted by [`Node::index`](bun_lint::ast::Node::index). The HIR stores
+//! which expressions are parenthesized the same way.
 
 use super::ast_nodes::AstNodes;
 use super::attach::{Attached, Owner, Placement};
@@ -18,7 +18,8 @@ const IGNORED: u8 = 3;
 /// The comments of one node with one placement.
 #[derive(Copy, Clone)]
 struct CommentGroup {
-    /// The [`AstKind`](super::ast_nodes::AstKind) of the node. Several `AstNodes` can share one node of `bun_lint::ast`.
+    /// The [`AstKind`](super::ast_nodes::AstKind) of the node. Several `AstNodes` can share one node of
+    /// `bun_lint::ast`.
     kind: u8,
     placement: u8,
     /// One of the comments is a `prettier-ignore` comment that applies to the node.
@@ -45,9 +46,9 @@ pub(crate) struct Owners {
     nodes: Vec<OwnerEntry>,
     names: Vec<OwnerEntry>,
     cast_parens: Vec<OwnerEntry>,
-    /// One bit per node, by `Node::index`: whether the node is in `nodes`.
+    /// One bit per node, indexed by `Node::index`. Set if the node is in `nodes`.
     owner_bitset: Vec<u64>,
-    /// Start offsets of the owners that are not next to their comment. Sorted.
+    /// Sorted start offsets of the owners that aren't next to their comment.
     relocated_owner_starts: Vec<u32>,
 }
 
@@ -190,7 +191,7 @@ impl Owners {
         }
     }
 
-    /// Whether one of the `AstNodes` that are made of `raw` owns a comment or is ignored.
+    /// True if one of the `AstNodes` backed by `raw` owns a comment or is ignored.
     #[inline]
     pub(crate) fn is_owner(&self, raw: Node<'_>) -> bool {
         let index = raw.index();
@@ -214,7 +215,7 @@ impl Owners {
         }
     }
 
-    /// Whether a node that starts inside `span` owns a comment that is not next to it.
+    /// True if a node that starts inside `span` owns a comment that isn't next to it.
     #[inline]
     pub(crate) fn has_relocated_owner_in(&self, span: Span) -> bool {
         !self.relocated_owner_starts.is_empty() && {

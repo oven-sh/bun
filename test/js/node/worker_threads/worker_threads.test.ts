@@ -226,6 +226,40 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
+// Node reads uv_hrtime() on every thread, so a stamp that a worker takes
+// between two stamps of this thread lands between them.
+test("process.hrtime() and process.hrtime.bigint() in a worker read the clock of the main thread", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.on("message", () => {
+       const [sec, nsec] = process.hrtime();
+       const bigint = process.hrtime.bigint();
+       parentPort.postMessage({ tuple: BigInt(sec) * 1_000_000_000n + BigInt(nsec), bigint });
+     });
+     parentPort.postMessage("ready");`,
+    { eval: true },
+  );
+  try {
+    // The worker is running, so the only thing between the stamps below is the message hop.
+    await once(worker, "message");
+
+    const sent = process.hrtime.bigint();
+    worker.postMessage("stamp");
+    const [{ tuple, bigint }] = await once(worker, "message");
+    const received = process.hrtime.bigint();
+
+    expect({ sent, tuple, bigint, received, ordered: sent <= tuple && tuple <= bigint && bigint <= received }).toEqual({
+      sent,
+      tuple,
+      bigint,
+      received,
+      ordered: true,
+    });
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url), {

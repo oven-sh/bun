@@ -62,7 +62,8 @@ describe.if(!isWindows)("uv stubs", () => {
 
     addonPath = path.join(tempdir, "./build/Release/uv_test.node");
     nativeModule = require(addonPath);
-  });
+    // Installs node-gyp and compiles an addon: far past the default 5s hook timeout.
+  }, 300_000);
 
   afterEach(() => {
     process.chdir(cwd);
@@ -112,7 +113,9 @@ describe.if(!isWindows)("uv stubs", () => {
   });
 
   test("hrtime", () => {
+    const before = process.hrtime.bigint();
     const result = nativeModule.testHrtime();
+    const after = process.hrtime.bigint();
 
     // Reconstruct the 64-bit values
     const time1 = (BigInt(result.time1High) << 32n) | BigInt(result.time1Low >>> 0);
@@ -130,6 +133,15 @@ describe.if(!isWindows)("uv stubs", () => {
     // 3. The difference shouldn't be unreasonably large
     // Let's say not more than 100ms (100,000,000 ns)
     expect(diff <= 100_000_000n).toBe(true);
+
+    // 4. process.hrtime() reads the same clock, as in Node
+    expect({ before, time1, time2, after, ordered: before <= time1 && time2 <= after }).toEqual({
+      before,
+      time1,
+      time2,
+      after,
+      ordered: true,
+    });
   });
 
   test("uv_tty_reset_mode", async () => {

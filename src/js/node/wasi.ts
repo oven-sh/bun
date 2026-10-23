@@ -8,6 +8,9 @@
 
 const nodeFsConstants: typeof $processBindingConstants.fs & { O_RSYNC?: number } = $processBindingConstants.fs;
 
+// CLOCK_MONOTONIC is the process.hrtime() clock: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L577-L579
+const hrtimeBigInt: () => bigint = $newCppFunction("BunProcess.cpp", "Process_functionHRTimeBigInt", 0);
+
 interface WASIBindings {
   hrtime: () => bigint;
   exit: (code: number) => void;
@@ -547,7 +550,7 @@ function getDefaults() {
   if (defaultConfig) return defaultConfig;
 
   const defaultBindings = {
-    hrtime: () => process.hrtime.bigint(),
+    hrtime: hrtimeBigInt,
     exit: code => {
       process.exit(code);
     },
@@ -775,7 +778,7 @@ class WASI {
     const now = clockId => {
       switch (clockId) {
         case WASI_CLOCK_MONOTONIC:
-          return Bun.nanoseconds();
+          return hrtimeBigInt();
         case WASI_CLOCK_REALTIME:
           return Bun.nanoseconds() + timeOrigin;
         case WASI_CLOCK_PROCESS_CPUTIME_ID:

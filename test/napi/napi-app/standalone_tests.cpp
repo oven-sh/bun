@@ -779,6 +779,71 @@ static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// The way most addons reach napi_run_script: node-addon-api fetches what the
+// script threw, wraps it in a Napi::Error and throws that.
+static Napi::Value
+test_napi_run_script_node_addon_api(const Napi::CallbackInfo &info) {
+  // info[0] is the GC callback
+  return info.Env().RunScript(info[1].As<Napi::String>());
+}
+
+// The addon fetches what a failed napi_run_script threw and throws it again.
+static napi_value
+test_napi_run_script_rethrow(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(env, info[1], &ret);
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  NODE_API_CALL(env, napi_throw(env, exc));
+  return nullptr;
+}
+
+// While what a failed napi_run_script threw is pending, napi_call_function is
+// refused and does not run its function, and the exception can still be
+// fetched afterwards.
+static napi_value
+test_napi_run_script_then_call(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value global;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+
+  napi_value ret = nullptr;
+  (void)napi_run_script(env, info[1], &ret);
+  // info[0] is the GC callback: it prints a line if it runs
+  napi_value call_result = nullptr;
+  napi_status call_status =
+      napi_call_function(env, global, info[0], 0, nullptr, &call_result);
+  printf("call status=%d\n", (int)call_status);
+
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  bool is_error = false;
+  NODE_API_CALL(env, napi_is_error(env, exc, &is_error));
+  printf("is_error=%d\n", (int)is_error);
+  return exc;
+}
+
+// While what a failed napi_run_script threw is pending, a second
+// napi_run_script is refused, and what the first one threw can still be
+// fetched.
+static napi_value test_napi_run_script_twice(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(env, info[1], &ret);
+  napi_status second_status = napi_run_script(env, info[1], &ret);
+  printf("second run status=%d\n", (int)second_status);
+
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  napi_valuetype type = (napi_valuetype)99;
+  napi_status typeof_status = napi_typeof(env, exc, &type);
+  printf("typeof status=%d type=%d\n", (int)typeof_status, (int)type);
+  return exc;
+}
+
 // Call Node-API functions in ways that result in different error handling
 // (erroneous call, valid call, or valid call while an exception is pending) and
 // log information from napi_get_last_error_info
@@ -4824,6 +4889,10 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_exception_value);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_node_addon_api);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_rethrow);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_then_call);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_twice);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);

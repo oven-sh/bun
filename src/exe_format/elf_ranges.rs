@@ -90,8 +90,10 @@ pub(crate) fn remove_ranges(
     // Read before the cuts: one at the end of the highest segment lowers where the mapped addresses end.
     let image_end = find_image_end(&table.headers)?;
     table.headers = removal.update_program_headers(&table.headers)?;
-    let free_headers = table.capacity().saturating_sub(table.headers.len());
-    for _ in 0..PAYLOAD_SEGMENT_COUNT.min(free_headers).max(1) {
+    if table.capacity().saturating_sub(table.headers.len()) < PAYLOAD_SEGMENT_COUNT {
+        return Err(ImageError::HeaderRoomExhausted);
+    }
+    for _ in 0..PAYLOAD_SEGMENT_COUNT {
         table.insert_by_address(create_reserved_header(image_end, removal.alignment)?);
     }
     let section_table = removal.plan_section_table(elf, &ehdr)?;
@@ -143,7 +145,11 @@ fn compute_capacity(ehdr: &Elf64_Ehdr, table: &ProgramHeaderTable, alignment: u6
         .iter()
         .filter(|header| !matches!(header.p_type, PT_NULL | PT_BUN_RESERVED))
         .count();
-    CutCapacity::from_free_slots(table.capacity().saturating_sub(used + 1))
+    CutCapacity::from_free_slots(
+        table
+            .capacity()
+            .saturating_sub(used + PAYLOAD_SEGMENT_COUNT),
+    )
 }
 
 fn find_required_ranges(

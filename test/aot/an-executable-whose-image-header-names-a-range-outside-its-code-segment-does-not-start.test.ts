@@ -12,6 +12,7 @@ import {
 import { join } from "path";
 import { findImage, imageHeader } from "./cli/compiled-image";
 import { runCopy, type SpawnResult } from "./cli/edited-executable";
+import { isHardened } from "./hardened";
 import { built, spawned, withoutDebugInformation } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
@@ -106,6 +107,23 @@ function allowWritesAt(file: Buffer, path: string, offset: number) {
   file.writeUInt32LE(file.readUInt32LE(at) | mayWrite, at);
 }
 
+/** The form that the writer gives an executable whose table of program headers has room for one more header only. */
+function loadPayloadAsOneSegment(file: Buffer, path: string) {
+  const [payload, mayRead] = [0x6fb00002, 4];
+  const headers = readElf64ProgramHeaders(path);
+  const whole = headers.find(header => header.type === payload)!;
+  const table = Number(file.readBigUInt64LE(32));
+  headers.forEach((header, index) => {
+    const at = table + index * programHeaderSize;
+    const isPiece =
+      header.type === loadable && whole.offset <= header.offset && header.offset < whole.offset + whole.filesz;
+    if (isPiece) file.fill(0, at, at + programHeaderSize);
+    if (header !== whole) return;
+    file.writeUInt32LE(loadable, at);
+    file.writeUInt32LE(mayRead | mayWrite, at + flagsOffset);
+  });
+}
+
 function loadFromPageBefore(file: Buffer, path: string, offset: number) {
   const at = findProgramHeader(file, path, offset) + offsetOffset;
   file.writeBigUInt64LE(file.readBigUInt64LE(at) - BigInt(imagePage), at);
@@ -151,6 +169,7 @@ beforeAll(async () => {
   })) {
     results["writable: " + name] = await runEdited(header => allowWritesAt(header.file, executable, offset));
   }
+  results.oneSegment = await runEdited(header => loadPayloadAsOneSegment(header.file, executable));
   results.moved = await runEdited(header => loadFromPageBefore(header.file, executable, code));
 }, 300_000);
 
@@ -183,6 +202,10 @@ describe("an executable whose image header names a range outside its code segmen
       expect(results["writable: " + name]).toEqual(refusedWith(outside));
     },
   );
+
+  test.skipIf(!isLinux)("an executable whose whole payload is one segment that is not executed starts", () => {
+    expect(results.oneSegment).toEqual(isHardened ? refusedWith(outside) : results.unedited);
+  });
 
   test.skipIf(!isLinux)("the executable loads its code from another place of the file than the header names", () => {
     expect(results.moved).toEqual(refusedWith(outside));

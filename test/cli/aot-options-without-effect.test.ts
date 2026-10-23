@@ -17,49 +17,58 @@ async function bun(cwd: string, ...args: string[]) {
 
 const unsupported = /^(error: --aot|compile\.aot) (only supports|isn't available)/m;
 
-describe.concurrent("an option that configures bytecode is an error with --aot", () => {
-  test.each([
-    ["--bytecode-depth=1", "--bytecode-depth"],
-    ["--bytecode-order=app.order", "--bytecode-order"],
-  ])("bun build --compile --aot %s", async (flag, name) => {
-    using dir = tempDir("aot-bytecode-flag", files);
-    const { stdout, stderr, exitCode } = await bun(
-      String(dir),
-      "build",
-      "--compile",
-      "--aot",
-      flag,
-      "app.ts",
-      "--outfile",
-      "out",
-    );
-    if (unsupported.test(stderr)) return;
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: `error: --aot does not support ${name}\n`,
-      exitCode: 1,
-    });
-    expect(existsSync(join(String(dir), isWindows ? "out.exe" : "out"))).toBe(false);
-  });
+describe.concurrent("an option that configures bytecode has no effect with --aot", () => {
+  test.each(["--bytecode-depth=1", "--bytecode-order=app.order"])(
+    "bun build --compile --aot %s",
+    async flag => {
+      using dir = tempDir("aot-bytecode-flag", files);
+      const { stderr, exitCode } = await bun(
+        String(dir),
+        "build",
+        "--compile",
+        "--aot",
+        flag,
+        "app.ts",
+        "--outfile",
+        "out",
+      );
+      if (unsupported.test(stderr)) return;
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], String(dir), bunEnv)).toMatchObject({
+        stdout: "1\n",
+        exitCode: 0,
+      });
+    },
+    60_000,
+  );
 
   test.each([
-    ["bytecodeDepth: 1", "", "bytecodeDepth"],
-    ["", 'bytecodeOrder: "./app.order"', "compile.bytecodeOrder"],
-  ])("Bun.build: %s %s", async (option, ofCompile, name) => {
-    using dir = tempDir("aot-bytecode-option", {
-      ...files,
-      "build.ts": `try {
+    ["bytecodeDepth: 1", ""],
+    ["", 'bytecodeOrder: "./app.order"'],
+    ["bytecode: true", 'bytecodeOrder: "./app.order"'],
+  ])(
+    "Bun.build: %s %s",
+    async (option, ofCompile) => {
+      using dir = tempDir("aot-bytecode-option", {
+        ...files,
+        "build.ts": `try {
   await Bun.build({ entrypoints: ["./app.ts"], ${option}${option && ","} compile: { outfile: "./out", aot: true, ${ofCompile} } });
   console.log("built");
 } catch (error) {
   console.log((error as Error).message);
 }
 `,
-    });
-    const { stdout } = await bun(String(dir), "build.ts");
-    if (unsupported.test(stdout)) return;
-    expect(stdout).toBe(`compile.aot does not support ${name}\n`);
-  });
+      });
+      const { stdout } = await bun(String(dir), "build.ts");
+      if (unsupported.test(stdout)) return;
+      expect(stdout).toBe("built\n");
+      expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], String(dir), bunEnv)).toMatchObject({
+        stdout: "1\n",
+        exitCode: 0,
+      });
+    },
+    60_000,
+  );
 
   test("--bytecode may be combined with --aot, where it has no effect", async () => {
     using dir = tempDir("aot-with-bytecode", files);

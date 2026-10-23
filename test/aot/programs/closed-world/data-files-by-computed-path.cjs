@@ -37,14 +37,12 @@ async function main() {
     "YAML": write("data.yaml", "a: 1\nb: [x, y]\n"),
     "XML": write("data.xml", "<a><b>1</b></a>"),
     "text": write("data.txt", "text"),
-    "Markdown": write("data.md", "# title\n"),
     "CSS": write("data.css", "a { color: red }"),
     "invalid JSON": write("invalid.json", "{"),
     "invalid TOML": write("invalid.toml", "a = = 1"),
     "empty JSON": write("empty.json", ""),
     "empty TOML": write("empty.toml", ""),
     "empty text": write("empty.txt", ""),
-    "empty Markdown": write("empty.md", ""),
   };
   for (const [label, name] of Object.entries(files)) required(label, name);
   for (const [label, name] of Object.entries(files)) await imported(label, name);

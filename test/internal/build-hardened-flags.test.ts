@@ -164,6 +164,8 @@ test("only --lock-environment=off lets tests steer a hardened build by the envir
   const locked = linuxConfig({ hardened: true }, String(dir));
   expect(everyFlagOf(locked).rust).toContain("--cfg=bun_locked_environment");
   expect(everyFlagOf(locked).cxx).toContain("-DBUN_LOCKED_ENVIRONMENT=1");
+  // What the first compiles calls a function of each of the other two.
+  expect(patchesOfAllocator(locked)).toContain(patch);
   for (const cfg of [
     linuxConfig({ hardened: true, lockEnvironment: false }, String(dir)),
     linuxConfig({}, String(dir)),
@@ -174,6 +176,20 @@ test("only --lock-environment=off lets tests steer a hardened build by the envir
   }
   expect(() => linuxConfig({ lockEnvironment: true }, String(dir))).toThrow(
     "lockEnvironment=true requires hardened=true",
+  );
+});
+
+test("only --guarded-pages=on puts what a compiled program maps for good between guard pages, each at an address of its own", () => {
+  using dir = tempDir("build-hardened-flags-guarded-pages", {});
+  const define = "-DENABLE_AOT_GUARDED_PAGES=1";
+  for (const partial of [{ guardedPages: true }, { guardedPages: true, hardened: true }] as PartialConfig[]) {
+    const flags = everyFlagOf(linuxConfig(partial, String(dir)));
+    for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx]) expect(list).toContain(define);
+  }
+  for (const partial of [{}, { hardened: true }] as PartialConfig[])
+    expect(Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat()).not.toContain(define);
+  expect(() => linuxConfig({ guardedPages: true, webkit: "prebuilt" }, String(dir))).toThrow(
+    "guardedPages=true requires os=linux and webkit=local",
   );
 });
 

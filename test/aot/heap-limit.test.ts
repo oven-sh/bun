@@ -683,7 +683,7 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
 
   // TODO: in about one run of five the process ends with a crash report in place of the sentence. Under the limit the collector's
   // mark stack cannot grow, and whether that or the end of the objects' range comes first differs from run to run.
-  test.skipIf(!isLinux || isASAN).todoIf(isLinux)(
+  (isLinux && !isASAN ? test.todo : test.skip)(
     "a program that fills what a limit on address space leaves says so",
     async () => {
       using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsObjects(45_000_000)) });

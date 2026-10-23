@@ -2,6 +2,7 @@
  * Build options that leave a feature out of Bun: what each one passes to the compilers, and what a Bun that was built
  * with it lacks. The second half runs against such a Bun only.
  */
+import { JSCallback } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -78,6 +79,14 @@ test("--shadow-realm=off defines BUN_DISABLE_SHADOW_REALM, and nothing else does
   expect(computeFlags(config({ shadowRealm: true, webAssembly: false }, String(dir))).defines).not.toContain(define);
 });
 
+test("--ffi=off defines BUN_DISABLE_FFI, and nothing else does", () => {
+  using dir = tempDir("build-left-out-features", {});
+  const define = "BUN_DISABLE_FFI=1";
+  expect(computeFlags(config({ ffi: false }, String(dir))).defines).toContain(define);
+  expect(computeFlags(config({}, String(dir))).defines).not.toContain(define);
+  expect(computeFlags(config({ ffi: true, shadowRealm: false }, String(dir))).defines).not.toContain(define);
+});
+
 const hasShadowRealm = typeof ShadowRealm !== "undefined";
 
 describe.skipIf(hasShadowRealm)("a Bun built with --shadow-realm=off", () => {
@@ -116,5 +125,51 @@ test.skipIf(!hasShadowRealm)("a Bun built without the option has ShadowRealm", a
     stdout: "2",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+const refusal = "bun:ffi: this build of Bun does not call native functions";
+
+function callsNativeFunctions() {
+  try {
+    new JSCallback(() => {}, { returns: "void", args: [] }).close();
+    return true;
+  } catch (error) {
+    return (error as Error).message !== refusal;
+  }
+}
+
+describe.skipIf(callsNativeFunctions())("a Bun built with --ffi=off", () => {
+  test("bun:ffi makes no function and no callback", async () => {
+    const source = `
+      const { CFunction, JSCallback, linkSymbols } = require("bun:ffi");
+      const signature = { returns: "int", args: [] };
+      for (const make of [
+        () => linkSymbols({ main: { ...signature, ptr: 1n } }),
+        () => CFunction({ ...signature, ptr: 1n }),
+        () => new JSCallback(() => 1, signature),
+      ]) {
+        try { make(); console.log("made"); } catch (error) { console.log(error.name + ": " + error.message); }
+      }
+    `;
+    expect(await run(source)).toEqual({
+      stdout: Array(3)
+        .fill("TypeError: " + refusal)
+        .join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("what calls nothing stays", async () => {
+    expect(
+      await run(
+        `const { ptr, suffix } = require("bun:ffi"); console.log(typeof ptr(new Uint8Array(8)), typeof suffix)`,
+      ),
+    ).toEqual({
+      stdout: "number string",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

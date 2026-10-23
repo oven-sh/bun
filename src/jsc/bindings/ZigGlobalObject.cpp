@@ -336,12 +336,19 @@ static bool isOptionThatCompiledCodeTakesFromEnvironment(const char* assignment)
         "numberOfGCMarkers"_s,
         "smallHeapSize"_s,
         "structureHeapSizeInKB"_s,
+        "useConcurrentGC"_s,
         "useConcurrentJIT"_s,
         "useWasm"_s,
     };
     return std::ranges::any_of(names, [&](ASCIILiteral name) {
         return !strncmp(assignment, name.characters(), name.length()) && assignment[name.length()] == '=';
     });
+}
+
+// compiled_program.rs exits with the name of such an entry of the environment before JSCInitialize.
+extern "C" bool Bun__isOptionThatCompiledCodeDoesNotTake(const char* entry)
+{
+    return !strncmp(entry, "BUN_JSC_", 8) && !isOptionThatCompiledCodeTakesFromEnvironment(entry + 8);
 }
 #endif
 
@@ -461,8 +468,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                     }
 
 #if defined(BUN_LOCKED_ENVIRONMENT)
-                    if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(env + 8))
-                        continue;
+                    if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(env + 8)) [[unlikely]]
+                        onCrash(env, strcspn(env, "="));
 #endif
                     if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
                         onCrash(env, strlen(env));

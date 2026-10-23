@@ -1214,6 +1214,8 @@ pub(crate) mod command {
         #[cfg(bun_hardened)]
         if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();
+            #[cfg(bun_locked_environment)]
+            bun_jsc::compiled_program::refuse_variables_that_are_never_read();
         }
         let offset_for_passthrough: usize;
 

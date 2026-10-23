@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-8ec44cba";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-dd1c9946";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -353,6 +353,8 @@ const rows: Row[] = [
   ["ENABLE_DRAG_SUPPORT", 0],
   ["ENABLE_ENCRYPTED_MEDIA", 0],
   ["ENABLE_EXPERIMENTAL_FEATURES", 0],
+  // PlatformEnable.h turns it on where nothing defines it, as in a prebuilt WebKit.
+  ["ENABLE_FFI", c => (c.ffi ? undefined : 0)],
   ["ENABLE_FTL_JIT", c => on(c.jit)],
   ["ENABLE_FULLSCREEN_API", 1],
   ["ENABLE_FUZZILLI", c => (c.windows ? undefined : c.fuzzilli ? 1 : 0)],

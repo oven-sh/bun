@@ -49,9 +49,6 @@ async function expectRejected(files: Record<string, string>, flag: string, messa
 const rejected: [flag: string, message: string][] = [
   [BANNER_WITH_CODE, BANNER_MESSAGE],
   ["--footer=globalThis.fromFooter = 1;", "--aot does not support --footer with code"],
-  ["--bytecode-depth=1", "--aot does not support --bytecode-depth"],
-  ["--bytecode-order=app.order", "--aot does not support --bytecode-order"],
-  ["--format=cjs", "--aot requires --format=esm"],
   [`--target=${otherTarget}`, "--aot can't cross-compile. It only builds for the platform it runs on"],
   ...(hostTarget
     ? ([[`--target=${hostTarget}-v1.0.0`, "--aot can't cross-compile. It only builds for the platform it runs on"]] as [
@@ -66,8 +63,12 @@ const accepted = [
   "--footer=/* a footer */",
   "--banner=// one\n/* two */",
   "--format=esm",
+  "--format=cjs",
+  "--format=iife",
   "--target=bun",
   "--bytecode",
+  "--bytecode-depth=1",
+  "--bytecode-order=app.order",
   "--splitting",
   ...(hostTarget ? [`--target=${hostTarget}`, `--target=${hostTarget}-baseline`, `--target=${hostTarget}-modern`] : []),
 ];
@@ -91,7 +92,7 @@ describe.concurrent("compile/aot/load/unsupported-options", () => {
     "accepted: %j",
     flag =>
       slot(async () => {
-        using dir = tempDir("aot-load-options", { "tsconfig.json": TSCONFIG, "main.ts": MAIN });
+        using dir = tempDir("aot-load-options", { "tsconfig.json": TSCONFIG, "main.ts": MAIN, "app.order": "" });
         const folder = String(dir);
         expect(await build(folder, [flag])).toEqual({ errors: [], exitCode: 0, wrote: true });
         const ran = await spawned([programPath(folder)], folder, COMPILED);

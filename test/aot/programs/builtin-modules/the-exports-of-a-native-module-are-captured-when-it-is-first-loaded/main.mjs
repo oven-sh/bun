@@ -1,7 +1,8 @@
 // The exports of a module that native code makes are captured once, when the module is first loaded as an ES module: not when an importer runs, and not at the first use of the name.
-import "./runs-first-and-stores.mjs";
+import { titleAtTheStart } from "./runs-first-and-stores.mjs";
 import process, { argv, title } from "node:process";
-console.log("a module that ran in front of this one has stored:", argv[0] === "stored by the first module", title === "stored by the first module", process.argv[0]);
+console.log("a module that ran in front of this one has stored:", argv[0] === "stored by the first module", title === process.title, title === titleAtTheStart, process.argv[0]);
+process.title = title;
 
 process.argv = ["stored by main"];
 const later = await import("./imports-the-name-later.mjs");

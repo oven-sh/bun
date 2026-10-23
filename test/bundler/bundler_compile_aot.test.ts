@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDirWithBunTypes as tempDir } from "harness";
 import { devNull } from "os";
 import { join } from "path";
@@ -663,21 +662,24 @@ test("compile.aot rejects cross-compilation and unsupported targets", async () =
   ).toThrow(`compile.aot ${whyNot}`);
 });
 
-test("--aot requires --format=esm", async () => {
+test("--format has no effect with --aot", async () => {
   using dir = tempDir("compile-aot-format", { "entry.cjs": `console.log(1);` });
   const { stderr, exitCode } = await runCommand(
     [bunExe(), "build", "--compile", "--aot", "--format=cjs", "entry.cjs", "--outfile", "out"],
     String(dir),
   );
-  expect(stderr).toContain("--aot requires --format=esm");
-  expect(exitCode).not.toBe(0);
-  expect(() =>
-    Bun.build({
-      entrypoints: [join(String(dir), "entry.cjs")],
-      format: "cjs",
-      compile: { aot: true, outfile: join(String(dir), "out") },
-    }),
-  ).toThrow("compile.aot requires format: 'esm'");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
+  const built = await Bun.build({
+    entrypoints: [join(String(dir), "entry.cjs")],
+    format: "cjs",
+    compile: { aot: true, outfile: join(String(dir), "out-of-build") },
+  });
+  expect(built.success).toBe(true);
+  expect(await runCommand([join(String(dir), "out-of-build")], String(dir))).toMatchObject({
+    stdout: "1\n",
+    exitCode: 0,
+  });
 });
 
 test("Bun.ModuleGraph refuses a module that is compiled into the executable", async () => {
@@ -2394,7 +2396,7 @@ test("--cpu-prof attributes native time to the calling function", async () => {
   expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
 });
 
-test("--aot with --bytecode-depth is an error", async () => {
+test("--bytecode-depth has no effect with --aot", async () => {
   using dir = tempDir("compile-aot-depth", {
     "entry.ts": `function a() { return function b() { return function c() { return 1; }; }; } console.log(a()()());`,
   });
@@ -2402,9 +2404,8 @@ test("--aot with --bytecode-depth is an error", async () => {
     [bunExe(), "build", "--compile", "--aot", "--bytecode-depth=1", "entry.ts", "--outfile", "out"],
     String(dir),
   );
-  expect(stderr).toBe("error: --aot does not support --bytecode-depth\n");
-  expect(exitCode).toBe(1);
-  expect(existsSync(join(String(dir), "out"))).toBe(false);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
 });
 
 test("--aot requires --compile", async () => {
@@ -2699,16 +2700,12 @@ describe("--aot at run time", () => {
   });
 });
 
-test("--aot with --bytecode-order is an error", async () => {
+test("--bytecode-order has no effect with --aot", async () => {
   using dir = tempDir("compile-aot-order", { "entry.ts": `console.log(1);`, "app.order": "" });
-  const { stdout, stderr, exitCode } = await runCommand(
+  const { stderr, exitCode } = await runCommand(
     [bunExe(), "build", "--compile", "--aot", "--bytecode-order=app.order", "entry.ts", "--outfile", "out"],
     String(dir),
   );
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "",
-    stderr: "error: --aot does not support --bytecode-order\n",
-    exitCode: 1,
-  });
-  expect(existsSync(join(String(dir), "out"))).toBe(false);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
 });

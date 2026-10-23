@@ -103,6 +103,43 @@ test.skipIf(!isLinux)(
   },
 );
 
+test.skipIf(!isLinux)(
+  "--compile-executable-path with --aot refuses a run time that takes another version of the image format",
+  async () => {
+    using dir = tempDir("aot-executable-path-format-version", files);
+    const other = readFileSync(bunExe());
+    const description = findRuntimeDescription(other);
+    if (description < 0) return;
+    const here = other.readUInt32LE(description + 28);
+    other.writeUInt32LE(here + 1, description + 28);
+    writeOther(String(dir), "format-version", other);
+    const { stderr, exitCode } = await build(String(dir), "./format-version");
+    if (isUnsupportedHere(stderr)) return;
+    expect(stderr).toContain(
+      `error: ./format-version can't run code compiled by this Bun: the version of the image format is ${here + 1} there and ${here} here`,
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  },
+);
+
+test.skipIf(!isLinux)("the description of the run time names the version of the image format", async () => {
+  using dir = tempDir("aot-executable-path-names-format-version", files);
+  const { stderr, exitCode } = await build(String(dir), bunExe());
+  if (isUnsupportedHere(stderr)) return;
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  const out = readFileSync(join(String(dir), "out"));
+  const versionsOfImages: number[] = [];
+  // An image starts on a page. Bun's own code holds the same eight bytes as an immediate.
+  for (let at = out.indexOf("BUNAOT01"); at >= 0; at = out.indexOf("BUNAOT01", at + 1)) {
+    if (at % 4096 === 0) versionsOfImages.push(out.readUInt32LE(at + 0x48));
+  }
+  const named = out.readUInt32LE(findRuntimeDescription(out) + 28);
+  expect(named).toBeGreaterThan(0);
+  expect(versionsOfImages).toEqual([named]);
+});
+
 test.skipIf(!isLinux)("--compile-executable-path with --aot refuses another revision of Bun", async () => {
   using dir = tempDir("aot-executable-path-revision", files);
   const other = readFileSync(bunExe());

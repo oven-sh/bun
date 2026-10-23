@@ -461,6 +461,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   codeGenerationFromStrings: "boolean",
   webAssembly: "boolean",
   shadowRealm: "boolean",
+  ffi: "boolean",
   unifiedSources: "boolean",
   archiveDeps: "boolean",
   timeTrace: "boolean",

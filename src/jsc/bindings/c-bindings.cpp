@@ -28,6 +28,9 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#if ENABLE(AOT_GUARDED_PAGES)
+#include <sys/personality.h>
+#endif
 #endif
 #else
 #include <uv.h>
@@ -516,11 +519,42 @@ pthread_key_t unsafeStackKey;
 pthread_mutex_t retiredUnsafeStacksLock = PTHREAD_MUTEX_INITIALIZER;
 UnsafeStack* retiredUnsafeStacks = nullptr;
 
+#if ENABLE(AOT_GUARDED_PAGES)
+// What the system places by itself shares one random base: an address of an array on this stack would give away the stack with the return addresses and the C library.
+// Runs before the C library's own initializers too: it asks the kernel itself for the random number.
+void* mapAtRandomAddress(size_t mappingSize)
+{
+    constexpr uintptr_t lowestRandomAddress = 64ull << 30;
+    constexpr uintptr_t highestRandomAddress = 124ull << 40;
+    constexpr unsigned maxDraws = 16;
+    int persona = personality(0xffffffff);
+    if (persona != -1 && persona & ADDR_NO_RANDOMIZE)
+        return MAP_FAILED;
+    uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - mappingSize) / unsafeStackPageSize;
+    for (unsigned draw = 0; draw < maxDraws; ++draw) {
+        uint64_t random;
+        if (syscall(SYS_getrandom, &random, sizeof(random), 0) != sizeof(random))
+            break;
+        void* requestedAddress = reinterpret_cast<void*>(lowestRandomAddress + random % numberOfSlots * unsafeStackPageSize);
+        void* mapping = mmap(requestedAddress, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (mapping == MAP_FAILED || mapping == requestedAddress)
+            return mapping;
+        munmap(mapping, mappingSize);
+    }
+    return MAP_FAILED;
+}
+#endif
+
 void* mapUnsafeStack(size_t size, size_t& mappingSize)
 {
     size = (size + unsafeStackPageSize - 1) & ~(unsafeStackPageSize - 1);
     mappingSize = size + 2 * unsafeStackGuardSize;
-    void* mapping = mmap(nullptr, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    void* mapping = MAP_FAILED;
+#if ENABLE(AOT_GUARDED_PAGES)
+    mapping = mapAtRandomAddress(mappingSize);
+#endif
+    if (mapping == MAP_FAILED)
+        mapping = mmap(nullptr, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (mapping == MAP_FAILED)
         return nullptr;
     if (mprotect(static_cast<char*>(mapping) + unsafeStackGuardSize, size, PROT_READ | PROT_WRITE)) {

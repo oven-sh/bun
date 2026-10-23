@@ -191,17 +191,11 @@ fn assert_reserved_segment(trimmed: &[u8], cuts: &[AddressRange]) {
         align_up(image_end, cut_model(trimmed).alignment)
     );
     assert!(cuts.iter().all(|cut| cut.end <= reserved.address));
-    let ehdr = read_header(trimmed).unwrap();
-    let is_table_full =
-        ProgramHeaderTable::read(trimmed, &ehdr).unwrap().capacity() == usize::from(ehdr.e_phnum);
     assert_eq!(
         segments_of_type(trimmed, PT_BUN_RESERVED).len(),
         reserved.header_count
     );
-    assert!(
-        reserved.header_count == PAYLOAD_SEGMENT_COUNT
-            || (is_table_full && reserved.header_count >= 1)
-    );
+    assert_eq!(reserved.header_count, PAYLOAD_SEGMENT_COUNT);
     assert!(segments_of_type(trimmed, PT_NULL).is_empty());
 
     let mut with_payload = trimmed.to_vec();
@@ -283,7 +277,7 @@ fn reads_toy_headers() {
     for (target, alignment) in targets {
         let elf = toy_elf(target, true);
         let model = cut_model(&elf);
-        let max_cuts = ROOM_CAPACITY - TOY_SEGMENT_COUNT as usize - 1;
+        let max_cuts = ROOM_CAPACITY - TOY_SEGMENT_COUNT as usize - PAYLOAD_SEGMENT_COUNT;
         assert_eq!(architecture(&read_header(&elf).unwrap()), Ok(target));
         assert_eq!(model.format, ExecutableFormat::Elf);
         assert_eq!(model.alignment, alignment);
@@ -502,7 +496,7 @@ fn cut_over_unsplit_segment_fails() {
 }
 
 #[test]
-fn table_without_room_reuses_null_headers() {
+fn table_without_room_for_the_payload_has_no_cuts() {
     let mut original = toy_elf(Architecture::X86_64, false);
     let cut = text_pages(&original, 2..4);
     assert_no_cuts(&original, 0x1000, NoCutReason::HeaderRoomExhausted);
@@ -513,10 +507,8 @@ fn table_without_room_reuses_null_headers() {
             *segment = Elf64_Phdr::ZEROED
         });
     }
-    assert_eq!(cut_model(&original).capacity, CutCapacity::Cuts(1));
-    let trimmed = remove_and_verify(&original, &[cut]);
-    assert_table_at(&trimmed, EHDR_SIZE);
-    assert_eq!(u64::from(read_ehdr(&trimmed).e_phnum), TOY_SEGMENT_COUNT);
+    assert_no_cuts(&original, 0x1000, NoCutReason::HeaderRoomExhausted);
+    assert_remove_error(&original, &[cut], ImageError::HeaderRoomExhausted);
 }
 
 #[test]

@@ -3,13 +3,15 @@
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
+    // What the callback returns is read: a text that nobody reads need not be made, however long it would be.
     function thrownBy(callback) {
+        let result;
         try {
-            callback();
+            result = callback();
         } catch (error) {
             return error.constructor.name;
         }
-        return "nothing";
+        return result === undefined ? "nothing" : "nothing, " + String(result).length + " characters";
     }
 
     function add(a, b) { return a + b; }

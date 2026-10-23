@@ -82,7 +82,10 @@ const environment: Record<string, string> = {
 
 /** For every process a bed starts from now on. As a user: without the flag that switches the compiler's verifiers on, so what they would refuse is built and run. */
 export function changeEnvironment(more: Record<string, string>, asAUser: boolean) {
-  Object.assign(environment, more);
+  for (const [name, value] of Object.entries(more)) {
+    if (value === "") delete environment[name];
+    else environment[name] = value;
+  }
   if (asAUser) delete environment.BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING;
 }
 

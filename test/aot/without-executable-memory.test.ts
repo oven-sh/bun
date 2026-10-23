@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isHardened } from "./hardened";
+import { isHardened, locksEnvironment } from "./hardened";
 import { unsupported, withoutCoreDump } from "./run-programs";
 
 const programs = join(import.meta.dir, "without-executable-memory");
@@ -93,7 +93,7 @@ async function run(cmd: string[], cwd?: string) {
   await using proc = Bun.spawn({
     cmd,
     cwd,
-    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "" },
+    env: { ...bunEnv, ...(locksEnvironment ? { BUN_ENABLE_CRASH_REPORTING: "0" } : { BUN_CRASH_REPORT_URL: "" }) },
     stdout: "pipe",
     stderr: "pipe",
   });

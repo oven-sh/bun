@@ -12,8 +12,12 @@ settings.seldom = settings.seldom + settings.seldom;
 settings.seldom = settings.seldom + 1;
 function read(o) { return o.often; }
 let total = 0;
-for (let i = 0; i < 100; i++) total += read(i & 1 ? { often: i } : { other: 1, often: i });
-console.log(total, settings.seldom);
+const made = [];
+for (let i = 0; i < 100; i++) {
+  made.push(i & 1 ? { often: i } : { other: 1, often: i });
+  total += read(made[i]);
+}
+console.log(total, settings.seldom, made.length);
 `,
 };
 
@@ -26,7 +30,7 @@ test("bun run --aot: a name read in a function has a lower number than a name th
     BUN_JSC_aotMapFilePath: mapPath,
   });
   expect(stderr).not.toContain("crashIfInterpreterIsUsed");
-  expect({ stdout, exitCode }).toEqual({ stdout: "4950 5\n", exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: "4950 5 100\n", exitCode: 0 });
   const numbers = new Map<string, number>();
   for (const line of readFileSync(mapPath, "utf8").split("\n")) {
     const fields = line.split("\t");

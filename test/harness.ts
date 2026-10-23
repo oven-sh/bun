@@ -14,6 +14,7 @@ import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
+import { locksEnvironment } from "./aot/hardened";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -146,6 +147,12 @@ for (let key in bunEnv) {
     delete bunEnv[key];
   }
 
+  // An executable that such a Bun compiles ahead of time does not start where the environment sets a variable that it
+  // never reads. A test that wants one of the few that it does read sets it itself.
+  if (locksEnvironment && /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_)/i.test(key)) {
+    delete bunEnv[key];
+  }
+
   if (key.startsWith("BUILDKITE")) {
     delete bunEnv[key];
     delete process.env[key];
@@ -165,7 +172,7 @@ for (let key in bunEnv) {
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
-if (isDebug) {
+if (isDebug && !locksEnvironment) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
   bunEnv.BUN_DEBUG_NO_DUMP = "1";

@@ -187,8 +187,6 @@ export class Bench {
   #runs = 0;
   #looks = 0;
 
-  // Where a run stands that has said nothing for ten seconds: whether the shell has become the program yet and how much processor time it
-  // has had, what its threads wait for, and what the services that judge a new executable have logged meanwhile.
   async lookAt(pid: number, name: string) {
     const services = ["amfid", "syspolicyd", "XprotectService", "taskgated", "trustd"].map(service => `process == "${service}"`).join(" OR ");
     const [processes, sample, log] = await Promise.all(

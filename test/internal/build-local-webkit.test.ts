@@ -482,6 +482,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     );
     expect(headers["cmakeconfig.h"]).toContain("#define USE_BUN_JSC_ADDITIONS 1\n");
     expect(headers["cmakeconfig.h"]).not.toContain("ENABLE_SHADOW_REALM");
+    expect(headers["cmakeconfig.h"]).not.toContain("ENABLE_FFI");
     delete headers["cmakeconfig.h"];
     expect(headers).toEqual({
       "bmalloc/Headers/bmalloc/bmalloc.h": "bmalloc/bmalloc/bmalloc.h",
@@ -562,6 +563,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
   test("--shadow-realm=off compiles the checkout with ENABLE_SHADOW_REALM=0", () => {
     const { spec } = describeBuild({ asan: false, shadowRealm: false });
     expect(spec.headers!["cmakeconfig.h"]).toContain("#define ENABLE_SHADOW_REALM 0\n");
+  });
+
+  test("--ffi=off compiles the checkout with ENABLE_FFI=0", () => {
+    const { spec } = describeBuild({ asan: false, ffi: false });
+    expect(spec.headers!["cmakeconfig.h"]).toContain("#define ENABLE_FFI 0\n");
   });
 
   test("a checkout without the AoT compiler says so", () => {

@@ -8,13 +8,14 @@
 // Every difference that fuzz/accepted-differences.tsv does not explain fails the test. The failure lists the findings, neither
 // reduced nor attributed, so that the test stays short; `bun test/aot/fuzz/run.ts --replay <source>:<seed>` shows one program again.
 import { expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
 import { freshSeed } from "./fresh-seed";
 import { ProductBed } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
+import { allSources } from "./fuzz/sources";
 import { unsupported } from "./run-programs";
 
 const programs = Number(process.env.AOT_FUZZ_PROGRAMS) || 45;
@@ -31,6 +32,11 @@ for (const seed of seeds)
     async () => {
       using folder = tempDir("aot-fuzzer-fixed-seeds", {});
       const out = join(String(folder), "out");
+      const programsRoot = join(import.meta.dir, "programs");
+      // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here.
+      const sources = Object.keys(await allSources(programsRoot, new Set())).filter(
+        name => !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
+      );
       const bed = new ProductBed(bunExe(), {
         baseFlags: [],
         validate: true,
@@ -42,7 +48,8 @@ for (const seed of seeds)
         beds: [{ bed, jobs: Math.max(1, availableParallelism() >> 1) }],
         out,
         work: join(String(folder), "work"),
-        programsRoot: join(import.meta.dir, "programs"),
+        programsRoot,
+        sources,
         seconds: programs * secondsPerProgram,
         programs,
         firstSeed: seed,

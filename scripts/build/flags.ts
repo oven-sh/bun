@@ -688,7 +688,7 @@ export const bunOnlyFlags: Flag[] = [
   {
     flag: "-DBUN_LOCKED_ENVIRONMENT=1",
     when: c => c.lockEnvironment,
-    desc: "Hardened: an executable compiled ahead of time takes a short list of BUN_JSC_* options",
+    desc: "Hardened: an executable compiled ahead of time takes a short list of BUN_JSC_* options and starts with no other",
   },
   {
     flag: "-DBUN_SAFE_STACK=1",
@@ -904,6 +904,11 @@ export const defines: Flag[] = [
     flag: "BUN_DISABLE_SHADOW_REALM=1",
     when: c => !c.shadowRealm,
     desc: "No ShadowRealm global: JSC's useShadowRealm option is always false",
+  },
+  {
+    flag: "BUN_DISABLE_FFI=1",
+    when: c => !c.ffi,
+    desc: "bun:ffi calls no native function",
   },
   {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.

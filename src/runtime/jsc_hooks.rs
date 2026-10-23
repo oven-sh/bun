@@ -2860,10 +2860,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     });
                 }
 
-                let exports_values =
-                    DATA_ONLY || bun_jsc::compiled_program::compiled_program().is_some();
-
-                if matches!(loader, L::Text) && exports_values {
+                if matches!(loader, L::Text)
+                    && (DATA_ONLY || bun_jsc::compiled_program::compiled_program().is_some())
+                {
                     let Ok(jsvalue_for_export) =
                         bun_core::String::clone_utf8(&parse_result.source.contents)
                             .into_js(global_object)
@@ -2879,16 +2878,11 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // JSON/TOML/YAML/JSON5/XML: export as a JS object.
-                let is_markdown_value = loader == L::Md && exports_values;
-                if is_markdown_value
-                    || matches!(
-                        loader,
-                        L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
-                    )
-                {
-                    let jsvalue_for_export = if parse_result.empty && is_markdown_value {
-                        JSValue::UNDEFINED
-                    } else if parse_result.empty {
+                if matches!(
+                    loader,
+                    L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
+                ) {
+                    let jsvalue_for_export = if parse_result.empty {
                         JSValue::create_empty_object(global_object, 0)
                     } else {
                         // `ast.parts.at(0).stmts[0].data.s_expr.value.toJS(...)`
@@ -2900,21 +2894,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         // arena outlives this call (returned to the VM by the
                         // scopeguard above only after we return).
                         let stmt = &(*part.stmts)[0];
-                        let value = match &stmt.data {
-                            bun_ast::StmtData::SExpr(s_expr) => &s_expr.value,
-                            bun_ast::StmtData::SExportDefault(export_default) => {
-                                match &export_default.value {
-                                    bun_ast::StmtOrExpr::Expr(html) => html,
-                                    bun_ast::StmtOrExpr::Stmt(_) => {
-                                        unreachable!("Markdown exports an expression")
-                                    }
-                                }
-                            }
+                        let bun_ast::StmtData::SExpr(s_expr) = &stmt.data else {
                             // Parser guarantees JSON/TOML/YAML produce a single
                             // `SExpr` part; anything else is a parser bug.
-                            _ => unreachable!("JSON/TOML/YAML parse result is always SExpr"),
+                            unreachable!("JSON/TOML/YAML parse result is always SExpr")
                         };
-                        match bun_js_parser_jsc::expr_to_js(value, global_object) {
+                        match bun_js_parser_jsc::expr_to_js(&s_expr.value, global_object) {
                             Ok(v) => v,
                             Err(e) => {
                                 return Err(match e {
@@ -2934,11 +2919,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     return Ok(ResolvedSource {
                         source_url: input_specifier.create_if_different(path.text),
                         jsvalue_for_export,
-                        tag: if is_markdown_value {
-                            ResolvedSourceTag::ExportDefaultOnly
-                        } else {
-                            ResolvedSourceTag::ExportsObject
-                        },
+                        tag: ResolvedSourceTag::ExportsObject,
                         ..Default::default()
                     });
                 }
@@ -4317,7 +4298,8 @@ fn what_loading_gives(loader: Loader) -> Loaded {
         | Loader::Tsx
         | Loader::Wasm
         | Loader::Napi
-        | Loader::Bunsh => Loaded::Code,
+        | Loader::Bunsh
+        | Loader::Md => Loaded::Code,
         Loader::Sqlite | Loader::SqliteEmbedded | Loader::Html => Loaded::HostObject,
         Loader::Css
         | Loader::File
@@ -4329,7 +4311,6 @@ fn what_loading_gives(loader: Loader) -> Loaded {
         | Loader::Text
         | Loader::Yaml
         | Loader::Json5
-        | Loader::Md
         | Loader::Xml => Loaded::Data,
     }
 }

@@ -1,4 +1,4 @@
-// Whatever Bun would read as JavaScript is refused like a .js file that is not in the executable: no extension, an unknown extension, a data: URL.
+// Whatever Bun would read as JavaScript is refused like a .js file that is not in the executable: no extension, an unknown extension, Markdown, a data: URL.
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -31,9 +31,12 @@ async function imported(label, name) {
 async function main() {
   const noExtension = write("code", "module.exports = 1;");
   const unknownExtension = write("code.unknown", "module.exports = 2;");
+  const markdown = write("page.md", "# title\n");
   required("a file with no extension", noExtension);
   required("a file with an unknown extension", unknownExtension);
+  required("a Markdown file", markdown);
   await imported("a file with no extension", noExtension);
+  await imported("a Markdown file", markdown);
   await imported("a data: URL", decoded("data:text/javascript,export default 3"));
   fs.rmSync(folder, { recursive: true });
 }

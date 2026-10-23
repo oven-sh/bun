@@ -438,7 +438,7 @@ The code behind the IPC channel is kept for `process.on("message", ...)` only wh
 
 ### Code that isn't in the executable
 
-A dynamic `import()` or `require()` can only load code that's in the executable. Anything else throws: JavaScript, TypeScript, WebAssembly or a native addon. So does everything that Bun would read as JavaScript: a file with no extension, a file with an extension that Bun doesn't know, and a `data:` or `blob:` URL.
+A dynamic `import()` or `require()` can only load code that's in the executable. Anything else throws: JavaScript, TypeScript, WebAssembly or a native addon. So does everything that Bun would read as JavaScript or turn into it: a file with no extension, a file with an extension that Bun doesn't know, a Markdown file, and a `data:` or `blob:` URL.
 
 ```txt
 error: Cannot load '/home/me/plugins/late.ts': it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external.
@@ -454,7 +454,7 @@ warn: TS100064: this import path isn't a constant. If it resolves to code that i
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | The file compiled            | Pass it as an additional entry point                                                                                              |
 | One package loaded from disk | `--external <package>`. Bun interprets it, and everything it loads                                                                |
-| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text, Markdown and CSS files run no code, so they load from disk as usual                  |
+| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text and CSS files run no code, so they load from disk as usual                            |
 | A database or an HTML page   | Import it by a constant path. `import(name, { with: { type: "sqlite" } })` and `require(name)` of an `.html` file throw like code |
 
 An `--external` package has `require`, `module`, `require.cache` and every built-in module, whole: the compiler can't see what the package calls, so a build with `--external` compiles every function of the built-in modules in the executable, not only the ones that your program calls. That makes the executable a few megabytes larger. The package doesn't see the modules of your program, as in an executable built without `--aot`: its `module.parent` has the path of the file that required it and empty `exports`, and `require.cache` lists the files that were loaded from disk. If a file of your program [names a way between module objects](#module-objects), the package finds your modules through `process.mainModule` too. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too: it can add a global or a property, and it can't replace one that your compiled code uses. `globalThis.fetch = polyfill` in such a package throws a `TypeError` if your program calls `fetch`.

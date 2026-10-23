@@ -107,7 +107,7 @@ describe.each([
     async (_form, isExecutable) => {
       const { stdout, stderr, exitCode, signal } = await runCompiled(importing(url), isExecutable, [], { TEXT: text });
       expect(stderr).toMatch(
-        /^EvalError: Code generation from strings disallowed for this context|^error: Cannot load 'blob:[^']*': it isn't in this executable\./m,
+        /^EvalError: Code generation from strings disallowed for this context|^error: Cannot load '(?:blob|data):[^']*': it isn't in this executable\./m,
       );
       expect(stderr).not.toContain("crashIfInterpreterIsUsed: ");
       expect({ stdout, signal, exitCode }).toEqual({ stdout: "", signal: null, exitCode: 1 });

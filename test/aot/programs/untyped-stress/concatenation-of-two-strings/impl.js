@@ -2,15 +2,17 @@ function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
+// What `f` returns is read: a text that nobody reads need not be made, however long it would be.
 function throws(f, constructor, what) {
+    let result;
     try {
-        f();
+        result = f();
     } catch (error) {
         if (!(error instanceof constructor))
             throw new Error(what + ": threw " + String(error));
         return;
     }
-    throw new Error(what + ": did not throw");
+    throw new Error(what + ": did not throw, " + String(result).length + " characters");
 }
 
 function add(a, b) { return a + b; }

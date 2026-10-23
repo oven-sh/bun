@@ -1613,8 +1613,7 @@ mod draft {
         // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
         const SEGV_MAPERR: c_int = 1;
         let pc = context.map(|(pc, _, _)| pc);
-        // macOS raises SIGSEGV only where nothing is mapped, and SIGBUS where a mapping refuses the access. On ARM64 the
-        // si_code of that SIGSEGV is SEGV_ACCERR.
+        // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
         // SAFETY: kernel provides a valid siginfo_t.
         let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
         let entered = match sig {

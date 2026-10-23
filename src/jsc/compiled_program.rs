@@ -62,6 +62,14 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+#[cfg(bun_locked_environment)]
+unsafe extern "C" {
+    /// ZigGlobalObject.cpp
+    fn Bun__isOptionThatCompiledCodeDoesNotTake(entry: *const core::ffi::c_char) -> bool;
+    /// patches/mimalloc/environment-sets-sizes-and-pace-only.patch
+    fn mi_is_read_from_environment(name_in_lower_case: *const core::ffi::c_char) -> bool;
+}
+
 pub fn compiled_program() -> Option<&'static CompiledProgram> {
     standalone_module_graph()?.compiled_program()
 }
@@ -432,6 +440,54 @@ pub fn deny_write_execute_memory() {
     }
 }
 
+/// Each of the three tables is the one that keeps the variable from being read.
+#[cfg(bun_locked_environment)]
+fn is_never_read(entry: &core::ffi::CStr, name: &[u8]) -> bool {
+    // The allocator compares names without regard to case.
+    if name
+        .get(..9)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"mimalloc_"))
+    {
+        let name = ZBox::from_vec(name.to_ascii_lowercase());
+        // SAFETY: `name` ends with a NUL and outlives the call.
+        return !unsafe { mi_is_read_from_environment(name.as_ptr()) };
+    }
+    // SAFETY: `entry` ends with a NUL and outlives the call.
+    bun_core::is_never_read(name)
+        || unsafe { Bun__isOptionThatCompiledCodeDoesNotTake(entry.as_ptr()) }
+}
+
+#[cfg(bun_locked_environment)]
+fn sentence_of_variables_never_read(names: &[&[u8]]) -> Option<String> {
+    let (last, others) = names.split_last()?;
+    let mut list = others.join(&b", "[..]);
+    if !others.is_empty() {
+        list.extend_from_slice(b" and ");
+    }
+    list.extend_from_slice(last);
+    Some(format!(
+        "the environment sets {}, which this build of Bun never reads",
+        bstr::BStr::new(&list)
+    ))
+}
+
+/// A setting that would be ignored is not lost without a word. By its name alone: so is one with an empty value.
+#[cfg(bun_locked_environment)]
+pub fn refuse_variables_that_are_never_read() {
+    let names: Vec<&[u8]> = bun_sys::environ()
+        .iter()
+        .filter_map(|&entry| {
+            // SAFETY: an entry of the environment ends with a NUL and lives as long as the process.
+            let entry = unsafe { core::ffi::CStr::from_ptr(entry) };
+            let name = entry.to_bytes().split(|&byte| byte == b'=').next()?;
+            is_never_read(entry, name).then_some(name)
+        })
+        .collect();
+    if let Some(sentence) = sentence_of_variables_never_read(&names) {
+        exit_with(&sentence);
+    }
+}
+
 pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     let Some(program) = graph.compiled_program() else {
@@ -448,6 +504,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         }
         #[cfg(bun_hardened)]
         deny_write_execute_memory();
+        #[cfg(bun_locked_environment)]
+        refuse_variables_that_are_never_read();
         bun_resolve_builtins::seal_internals();
         set_mismatch_log();
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);

@@ -1703,6 +1703,7 @@ pub(crate) mod js_bundler {
             }
 
             if !this.bytecode
+                && !is_compiled_ahead_of_time
                 && this
                     .compile
                     .as_ref()

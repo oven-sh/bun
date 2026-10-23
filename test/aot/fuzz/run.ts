@@ -23,7 +23,7 @@
 //   --fail-predictions 1,2,7   one time in n compiled code takes the general road behind a test though the value would have passed; n and the seed are drawn anew for every batch
 //   --workers <n>         n workers run each program at once, each for itself, in place of the main thread; lines are compared in any order
 //   --as-a-user           the compiler's verifiers stay off, as in a user's build: what they would refuse is built and run
-//   --environment "A=1 B=2"      set for every process; --run-environment the same for the run of the executable alone (the collector's options, say)
+//   --environment "A=1 B=2"      set for every process ("A=" takes A out); --run-environment the same for the run of the executable alone (the collector's options, say)
 //   --run-seconds <n>     the time a plain run may take (default 20); --compiled-run-seconds <n> the executable's (default: the same)
 //   --known <file>        findings that are counted and not kept, in the form of accepted-differences.tsv beside this file, which is always read
 //                         (may be repeated)

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
 import { describe, test } from "./supported";
 
 // What `bun build --compile --aot` cuts out of the executable leaves a hole in its address space, which later mappings may fill.
@@ -50,7 +51,8 @@ function middleOfLargestHole(executable: string) {
     .slice(1)
     .map(({ start }, index) => ({ start: segments[index].end, size: start - segments[index].end }));
   const largest = holes.sort((a, b) => b.size - a.size)[0];
-  return { address: (largest.start + largest.size / 2) & ~0x3fff, size: largest.size };
+  const middle = largest.start + largest.size / 2;
+  return { address: middle - (middle % 0x4000), size: largest.size };
 }
 
 describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed range", () => {
@@ -61,7 +63,12 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
       await using child = Bun.spawn({
         cmd,
         cwd: folder,
-        env: { ...bunEnv, NO_COLOR: "1", BUN_ENABLE_CRASH_REPORTING: "0" },
+        env: {
+          ...bunEnv,
+          NO_COLOR: "1",
+          BUN_ENABLE_CRASH_REPORTING: "0",
+          ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

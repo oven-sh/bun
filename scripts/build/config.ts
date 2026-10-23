@@ -187,14 +187,18 @@ export interface Config {
   /**
    * The environment variables that only a compiler, a test or somebody who debugs Bun sets are never read: those that
    * write a file, print addresses, switch a check off or bring in other code. An executable compiled ahead of time takes a
-   * short list of BUN_JSC_* options, and the allocator its sizes and its pace. On with `hardened`. Off: a hardened
-   * build that tests can steer as they steer any other. No environment variable does the same.
+   * short list of BUN_JSC_* options, and the allocator its sizes and its pace. No setting is lost without a word: where
+   * the environment sets one of the variables that are never read, any other BUN_JSC_* option or any other MIMALLOC_*
+   * word, such an executable prints their names and exits with 1 before it runs any JavaScript. `bun` itself starts, and
+   * ignores them. On with `hardened`. Off: a hardened build that tests can steer as they steer any other, and that
+   * refuses nothing. No environment variable does the same.
    */
   lockEnvironment: boolean;
   /**
    * What an executable compiled ahead of time maps for as long as a VM or the process lives (its instance, its tables) lies
    * between two pages that cannot be touched, at an address drawn for that mapping alone: an address of one says nothing
-   * about another's, nor about the C library's. Costs a few system calls and 8 KB of page tables a mapping.
+   * about another's, nor about the C library's. So does every thread's second stack, where a hardened build has them.
+   * Costs a few system calls and 8 KB of page tables a mapping.
    */
   guardedPages: boolean;
   /**
@@ -222,6 +226,12 @@ export interface Config {
    * keeps it.
    */
   shadowRealm: boolean;
+  /**
+   * Default true. Off builds a Bun whose `bun:ffi` calls no native function: dlopen(), linkSymbols(), CFunction(),
+   * JSCallback() and what cc() returns throw. A WebKit built from source (`webkit: "local"`) is also built with
+   * ENABLE_FFI=0, which leaves the engine's half of those calls out of the binary; a prebuilt one keeps it.
+   */
+  ffi: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -456,6 +466,7 @@ export interface PartialConfig {
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
   shadowRealm?: boolean;
+  ffi?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -1209,6 +1220,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     "jit=false requires webkit=local: there is no prebuilt WebKit without the JIT tiers",
   );
   assert(jit || (partial.aot ?? true), "jit=false requires aot=true");
+  assert(jit || (linux && x64), "jit=false requires os=linux and arch=x64");
   assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
   assert(
     !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
@@ -1488,6 +1500,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
     shadowRealm: partial.shadowRealm ?? true,
+    ffi: partial.ffi ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1898,6 +1911,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
   if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.shadowRealm) features.push("shadow-realm:off");
+  if (!cfg.ffi) features.push("ffi:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

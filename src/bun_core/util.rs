@@ -315,8 +315,9 @@ impl core::ops::Deref for ZStr {
 }
 
 /// What only a compiler, a test or somebody who debugs Bun sets: it writes a file, prints addresses or brings in other code.
+/// An executable compiled ahead of time does not start where the environment sets one.
 #[cfg(bun_locked_environment)]
-fn is_never_read(key: &[u8]) -> bool {
+pub fn is_never_read(key: &[u8]) -> bool {
     const WORDS: [&[u8]; 24] = [
         b"BUN_AOT_TYPE_MISMATCH_LOG",
         b"BUN_AOT_TYPE_MISMATCH_LOG_FORMAT",

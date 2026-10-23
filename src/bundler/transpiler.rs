@@ -1747,7 +1747,7 @@ impl<'a> Transpiler<'a> {
             options::Loader::Text => {
                 return parse_text_loader(source, loader, source_backing, arena);
             }
-            options::Loader::Md => {
+            options::Loader::Md if !DATA_ONLY => {
                 return parse_md_loader(source, loader, source_backing, arena, log);
             }
             options::Loader::Wasm => {
@@ -1766,6 +1766,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Jsx
             | options::Loader::Ts
             | options::Loader::Tsx
+            | options::Loader::Md
             | options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64

@@ -79,6 +79,12 @@ pub struct WindowsOptions {
     pub copyright: Option<Box<[u8]>>,
 }
 
+#[derive(Default)]
+pub struct MacosOptions {
+    /// `--macos-info-plist` / `compile.macos.infoPlist`: the contents of the file, read when the option is parsed.
+    pub info_plist: Option<Box<[u8]>>,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BundlePackage {

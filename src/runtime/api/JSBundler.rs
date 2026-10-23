@@ -247,6 +247,7 @@ pub(crate) mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
+        pub(crate) macos: bun_options_types::MacosOptions,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
@@ -272,6 +273,7 @@ pub(crate) mod js_bundler {
                 windows_version: OwnedString::default(),
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
+                macos: bun_options_types::MacosOptions::default(),
                 outfile: OwnedString::default(),
                 assets: Vec::new(),
                 autoload_dotenv: true,
@@ -416,6 +418,45 @@ pub(crate) mod js_bundler {
                 {
                     let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
+                }
+            }
+
+            if let Some(macos) = object.get_own_truthy(global_this, "macos")? {
+                if !macos.is_object() {
+                    return Err(global_this
+                        .throw_invalid_arguments(format_args!("macos must be an object")));
+                }
+
+                if let Some(info_plist) = macos.get_own_truthy(global_this, "infoPlist")? {
+                    if !info_plist.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.macos.infoPlist",
+                            b"string",
+                            info_plist,
+                        ));
+                    }
+                    let path = info_plist.to_utf8(global_this)?;
+                    if bun_core::strings::contains_char(path.slice(), 0) {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'compile.macos.infoPlist' must be a string without null bytes. Received {}",
+                                    bun_core::fmt::quote(path.slice())
+                                ),
+                            )
+                            .throw());
+                    }
+                    // Read and checked whatever the target is, like `windows.icon`. Only a macOS executable takes it.
+                    match bun_standalone_graph::info_plist::load(path.slice()) {
+                        Ok(bytes) => this.macos.info_plist = Some(bytes),
+                        Err(err) => {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "compile.macos.infoPlist: {}",
+                                bstr::BStr::new(err.slice())
+                            )));
+                        }
+                    }
                 }
             }
 

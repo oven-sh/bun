@@ -1281,6 +1281,11 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
+// Room for --macos-info-plist: INFO_PLIST_MAX_LEN in exe_format/macho.rs is this size. Assembly: no ASan redzone, -dead_strip keeps it.
+__asm__(".section __TEXT,__bun_plist,regular,no_dead_strip\n"
+        ".space 4096\n"
+        ".text\n");
+
 #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
 
 extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };

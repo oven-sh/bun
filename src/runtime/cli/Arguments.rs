@@ -571,6 +571,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"
         ),
+        parse_param!(
+            "--macos-info-plist <STR>         When using --compile targeting macOS, embed an Info.plist in the executable"
+        ),
     ],
     maybe_bake_debug_params!(),
 );
@@ -2510,6 +2513,23 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.windows.copyright = Some(copyright.into());
+    }
+    if let Some(path) = args.option(b"--macos-info-plist") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--macos-info-plist requires --compile", ());
+            Global::crash();
+        }
+        if ctx.bundler_options.compile_target.os != OperatingSystem::Mac {
+            Output::err_generic("--macos-info-plist requires a macOS compile target", ());
+            Global::crash();
+        }
+        match bun_standalone_graph::info_plist::load(path) {
+            Ok(bytes) => ctx.bundler_options.macos.info_plist = Some(bytes),
+            Err(err) => {
+                Output::err_generic("{}", format_args!("{}", BStr::new(err.slice())));
+                Global::crash();
+            }
+        }
     }
 
     if let Some(outdir) = args.option(b"--outdir") {

@@ -74,7 +74,14 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "hardening"
+  | "reserved sections"
+  | "debug info"
+  | "size";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -114,6 +121,14 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
     "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
     "unintended side effect of a linker-flag or toolchain change; find that change.",
+  ],
+  "reserved sections": [
+    "`bun build --compile` writes into these sections in a copy of this executable, and finds",
+    "them by segment and name. One that is missing, resized or not zero-filled means its",
+    "definition (see src/jsc/bindings/c-bindings.cpp) was dropped, padded or moved on the way to",
+    "the link: dead-strip, LTO, a sanitizer redzone, a segment rename. Fix the definition. The",
+    "names and sizes are what other versions of bun expect, so changing one is a deliberate",
+    "decision, not a fix for this check.",
   ],
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
@@ -556,6 +571,33 @@ function verifyMachO(spec: VerifySpec): void {
     }
     const props = [...flagLine.trim().split(/\s+/).slice(7), ...seen];
     report("hardening", `${props.length} hardening properties`, violations, props);
+  }
+
+  // 6. sections `bun build --compile` writes into
+  if (expect.macho !== undefined) {
+    const violations: string[] = [];
+    const unparen = (s: string | undefined) => s?.replace(/ \(.*$/, "");
+    const secs = blocks(run(readobj, ["--sections", exe]), "Section").map(b => ({
+      name: `${unparen(field(b, "Segment"))},${unparen(field(b, "Name"))}`,
+      size: Number(field(b, "Size")),
+      offset: Number(field(b, "Offset")),
+    }));
+    const reserved = Object.entries(expect.macho.reservedSections);
+    for (const [name, size] of reserved) {
+      const sec = secs.find(s => s.name === name);
+      if (sec === undefined) violations.push(`- ${name} (expected, absent)`);
+      else if (sec.size !== size) violations.push(`${name} is ${sec.size} bytes, expected ${size}`);
+      else if (readAt(exe, sec.offset, sec.size).some(b => b !== 0)) violations.push(`${name} is not zero-filled`);
+    }
+    for (const name of expect.macho.forbiddenSections)
+      if (secs.some(s => s.name === name)) violations.push(`+ ${name} (not expected)`);
+    const watched = new Set([...Object.keys(expect.macho.reservedSections), ...expect.macho.forbiddenSections]);
+    report(
+      "reserved sections",
+      `${reserved.length} reserved sections`,
+      violations,
+      secs.filter(s => watched.has(s.name)).map(s => `${s.name} ${s.size} bytes`),
+    );
   }
 }
 

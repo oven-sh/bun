@@ -72,6 +72,10 @@ impl section_64 {
     pub(crate) fn sect_name(&self) -> &[u8] {
         parse_name(&self.sectname)
     }
+    #[inline]
+    pub(crate) fn seg_name(&self) -> &[u8] {
+        parse_name(&self.segname)
+    }
 }
 
 #[repr(C)]

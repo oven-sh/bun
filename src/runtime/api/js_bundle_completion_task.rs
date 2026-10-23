@@ -31,7 +31,7 @@ use bun_paths::resolve_path::{join_abs_string, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, InjectOptions, RuntimeOptions,
     target_base_public_path, to_executable,
 };
 use bun_sys::Dir;
@@ -457,14 +457,17 @@ impl JSBundleCompletionTask {
             outfile_for_executable,
             &mut self.env,
             self.config.format,
-            &WindowsOptions {
-                hide_console: compile_options.windows_hide_console,
-                icon: opt_box(&compile_options.windows_icon_path.list),
-                title: opt_box(&compile_options.windows_title.list),
-                publisher: opt_box(&compile_options.windows_publisher.list),
-                version: opt_box(&compile_options.windows_version.list),
-                description: opt_box(&compile_options.windows_description.list),
-                copyright: opt_box(&compile_options.windows_copyright.list),
+            &InjectOptions {
+                windows: &WindowsOptions {
+                    hide_console: compile_options.windows_hide_console,
+                    icon: opt_box(&compile_options.windows_icon_path.list),
+                    title: opt_box(&compile_options.windows_title.list),
+                    publisher: opt_box(&compile_options.windows_publisher.list),
+                    version: opt_box(&compile_options.windows_version.list),
+                    description: opt_box(&compile_options.windows_description.list),
+                    copyright: opt_box(&compile_options.windows_copyright.list),
+                },
+                macos: &compile_options.macos,
             },
             &compile_options.exec_argv.list,
             if compile_options.executable_path.list.is_empty() {

@@ -13,7 +13,7 @@ use bun_collections::StringArrayHashMap;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
-use bun_options_types::bundle_enums::{Format, WindowsOptions};
+use bun_options_types::bundle_enums::{Format, MacosOptions, WindowsOptions};
 #[cfg(not(windows))]
 use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
@@ -2036,7 +2036,11 @@ pub(crate) fn to_bytes(
     Ok(output)
 }
 
-pub(crate) type InjectOptions = WindowsOptions;
+/// Per-platform metadata that `inject` puts into the executable it writes.
+pub struct InjectOptions<'a> {
+    pub windows: &'a WindowsOptions,
+    pub macos: &'a MacosOptions,
+}
 
 pub enum CompileResult {
     Success,
@@ -2114,13 +2118,21 @@ impl<'a> Injected<'a> {
     }
 }
 
+/// Why `inject` wrote no executable.
+pub(crate) enum InjectError {
+    /// `inject` printed the reason to stderr.
+    Printed,
+    /// The reason, for the caller to report. Unlike a printed one, it reaches a `Bun.build` rejection.
+    Reason(CompileError),
+}
+
 pub(crate) fn inject<'a>(
     bytes: &[u8],
     self_exe: &ZStr,
-    inject_options: &InjectOptions,
+    inject_options: &InjectOptions<'_>,
     target: &CompileTarget,
     temp_path_buf: &'a mut PathBuffer,
-) -> Option<Injected<'a>> {
+) -> Result<Injected<'a>, InjectError> {
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
         Ok(len) => &cwd_buf[..len],
@@ -2129,7 +2141,7 @@ pub(crate) fn inject<'a>(
                 "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
                 err
             );
-            return None;
+            return Err(InjectError::Printed);
         }
     };
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -2153,7 +2165,7 @@ pub(crate) fn inject<'a>(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
                 bstr::BStr::new(e.name())
             );
-            return None;
+            return Err(InjectError::Printed);
         }
     };
 
@@ -2188,7 +2200,7 @@ pub(crate) fn inject<'a>(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     w::last_system_errno()
                 );
-                return None;
+                return Err(InjectError::Printed);
             }
             let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
@@ -2207,7 +2219,7 @@ pub(crate) fn inject<'a>(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
                     );
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
 
@@ -2289,7 +2301,7 @@ pub(crate) fn inject<'a>(
                             "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                             err
                         );
-                        return None;
+                        return Err(InjectError::Printed);
                     }
                 }
             }
@@ -2316,7 +2328,7 @@ pub(crate) fn inject<'a>(
                             err
                         );
                         cleanup(zname, fd);
-                        return None;
+                        return Err(InjectError::Printed);
                     }
                 }
             }
@@ -2333,7 +2345,7 @@ pub(crate) fn inject<'a>(
                     e
                 );
                 cleanup(zname, fd);
-                return None;
+                return Err(InjectError::Printed);
             }
 
             break 'brk fd;
@@ -2348,7 +2360,7 @@ pub(crate) fn inject<'a>(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
@@ -2356,20 +2368,33 @@ pub(crate) fn inject<'a>(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
+            match inject_options.macos.info_plist.as_deref() {
+                Some(plist) => {
+                    if let Err(e) = macho_file.set_info_plist(plist) {
+                        cleanup(zname, cloned_executable_fd);
+                        return Err(InjectError::Reason(CompileError::fmt(format_args!(
+                            "failed to embed the Info.plist in {}: {}",
+                            bun_core::fmt::quote(self_exe.as_bytes()),
+                            e
+                        ))));
+                    }
+                }
+                None => macho_file.clear_info_plist(),
+            }
             if let Err(e) = macho_file.write_section(bytes) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
 
             let mut buffered_writer = std::io::BufWriter::with_capacity(
@@ -2384,13 +2409,13 @@ pub(crate) fn inject<'a>(
                         bstr::BStr::new(e.name())
                     );
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
             if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
                 bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
             if let Err(err) = Syscall::ftruncate(
@@ -2399,14 +2424,14 @@ pub(crate) fn inject<'a>(
             ) {
                 bun_core::pretty_errorln!("Error truncating temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
+            return Ok(Injected::new(
                 cloned_executable_fd,
                 cwd,
                 zname,
@@ -2419,7 +2444,7 @@ pub(crate) fn inject<'a>(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
@@ -2427,35 +2452,35 @@ pub(crate) fn inject<'a>(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing PE file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
-            if inject_options.hide_console {
+            if inject_options.windows.hide_console {
                 if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
                     bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             }
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
 
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
                 bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
             if let Err(err) = Syscall::ftruncate(
@@ -2464,7 +2489,7 @@ pub(crate) fn inject<'a>(
             ) {
                 bun_core::pretty_errorln!("Error truncating PE file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
@@ -2472,7 +2497,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
+            return Ok(Injected::new(
                 cloned_executable_fd,
                 cwd,
                 zname,
@@ -2486,7 +2511,7 @@ pub(crate) fn inject<'a>(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading executable: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
 
@@ -2495,7 +2520,7 @@ pub(crate) fn inject<'a>(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             };
 
@@ -2504,13 +2529,13 @@ pub(crate) fn inject<'a>(
             if let Err(e) = elf_file.write_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
 
             // Write the modified ELF data back to the file
@@ -2518,7 +2543,7 @@ pub(crate) fn inject<'a>(
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 bun_core::pretty_errorln!("Error writing ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
             // Truncate the file to the exact size of the modified ELF
             if let Err(err) = Syscall::ftruncate(
@@ -2527,7 +2552,7 @@ pub(crate) fn inject<'a>(
             ) {
                 bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return None;
+                return Err(InjectError::Printed);
             }
 
             #[cfg(not(windows))]
@@ -2535,7 +2560,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
+            return Ok(Injected::new(
                 cloned_executable_fd,
                 cwd,
                 zname,
@@ -2556,7 +2581,7 @@ pub(crate) fn inject<'a>(
                                 e
                             );
                             cleanup(zname, cloned_executable_fd);
-                            return None;
+                            return Err(InjectError::Printed);
                         }
                     };
             }
@@ -2568,7 +2593,7 @@ pub(crate) fn inject<'a>(
                         Err(err) => {
                             bun_core::pretty_errorln!("{}", err);
                             cleanup(zname, cloned_executable_fd);
-                            return None;
+                            return Err(InjectError::Printed);
                         }
                     };
                     break 'brk fstat.st_size.max(0);
@@ -2592,7 +2617,7 @@ pub(crate) fn inject<'a>(
                         seek_position
                     );
                     cleanup(zname, cloned_executable_fd);
-                    return None;
+                    return Err(InjectError::Printed);
                 }
             }
 
@@ -2606,7 +2631,7 @@ pub(crate) fn inject<'a>(
                             err
                         );
                         cleanup(zname, cloned_executable_fd);
-                        return None;
+                        return Err(InjectError::Printed);
                     }
                 }
             }
@@ -2619,7 +2644,7 @@ pub(crate) fn inject<'a>(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return Some(Injected::new(
+            return Ok(Injected::new(
                 cloned_executable_fd,
                 cwd,
                 zname,
@@ -2909,7 +2934,7 @@ pub fn to_executable(
     outfile: &[u8],
     env: &mut bun_dotenv::Loader,
     output_format: Format,
-    windows_options: &WindowsOptions,
+    inject_options: &InjectOptions<'_>,
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
@@ -2945,18 +2970,21 @@ pub fn to_executable(
     };
 
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
-    let Some(injected) = inject(
+    let injected = match inject(
         &bytes,
         &self_exe,
-        windows_options,
+        inject_options,
         target,
         &mut temp_path_buf,
-    ) else {
-        // inject() has already printed the specific error.
-        return Ok(CompileResult::fail_fmt(format_args!(
-            "failed to write compiled executable {}",
-            bstr::BStr::new(outfile)
-        )));
+    ) {
+        Ok(injected) => injected,
+        Err(InjectError::Reason(err)) => return Ok(CompileResult::Err(err)),
+        Err(InjectError::Printed) => {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "failed to write compiled executable {}",
+                bstr::BStr::new(outfile)
+            )));
+        }
     };
     let fd = injected.fd;
     // Closed explicitly at every return below rather than by a guard: on Windows
@@ -3041,6 +3069,7 @@ pub fn to_executable(
         }
 
         // Set Windows icon and/or metadata using unified function
+        let windows_options = inject_options.windows;
         if windows_options.icon.is_some()
             || windows_options.title.is_some()
             || windows_options.publisher.is_some()

@@ -2,6 +2,7 @@
 #![warn(unused_must_use)]
 
 pub mod error;
+pub mod info_plist;
 pub use error::{Error, Result};
 
 #[path = "StandaloneModuleGraph.rs"]

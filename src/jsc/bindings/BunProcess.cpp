@@ -3,6 +3,8 @@
 
 #include "BunProcess.h"
 #include "ObjectBindings.h"
+#include "ZigGeneratedClasses.h"
+#include "JSDOMException.h"
 #include "DLHandleMap.h"
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
@@ -1409,6 +1411,9 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     auto object = obj.getObject();
     if (!object)
         return false;
+    // In V8 every error has a `stack` of its own. Here an error that was made with no script on the stack has none.
+    if (object->isErrorInstance() || object->inherits<WebCore::JSDOMException>() || object->inherits<WebCore::JSResolveMessage>() || object->inherits<WebCore::JSBuildMessage>())
+        return true;
 
     RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
@@ -1467,7 +1472,11 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        if (reasonStack && !reasonStack.isUndefined())
+            warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        // Process::emitWarning() takes a string. For any other `stack`, the first warning has the text of the reason.
+        if (!reasonStack || !reasonStack.isString())
+            reasonStack = {};
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));

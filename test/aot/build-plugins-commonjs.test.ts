@@ -325,7 +325,7 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "node_modules/pkg/index.js": `export const a = "disk"; export default { a };`,
     },
     plugins: [
-      `build.onLoad({ filter: /pkg\\/index\\.js$/ }, () => ({ contents: 'exports.a = "plugin"; exports.default = "the default";', loader: "js" }));`,
+      `build.onLoad({ filter: /pkg[\\\\/]index\\.js$/ }, () => ({ contents: 'exports.a = "plugin"; exports.default = "the default";', loader: "js" }));`,
     ],
     options: entry("main.mjs"),
   },
@@ -337,7 +337,7 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "node_modules/pkg/other.js": `exports.unused = 1;`,
     },
     plugins: [
-      `build.onLoad({ filter: /pkg\\/(index|other)\\.js$/ }, (args: any) => ({ contents: '(globalThis.effects ??= []).push(' + JSON.stringify(basename(args.path)) + '); exports.unused = 1;', loader: "js" }));`,
+      `build.onLoad({ filter: /pkg[\\\\/](index|other)\\.js$/ }, (args: any) => ({ contents: '(globalThis.effects ??= []).push(' + JSON.stringify(basename(args.path)) + '); exports.unused = 1;', loader: "js" }));`,
     ],
     options: entry("main.mjs"),
   },
@@ -348,7 +348,7 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => ({ contents:
       "mods/two.cjs": `exports.name = "two on the disk";`,
     },
     plugins: [
-      `build.onLoad({ filter: /mods\\/\\w+\\.cjs$/ }, (args: any) => { tell("onLoad", args); return { contents: "exports.name = " + JSON.stringify(basename(args.path) + " from the plugin") + ";", loader: "js" }; });`,
+      `build.onLoad({ filter: /mods[\\\\/]\\w+\\.cjs$/ }, (args: any) => { tell("onLoad", args); return { contents: "exports.name = " + JSON.stringify(basename(args.path) + " from the plugin") + ";", loader: "js" }; });`,
     ],
     options: entry("main.cjs"),
     arguments: ["one", "two"],

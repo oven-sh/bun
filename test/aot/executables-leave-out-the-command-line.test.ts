@@ -100,8 +100,8 @@ describe.skipIf(!canTrim || !!unsupported)("bun build --compile --aot, without -
     for (const args of [["install"], ["run", "hello.ts"], ["-e", "1"], ["hello.ts"], []]) {
       expect(await run([hello, ...args], folder, asBun)).toEqual({
         stdout: "",
-        stderr:
-          "error: BUN_BE_BUN is set, but this executable doesn't include the Bun command line. Run bun instead.\n",
+        // It is written to C's descriptor 2, which translates line ends on Windows.
+        stderr: `error: BUN_BE_BUN is set, but this executable doesn't include the Bun command line. Run bun instead.${isWindows ? "\r\n" : "\n"}`,
         exitCode: 70,
       });
     }

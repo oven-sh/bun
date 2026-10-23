@@ -7,7 +7,7 @@
 // round. Each also asks for four types that are within the limit only for a checker that knows what the file in front of it has
 // asked for: ten elements more of the same tuple.
 import { expect, setDefaultTimeout } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -100,7 +100,7 @@ async function build(directory: string, threads: number, round: number) {
   });
   return {
     program: Bun.hash(await Bun.file(join(directory, `${name}.program`)).bytes()),
-    executable: Bun.hash(await Bun.file(join(directory, "app")).bytes()),
+    executable: Bun.hash(await Bun.file(join(directory, isWindows ? "app.exe" : "app")).bytes()),
   };
 }
 

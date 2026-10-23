@@ -126,8 +126,8 @@ build.onLoad({ filter: /.*/ }, (args: any) => void tell("onLoad", args));`,
     },
     plugins: [
       `require("fs").rmSync(join(folder, "node_modules/linked"), { force: true }); require("fs").symlinkSync(join(folder, "store/linked"), join(folder, "node_modules/linked"), "junction");
-build.onLoad({ filter: /store\\/linked\\/index\\.js$/ }, () => ({ contents: 'exports.name = "by the real path";', loader: "js" }));
-build.onLoad({ filter: /node_modules\\/linked\\/index\\.js$/ }, () => ({ contents: 'exports.name = "by the path of the link";', loader: "js" }));`,
+build.onLoad({ filter: /store[\\\\/]linked[\\\\/]index\\.js$/ }, () => ({ contents: 'exports.name = "by the real path";', loader: "js" }));
+build.onLoad({ filter: /node_modules[\\\\/]linked[\\\\/]index\\.js$/ }, () => ({ contents: 'exports.name = "by the path of the link";', loader: "js" }));`,
     ],
   },
 });

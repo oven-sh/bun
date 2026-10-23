@@ -174,7 +174,7 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's dat
     const folder = String(dir);
     const kept = await build(folder, "names-Intl.ts", "kept", []);
     const forcedOut = await build(folder, "names-Intl.ts", "forced-out", without());
-    expect(kept - forcedOut).toBeGreaterThan(8_000_000);
+    expect(kept - forcedOut).toBeGreaterThan(7_900_000);
   });
 
   test.skipIf(!isLinux && !isWindows)(

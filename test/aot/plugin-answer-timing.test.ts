@@ -263,7 +263,7 @@ console.log(shapes.length, shapes[3].side9, late);
 `,
   "late.tmpl": "",
   "plugin.ts": `import { join } from "path"; import { delayed } from "./delayed"; export default { name: "p", setup(b: any) {
-    b.onLoad({ filter: /late\\.tmpl$/ }, () => delayed({ contents: ${JSON.stringify(Array.from({ length: 20 }, (_, index) => `import { make${index * 7 + 1} } from "@/root${index * 7 + 1}";`).join("\n"))}.replaceAll("@", import.meta.dir) + "\\nexport default " + ${JSON.stringify(Array.from({ length: 20 }, (_, index) => `make${index * 7 + 1}().side${index * 7 + 1}`).join(" + "))} + ";", loader: "ts" }));
+    b.onLoad({ filter: /late\\.tmpl$/ }, () => delayed({ contents: ${JSON.stringify(Array.from({ length: 20 }, (_, index) => `import { make${index * 7 + 1} } from "@/root${index * 7 + 1}";`).join("\n"))}.replaceAll("@", import.meta.dir.replaceAll("\\\\", "/")) + "\\nexport default " + ${JSON.stringify(Array.from({ length: 20 }, (_, index) => `make${index * 7 + 1}().side${index * 7 + 1}`).join(" + "))} + ";", loader: "ts" }));
   } };`,
 };
 

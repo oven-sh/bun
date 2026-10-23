@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
@@ -8,6 +8,7 @@ import { canTrim, tempDirForAotBuilds } from "./compile-trim-features";
 // `compile.trim.remove` takes a feature out of an executable whose program uses it. The names stay: an import works, `typeof` answers as
 // before. A call throws an error with the code ERR_FEATURE_REMOVED that says how the executable was built.
 
+const getpid = isWindows ? "GetCurrentProcessId" : "getpid";
 const told = `(error: any) => console.log(error.code, String(error.message).includes("compile.trim.remove"))`;
 
 const programs: Record<string, { remove: string; text: string; whole: string; cut: string }> = {
@@ -15,7 +16,7 @@ const programs: Record<string, { remove: string; text: string; whole: string; cu
     remove: "ffi",
     text: `import { dlopen, suffix } from "bun:ffi";
 console.log(typeof dlopen, typeof suffix);
-try { console.log(typeof dlopen(process.env.LIBC!, { getpid: { returns: "int" } }).symbols.getpid()); } catch (error) { (${told})(error); }`,
+try { console.log(typeof dlopen(process.env.LIBC!, { ${getpid}: { returns: "int" } }).symbols.${getpid}()); } catch (error) { (${told})(error); }`,
     whole: "function string\nnumber\n",
     cut: "function string\nERR_FEATURE_REMOVED true\n",
   },
@@ -114,7 +115,8 @@ try {
   console.log(String(error.message));
 }`;
 
-const libc = isLinux ? "libc.so.6" : "/usr/lib/libSystem.B.dylib";
+const libc = isWindows ? "kernel32.dll" : isLinux ? "libc.so.6" : "/usr/lib/libSystem.B.dylib";
+const sizeOf = (executable: string) => statSync(isWindows ? executable + ".exe" : executable).size;
 
 describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
   const files = {
@@ -135,9 +137,7 @@ describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
       expect(await build(folder, entry, "cut", { remove: [remove] })).toMatchObject({ stdout: "built\n", exitCode: 0 });
       expect(await spawned([join(folder, "kept")], folder, env)).toMatchObject({ stdout: whole, exitCode: 0 });
       expect(await spawned([join(folder, "cut")], folder, env)).toMatchObject({ stdout: cut, exitCode: 0 });
-      expect(statSync(join(folder, "kept")).size - statSync(join(folder, "cut")).size).toBeGreaterThan(
-        smallest[remove]! * 1024,
-      );
+      expect(sizeOf(join(folder, "kept")) - sizeOf(join(folder, "cut"))).toBeGreaterThan(smallest[remove]! * 1024);
     },
     240_000,
   );

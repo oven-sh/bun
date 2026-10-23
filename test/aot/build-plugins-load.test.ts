@@ -174,7 +174,7 @@ build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "ex
       "node_modules/pkg/index.d.ts": `export const name: string;`,
     },
     plugins: [
-      `build.onLoad({ filter: /node_modules\\/pkg\\/index\\.js$/ }, () => ({ contents: 'exports.name = "from the plugin";', loader: "js" }));`,
+      `build.onLoad({ filter: /node_modules[\\\\/]pkg[\\\\/]index\\.js$/ }, () => ({ contents: 'exports.name = "from the plugin";', loader: "js" }));`,
     ],
     prints: "from the plugin\n",
   },

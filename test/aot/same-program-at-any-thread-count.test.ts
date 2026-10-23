@@ -1,7 +1,7 @@
 // Many files say the same of the types that they share, and the link keeps what the first of them says. The program that the
 // front end emits does not depend on which thread gets where first: same bytes, whatever the number of threads.
 import { expect, setDefaultTimeout } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -96,7 +96,7 @@ async function build(directory: string, threads: number, round: number) {
   });
   return {
     program: Bun.hash(await Bun.file(join(directory, `${name}.program`)).bytes()),
-    executable: Bun.hash(await Bun.file(join(directory, "app")).bytes()),
+    executable: Bun.hash(await Bun.file(join(directory, isWindows ? "app.exe" : "app")).bytes()),
   };
 }
 

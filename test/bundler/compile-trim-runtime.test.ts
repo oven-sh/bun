@@ -427,8 +427,9 @@ describe.skipIf(!canTrim)("--trim", () => {
         const build = [bunExe(), "build", "--compile", ...flags, "--trim", "hello.ts", "--outfile", "hello"];
         expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
         const asked = await run([join(folder, "hello"), "install"], folder, { ...bunEnv, BUN_BE_BUN: "1" });
+        // It is written to C's descriptor 2, which translates line ends on Windows.
         expect(asked.stderr).toBe(
-          `error: BUN_BE_BUN is set, but this executable doesn't include ${textOf(featureNamed("Tools"))}. Run bun instead.\n`,
+          `error: BUN_BE_BUN is set, but this executable doesn't include ${textOf(featureNamed("Tools"))}. Run bun instead.${isWindows ? "\r\n" : "\n"}`,
         );
         expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
         const version = await run([join(folder, "hello"), "--version"], folder, { ...bunEnv, BUN_BE_BUN: "1" });

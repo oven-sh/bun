@@ -1469,6 +1469,26 @@ describe("bun test", () => {
     `);
   });
 
+  test("-t matches test names case-insensitively (jest parity)", () => {
+    const input = `
+      import { test, expect } from "bun:test";
+      test("MixedCase Target", () => { expect(1).toBe(1); });
+      test("unrelated", () => { expect(1).toBe(1); });
+    `;
+    const stderr = runTest({ args: ["-t", "mixedcase target"], input });
+    expect(stderr).toContain("(pass) MixedCase Target");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("(pass) unrelated");
+
+    // A `(?-i:...)` group matches case again.
+    const wrongCase = runTest({ args: ["-t", "(?-i:mixedcase target)"], input, expectExitCode: 1 });
+    expect(wrongCase).toContain('regex "(?-i:mixedcase target)" matched 0 tests');
+    const rightCase = runTest({ args: ["-t", "(?-i:MixedCase Target)"], input });
+    expect(rightCase).toContain("(pass) MixedCase Target");
+    expect(rightCase).toContain("1 pass");
+    expect(rightCase).not.toContain("(pass) unrelated");
+  });
+
   test("Does not print the regex error when a test fails", () => {
     const stderr = runTest({
       args: ["-t", "not-a-test"],

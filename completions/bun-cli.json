@@ -117,7 +117,7 @@
         {
           "name": "test-name-pattern",
           "shortName": "t",
-          "description": "Run only tests with a name that matches the given regex.",
+          "description": "Run only tests with a name that matches the given regex, ignoring case.",
           "hasValue": true,
           "valueType": "val",
           "required": false,

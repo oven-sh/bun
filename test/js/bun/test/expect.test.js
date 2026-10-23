@@ -699,6 +699,134 @@ describe("expect()", () => {
       }
     });
 
+    // https://github.com/oven-sh/bun/issues/9103: reactive state is a Proxy whose get
+    // trap hands out nested objects as Proxies too.
+    test("toStrictEqual compares a reactive-style Proxy with plain values", () => {
+      const reactive = target =>
+        new Proxy(target, {
+          get(t, key, receiver) {
+            const value = Reflect.get(t, key, receiver);
+            return typeof value === "object" && value !== null ? reactive(value) : value;
+          },
+          has: (t, key) => Reflect.has(t, key),
+          ownKeys: t => Reflect.ownKeys(t),
+        });
+      const alerts = reactive([]);
+      alerts.push({ message: "1" });
+
+      expect(alerts).toStrictEqual([{ message: "1" }]);
+      expect([{ message: "1" }]).toStrictEqual(alerts);
+      expect({ alerts }).toStrictEqual({ alerts: [{ message: "1" }] });
+      expect(alerts).not.toStrictEqual([{ message: "2" }]);
+      expect(alerts).not.toStrictEqual([{ message: "1" }, { message: "2" }]);
+      expect(alerts).not.toStrictEqual({ 0: { message: "1" } });
+
+      expect(alerts).toStrictEqual([{ message: expect.any(String) }]);
+      expect(alerts).toStrictEqual([expect.objectContaining({ message: "1" })]);
+      expect(alerts).not.toStrictEqual([{ message: expect.any(Number) }]);
+
+      class Alert {
+        message = "1";
+      }
+      expect(reactive(new Alert())).toStrictEqual(new Alert());
+      expect(reactive(new Alert())).not.toStrictEqual({ message: "1" });
+    });
+
+    // A DOM written in JavaScript hands out some nodes as Proxies (jsdom: <form>, <select>).
+    // Such a node has no own keys for its state. Enumerable accessors of its prototype show it.
+    test("toStrictEqual compares two Proxy-backed nodes by more than their own keys", () => {
+      const state = Symbol("state");
+      class Form {
+        constructor(id) {
+          Object.defineProperty(this, state, { value: { id } });
+        }
+        get id() {
+          return this[state].id;
+        }
+        get nodeType() {
+          return 1;
+        }
+        get nodeName() {
+          return "FORM";
+        }
+        isEqualNode(other) {
+          return this.id === other.id;
+        }
+      }
+      for (const attribute of ["id", "nodeType", "nodeName"]) {
+        Object.defineProperty(Form.prototype, attribute, { enumerable: true });
+      }
+      const form = id => new Proxy(new Form(id), {});
+
+      expect(form("a")).toStrictEqual(form("a"));
+      expect(form("a")).not.toStrictEqual(form("b"));
+    });
+
+    // Each Proxy trap that toStrictEqual runs can throw. A missing exception check aborts a
+    // debug build under BUN_JSC_validateExceptionChecks=1 (a no-op on release builds).
+    test("toStrictEqual checks the exception after each Proxy trap", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { expect } = require("bun:test");
+        const fail = () => { throw new RangeError("trap"); };
+        const nameOfThrown = assertion => {
+          try {
+            assertion();
+            return "no throw";
+          } catch (e) {
+            return e.name;
+          }
+        };
+        // Proxy first and Proxy second, each with and without .not.
+        const outcomes = (proxy, plain) => [
+          nameOfThrown(() => expect(proxy()).toStrictEqual(plain())),
+          nameOfThrown(() => expect(plain()).toStrictEqual(proxy())),
+          nameOfThrown(() => expect(proxy()).not.toStrictEqual(plain())),
+          nameOfThrown(() => expect(plain()).not.toStrictEqual(proxy())),
+        ].join(" ");
+        const object = () => ({ a: 1 });
+        const revokedBy = trap => () => {
+          const revocable = Proxy.revocable({ a: 1 }, {
+            [trap](...args) { revocable.revoke(); return Reflect[trap](...args); },
+          });
+          return revocable.proxy;
+        };
+        console.log(JSON.stringify({
+          get: outcomes(() => new Proxy({ a: 1 }, { get: fail }), object),
+          getOverAnArray: outcomes(() => new Proxy([1], { get: fail }), () => [1]),
+          ownKeys: outcomes(() => new Proxy({ a: 1 }, { ownKeys: fail }), object),
+          getOwnPropertyDescriptor: outcomes(() => new Proxy({ a: 1 }, { getOwnPropertyDescriptor: fail }), object),
+          revokedByGet: outcomes(revokedBy("get"), object),
+          revokedByOwnKeys: outcomes(revokedBy("ownKeys"), object),
+        }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const everyCall = name => [name, name, name, name].join(" ");
+      expect({
+        stdout: stdout.trim() && JSON.parse(stdout),
+        stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toMatchObject({
+        stdout: {
+          get: everyCall("RangeError"),
+          getOverAnArray: everyCall("RangeError"),
+          ownKeys: everyCall("RangeError"),
+          getOwnPropertyDescriptor: everyCall("RangeError"),
+          revokedByGet: everyCall("TypeError"),
+          revokedByOwnKeys: everyCall("TypeError"),
+        },
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
     // JSC::isArray() can throw for a Proxy (revoked, or with a throwing trap), so
     // expect.any(Array), toMatchObject, and toHaveProperty must check for an
     // exception right after it. A missing check aborts a debug build under

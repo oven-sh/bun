@@ -711,6 +711,9 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
+template<bool enableAsymmetricMatchers>
+static std::optional<bool> strictProxyPairEquals(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2, bool bothAreArrays);
+
 template<typename T>
 static bool looseFloatContentsEqual(std::span<const T> a, std::span<const T> b)
 {
@@ -820,6 +823,20 @@ static bool isWellKnownConstructor(JSValue value)
         || info == JSC::JSBigUint64ArrayConstructor::info()
         || info == JSC::JSDataViewConstructor::info()
         || info == WebCore::JSBufferConstructor::info();
+}
+
+static bool toStringTagsEqual(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2)
+{
+    JSString* tag1 = objectPrototypeToString(globalObject, o1);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSString* tag2 = objectPrototypeToString(globalObject, o2);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (tag1 == tag2) {
+        return true;
+    }
+    bool sameTag = tag1->equal(globalObject, tag2);
+    RETURN_IF_EXCEPTION(scope, false);
+    return sameTag;
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
@@ -955,16 +972,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     }
                 }
             }
-            JSString* tag1 = objectPrototypeToString(globalObject, protoCheck1);
+            bool sameTag = toStringTagsEqual(globalObject, scope, protoCheck1, protoCheck2);
             RETURN_IF_EXCEPTION(scope, false);
-            JSString* tag2 = objectPrototypeToString(globalObject, protoCheck2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (tag1 != tag2) {
-                bool sameTag = tag1->equal(globalObject, tag2);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (!sameTag) {
-                    return false;
-                }
+            if (!sameTag) {
+                return false;
             }
         }
     }
@@ -978,10 +989,23 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
-    bool v1Array = isArray(globalObject, v1);
-    RETURN_IF_EXCEPTION(scope, false);
-    bool v2Array = isArray(globalObject, v2);
-    RETURN_IF_EXCEPTION(scope, false);
+    bool v1Array = false;
+    bool v2Array = false;
+    bool mayHoldProxy = true;
+    if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
+        const JSC::JSType type1 = c1->type();
+        const JSC::JSType type2 = c2->type();
+        mayHoldProxy = type1 == ProxyObjectType || type2 == ProxyObjectType;
+        // Without a Proxy, isArray() is this type test and cannot throw.
+        v1Array = type1 == ArrayType || type1 == DerivedArrayType;
+        v2Array = type2 == ArrayType || type2 == DerivedArrayType;
+    }
+    if (mayHoldProxy) {
+        v1Array = isArray(globalObject, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        v2Array = isArray(globalObject, v2);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
 
     if (v1Array != v2Array)
         return false;
@@ -1101,7 +1125,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        if (mayHoldProxy) [[unlikely]] {
+            // calculatedClassName() reads the cell, which is a ProxyObject for every Proxy.
+            std::optional<bool> proxyPairEqual = strictProxyPairEquals<enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, o1, o2, v1Array && v2Array);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (proxyPairEqual.has_value()) {
+                return *proxyPairEqual;
+            }
+        } else if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
     }
@@ -1405,6 +1436,84 @@ static constexpr DeepEqualsMode deepEqualsMode {
     &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
+
+// Bun-native strict mode for a pair that holds a Proxy. nullopt: two Proxies, which the caller compares as it did before.
+static NEVER_INLINE std::optional<bool> strictProxyPairEqualsSlow(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2, bool bothAreArrays)
+{
+    VM& vm = globalObject->vm();
+    JSObject* other = o1->type() == ProxyObjectType ? o2 : o1;
+
+    // Typing two Proxies would run their traps. The `get` trap of a mock stores a key on each read, which made two equal mocks unequal.
+    if (other->type() == ProxyObjectType) {
+        return std::nullopt;
+    }
+    // The own keys of a host object (URL, WeakMap) do not show its state, so it stays unequal to a Proxy.
+    if (!bothAreArrays && other->type() != FinalObjectType) {
+        return false;
+    }
+    // A function is equal only to itself, and SameValue already answered that.
+    if (o1->isCallable() || o2->isCallable()) {
+        return false;
+    }
+
+    // Jest's typeEquality and node read `constructor`. Two arrays compare `length`, as the array path does.
+    const Identifier& typeKey = bothAreArrays ? vm.propertyNames->length : vm.propertyNames->constructor;
+    JSValue type1 = o1->get(globalObject, typeKey);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue type2 = o2->get(globalObject, typeKey);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool sameType = JSC::JSValue::strictEqual(globalObject, type1, type2);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!sameType) {
+        return false;
+    }
+    bool sameTag = toStringTagsEqual(globalObject, scope, o1, o2);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!sameTag) {
+        return false;
+    }
+
+    JSC::PropertyNameArrayBuilder keys1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder keys2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    o1->methodTable()->getOwnPropertyNames(o1, globalObject, keys1, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, {});
+    o2->methodTable()->getOwnPropertyNames(o2, globalObject, keys2, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, {});
+    const size_t keyCount = keys1.size();
+    if (keyCount != keys2.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < keyCount; i++) {
+        const Identifier& key = keys1[i];
+        if (keys2[i] != key) {
+            PropertySlot ownSlot(o2, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool o2Owns = o2->methodTable()->getOwnPropertySlot(o2, globalObject, key, ownSlot);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!o2Owns || (ownSlot.attributes() & PropertyAttribute::DontEnum)) {
+                return false;
+            }
+        }
+
+        JSValue value1 = o1->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue value2 = o2->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool valuesEqual = mode.deepEquals(globalObject, value1, value2, gcBuffer, stack, scope, true);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!valuesEqual) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+template<bool enableAsymmetricMatchers>
+static std::optional<bool> strictProxyPairEquals(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2, bool bothAreArrays)
+{
+    return strictProxyPairEqualsSlow(deepEqualsMode<true, enableAsymmetricMatchers, false, false>, globalObject, gcBuffer, stack, scope, o1, o2, bothAreArrays);
+}
 
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in

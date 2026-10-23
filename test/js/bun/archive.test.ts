@@ -680,7 +680,7 @@ describe("Bun.Archive", () => {
     });
 
     test("extracts entries whose mode field has bits above the permission bits", async () => {
-      // libarchive hands back whatever the header's mode field encoded, and a
+      // The tar reader hands back whatever the header's mode field encoded, and a
       // base-256 field can encode far more than the 12 mode bits. Only the
       // permission bits may reach mkdirat()/openat(); the rest are dropped.
       const high = 1n << 31n;
@@ -757,6 +757,35 @@ describe("Bun.Archive", () => {
       expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
       expect(readlinkSync(linkPath)).toBe("index.js");
     });
+
+    // `tar --acls` stores these. GNU tar and node-tar take the permissions from the header.
+    describe("ACL records", () => {
+      const withAcl = (acl: string, mode: string, typeflag = "0", name = "run.sh") => {
+        const body = ` SCHILY.acl.access=${acl}\n`;
+        let length = body.length + 1;
+        while (String(length).length + body.length !== length) length++;
+        const records = Buffer.from(`${length}${body}`);
+        return Buffer.concat([
+          ustarHeader("PaxHeaders/0", records.length, "x"),
+          records,
+          Buffer.alloc(512 - records.length),
+          ustarHeader(name, 0, typeflag, { mode: Buffer.from(mode + "\0") }),
+          Buffer.alloc(1024),
+        ]);
+      };
+
+      test.skipIf(isWindows)("do not change the permissions of a file", async () => {
+        using dir = tempDir("archive-acl-file", {});
+        await new Bun.Archive(withAcl("user::rw-,group::r--,other::r--", "0000755")).extract(String(dir));
+        expect(statSync(join(String(dir), "run.sh")).mode & 0o111).toBe(0o111);
+      });
+
+      test.skipIf(isWindows)("do not change the permissions of a directory", async () => {
+        using dir = tempDir("archive-acl-dir", {});
+        await new Bun.Archive(withAcl("user::---,group::---,other::---", "0000755", "5", "d/")).extract(String(dir));
+        expect(statSync(join(String(dir), "d")).mode & 0o777).toBe(0o755);
+      });
+    });
   });
 
   describe("corrupted archives", () => {
@@ -824,7 +853,7 @@ describe("Bun.Archive", () => {
 
     test("files() does not leak entries when readData fails mid-stream", async () => {
       // Regression test: a tarball with two valid 64KB entries followed by a third
-      // entry whose header advertises 64KB but whose data is truncated. libarchive
+      // entry whose header advertises 64KB but whose data is truncated. The reader
       // successfully reads the first two entries (allocating path + data for each),
       // then readData() fails on the third. The already-collected entries must be
       // freed on that error path; previously they were leaked on every call.
@@ -1560,7 +1589,7 @@ describe("Bun.Archive", () => {
     });
 
     test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {
-      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so libarchive
+      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so the reader
       // hands the raw header bytes back verbatim. They must not collapse onto
       // an empty Map key.
       const invalidUtf8Name = Buffer.from([0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x2e, 0x74, 0x78, 0x74]);

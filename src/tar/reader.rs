@@ -375,6 +375,8 @@ pub struct Reader {
     pax_size: i64,
     disk_size: i64,
     bytes_remaining: i64,
+    /// How much of the current `State::Skip` is behind us.
+    skipped: i64,
     padding: i64,
     null_blocks: u32,
 }
@@ -433,6 +435,7 @@ impl Reader {
             pax_size: 0,
             disk_size: 0,
             bytes_remaining: 0,
+            skipped: 0,
             padding: 0,
             null_blocks: 0,
         }
@@ -567,14 +570,24 @@ impl Reader {
             State::Skip(left, after) => {
                 let take = usize::try_from(left).unwrap_or(usize::MAX).min(input.len());
                 *used = take;
-                let left = left.saturating_sub(i64::try_from(take).unwrap_or(i64::MAX));
+                let taken = i64::try_from(take).unwrap_or(i64::MAX);
+                let left = left.saturating_sub(taken);
+                self.skipped = self.skipped.saturating_add(taken);
                 if left > 0 {
                     self.state = State::Skip(left, after);
                     if !eof {
                         return Ok(Step::NeedInput);
                     }
-                    return Err(Error::TruncatedInput);
+                    return Err(match after {
+                        AfterSkip::EndOfEntry | AfterSkip::NextEntry => Error::TruncatedSkip,
+                        AfterSkip::MacMetadata => Error::TruncatedMacMetadata,
+                        _ => Error::TruncatedInput {
+                            needed: left.saturating_add(self.skipped),
+                            available: self.skipped,
+                        },
+                    });
                 }
+                self.skipped = 0;
                 self.after_skip(after)
             }
 
@@ -712,7 +725,7 @@ impl Reader {
                 for &c in input {
                     *used = used.saturating_add(1);
                     if self.line_len >= limit {
-                        return Err(Error::MalformedSparseMap);
+                        return Err(Error::LineTooLong);
                     }
                     if let Some(slot) = self.line.get_mut(self.line_len) {
                         *slot = c;
@@ -871,7 +884,7 @@ impl Reader {
         match header::typeflag(&block) {
             b'A' => {
                 if self.mark_seen(seen::SOLARIS_ACL) {
-                    return Err(Error::RedundantHeader('A'));
+                    return Err(Error::RedundantHeader("A"));
                 }
                 self.format = Format::Pax;
                 // A Solaris ACL. Permissions come from the header's mode alone, as in GNU tar and
@@ -880,14 +893,14 @@ impl Reader {
             }
             b'g' => {
                 if self.mark_seen(seen::PAX_GLOBAL) {
-                    return Err(Error::RedundantHeader('g'));
+                    return Err(Error::RedundantHeader("g"));
                 }
                 self.format = Format::Pax;
                 if !(0..=ENTRY_LIMIT).contains(&size) {
-                    return Err(Error::InvalidSpecialHeaderSize);
+                    return Err(Error::InvalidSpecialHeaderSize(size));
                 }
                 if size == 0 {
-                    return Err(Error::EmptyPaxHeader);
+                    return Err(Error::EmptyPaxGlobalHeader);
                 }
                 self.skip_body(size, Status::Ok);
                 Ok(())
@@ -912,14 +925,18 @@ impl Reader {
                 }
                 self.format = Format::Gnu;
                 if !(0..=PATHNAME_LIMIT).contains(&size) {
-                    return Err(Error::InvalidSpecialHeaderSize);
+                    return Err(Error::InvalidSpecialHeaderSize(size));
                 }
                 self.skip_body(size, Status::Ok);
                 Ok(())
             }
             flag @ (b'x' | b'X') => {
                 if self.mark_seen(seen::PAX) {
-                    return Err(Error::RedundantHeader(char::from(flag)));
+                    return Err(Error::RedundantHeader(if flag == b'x' {
+                        "x"
+                    } else {
+                        "X'/'x"
+                    }));
                 }
                 self.format = Format::Pax;
                 self.begin_pax(size)
@@ -938,7 +955,7 @@ impl Reader {
     /// The body of a header whose size is not trusted past [`PATHNAME_LIMIT`].
     fn begin_body(&mut self, size: i64, collect: Option<Collect>) -> Result<()> {
         if !(0..=ENTRY_LIMIT).contains(&size) {
-            return Err(Error::InvalidSpecialHeaderSize);
+            return Err(Error::InvalidSpecialHeaderSize(size));
         }
         if size > PATHNAME_LIMIT {
             self.skip_body(size, Status::Warn);
@@ -955,7 +972,7 @@ impl Reader {
 
     fn begin_pax(&mut self, size: i64) -> Result<()> {
         if !(0..=ENTRY_LIMIT).contains(&size) {
-            return Err(Error::InvalidSpecialHeaderSize);
+            return Err(Error::InvalidPaxHeaderSize(size));
         }
         if size == 0 {
             return Err(Error::EmptyPaxHeader);
@@ -1001,7 +1018,7 @@ impl Reader {
         if !eof {
             return Ok(Step::NeedInput);
         }
-        Err(Error::TruncatedMetadata)
+        Err(Error::TruncatedPaxName)
     }
 
     fn on_pax_key(&mut self) -> Result<()> {
@@ -1156,7 +1173,7 @@ impl Reader {
     fn converts(&self, text: &[u8]) -> bool {
         let text = until_nul(text);
         match self.options.charset {
-            Charset::Ascii => strings::first_non_ascii(text).is_none(),
+            Charset::Ascii => text.is_ascii(),
             Charset::Utf8 => crate::compose::converts(text),
         }
     }
@@ -1491,7 +1508,7 @@ impl Reader {
             header_size
         };
         if self.disk_size < 0 {
-            return Err(Error::NegativeSize);
+            return Err(Error::NegativeFileSize);
         }
         if self.disk_size > ENTRY_LIMIT {
             return Err(Error::SizeOverflow);

@@ -96,7 +96,7 @@ impl<O: Output> Writer<O> {
         };
         let converted;
         let (path, binary) = match self.names {
-            Names::Binary => (given, strings::first_non_ascii(given).is_some()),
+            Names::Binary => (given, !given.is_ascii()),
             Names::Utf8 => match crate::compose::windows_name(given)? {
                 Some(name) => {
                     converted = name;
@@ -112,7 +112,7 @@ impl<O: Output> Writer<O> {
         }
         let shortened;
         let mut name = path;
-        if strings::first_non_ascii(path).is_some() || !fits_in_ustar(path) {
+        if !path.is_ascii() || !fits_in_ustar(path) {
             add_record(&mut pax, b"path", path)?;
             shortened = ustar_entry_name(path, None);
             name = &shortened;

@@ -12,24 +12,38 @@ pub enum Error {
     TruncatedData,
     #[error("Truncated archive detected while reading metadata")]
     TruncatedMetadata,
-    #[error("Truncated input file")]
-    TruncatedInput,
+    #[error("Truncated tar archive detected while reading pax attribute name")]
+    TruncatedPaxName,
+    #[error("Truncated archive detected while reading macOS metadata")]
+    TruncatedMacMetadata,
+    #[error("Truncated tar archive detected while skipping data")]
+    TruncatedSkip,
+    #[error("Truncated input file (needed {needed} bytes, only {available} available)")]
+    TruncatedInput { needed: i64, available: i64 },
     #[error("Truncated tar archive detected while reading sparse file data")]
     TruncatedSparse,
     #[error("Redundant '{0}' header")]
-    RedundantHeader(char),
-    #[error("Special header has invalid size")]
-    InvalidSpecialHeaderSize,
+    RedundantHeader(&'static str),
+    #[error("Special header has invalid size: {0}")]
+    InvalidSpecialHeaderSize(i64),
+    #[error("pax extension header has invalid size: {0}")]
+    InvalidPaxHeaderSize(i64),
     #[error("Invalid empty pax extended header")]
     EmptyPaxHeader,
+    #[error("Invalid empty pax global extended header")]
+    EmptyPaxGlobalHeader,
     #[error("Malformed pax attribute")]
     MalformedPaxAttribute,
     #[error("Tar size attribute overflow")]
     PaxSizeOverflow,
+    #[error("Tar entry has negative file size")]
+    NegativeFileSize,
     #[error("Tar entry has negative size")]
     NegativeSize,
     #[error("Tar entry size overflow")]
     SizeOverflow,
+    #[error("Line too long")]
+    LineTooLong,
     #[error("Malformed sparse map data")]
     MalformedSparseMap,
     #[error("Encountered out-of-order sparse blocks")]

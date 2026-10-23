@@ -2,8 +2,10 @@
 #![warn(unused_must_use)]
 
 use bun_collections::StringArrayHashMap;
+#[cfg(unix)]
+use bun_core::ZStr;
 use bun_core::{MutableString, strings};
-use bun_core::{Output, ZStr, slice_as_bytes};
+use bun_core::{Output, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
 use bun_paths::{OSPathChar, SEP, SEP_STR};

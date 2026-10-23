@@ -7,7 +7,6 @@
 mod tables;
 
 use crate::error::{Error, Result};
-use bun_core::strings;
 use tables::{COMBINING_CLASSES, COMPOSING_BLOCKS, COMPOSITIONS};
 
 /// More combining marks than this on one character make the name count as unconvertible.
@@ -255,7 +254,7 @@ pub fn compose(name: &[u8]) -> Result<Option<Vec<u32>>> {
 
 /// Whether [`compose`] would return something.
 pub fn converts(name: &[u8]) -> bool {
-    strings::first_non_ascii(name).is_none() || matches!(compose(name), Ok(Some(_)))
+    name.is_ascii() || matches!(compose(name), Ok(Some(_)))
 }
 
 fn push_utf8(out: &mut Vec<u8>, c: u32) {
@@ -268,7 +267,7 @@ pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut out = Vec::new();
     out.try_reserve(name.len())
         .map_err(|_| Error::OutOfMemory)?;
-    if strings::first_non_ascii(name).is_none() {
+    if name.is_ascii() {
         out.extend_from_slice(name);
     } else {
         let Some(chars) = compose(name)? else {
@@ -290,7 +289,7 @@ pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
 pub fn to_utf16(name: &[u8], is_utf8: bool, out: &mut Vec<u16>) -> Result<()> {
     out.try_reserve(name.len())
         .map_err(|_| Error::OutOfMemory)?;
-    if is_utf8 && strings::first_non_ascii(name).is_some() {
+    if is_utf8 && !name.is_ascii() {
         if let Some(chars) = compose(name)? {
             for c in chars {
                 let c = char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER);

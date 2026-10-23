@@ -135,7 +135,14 @@ impl Decoder {
                 break Poll::EndOfArchive;
             };
             let base = layer.pos;
-            let (used, poll) = self.tar.poll(layer.unread(), layer.done)?;
+            let (used, poll) = match self.tar.poll(layer.unread(), layer.done) {
+                // Damaged compression explains it better than what came out of it not being tar.
+                Err(Error::UnrecognizedFormat) if eof => {
+                    self.drain(input.get(used_total..).unwrap_or_default(), eof)?;
+                    return Err(Error::UnrecognizedFormat);
+                }
+                other => other?,
+            };
             layer.pos = layer.pos.saturating_add(used);
             match poll {
                 Poll::NeedInput => {}

@@ -3,7 +3,19 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isMusl, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isRoot,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 

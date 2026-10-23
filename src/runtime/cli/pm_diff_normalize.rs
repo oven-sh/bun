@@ -303,7 +303,15 @@ fn parse_js<'a>(
     loader: bun_ast::Loader,
     options: Options,
 ) -> Option<Box<bun_ast::Ast<'a>>> {
-    let mut opts = bun_js_parser::ParserOptions::init(Default::default(), loader);
+    let mut opts = bun_js_parser::ParserOptions::init(
+        Default::default(),
+        loader,
+        // No tsconfig comes with a package file: TypeScript gets the legacy decorators.
+        bun_js_parser::TsconfigOptions {
+            experimental_decorators: true,
+            ..bun_js_parser::TsconfigOptions::NONE
+        },
+    );
     // Print what is there: no dead-code removal, no macro execution, no import trimming.
     opts.features.dead_code_elimination = options.dce;
     opts.features.no_macros = true;
@@ -314,7 +322,6 @@ fn parse_js<'a>(
     opts.keep_directives = true;
     // Accept the same syntax as the runtime.
     opts.features.top_level_await = true;
-    opts.features.standard_decorators = !loader.is_typescript();
     opts.transform_only = true;
     opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());

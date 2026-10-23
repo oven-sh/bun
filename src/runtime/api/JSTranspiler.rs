@@ -1555,12 +1555,23 @@ impl JSTranspiler {
         let _ast_scope = ast_memory_allocator.enter();
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
-        let jsx = match self.config.get().tsconfig.as_deref() {
+        let tsconfig = self.config.get().tsconfig.as_deref();
+        let jsx = match tsconfig {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
-        let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        let mut opts = bun_js_parser::ParserOptions::init(
+            jsx,
+            loader,
+            bun_js_parser::TsconfigOptions {
+                experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
+                emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
+                use_define_for_class_fields: tsconfig
+                    .and_then(|ts| ts.use_define_for_class_fields)
+                    .unwrap_or(true),
+            },
+        );
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

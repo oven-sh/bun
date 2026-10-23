@@ -7614,6 +7614,7 @@ pub mod bv2_impl {
             let mut js_parser_options = bun_js_parser::ParserOptions::init(
                 self.transpiler_for_target(target).options.jsx.clone(),
                 Loader::Html,
+                bun_js_parser::TsconfigOptions::NONE,
             );
             js_parser_options.bundle = true;
 

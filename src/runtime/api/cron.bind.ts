@@ -35,7 +35,7 @@ export const cron = b.fn({
 
 export const remove = b.fn({
   export: "Bun__Cron__remove",
-  args: { title: b.string },
+  args: { title: b.string.allowStringObject },
   expected: { title: "Bun.cron.remove() expects a string title" },
   returns: b.any,
   capability: "js",
@@ -44,7 +44,7 @@ export const remove = b.fn({
 
 export const parse = b.fn({
   export: "Bun__Cron__parse",
-  args: { expression: b.string, from: b.any, options: b.any },
+  args: { expression: b.string.allowStringObject, from: b.any, options: b.any },
   expected: { expression: "Bun.cron.parse() expects a string cron expression as the first argument" },
   returns: b.f64.asDate.nullable,
   capability: "js",

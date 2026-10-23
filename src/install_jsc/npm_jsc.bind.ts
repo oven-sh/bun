@@ -18,7 +18,7 @@ export const architectureIsMatch = b.fn({
 
 export const npmManifestTestHelpers = b.namespace({
   parseManifest: {
-    args: { manifestFilename: b.string, registry: b.string },
+    args: { manifestFilename: b.string.allowStringObject, registry: b.string.allowStringObject },
     returns: b.any,
     capability: "heap",
     throws: true,

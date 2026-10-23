@@ -78,12 +78,12 @@ export const globalLookupService = b.fn({
 // `bun:internal-for-testing`
 export const seedCacheForTesting = b.fn({
   ...method,
-  args: { hostname: b.string, addresses: b.any },
+  args: { hostname: b.string.allowStringObject, addresses: b.any },
   returns: b.any,
   rustPath: "crate::dns_jsc::internal::seed_cache_for_testing",
 });
 export const isLocalhostNameForTesting = b.fn({
-  args: { hostname: b.string },
+  args: { hostname: b.string.allowStringObject },
   returns: b.bool,
   rustPath: "crate::dns_jsc::internal::is_localhost_name_for_testing",
 });
@@ -95,7 +95,7 @@ export const isAllLoopbackOfOneFamilyForTesting = b.fn({
 });
 export const getaddrinfoErrorForTesting = b.fn({
   ...method,
-  args: { code: b.string, hostname: b.string },
+  args: { code: b.string.allowStringObject, hostname: b.string.allowStringObject },
   returns: b.any,
   rustPath: "crate::dns_jsc::internal::getaddrinfo_error_for_testing",
 });

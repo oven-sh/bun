@@ -1881,14 +1881,12 @@ export class FunctionDefinition {
   readonly passThis: boolean;
   readonly passCallee: boolean;
   readonly exportName: string | undefined;
+  /** `b.value`: there is no JS function. */
+  readonly isValue: boolean;
   name = "";
   origin: Origin | null = null;
-  /** `isValue`: `b.value`. There is no JS function. */
-  constructor(
-    signatures: readonly (SignatureOptions | Signature)[],
-    options: FunctionOptions = {},
-    readonly isValue = false,
-  ) {
+  constructor(signatures: readonly (SignatureOptions | Signature)[], options: FunctionOptions = {}, isValue = false) {
+    this.isValue = isValue;
     assert(signatures.length > 0, "b.overloads needs at least one signature");
     this.passThis = options.passThis ?? false;
     this.passCallee = options.passCallee ?? false;

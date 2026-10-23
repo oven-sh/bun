@@ -1,7 +1,6 @@
 // @link "deps/zlib/libz.a"
 
 use core::ffi::{c_char, c_int, c_uint};
-use core::mem::size_of;
 
 use bun_collections::VecExt as _;
 
@@ -27,7 +26,7 @@ pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub use bun_zlib_sys::shared::{z_stream, z_streamp};
+use bun_zlib_sys::shared::z_streamp;
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -204,15 +203,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             .zlib
             .set_output(zlib_reader.list_ptr.as_mut_ptr(), list_len as uInt);
 
-        // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
-            inflateInit2_(
-                zlib_reader.zlib.as_ptr(),
-                options.window_bits,
-                zlibVersion().cast::<u8>(),
-                size_of::<zStream_struct>() as c_int,
-            )
-        } {
+        match zlib_reader.zlib.inflate_init(options.window_bits) {
             ReturnCode::Ok => Ok(zlib_reader),
             ReturnCode::MemError => Err(ZlibError::OutOfMemory),
             ReturnCode::StreamError | ReturnCode::VersionError => Err(ZlibError::InvalidArgument),
@@ -632,29 +623,21 @@ impl<'a> ZlibCompressorArrayList<'a> {
             state: ZlibCompressorArrayListState::Uninitialized,
         };
 
-        // `read_all` points the output at the list's spare capacity before
-        // each `deflate` call.
         zlib_reader
             .zlib
             .set_input(input.as_ptr(), input.len() as uInt);
 
-        // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
-            deflateInit2_(
-                zlib_reader.zlib.as_ptr(),
-                options.level,
-                options.method,
-                if !options.gzip {
-                    -options.window_bits
-                } else {
-                    options.window_bits + 16
-                },
-                options.mem_level,
-                options.strategy,
-                zlibVersion().cast::<u8>(),
-                size_of::<zStream_struct>() as c_int,
-            )
-        } {
+        match zlib_reader.zlib.deflate_init(
+            options.level,
+            options.method,
+            if !options.gzip {
+                -options.window_bits
+            } else {
+                options.window_bits + 16
+            },
+            options.mem_level,
+            options.strategy,
+        ) {
             ReturnCode::Ok => {
                 // SAFETY: zlib initialized; deflateBound returns upper bound on output.
                 let bound = unsafe {
@@ -761,23 +744,14 @@ impl DeflateEncoder {
         mem_level: c_int,
         strategy: c_int,
     ) -> Result<Self, ZlibError> {
-        let this = Self {
+        let mut this = Self {
             strm: ZStream::new(),
         };
-        // SAFETY: strm is fully initialized; version/size match the linked zlib.
-        let rc = unsafe {
-            deflateInit2_(
-                this.strm.as_ptr(),
-                level,
-                8, // Z_DEFLATED
-                window_bits,
-                mem_level,
-                strategy,
-                zlibVersion().cast::<u8>(),
-                size_of::<zStream_struct>() as c_int,
-            )
-        };
-        match rc {
+        // 8 = Z_DEFLATED
+        match this
+            .strm
+            .deflate_init(level, 8, window_bits, mem_level, strategy)
+        {
             ReturnCode::Ok => Ok(this),
             ReturnCode::MemError => Err(ZlibError::OutOfMemory),
             _ => Err(ZlibError::InvalidArgument),
@@ -845,23 +819,14 @@ pub struct InflateDecoder {
 
 impl InflateDecoder {
     pub fn new(window_bits: c_int) -> Result<Self, ZlibError> {
-        let this = Self {
+        let mut this = Self {
             strm: ZStream::new(),
             state: State::Uninitialized,
             max_output_size: usize::MAX,
             // `MAX_WBITS | 16` selects gzip-only decode (zlib manual).
             multi_member: (16..32).contains(&window_bits),
         };
-        // SAFETY: strm is fully initialized; version/size match the linked zlib.
-        let rc = unsafe {
-            inflateInit2_(
-                this.strm.as_ptr(),
-                window_bits,
-                zlibVersion().cast::<u8>(),
-                size_of::<zStream_struct>() as c_int,
-            )
-        };
-        match rc {
+        match this.strm.inflate_init(window_bits) {
             ReturnCode::Ok => Ok(this),
             ReturnCode::MemError => Err(ZlibError::OutOfMemory),
             _ => Err(ZlibError::InvalidArgument),

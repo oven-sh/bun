@@ -6,8 +6,7 @@
 //! | brotli `brotli_alloc/free_func`  | `(opaque, size: usize)`                  | `(opaque, ptr)`            |
 //! | JSC `JSTypedArrayBytesDeallocator` | —                                      | `(bytes, ctx)`             |
 //!
-//! The plain (non-zone-tagged) JSC variant is a free function below; the
-//! zone-tagged zlib and brotli variants are minted per-label by
+//! The zone-tagged zlib and brotli variants are minted per-label by
 //! [`c_thunks_for_zone!`].
 
 use core::ffi::c_void;

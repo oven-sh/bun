@@ -197,38 +197,23 @@ impl CompressionStreamCoder {
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
-                let s = zlib::ZStream::new();
+                let mut s = zlib::ZStream::new();
                 // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
-                // SAFETY: `s` is a zeroed, #[repr(C)] z_stream; zlibVersion() is
-                // a static C string.
-                let rc = unsafe {
-                    zlib::deflateInit2_(
-                        s.as_ptr(),
-                        level.unwrap_or(-1),
-                        8, // Z_DEFLATED
-                        format.window_bits(),
-                        8, // default mem_level
-                        0, // Z_DEFAULT_STRATEGY
-                        zlib::zlibVersion().cast(),
-                        core::mem::size_of::<zlib::z_stream>() as c_int,
-                    )
-                };
+                let rc = s.deflate_init(
+                    level.unwrap_or(-1),
+                    8, // Z_DEFLATED
+                    format.window_bits(),
+                    8, // default mem_level
+                    0, // Z_DEFAULT_STRATEGY
+                );
                 if rc != zlib::ReturnCode::Ok {
                     return Err(CodecError::Message("failed to initialize deflate"));
                 }
                 Backend::Deflate(s)
             }
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, true) => {
-                let s = zlib::ZStream::new();
-                // SAFETY: as above.
-                let rc = unsafe {
-                    zlib::inflateInit2_(
-                        s.as_ptr(),
-                        format.window_bits(),
-                        zlib::zlibVersion().cast(),
-                        core::mem::size_of::<zlib::z_stream>() as c_int,
-                    )
-                };
+                let mut s = zlib::ZStream::new();
+                let rc = s.inflate_init(format.window_bits());
                 if rc != zlib::ReturnCode::Ok {
                     return Err(CodecError::Message("failed to initialize inflate"));
                 }

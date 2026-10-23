@@ -1,23 +1,15 @@
 //! Owned `z_stream` that Rust reaches only through a raw pointer.
 //!
-//! zlib-ng keeps a back-pointer to the `z_stream` in its internal state from
-//! init on (`deflate.c`: `s->strm = strm`, `inflate.c`: `state->strm = strm`)
-//! and reads and writes `avail_in`, `next_out`, `avail_out`, `total_out`
-//! through it inside every later call. A `&mut zStream_struct` (or a `&mut`
-//! to a struct that holds one inline) that is alive across such a call makes
-//! that access a foreign access to a protected borrow, which is undefined
-//! behaviour under both Stacked Borrows and Tree Borrows, and lets LLVM treat
-//! the parameter as `noalias` under cross-language LTO. rust-lang/flate2-rs#392
-//! is the same bug against the same library.
-//!
-//! [`ZStream`] is the one place every stream owner goes through. It never
-//! hands out a reference to the stream: field access is a read or write
-//! through the stored pointer, and the C calls take [`ZStream::as_ptr`].
+//! zlib-ng stores a pointer to the `z_stream` at init and accesses the stream
+//! through it in every later call. A `&mut` to the stream (or to a struct that
+//! holds it inline) held across that call is undefined behaviour (aliasing).
+//! `ZStream` never hands out a reference to the stream.
 
 use core::ffi::{c_char, c_int};
+use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_zlib_sys::shared::{DataType, uInt, uLong, zStream_struct};
+use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, uLong, zStream_struct};
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
@@ -25,9 +17,7 @@ mod ZlibAllocator {
     pub(crate) use malloc_items as alloc;
 }
 
-/// Heap-pinned `z_stream`. The owner calls `deflateEnd`/`inflateEnd` on
-/// [`as_ptr`](Self::as_ptr) before this drops. `Drop` frees only the
-/// `z_stream` allocation itself.
+/// Heap-pinned `z_stream`. The owner ends the zlib state before this drops.
 pub struct ZStream {
     ptr: NonNull<zStream_struct>,
 }
@@ -39,8 +29,7 @@ impl Default for ZStream {
 }
 
 impl ZStream {
-    /// A zeroed stream with Bun's zlib allocator installed. Ready for
-    /// `deflateInit2_`/`inflateInit2_`.
+    /// A zeroed stream with Bun's zlib allocator installed.
     pub fn new() -> Self {
         let ptr = bun_core::heap::alloc_nn(zStream_struct {
             next_in: core::ptr::null(),
@@ -61,19 +50,53 @@ impl ZStream {
         Self { ptr }
     }
 
-    /// The pointer to hand to zlib. Every call into zlib for this stream
-    /// uses this same pointer, so the back-pointer zlib stores at init stays
-    /// valid for the life of the stream.
+    /// The pointer to hand to zlib.
     #[inline]
     pub fn as_ptr(&self) -> *mut zStream_struct {
         self.ptr.as_ptr()
     }
 
+    /// `deflateInit2_` against the linked zlib's version and struct size.
+    pub fn deflate_init(
+        &mut self,
+        level: c_int,
+        method: c_int,
+        window_bits: c_int,
+        mem_level: c_int,
+        strategy: c_int,
+    ) -> ReturnCode {
+        // SAFETY: `ptr` is a live z_stream; version/size match the linked zlib.
+        unsafe {
+            crate::deflateInit2_(
+                self.as_ptr(),
+                level,
+                method,
+                window_bits,
+                mem_level,
+                strategy,
+                crate::zlibVersion().cast::<u8>(),
+                size_of::<zStream_struct>() as c_int,
+            )
+        }
+    }
+
+    /// `inflateInit2_` against the linked zlib's version and struct size.
+    pub fn inflate_init(&mut self, window_bits: c_int) -> ReturnCode {
+        // SAFETY: `ptr` is a live z_stream; version/size match the linked zlib.
+        unsafe {
+            crate::inflateInit2_(
+                self.as_ptr(),
+                window_bits,
+                crate::zlibVersion().cast::<u8>(),
+                size_of::<zStream_struct>() as c_int,
+            )
+        }
+    }
+
     #[inline]
     pub fn next_in(&self) -> *const u8 {
-        // SAFETY: `ptr` is a live allocation owned by `self`. No reference to
-        // the stream exists, so a read through the raw pointer is the only
-        // Rust-side access.
+        // SAFETY: `ptr` is a live allocation owned by `self`, read through
+        // the raw pointer only.
         unsafe { (*self.as_ptr()).next_in }
     }
 
@@ -101,8 +124,7 @@ impl ZStream {
         unsafe { (*self.as_ptr()).err_msg }
     }
 
-    /// `msg` as bytes, if zlib set one. zlib only ever points `msg` at a
-    /// static string.
+    /// `msg` as bytes, if zlib set one.
     pub fn error_message(&self) -> Option<&[u8]> {
         let msg = self.err_msg();
         if msg.is_null() {
@@ -112,12 +134,10 @@ impl ZStream {
         Some(unsafe { bun_core::ffi::cstr(msg) }.to_bytes())
     }
 
-    /// Point `next_in`/`avail_in` at the next input chunk. `avail_in` is
-    /// 32 bits; the caller clamps and loops.
+    /// Point `next_in`/`avail_in` at the next input chunk.
     #[inline]
     pub fn set_input(&mut self, next_in: *const u8, avail_in: uInt) {
-        // SAFETY: see `next_in`. The write goes through the raw pointer, so
-        // it does not retag the stream.
+        // SAFETY: see `next_in`.
         unsafe {
             (*self.as_ptr()).next_in = next_in;
             (*self.as_ptr()).avail_in = avail_in;
@@ -138,8 +158,7 @@ impl ZStream {
 impl Drop for ZStream {
     fn drop(&mut self) {
         // SAFETY: `ptr` came from `heap::alloc_nn` in `new` and is freed once,
-        // here. The owner has already ended the zlib state, so zlib holds no
-        // live pointer into it.
+        // here, after the owner ended the zlib state.
         unsafe { bun_core::heap::destroy(self.ptr.as_ptr()) };
     }
 }

@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int};
-use core::mem;
 
 use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
 
@@ -272,28 +271,14 @@ impl Context {
 
         match self.mode {
             NONE => unreachable!(),
-            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
-            DEFLATE | GZIP | DEFLATERAW => unsafe {
-                self.err = c::deflateInit2_(
-                    self.state.as_ptr(),
-                    level,
-                    8,
-                    window_bits_actual,
-                    mem_level,
-                    strategy,
-                    c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
-                );
-            },
-            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
-            INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
-                self.err = c::inflateInit2_(
-                    self.state.as_ptr(),
-                    window_bits_actual,
-                    c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
-                );
-            },
+            DEFLATE | GZIP | DEFLATERAW => {
+                self.err =
+                    self.state
+                        .deflate_init(level, 8, window_bits_actual, mem_level, strategy);
+            }
+            INFLATE | GUNZIP | UNZIP | INFLATERAW => {
+                self.err = self.state.inflate_init(window_bits_actual);
+            }
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         }

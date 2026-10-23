@@ -103,7 +103,8 @@ unsafe fn free_owned_href(href: &'static [u8]) {
 /// Read the HTTP-thread monotonic timer in nanoseconds.
 #[inline]
 fn http_thread_timer_read() -> u64 {
-    crate::http_thread().timer.elapsed().as_nanos() as u64
+    // SAFETY: HTTP thread; reads one field without borrowing the rest.
+    unsafe { (*crate::http_thread_ptr()).timer.elapsed().as_nanos() as u64 }
 }
 
 /// A CR, LF or NUL ends the header line that a configured value (token, OTP, user agent) is written into as is.
@@ -786,7 +787,9 @@ impl<'a> AsyncHTTP<'a> {
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 {
-                    let in_flight = &mut crate::http_thread().in_flight;
+                    // HTTP thread; borrows this one field, which nothing up
+                    // the stack holds.
+                    let in_flight = &mut (*crate::http_thread_ptr()).in_flight;
                     if let Some(i) = in_flight
                         .iter()
                         .position(|n| n.as_ptr() == threadlocal_http)
@@ -808,12 +811,17 @@ impl<'a> AsyncHTTP<'a> {
             }
         }
 
-        let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
+        // This can run inside `HTTPThread::drain_events`, so read single
+        // fields instead of borrowing the whole thread state.
+        let thread = crate::http_thread_ptr();
+        // SAFETY: HTTP thread; short reads of two fields.
+        let has_waiting =
+            unsafe { !(*thread).queued_tasks.is_empty() || !(*thread).deferred_tasks.is_empty() };
+        if has_waiting
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
                 < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
-            thread.wakeup();
+            crate::HTTPThread::wakeup_from_http_thread();
         }
     }
 }

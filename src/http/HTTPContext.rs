@@ -563,8 +563,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // SAFETY: secure was just set to Some.
         unsafe { ssl_ctx_setup(self.ssl_ctx()) };
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        // SAFETY: HTTP thread; reads one field. `self` can be a field of the
+        // thread state, so do not borrow the whole of it.
+        let uws_loop = unsafe { (*http::http_thread_ptr()).uws_loop };
+        self.group.init(uws_loop, None, owner_ptr);
         Ok(())
     }
 
@@ -593,8 +595,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        // SAFETY: HTTP thread; reads one field. `self` can be a field of the
+        // thread state, so do not borrow the whole of it.
+        let uws_loop = unsafe { (*http::http_thread_ptr()).uws_loop };
+        self.group.init(uws_loop, None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             self.secure = Some(
@@ -1286,7 +1290,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(SSL);
         let this =
             NonNull::new(this.cast::<HTTPContext<true>>()).expect("deref passes a live context");
-        crate::http_thread().dead_ssl_contexts.push(this);
+        // SAFETY: HTTP thread; borrows one field, which nothing up the stack
+        // holds (`free_dead_ssl_contexts` lets go of it before each drop).
+        unsafe { (*crate::http_thread_ptr()).dead_ssl_contexts.push(this) };
     }
 }
 

@@ -186,8 +186,7 @@ pub(crate) fn compute_chunks(
                 ),
             );
             // Create a chunk for the entry point here to ensure that the chunk is
-            // always generated even if the resulting file is empty. With CSS chunking
-            // the key is the import order, so the chunk can exist already.
+            // always generated even if the resulting file is empty
             let hash_to_use = if !this.options.css_chunking {
                 bun_wyhash::hash(entry_point_chunk_bits.bytes(this.graph.entry_points.len()))
             } else {
@@ -224,12 +223,10 @@ pub(crate) fn compute_chunks(
             } else if this.graph.files.items_entry_point_kind()[source_index as usize]
                 == crate::EntryPoint::Kind::UserSpecified
             {
-                // The stylesheet of an earlier entry point has this import order. The
-                // entry point that names the CSS file owns the chunk, so the output has
-                // its name in each entry order. Without HAS_HTML_CHUNK the chunk takes
-                // the entry naming template.
+                // The stylesheet of an earlier entry point has this import order. This entry point names the CSS file, so it owns the chunk.
                 let shared = css_chunk_entry.value_ptr;
                 shared.entry_point = chunk::EntryPoint::entry_point(source_index, entry_bit);
+                // With HAS_HTML_CHUNK the chunk takes the chunk naming template, not the entry naming template.
                 shared.flags.remove(chunk::Flags::HAS_HTML_CHUNK);
             }
 

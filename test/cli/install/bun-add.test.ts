@@ -17,7 +17,7 @@ import {
 } from "harness";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
-import { basename, join, relative, resolve } from "path";
+import { basename, dirname, join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
   check_npm_auth_type,
@@ -294,19 +294,38 @@ it("bun add --only-missing should not install existing package", async () => {
   }
 });
 
-// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json. `urls` collects
-// its registry requests.
+// Writes `source` to entry-point.ts and returns what `bun <command> --analyze <entry>` adds to package.json. `urls`
+// collects its registry requests. `files` are written beside it. The registry answers 404 for the `absent` names.
 async function analyze(
   command: "add" | "install",
   source: string,
-  { packageJson = { name: "foo" }, urls = [] }: { packageJson?: object; urls?: string[] } = {},
+  {
+    packageJson = { name: "foo" },
+    urls = [],
+    files = {},
+    absent = [],
+    entry = "./entry-point.ts",
+  }: {
+    packageJson?: object;
+    urls?: string[];
+    files?: Record<string, string>;
+    absent?: string[];
+    entry?: string;
+  } = {},
 ) {
-  setHandler(dummyRegistry(urls));
+  const registry = dummyRegistry(urls);
+  setHandler(request =>
+    absent.some(name => request.url.endsWith(`/${name}`)) ? new Response(null, { status: 404 }) : registry(request),
+  );
   await writeFile(join(package_dir, "package.json"), JSON.stringify({ version: "0.0.1", ...packageJson }));
   await writeFile(join(package_dir, "entry-point.ts"), source);
+  for (const [path, contents] of Object.entries(files)) {
+    await mkdir(dirname(join(package_dir, path)), { recursive: true });
+    await writeFile(join(package_dir, path), contents);
+  }
   // The registry has no tarball for most of these names.
   await using proc = spawn({
-    cmd: [bunExe(), command, "--analyze", "--lockfile-only", "./entry-point.ts"],
+    cmd: [bunExe(), command, "--analyze", "--lockfile-only", entry],
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -414,6 +433,189 @@ it("bun add --analyze uses the nearest package.json with a name above the import
     }),
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
   expect(urls).toEqual([`${root_url}/bar`]);
+});
+
+// `--analyze` reads the import records and does not link the files as a browser bundle. Each of
+// these is an error of that link. bun runs the first five. It rejects the last three too: two when it
+// loads the file, one when it bundles the page.
+it.each([
+  [
+    "a default import of an HTML page",
+    `import page from "./page.html"; import "bar"; console.log(page);`,
+    {
+      "page.html": `<!doctype html><script type="module" src="./front.ts"></script>`,
+      "front.ts": `import "from-the-page-script";`,
+    },
+    ["bar", "from-the-page-script"],
+  ],
+  [
+    "a re-export of the default export of an HTML page",
+    `export { default as page } from "./page.html"; import "bar";`,
+    { "page.html": `<!doctype html><p>hi</p>` },
+    ["bar"],
+  ],
+  [
+    "require() of a file with top-level await",
+    `import "bar"; export const lazy = () => require("./tla.ts");`,
+    { "tla.ts": `export const value = await Promise.resolve(1);` },
+    ["bar"],
+  ],
+  [
+    "CSS composes of a class that the other file does not have",
+    `import styles from "./a.module.css"; import "bar"; console.log(styles);`,
+    {
+      "a.module.css": `.button { composes: missing from "./b.module.css"; }`,
+      "b.module.css": `.other { color: blue; }`,
+    },
+    ["bar"],
+  ],
+  [
+    "a CSS @import of a .ts file",
+    `import "./styles.css"; import "bar";`,
+    { "styles.css": `@import "./a.ts";`, "a.ts": `export const a = 1;` },
+    ["bar"],
+  ],
+  [
+    "an import of a name that the other file does not export",
+    `import { missing } from "./a.js"; import "bar"; console.log(missing);`,
+    { "a.js": `export const a = 1;` },
+    ["bar"],
+  ],
+  [
+    "an import of a name that two export * statements both export",
+    `import { twice } from "./star.js"; import "bar"; console.log(twice);`,
+    {
+      "star.js": `export * from "./a.js"; export * from "./b.js";`,
+      "a.js": `export const twice = 1;`,
+      "b.js": `export const twice = 2;`,
+    },
+    ["bar"],
+  ],
+  [
+    "an import of a missing name in the script of an HTML page",
+    `import page from "./page.html"; import "bar"; console.log(page);`,
+    {
+      "page.html": `<!doctype html><script type="module" src="./front.js"></script>`,
+      "front.js": `import { missing } from "./a.js"; console.log(missing);`,
+      "a.js": `export const a = 1;`,
+    },
+    ["bar"],
+  ],
+])("bun add --analyze installs across %s", async (_, source, files, added) => {
+  expect(await analyze("add", source, { files })).toEqual({ added, errors: [], exitCode: 0 });
+});
+
+// The scan is a browser bundle with every package external. These rows pin two results of that
+// which the link used to stop. Neither is what bun loads when it runs the file.
+it("bun add --analyze follows the browser field of package.json", async () => {
+  expect(
+    await analyze("add", `import { server } from "./impl.ts"; console.log(server);`, {
+      packageJson: { name: "foo", browser: { "./impl.ts": "./impl.browser.ts" } },
+      files: {
+        "impl.ts": `import "for-the-server"; export const server = 1;`,
+        "impl.browser.ts": `import "for-the-browser"; export const browser = 1;`,
+      },
+    }),
+  ).toEqual({ added: ["for-the-browser"], errors: [], exitCode: 0 });
+});
+
+it("bun add --analyze takes a URL without ./ in an HTML page for a package", async () => {
+  expect(
+    await analyze("add", `import page from "./page.html"; import "bar"; console.log(page);`, {
+      files: { "page.html": `<!doctype html><img src="images/photo.webp">`, "images/photo.webp": "" },
+    }),
+  ).toEqual({ added: ["bar", "images"], errors: [], exitCode: 0 });
+});
+
+it.each([
+  ["the entry point has a syntax error", `import "bar"; export const value = ;`, {}, "error: Unexpected ;"],
+  [
+    "a file that it imports has a syntax error",
+    `import "bar"; import "./broken.ts";`,
+    { "broken.ts": `export const value = ;` },
+    "error: Unexpected ;",
+  ],
+])("bun add --analyze adds nothing when %s", async (_, source, files, error) => {
+  const urls: string[] = [];
+  expect(await analyze("add", source, { files, urls })).toEqual({ added: [], errors: [error], exitCode: 1 });
+  expect(urls).toEqual([]);
+});
+
+it("bun add --analyze adds nothing when the entry point does not exist", async () => {
+  const urls: string[] = [];
+  expect(await analyze("add", `import "bar";`, { entry: "./missing.ts", urls })).toEqual({
+    added: [],
+    errors: [`error: ModuleNotFound resolving "./missing.ts" (entry point)`],
+    exitCode: 1,
+  });
+  expect(urls).toEqual([]);
+});
+
+it.each(["add", "install"] as const)(
+  "bun %s --analyze adds nothing when the registry does not have a package",
+  async command => {
+    const { added, errors, exitCode } = await analyze(command, `import "bar"; import "absent";`, {
+      absent: ["absent"],
+    });
+    expect({ added, errors: errors.slice(0, 1), exitCode }).toEqual({
+      added: [],
+      errors: [`error: GET ${root_url}/absent - 404`],
+      exitCode: 1,
+    });
+  },
+);
+
+// `bun create <component>` runs the same scan and reads the exports of the component, so it links.
+// Its project bundles the component, and that bundle skips a re-export of a "sideEffects": false
+// barrel that nothing imports. The scan has to skip it too.
+describe("bun create <component> and a file behind an unused re-export of a barrel", () => {
+  const files = {
+    "App.tsx": `import { a } from "./lib"; export default function App() { return <div>{a}</div>; }`,
+    "lib/index.ts": `export { a } from "./a"; export { Fancy } from "./fancy"; export { routes } from "./server";`,
+    "lib/a.ts": `export const a = 1;`,
+    "lib/fancy.tsx": `import "behind"; export const Fancy = () => <div className="bg-red-500 p-4" />;`,
+    "lib/server.ts": `import page from "./page.html"; export const routes = { "/": page };`,
+    "lib/page.html": `<!doctype html><p>hi</p>`,
+  };
+  async function create(packageJson: object) {
+    using dir = tempDir("create-barrel", { ...files, "package.json": JSON.stringify(packageJson) });
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "./App.tsx"],
+      cwd: String(dir),
+      // The registry is unreachable, so the install fails at once.
+      env: { ...env, BUN_CONFIG_REGISTRY: "http://localhost:1/" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      install: stdout.split(/\r?\n/).find(line => line.includes("--only-missing install")),
+      errors: stderr
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("error: No matching export"))
+        .map(line => line.replaceAll("\\", "/")),
+      exitCode,
+    };
+  }
+
+  // Windows: `bun create` never prints the "--only-missing install" line this asserts on, so the
+  // dependency detection cannot be observed there.
+  it.todoIf(isWindows)("picks the template and the packages from the files that the bundle loads", async () => {
+    const { install, errors } = await create({ name: "foo", sideEffects: false });
+    expect({ install, errors }).toEqual({
+      install: "$ bun --only-missing install -- react-dom@19 react@19",
+      errors: [],
+    });
+  });
+
+  it("stops at a link error of the bundle when the barrel has side effects", async () => {
+    expect(await create({ name: "foo" })).toEqual({
+      install: undefined,
+      errors: [`error: No matching export in "lib/page.html" for import "default"`],
+      exitCode: 1,
+    });
+  });
 });
 
 it("bun add --analyze should scan dependencies", async () => {

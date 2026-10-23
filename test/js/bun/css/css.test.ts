@@ -223,6 +223,129 @@ describe("css tests", () => {
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
+  describe("math that is compiled into Bun gives the same value on every host", () => {
+    // `asin()`, `acos()`, `atan()`, `atan2()`, `hypot()`, `log()`, and the cube root and the hue of a color
+    // conversion come from `src/css/values/math.rs`. The same functions of the C library differ in the last bit
+    // between hosts.
+    //
+    // With Apple's libm, atan2f(0, -1) and acosf(-1) are one ulp below the `f32` nearest to pi, and asinf(1) and
+    // atanf(infinity) are one ulp below the one nearest to pi/2. So are acosf(-1) and atanf(infinity) of musl.
+    // These rows printed `3.14159rad` and `1.5708rad` there.
+    minify_test(`a { transform: rotate(atan2(0px, -1px)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0, -1)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0deg, -1deg)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0%, -1%)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0s, -1s)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0, sign(-1px))) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(acos(-1)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(asin(1)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan(infinity)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan2(1px, 0px)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan2(1px, -1px)) }`, `a{transform:rotate(135deg)}`);
+    minify_test(`a { transform: rotate(atan2(1px, 1px)) }`, `a{transform:rotate(45deg)}`);
+
+    // A later step reads the bits of a fold. With musl and with Apple's libm, the two angles were `none` and the
+    // color was `red`.
+    minify_test(`a { rotate: round(down, acos(-1), 180deg) }`, `a{rotate:180deg}`);
+    minify_test(`a { rotate: round(down, atan(infinity), 90deg) }`, `a{rotate:90deg}`);
+    minify_test(`a { color: hsl(round(down, acos(-1), 180deg) 100% 50%) }`, `a{color:#0ff}`);
+    // The hue of a color is an arc tangent.
+    minify_test(`a { color: lch(from lab(50% -20 0) l c round(down, h, 180)) }`, `a{color:lch(50% 20 180)}`);
+    minify_test(`a { color: oklch(from oklab(50% 0 0.2) l c calc(h - 90)) }`, `a{color:oklch(50% .2 0)}`);
+    // `f32::log` divides two `f32` logarithms. These were 14 and `#e00` on every host.
+    minify_test(`a { line-height: round(down, log(32768, 2), 1) }`, `a{line-height:15}`);
+    minify_test(`a { color: rgb(calc(17 * round(down, log(32768, 2), 1)) 0 0) }`, `a{color:red}`);
+
+    // Whole degrees. A change to the `f32` constant in `Angle::to_degrees` moves these.
+    minify_test(`a { rotate: acos(0.5) }`, `a{rotate:60deg}`);
+    minify_test(`a { rotate: round(up, acos(0.5), 60deg) }`, `a{rotate:60deg}`);
+    minify_test(`a { rotate: round(up, asin(0.5), 30deg) }`, `a{rotate:30deg}`);
+    minify_test(`a { rotate: round(up, acos(-0.5), 120deg) }`, `a{rotate:120deg}`);
+    // The acosf of musl gave `1.00423rad`. So did the one of the Windows C runtime for a processor without FMA3.
+    minify_test(`a { rotate: acos(0.53674) }`, `a{rotate:57.538deg}`);
+
+    // Special values. A NaN is not an angle, so the function stays. A NaN number prints as 0, and an infinity as
+    // the largest `f32`.
+    minify_test(`a { transform: rotate(acos(2)) }`, `a{transform:rotate(acos(2))}`);
+    minify_test(`a { transform: rotate(asin(0)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(atan2(0, 0)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(atan2(1, infinity)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(atan2(1, -infinity)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, infinity)) }`, `a{transform:rotate(45deg)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, -infinity)) }`, `a{transform:rotate(135deg)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, 1)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { line-height: hypot(3, 4) }`, `a{line-height:5}`);
+    minify_test(`a { width: hypot(3px, 4px) }`, `a{width:5px}`);
+    minify_test(`a { line-height: calc(hypot(3e30, 4e30) / 1e30) }`, `a{line-height:5}`);
+    minify_test(`a { line-height: hypot(infinity, 5) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: hypot(5, -infinity) }`, `a{line-height:3.40282e38}`);
+    // In CSS a NaN wins over an infinity, unlike in C: WPT css/css-values/hypot-pow-sqrt-computed.html.
+    minify_test(`a { line-height: hypot(infinity, NaN) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: hypot(NaN, infinity) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: log(0.125, 0.5) }`, `a{line-height:3}`);
+    minify_test(`a { line-height: log(infinity, 2) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: log(0, 2) }`, `a{line-height:-3.40282e38}`);
+    minify_test(`a { line-height: log(-1, 2) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: log(NaN, 2) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: log(0) }`, `a{line-height:-3.40282e38}`);
+    minify_test(`a { line-height: log(-1) }`, `a{line-height:0}`);
+    // The cube root of zero, and of a subnormal.
+    minify_test(`a { color: oklab(from black l a b) }`, `a{color:oklab(0% 0 0)}`);
+    minify_test(
+      `a { color: oklab(from color(xyz 1e-40 1e-40 1e-40) l a b) }`,
+      `a{color:oklab(4.65664e-12% 1.24172e-15 6.89946e-16)}`,
+    );
+
+    // Every bit of a fold. `literal` is the `f64` function, rounded once to `f32`. The output is only this when
+    // the fold has every bit of `literal`: a NaN angle prints `0rad`, and a NaN number gives 0.
+    const angle = (call: string, literal: string) =>
+      minify_test(`a { transform: rotate(calc(${call} - ${literal}rad)) }`, `a{transform:rotate(0)}`);
+    const number = (call: string, literal: string) =>
+      minify_test(`a { line-height: calc(1 + sign(${call} - ${literal})) }`, `a{line-height:1}`);
+    angle("atan2(0, -1)", "3.1415927");
+    angle("atan2(-0, -1)", "-3.1415927");
+    angle("acos(-1)", "3.1415927");
+    angle("asin(1)", "1.5707964");
+    angle("atan(infinity)", "1.5707964");
+    angle("atan(-infinity)", "-1.5707964");
+    angle("atan2(1, 0)", "1.5707964");
+    angle("atan2(-infinity, 1)", "-1.5707964");
+    angle("atan2(1, -1)", "2.3561945");
+    angle("atan2(-1, -1)", "-2.3561945");
+    angle("atan2(1, 1)", "0.78539816");
+    // In CI, the C library of at least one host gave another `f32` for each of these folds, or for the same inputs
+    // with another sign or unit.
+    angle("asin(0.5151)", "0.541124344");
+    angle("asin(0.0612)", "0.0612382665");
+    angle("asin(0.0459)", "0.0459161326");
+    angle("asin(0.5032)", "0.527297795");
+    angle("asin(-0.5151)", "-0.541124344");
+    angle("acos(0.5474)", "0.991542041");
+    angle("acos(0.0374)", "1.53338766");
+    angle("acos(0.1666)", "1.40341580");
+    angle("acos(-0.5474)", "2.15005064");
+    angle("atan(1.3289)", "0.925695837");
+    angle("atan(0.0959)", "0.0956076160");
+    angle("atan(0.5891)", "0.532366216");
+    angle("atan(-1.3289)", "-0.925695837");
+    angle("atan2(8.9541, 8.1645)", "0.831490755");
+    angle("atan2(8.9541px, 8.1645px)", "0.831490755");
+    angle("atan2(7.5009, 2.8228)", "1.21086168");
+    angle("atan2(0.1138, 2.4315)", "0.0467682555");
+    angle("atan2(-8.9541, 8.1645)", "-0.831490755");
+    angle("atan2(8.9541, -8.1645)", "2.31010199");
+    number("hypot(0.5463, 1.4942)", "1.59093595");
+    number("hypot(-16.445, 1.8946)", "16.5537758");
+    // Every host in CI gave another `f32` for these two.
+    number("log(10.3035, 2.022)", "3.31277680");
+    number("log(13.5905, 6.026)", "1.45281172");
+    // The logf of glibc, of musl and of Windows on arm64 gave another `f32` for the first.
+    number("log(1.0686)", "0.0663494319");
+    number("log(0.001)", "-6.90775537");
+    number("log(1e30)", "69.0775528");
+    // The exact value is less than one `f64` ulp below the middle of two `f32`.
+    angle("atan2(910.131836, -0.0220102575)", "1.57082045");
+  });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
     minify_test(`a { width: calc(100% - 2 - 1) }`, `a{width:calc(100% - 2 - 1)}`); // ideally 100% - 3

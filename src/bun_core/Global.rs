@@ -47,8 +47,7 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
-/// A `chdir` moved the process past what [`set_top_level_dir`] could record, so the
-/// recorded directory must not be used as a base until a trusted one is recorded.
+/// The recorded directory must not be used as a base until a trusted one is recorded.
 #[inline]
 pub fn mark_top_level_dir_stale() {
     let _guard = TOP_LEVEL_DIR.write();

@@ -68,7 +68,7 @@ pub(crate) trait S3Ext {
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
-    /// It's an owned ref because reading the options runs user JS, which can detach the store from its Blob.
+    /// It's an owned ref because reading the options runs user JS, so `self` is not borrowed from a Blob across it.
     fn unlink(
         &self,
         store: RefPtr<Store>,

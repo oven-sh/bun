@@ -434,7 +434,7 @@ impl S3BlobStatTask {
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
 }
 
-/// Returns an owned ref to `blob`'s S3 store, because the option getters that run next can detach it from `blob`.
+/// Returns an owned ref to `blob`'s S3 store. The option getters that run next are user JS, so the store is not borrowed from `blob` across them.
 fn s3_store(blob: &Blob, global: &JSGlobalObject, verb: &str) -> JsResult<RefPtr<Store>> {
     match blob.store().cloned() {
         Some(store) if matches!(store.data, blob::store::Data::S3(_)) => Ok(store),

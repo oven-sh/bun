@@ -1,6 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -632,6 +645,177 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
 
     const result = await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-promise");
     expect(result).toBeUndefined();
+  });
+});
+
+// On Linux a file name is bytes, not text. cron gives the line to `sh`, so the entry has to hold the
+// bytes of each path. A stand-in `crontab` is the only thing on PATH: it keeps what bun installs in a
+// file, and the crontab of the user is never read or written. `sh` reads each path from a file: a
+// JavaScript string cannot hold a lone 0xFF byte.
+describe.skipIf(!isLinux)("crontab entry for paths that are not UTF-8", () => {
+  const withByte = (path: string, byte: number) => Buffer.concat([Buffer.from(path), Buffer.from([byte])]);
+  const under = (directory: Buffer, path: string) => Buffer.concat([directory, Buffer.from(path)]);
+  // One byte of a path is one character of the string, so a failure shows the bytes.
+  const latin1 = (bytes: Uint8Array) => Buffer.from(bytes).toString("latin1");
+
+  function fixture() {
+    const dir = tempDir("bun-cron-bytes", {
+      // As crontab(1): `-l` without a crontab says so and exits 1, `<file>` installs the file.
+      "stub/crontab":
+        `#!/bin/sh\n[ "$1" = -l ] && { echo "no crontab for user" >&2; exit 1; }\n` +
+        `PATH=/usr/bin:/bin\ncat "$1" > "$BUN_TEST_CRONTAB_FILE"\n`,
+      "project": {},
+    });
+    chmodSync(join(String(dir), "stub", "crontab"), 0o755);
+    return dir;
+  }
+
+  // A hardlink avoids copying the binary. Fall back to a copy across filesystems.
+  function privateExe(root: string, exe: Buffer) {
+    try {
+      linkSync(realpathSync(bunExe()), exe);
+    } catch {
+      copyFileSync(bunExe(), exe);
+    }
+    writeFileSync(join(root, "exe.bin"), exe);
+  }
+
+  // Registers project/job.ts with the private executable, and returns what `crontab` got.
+  async function register(root: string, title: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `exe="$(cat ../exe.bin)"; PATH="$0" exec "$exe" -e "$1"`,
+        join(root, "stub"),
+        `await Bun.cron("./job.ts", "30 2 * * 1", "${title}"); console.log("registered");`,
+      ],
+      cwd: join(root, "project"),
+      env: { ...bunEnv, BUN_TEST_CRONTAB_FILE: join(root, "crontab.txt") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "registered\n", stderr: "", exitCode: 0 });
+    return readFileSync(join(root, "crontab.txt"));
+  }
+
+  // bun cannot load a module whose path is not UTF-8, so the command of this entry would not run.
+  // The entry is checked as text.
+  test.concurrent("the entry names the executable and the script byte for byte", async () => {
+    using dir = fixture();
+    const root = String(dir);
+    const bin = withByte(join(root, "bin-"), 0xff);
+    mkdirSync(bin);
+    const exe = under(bin, "/bun");
+    privateExe(root, exe);
+
+    // The entry holds the real path of the script. The import path itself is a string.
+    const scripts = withByte(join(root, "scripts-"), 0xff);
+    mkdirSync(scripts);
+    const script = under(scripts, "/job.ts");
+    writeFileSync(script, `export default { scheduled() {} };`);
+    symlinkSync(script, join(root, "project", "job.ts"));
+
+    expect(latin1(await register(root, "test-bytes"))).toBe(
+      `# bun-cron: test-bytes\n` +
+        `30 2 * * 1 '${latin1(exe)}' run --cron-title=test-bytes --cron-period='30 2 * * 1' '${latin1(script)}'\n`,
+    );
+  });
+
+  // cron starts a job with `sh -c` in the home directory of the user, and the installer puts bun in
+  // $HOME/.bun/bin. 0xE9 is "é" in Latin-1, and in UTF-8 the first byte of a longer character.
+  test.concurrent("the installed command runs the job for a home directory that is not UTF-8", async () => {
+    using dir = fixture();
+    const root = String(dir);
+    writeFileSync(
+      join(root, "project", "job.ts"),
+      `export default { scheduled(controller) { console.log("ran", controller.cron); } };`,
+    );
+    const home = withByte(join(root, "jos"), 0xe9);
+    mkdirSync(under(home, "/.bun/bin"), { recursive: true });
+    privateExe(root, under(home, "/.bun/bin/bun"));
+    writeFileSync(join(root, "home.bin"), home);
+
+    // The second line is the entry. Its command starts at the quote before the executable.
+    const crontab = await register(root, "test-run");
+    const entry = crontab.subarray(crontab.indexOf("\n") + 1);
+    writeFileSync(join(root, "command.bin"), entry.subarray(entry.indexOf("'")));
+
+    await using job = Bun.spawn({
+      cmd: ["sh", "-c", `HOME="$(cat home.bin)"; command="$(cat command.bin)"; cd "$HOME" && exec sh -c "$command"`],
+      cwd: root,
+      env: { ...bunEnv, PATH: "/usr/bin:/bin" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([job.stdout.text(), job.stderr.bytes(), job.exited]);
+    expect({ stdout, stderr: latin1(stderr), exitCode }).toEqual({
+      stdout: "ran 30 2 * * 1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// macOS refuses a file name that is not UTF-8, so a $HOME with such a byte names no directory. The
+// plist of a job belongs in $HOME/Library/LaunchAgents, and in no directory with another name.
+// These need no login session: neither reaches a launchctl call whose result matters.
+describe.skipIf(!isMacOS)("$HOME that is not UTF-8 (macOS)", () => {
+  const title = "test-home-bytes";
+  // When $HOME goes through `{}`, U+FFFD takes the place of the byte.
+  const otherHome = "home-\uFFFD";
+
+  async function withHome(root: string, code: string) {
+    writeFileSync(join(root, "home.bin"), Buffer.concat([Buffer.from(join(root, "home-")), Buffer.from([0xff])]));
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `export HOME="$(cat home.bin)"; exec "$0" -e "$1"`, bunExe(), code],
+      cwd: root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("Bun.cron() does not make a LaunchAgents directory under another name", async () => {
+    using dir = tempDir("bun-cron-home-bytes", { "job.ts": `export default { scheduled() {} };` });
+    const root = String(dir);
+    try {
+      const result = await withHome(
+        root,
+        `try {
+           await Bun.cron("./job.ts", "30 2 * * 1", "${title}");
+           console.log("registered");
+         } catch (error) {
+           console.log(error.message);
+         }`,
+      );
+      expect(result).toEqual({
+        stdout: "Failed to create ~/Library/LaunchAgents directory\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readdirSync(root).sort()).toEqual(["home.bin", "job.ts"]);
+    } finally {
+      // A job that got registered from the other directory must not outlive the test.
+      Bun.spawnSync({
+        cmd: ["launchctl", "bootout", `gui/${process.getuid!()}/bun.cron.${title}`],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    }
+  });
+
+  test("Bun.cron.remove() does not delete the plist of a directory with another name", async () => {
+    const plist = `${otherHome}/Library/LaunchAgents/bun.cron.${title}.plist`;
+    using dir = tempDir("bun-cron-home-bytes", { [plist]: "<plist/>" });
+    const root = String(dir);
+
+    const result = await withHome(root, `await Bun.cron.remove("${title}"); console.log("removed");`);
+    expect(result).toEqual({ stdout: "removed\n", stderr: "", exitCode: 0 });
+    expect(existsSync(join(root, plist))).toBe(true);
   });
 });
 

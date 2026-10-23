@@ -646,7 +646,7 @@ impl Parser<'_> {
                         // Determine URL prefix and render through the renderer
                         let link_text = &content[a.beg..a.end];
                         self.at(base + a.beg, base + a.beg);
-                        self.renderer.enter_span(
+                        self.enter_span_with(
                             SpanType::A,
                             crate::types::SpanDetail {
                                 href: link_text,
@@ -659,7 +659,7 @@ impl Parser<'_> {
                         self.at(base + a.beg, base + a.end);
                         self.emit_text(TextType::Normal, link_text)?;
                         self.at(base + a.end, base + a.end);
-                        self.renderer.leave_span(SpanType::A)?;
+                        self.leave_span(SpanType::A)?;
                         i = a.end;
                         text_start = i;
                         continue;
@@ -700,7 +700,7 @@ impl Parser<'_> {
                             self.renderer.leave_span(SpanType::A)?;
                         }
                         LabelLeave::Wikilink => {
-                            self.renderer.leave_span(SpanType::Wikilink)?;
+                            self.leave_span(SpanType::Wikilink)?;
                         }
                     }
                     cur = &content[frame.base..frame.end];
@@ -725,10 +725,21 @@ impl Parser<'_> {
     }
 
     pub(crate) fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+        self.enter_span_with(span_type, Default::default())
+    }
+
+    /// In the description of an image only the text counts: no span is
+    /// emitted there. Every span but the image itself and the link that
+    /// `enter_label_span` opens goes through this and `leave_span`.
+    pub(crate) fn enter_span_with(
+        &mut self,
+        span_type: SpanType,
+        detail: crate::types::SpanDetail<'_>,
+    ) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
-        self.renderer.enter_span(span_type, Default::default())
+        self.renderer.enter_span(span_type, detail)
     }
 
     pub(crate) fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
@@ -864,14 +875,18 @@ impl Parser<'_> {
                     None => (pos + ticks, HiddenKind::Backticks),
                 }
             }
-            b'<' if !self.flags.no_html_spans => match self.find_html_tag(content, pos) {
-                Some(end) => (end, HiddenKind::Html),
-                None => {
+            // `no_html_spans` turns off the tag, not the autolink (mity/md4c#61).
+            b'<' => {
+                if !self.flags.no_html_spans
+                    && let Some(end) = self.find_html_tag(content, pos)
+                {
+                    (end, HiddenKind::Html)
+                } else {
                     let autolink = self.find_autolink(content, pos)?;
                     let is_email = autolink.is_email;
                     (autolink.end_pos, HiddenKind::Autolink { is_email })
                 }
-            },
+            }
             b'[' if self.flags.footnotes => (
                 self.footnote_reference_end(content, pos)?,
                 HiddenKind::FootnoteReference,

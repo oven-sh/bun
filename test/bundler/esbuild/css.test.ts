@@ -1460,9 +1460,9 @@ c {
         @import "http://example.com/foo.css" layer;
         @import "http://example.com/foo.css" layer(layer-name);
         @import "http://example.com/foo.css" layer(layer-name) supports(display: flex);
-        @import "http://example.com/foo.css" layer(layer-name) (min-width: 768px) and (max-width: 1024px);
+        @import "http://example.com/foo.css" layer(layer-name) (width >= 768px) and (width <= 1024px);
         @import "http://example.com/foo.css" supports(display: flex);
-        @import "http://example.com/foo.css" (min-width: 768px) and (max-width: 1024px);
+        @import "http://example.com/foo.css" (width >= 768px) and (width <= 1024px);
 
         /* foo.css */
         body {
@@ -1493,7 +1493,7 @@ c {
         }
 
         /* foo.css */
-        @media (min-width: 768px) and (max-width: 1024px) {
+        @media (width >= 768px) and (width <= 1024px) {
           @layer layer-name {
             body {
           color: red;
@@ -1509,7 +1509,7 @@ c {
         }
 
         /* foo.css */
-        @media (min-width: 768px) and (max-width: 1024px) {
+        @media (width >= 768px) and (width <= 1024px) {
           body {
             color: red;
           }

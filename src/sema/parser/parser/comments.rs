@@ -134,6 +134,15 @@ pub(crate) struct CommentTracker {
 }
 
 impl CommentTracker {
+    /// For a lexer that already holds `already_tracked` comments of earlier parts of the file. They're never pending
+    /// again.
+    pub(crate) fn starting_after(already_tracked: usize) -> Self {
+        CommentTracker {
+            tracked_count: already_tracked as u32,
+            ..Self::default()
+        }
+    }
+
     /// Restores the pending comments to what they were when `undo_log` had `len` entries, except for the comments from
     /// `discarded_from` on.
     fn undo_until(&mut self, len: usize, discarded_from: u32) {

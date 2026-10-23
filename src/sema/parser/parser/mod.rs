@@ -124,20 +124,20 @@ macro_rules! file_lists {
     ($($field:ident,)*) => {
         /// The length of each of the file's lists.
         #[derive(Copy, Clone)]
-        struct FileLens {
+        pub(crate) struct FileLens {
             $($field: u32,)*
         }
 
-        fn file_lens(file: &FileBuilder) -> FileLens {
+        pub(crate) fn file_lens(file: &FileBuilder) -> FileLens {
             FileLens { $($field: file.$field.len() as u32,)* }
         }
 
-        fn truncate_file(file: &mut FileBuilder, lens: &FileLens) {
+        pub(crate) fn truncate_file(file: &mut FileBuilder, lens: &FileLens) {
             $(file.$field.truncate(lens.$field as usize);)*
         }
 
         /// Returns an empty file that reuses the list allocations of `old`, which loses them.
-        fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
+        pub(crate) fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
             let mut file = FileBuilder::default();
             $(
                 old.$field.clear();
@@ -317,6 +317,75 @@ struct Seed<'a> {
     jsdoc: jsdoc::State,
 }
 
+impl<'a> Seed<'a> {
+    /// A lexer at the start of `text`, or of `part`, and what the scratch lends the parser. The caller has begun `names`
+    /// and found `stops`.
+    fn new(
+        text: &'a [u8],
+        options: Options,
+        part: Option<crate::Part>,
+        atoms: &'a dyn Intern,
+        jsdoc: jsdoc::State,
+        mut file: FileBuilder,
+        stops: bun_highway::ScannerStops<'a>,
+        names: &'a mut crate::names::Names,
+        mut stacks: Stacks,
+        mut declared: Declared,
+    ) -> Seed<'a> {
+        stacks.clear();
+        declared.begin(
+            text.len(),
+            options.dialect.oxc_names,
+            options.dialect.oxc && options.is_javascript,
+            options.is_javascript,
+        );
+        let mut lx = Lexer::new(text, stops, atoms, names);
+        if let Some(part) = part {
+            lx.start_at(part.from);
+            lx.set_src(text.get(..part.until as usize).unwrap_or(text));
+        }
+        lx.is_jsx = options.is_jsx;
+        lx.recovers = options.recovers;
+        lx.comments = std::mem::take(&mut file.comments);
+        lx.attach_comments = options.attach_comments;
+        let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
+        lx.is_ecmascript = is_ecmascript;
+        lx.is_typescript_5 = options.dialect.typescript_5;
+        lx.is_babel = options.dialect.babel;
+        lx.is_oxc = options.dialect.oxc;
+        lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
+        lx.records_html_opens =
+            options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
+        Seed {
+            lx,
+            file,
+            stacks,
+            declared,
+            options,
+            jsdoc,
+        }
+    }
+
+    /// True if the parser has to be the general one: see [`Parser`].
+    fn is_general(&self) -> bool {
+        let options = &self.options;
+        let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
+        options.recovers || self.jsdoc.wanted != 0 || is_flow
+    }
+}
+
+/// Runs `$method` of the one of the three instantiations of [`Parser`] that `$seed` asks for.
+macro_rules! with_parser {
+    ($seed:expr, $method:ident($($arg:expr),*)) => {{
+        let seed = $seed;
+        match (seed.is_general(), seed.options.attach_comments) {
+            (true, _) => Parser::<true, true>::new(seed).$method($($arg),*),
+            (false, true) => Parser::<false, true>::new(seed).$method($($arg),*),
+            (false, false) => Parser::<false, false>::new(seed).$method($($arg),*),
+        }
+    }};
+}
+
 /// What a finished parser hands back, besides the file.
 struct Harvest<'a> {
     lx: Lexer<'a>,
@@ -325,6 +394,62 @@ struct Harvest<'a> {
     end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
+}
+
+/// A [`Harvest`] without the lexer: what the scratch lent, and what the lexer found.
+struct Reaped {
+    stacks: Stacks,
+    declared: Declared,
+    html_opens: crate::lexer::HtmlOpens,
+    end: (u32, u32),
+    has_top_level_await: bool,
+    has_plain_top_level_await: bool,
+    rejected: Option<Rejected>,
+    comment_directives: Vec<CommentDirective>,
+    leading_comments: Vec<(u32, u32)>,
+}
+
+impl Harvest<'_> {
+    /// Gives `file` its comments back, and ends the lexer's borrow of the scratch.
+    fn reap(self, file: &mut FileBuilder) -> Reaped {
+        let Harvest {
+            lx,
+            stacks,
+            declared,
+            end,
+            has_top_level_await,
+            has_plain_top_level_await,
+        } = self;
+        file.comments = lx.comments;
+        let rejected = lx.rejection.map(|why| Rejected {
+            why,
+            at: lx.rejected_at.0,
+            by: lx.rejected_at.1,
+            after: lx.rejected_after,
+        });
+        Reaped {
+            stacks,
+            declared,
+            html_opens: lx.html_opens,
+            end,
+            has_top_level_await,
+            has_plain_top_level_await,
+            rejected,
+            comment_directives: lx.comment_directives,
+            leading_comments: lx.leading_comments,
+        }
+    }
+}
+
+impl Reaped {
+    /// Gives the scratch back what it lent the parser, and what it keeps of the text that was parsed last.
+    fn give_back(&mut self, scratch: &mut Scratch) {
+        scratch.stacks = std::mem::take(&mut self.stacks);
+        scratch.declared = std::mem::take(&mut self.declared);
+        scratch.html_opens = self.html_opens;
+        scratch.has_only_ambiguous_awaits =
+            self.has_top_level_await && !self.has_plain_top_level_await;
+    }
 }
 
 pub(crate) fn run<'a>(
@@ -336,96 +461,45 @@ pub(crate) fn run<'a>(
     if text.len() >= 1 << 30 {
         return Err(Rejected::new(Rejection::TooLarge));
     }
-    match (atoms, options.part) {
-        (Some(atoms), _) => scratch.names.use_interner(atoms),
-        (None, None) => scratch.names.begin_own(text.len()),
-        // Size the table for the part, not for the whole text.
-        (None, Some(part)) => {
-            let len = part.until.saturating_sub(part.from) as usize;
-            scratch.names.begin_own(len.min(1 << 12));
-        }
+    match atoms {
+        Some(atoms) => scratch.names.use_interner(atoms),
+        None => scratch.names.begin_own(text.len()),
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
     let mut f = scratch.recycled.take().unwrap_or_default();
-    let mut file = recycled_file(&mut f);
-    let mut stacks = std::mem::take(&mut scratch.stacks);
-    stacks.clear();
-    let mut declared = std::mem::take(&mut scratch.declared);
-    declared.begin(
-        text.len(),
-        options.dialect.oxc_names,
-        options.dialect.oxc && options.is_javascript,
-        options.is_javascript,
-    );
+    let file = recycled_file(&mut f);
     let stops = scratch.stops.find_again(text);
-    let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
-    if let Some(part) = options.part {
-        lx.start_at(part.from);
-        lx.set_src(text.get(..part.until as usize).unwrap_or(text));
-    }
-    lx.is_jsx = options.is_jsx;
-    lx.recovers = options.recovers;
-    lx.comments = std::mem::take(&mut file.comments);
-    lx.attach_comments = options.attach_comments;
-    let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
-    lx.is_ecmascript = is_ecmascript;
-    lx.is_typescript_5 = options.dialect.typescript_5;
-    lx.is_babel = options.dialect.babel;
-    lx.is_oxc = options.dialect.oxc;
-    lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
-    lx.records_html_opens =
-        options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
-    let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
-    let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
-    let seed = Seed {
-        lx,
-        file,
-        stacks,
-        declared,
+    let seed = Seed::new(
+        text,
         options,
+        None,
+        atoms,
         jsdoc,
-    };
-    let Harvest {
-        lx,
-        stacks,
-        declared,
-        end,
-        has_top_level_await,
-        has_plain_top_level_await,
-    } = match (is_general, options.attach_comments) {
-        (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
-        (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
-        (false, false) => Parser::<false, false>::new(seed).parse_into(&mut f),
-    };
-    let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
-    let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
-    f.comments = lx.comments;
-    scratch.stacks = stacks;
-    scratch.declared = declared;
-    scratch.html_opens = lx.html_opens;
-    scratch.has_only_ambiguous_awaits = has_top_level_await && !has_plain_top_level_await;
-    if let Some(why) = rejection {
+        file,
+        stops,
+        &mut scratch.names,
+        std::mem::take(&mut scratch.stacks),
+        std::mem::take(&mut scratch.declared),
+    );
+    let mut reaped = with_parser!(seed, parse_into(&mut f)).reap(&mut f);
+    reaped.give_back(scratch);
+    if let Some(rejected) = reaped.rejected {
         scratch.recycled = Some(f);
-        return Err(Rejected {
-            why,
-            at: rejected_at.0,
-            by: rejected_at.1,
-            after: lx.rejected_after,
-        });
+        return Err(rejected);
     }
     if !f.has_room_for_handles() {
         scratch.recycled = Some(f);
         return Err(Rejected::new(Rejection::TooLarge));
     }
-    f.comment_directives = comment_directives;
+    f.comment_directives = reaped.comment_directives;
     let names = &mut scratch.names;
     let source = text;
     let mut intern = |it: &[u8]| names.atom(crate::names::Text::not_in_source(source, it), atoms);
     let errors = f.diagnostics.len();
     if !crate::pragmas::process_pragmas_into_fields(
         text,
-        &leading_comments,
+        &reaped.leading_comments,
         options.recovers,
         &mut intern,
         &mut f,
@@ -442,8 +516,61 @@ pub(crate) fn run<'a>(
     f.mentioned.extend_from_slice(scratch.names.mentioned());
     Ok(Parsed {
         file: f,
-        has_top_level_await,
-        end,
+        has_top_level_await: reaped.has_top_level_await,
+        end: reaped.end,
+    })
+}
+
+/// What [`run_part`] returns beside the file.
+pub(crate) struct PartHarvest {
+    /// The one statement of the part.
+    pub(crate) stmt: StmtId,
+    /// See [`Parsed::end`].
+    pub(crate) end: (u32, u32),
+    /// Those in the text of the part: `hir::File::comment_directives` is for the caller to fill.
+    pub(crate) comment_directives: Vec<CommentDirective>,
+}
+
+/// Parses `part` of `text` after the parts that `file` already holds. The caller has begun the atoms and found the
+/// stops in `scratch`. The caller owns what a file has once (`body`, `comment_directives`, `mentioned`, the pragmas, the
+/// sorting of the lists that are searched by halves) and truncates `file` after a rejection.
+pub(crate) fn run_part<'a>(
+    text: &'a [u8],
+    options: Options,
+    part: crate::Part,
+    scratch: &'a mut Scratch,
+    file: &mut FileBuilder,
+) -> Result<PartHarvest, Rejected> {
+    if text.len() >= 1 << 30 {
+        return Err(Rejected::new(Rejection::TooLarge));
+    }
+    let jsdoc = jsdoc::State::new(&options, false, scratch.jsdoc_wanted);
+    let stops = scratch.stops.found(text);
+    let seed = Seed::new(
+        text,
+        options,
+        Some(part),
+        &crate::names::NoInterner,
+        jsdoc,
+        std::mem::take(file),
+        stops,
+        &mut scratch.names,
+        std::mem::take(&mut scratch.stacks),
+        std::mem::take(&mut scratch.declared),
+    );
+    let (stmt, harvest) = with_parser!(seed, part_into(part.goal, file));
+    let mut reaped = harvest.reap(file);
+    reaped.give_back(scratch);
+    if let Some(rejected) = reaped.rejected {
+        return Err(rejected);
+    }
+    if !file.has_room_for_handles() {
+        return Err(Rejected::new(Rejection::TooLarge));
+    }
+    Ok(PartHarvest {
+        stmt,
+        end: reaped.end,
+        comment_directives: reaped.comment_directives,
     })
 }
 
@@ -469,6 +596,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if !options.await_is_a_name && (!options.is_declaration_file || options.dialect.oxc) {
             context |= ctx::AWAIT;
         }
+        // In a session `lx.comments` already holds the comments of the earlier parts of the file.
+        let comments = comments::CommentTracker::starting_after(lx.comments.len());
         Parser {
             lx,
             f: file,
@@ -479,7 +608,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
             jsdoc,
-            comments: comments::CommentTracker::default(),
+            comments,
             lists: 0,
             // An empty range, so it contains no token.
             declaration_scan: stmt::DeclarationScan {
@@ -553,6 +682,45 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
+    /// [`Parser::parse_into`] for one [`crate::Part`] of a file that holds the parts before it: see [`run_part`].
+    /// Returns the one statement of the part.
+    fn part_into(mut self, goal: crate::Goal, file: &mut FileBuilder) -> (StmtId, Harvest<'a>) {
+        let since = bun_sema::ecmascript::Since {
+            stmts: self.f.stmts.len() as u32,
+            var_decls: self.f.var_decls.len() as u32,
+            params: self.f.params.len() as u32,
+            members: self.f.members.len() as u32,
+            props: self.f.props.len() as u32,
+            modifiers_of_props: self.f.modifiers_of_props.len() as u32,
+        };
+        self.next();
+        self.lists = 1 << ListKind::SourceElements as u32;
+        let stmt = self.part(goal);
+        self.take_scanner_errors();
+        if self.is_ecmascript && !self.is_flow() && !self.has_failed() {
+            let text = self.lx.src;
+            bun_sema::ecmascript::report_typescript_only_syntax_since(&mut self.f, text, since);
+        }
+        self.resolve_top_level_comments();
+        self.report_scanner_flagged_errors();
+        if !self.lx.private_names.is_empty() {
+            self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
+        if self.has_top_level_await {
+            self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
+        }
+        *file = self.f;
+        let harvest = Harvest {
+            lx: self.lx,
+            stacks: self.s,
+            declared: self.declared,
+            end: self.end,
+            has_top_level_await: self.has_top_level_await,
+            has_plain_top_level_await: self.has_plain_top_level_await,
+        };
+        (stmt, harvest)
+    }
+
     /// `Options::recovers`
     #[inline(always)]
     pub(crate) fn recovers(&self) -> bool {
@@ -593,10 +761,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             let value = self.json_text();
             self.f.has_module_syntax = true;
             self.s.ids.push(value.0);
-        }
-        if let Some(part) = self.options.part {
-            let part = self.part(part.goal);
-            self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {

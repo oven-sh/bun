@@ -18734,5 +18734,104 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "module-specifier-that-is-not-closed-in-a-referenced-project": {
+    "files": {
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "app/main.ts": "import \"../lib/star\";\nimport \"../lib/crlf\";\nimport \"../lib/cr\";\nimport \"../lib/end\";\nimport \"../lib/single\";\nimport \"../lib/escaped\";\nimport \"../lib/continued\";\nimport \"../lib/side\";\nimport \"../lib/named\";\nimport \"../lib/required\";\nimport \"../lib/decorator\";\nimport \"../lib/cut\";\nimport \"../lib/line\";\nimport \"../lib/quote\";\nexport const planted: number = \"x\";\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true, \"emitDeclarationOnly\": true, \"allowJs\": true, \"checkJs\": true }, \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/continued.ts": "export * from \"./m\\\r\nx\r\n",
+      "lib/cr.ts": "export * from \"./m\rexport const c = 1;\r",
+      "lib/crlf.ts": "export * from \"./m\r\nexport const c = 1;\r\n",
+      "lib/cut.js": "/** @import { A } from \"./m */\n/** @type {A} */\nexport const v = 1;\n",
+      "lib/decorator.ts": "@(function () { import x = require(\"./m\n) }) export * from \"./m\";\n",
+      "lib/end.ts": "export * from \"./m",
+      "lib/escaped.ts": "export * from \"./m\\\"\n",
+      "lib/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/line.js": "/**\n * @import { A } from \"./m\n */\n/** @type {A} */\nexport const v = 1;\n",
+      "lib/m.ts": "export const a = 1;\nexport type A = number;\n",
+      "lib/named.ts": "import { a } from \"./m\nexport const c: typeof a = 1;\n",
+      "lib/quote.js": "/** @import { A } from \"./m*/\" */\n/** @type {A} */\nexport const v = 1;\n",
+      "lib/required.ts": "export import x = require(\"./m\n",
+      "lib/side.ts": "import \"./m\r\nexport {};\r\n",
+      "lib/single.ts": "export * from './m\n",
+      "lib/star.ts": "export * from \"./m\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true, \"emitDeclarationOnly\": true, \"allowJs\": true, \"checkJs\": true } }\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
+  },
+  "module-specifier-continued-after-a-backslash-in-a-referenced-project": {
+    "files": {
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "app/main.ts": "import \"../lib/star\";\nimport \"../lib/lf\";\nimport \"../lib/cr\";\nimport \"../lib/side\";\nimport \"../lib/named\";\nimport \"../lib/required.cts\";\nimport \"../lib/doc\";\nexport const planted: number = \"x\";\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true, \"emitDeclarationOnly\": true, \"allowJs\": true, \"checkJs\": true }, \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/cr.ts": "export * from \"./m\\\r\";\r",
+      "lib/doc.js": "/** @import { A } from \"./m\\\r\n\" */\r\n/** @type {A} */\r\nexport const v = 1;\r\n",
+      "lib/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/lf.ts": "export * from \"./m\\\n\";\n",
+      "lib/m.ts": "export const a = 1;\nexport type A = number;\n",
+      "lib/named.ts": "import { a } from \"./m\\\r\n\";\r\nexport const c: typeof a = 1;\r\n",
+      "lib/required.cts": "export import x = require(\"./m\\\r\n\");\r\n",
+      "lib/side.ts": "import \"./m\\\r\n\";\r\nexport {};\r\n",
+      "lib/star.ts": "export * from \"./m\\\r\n\";\r\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true, \"emitDeclarationOnly\": true, \"allowJs\": true, \"checkJs\": true } }\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
+  },
+  "string-names-and-ts2308-with-a-continued-or-jsdoc-cut-literal": {
+    "files": {
+      "a.ts": "export const x = 1;\nexport type T = number;\n",
+      "b.ts": "export const x = 2;\n",
+      "exported-lf.ts": "const a = 1;\nexport { a as \"b\\\nc\" };\n",
+      "exported.ts": "const a = 1;\r\nexport { a as \"b\\\r\nc\" };\r\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "imported.ts": "import { \"x\\\r\n\" as y } from \"./a\";\r\nexport const z: typeof y = 1;\r\n",
+      "method.js": "/** @type {{ m(): void, \"m */\nexport const w = { m() {} };\n",
+      "namespace.ts": "export * as \"n\\\r\ns\" from \"./a\";\r\n",
+      "open.js": "/**\n * @import { \"x\n * as y } from './a'\n */\nexport const q = 1;\n",
+      "property.js": "/** @type {{ \"a \": number, \"a */\nexport const v = { \"a \": 1 };\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true, \"module\": \"es2015\", \"allowJs\": true, \"checkJs\": true } }\n",
+      "twice-lf.ts": "export * from \"./a\\\n\";\nexport * from \"./b\";\n",
+      "twice-single.ts": "export * from './a\\\r\n';\r\nexport * from './b';\r\n",
+      "twice.ts": "export * from \"./a\\\r\n\";\r\nexport * from \"./b\";\r\n"
+    }
+  },
+  "explain-files-for-a-specifier-that-a-jsdoc-comment-or-a-backtick-ends": {
+    "files": {
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "import.js": "/** @import { A } from \"./inside*/\nexport const d = 1;\n",
+      "index.ts": "import { a } from \"./inside\\\r\n\";\r\nexport const b = a;\r\n",
+      "inside.ts": "export const a = 1;\nexport type A = number;\n",
+      "missing.js": "/** @import { A } from \"./missing */\n/** @type {A} */\nexport const v = 1;\n",
+      "promise.d.ts": "interface Promise<T> {}\ndeclare var Promise: { new <T>(): Promise<T> };\n",
+      "template.js": "require(`a\nb`);\n",
+      "template.ts": "import(`a\nb`);\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true, \"explainFiles\": true, \"allowJs\": true, \"checkJs\": true, \"paths\": { \"*\": [\"./inside.ts\"] } } }\n",
+      "type.js": "/** @type {import(\"./inside*/\nexport const w = 1;\n"
+    }
+  },
+  "trace-resolution-of-an-import-call-whose-specifier-is-not-closed": {
+    "files": {
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "index.ts": "import(\"./m\nimport(\"./n\");\n",
+      "m.ts": "export const m = 1;\n",
+      "n.ts": "export const n = 1;\n",
+      "required.js": "require(\"./m\nrequire(\"./n\");\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true, \"traceResolution\": true, \"allowJs\": true } }\n",
+      "words.ts": "import(\"./m\nconst a = 1;\n// import import require\nexport const b = a;\n"
+    }
+  },
+  "ts2308-for-an-export-whose-decorator-or-attribute-has-a-module-specifier-too": {
+    "files": {
+      "attribute.ts": "export * from \"./m\" with { a: (null! as import('./m').T) };\nexport * from \"./n\";\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ninterface ImportAttributes {}\n",
+      "m.ts": "export const a = 1;\nexport type T = number;\n",
+      "n.ts": "export const a = 2;\n",
+      "other.ts": "@(null! as typeof import('./n')) export * from \"./m\";\nexport * from \"./n\";\n",
+      "star.ts": "@(null! as import('./m').T) export * from \"./m\";\nexport * from \"./n\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true } }\n"
+    }
   }
 }

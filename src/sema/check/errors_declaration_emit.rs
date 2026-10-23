@@ -3132,22 +3132,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         created.map(|it| it.0).collect()
     }
 
-    /// The source text of the module specifier literal in the statement `s`.
+    /// `getLiteralTextOfNode` of the module specifier literal in the statement `s`: its source text.
     fn module_specifier_text(&self, s: StmtId, spec: Atom) -> Vec<u8> {
         let hir = self.c.hir(self.file());
-        let (from, to) = (hir[s].start, hir[s].loc.end);
-        let mut uses = hir.specifier_uses.iter();
-        let specifier_use = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
-        let text = &hir.text[..];
-        if let Some(start) = specifier_use.map(|it| it.pos as usize)
-            && let Some(&quote) = text.get(start)
-            && matches!(quote, b'"' | b'\'')
+        if let Some(start) = hir.specifier_of_stmt(s, spec).map(|it| it.pos)
+            && matches!(hir.text.get(start as usize), Some(b'"' | b'\''))
         {
-            let mut end = start + 1;
-            while end < text.len() && text[end] != quote && text[end] != b'\n' {
-                end += if text[end] == b'\\' { 2 } else { 1 };
-            }
-            return text[start..(end + 1).min(text.len())].to_vec();
+            let end = self.c.end_of_string_at(self.file(), start);
+            return self.c.source_text(self.file(), start, end);
         }
         super::print::quoted(self.name(spec), b'"', false)
     }

@@ -944,9 +944,25 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
 pub struct IndexType(u32);
 
 impl IndexType {
+    /// Bit 30 of an assigned index. `BSSMapInner::get_or_put` reports a tagged index as
+    /// `ItemStatus::Unknown`, so a caller that returns on `Exists` sends it to the code that
+    /// handles a miss, at no cost to the lookup of an untagged index. No map has 2^30 slots.
+    const TAG: u32 = 1 << 30;
+
     #[inline]
     pub const fn new(index: u32, is_overflow: bool) -> Self {
         Self((index & 0x7FFF_FFFF) | ((is_overflow as u32) << 31))
+    }
+    /// See [`BSSMapInner::tag`]. The two sentinels have bit 30 set and are not tagged.
+    #[inline]
+    pub const fn is_tagged(self) -> bool {
+        self.index() >= Self::TAG && self.index() < UNASSIGNED.index()
+    }
+    /// The index that `BSSMapInner::put` assigned, for a tagged one.
+    #[inline]
+    pub const fn untagged(self) -> Self {
+        debug_assert!(self.is_tagged());
+        Self(self.0 & !Self::TAG)
     }
     #[inline]
     pub const fn index(self) -> u32 {
@@ -2220,7 +2236,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
                     index: v,
                     status: match v.index() {
                         i if i == NOT_FOUND.index() => ItemStatus::NotFound,
-                        i if i == UNASSIGNED.index() => ItemStatus::Unknown,
+                        // `UNASSIGNED`, or a tagged index.
+                        i if i >= IndexType::TAG => ItemStatus::Unknown,
                         _ => ItemStatus::Exists,
                     },
                 })
@@ -2256,6 +2273,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
             return None;
         }
+        debug_assert!(!index.is_tagged());
 
         if index.is_overflow() {
             Some(self.overflow_list.at_index_mut(index))
@@ -2272,6 +2290,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
         let _guard = self.mutex.lock();
+        // A tagged index names a slot that is in use. Its caller must untag it, not fill it again.
+        assert!(!result.index.is_tagged());
 
         if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
             result
@@ -2311,6 +2331,39 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
+    }
+
+    /// Tags the index that `put` assigned for `result`. `get_or_put` then reports the key as
+    /// `ItemStatus::Unknown` with `IndexType::is_tagged`, and `IndexType::untagged` is its slot.
+    pub fn tag(&mut self, result: &Result) {
+        debug_assert!(result.index.index() < IndexType::TAG);
+        let _guard = self.mutex.lock();
+        self.index
+            .insert(result.hash, IndexType(result.index.0 | IndexType::TAG));
+    }
+
+    /// Removes each tagged key whose value `remove` accepts.
+    pub fn remove_tagged_if(&mut self, mut remove: impl FnMut(&ValueType) -> bool) {
+        let _guard = self.mutex.lock();
+        let Self {
+            index,
+            overflow_list,
+            backing_buf,
+            ..
+        } = self;
+        index.retain(|_, tagged| {
+            if !tagged.is_tagged() {
+                return true;
+            }
+            let assigned = tagged.untagged();
+            let value: &ValueType = if assigned.is_overflow() {
+                overflow_list.at_index_mut(assigned)
+            } else {
+                // SAFETY: `put` initialized the slot of every assigned index.
+                unsafe { backing_buf[assigned.index() as usize].assume_init_ref() }
+            };
+            !remove(value)
+        });
     }
 }
 

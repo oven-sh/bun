@@ -341,6 +341,21 @@ impl DevServer {
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
 
+        // One session for the bundle: its transpilers write to `self.log`.
+        self.server_transpiler_mut()
+            .resolver
+            .begin_diagnostics_session();
+        let diagnostics_session = self.server_transpiler().resolver.diagnostics_session;
+        self.client_transpiler_mut().resolver.diagnostics_session = diagnostics_session;
+        if self
+            .framework
+            .server_components
+            .as_ref()
+            .is_some_and(|sc| sc.separate_ssr_graph)
+        {
+            self.ssr_transpiler_mut().resolver.diagnostics_session = diagnostics_session;
+        }
+
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());

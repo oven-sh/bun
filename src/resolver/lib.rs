@@ -13,6 +13,7 @@
 // (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
 // EntriesOption, Implementation) and re-exports from `fs_full`.
 pub mod data_url;
+mod dir_diagnostics;
 pub mod dir_info;
 pub mod error;
 #[path = "fs.rs"]

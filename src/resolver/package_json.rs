@@ -12,6 +12,7 @@ use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
 
 use crate as resolver;
+use crate::dir_diagnostics::Stamp;
 use crate::fs;
 use bun_parsers::json_parser;
 
@@ -165,6 +166,15 @@ impl Default for PackageJSON {
 pub enum IncludeScripts {
     IgnoreScripts,
     IncludeScripts,
+}
+
+/// What `PackageJSON::load` found.
+pub(crate) enum Load<T> {
+    Loaded(T),
+    /// Nothing to report: a directory by that name, or JSON that is not an object.
+    Absent,
+    /// The log says why. The stamp is of the bytes that were read.
+    Failed(Stamp),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -393,6 +403,25 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
+        match Self::load::<INCLUDE_DEPENDENCIES>(
+            r,
+            input_path,
+            dirname_fd,
+            package_id,
+            include_scripts_,
+        ) {
+            Load::Loaded(package_json) => Some(package_json),
+            Load::Absent | Load::Failed(_) => None,
+        }
+    }
+
+    pub(crate) fn load<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
+        r: &mut resolver::Resolver<'_>,
+        input_path: &[u8],
+        dirname_fd: Fd,
+        package_id: Option<PackageID>,
+        include_scripts_: IncludeScripts,
+    ) -> Load<PackageJSON> {
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -416,7 +445,7 @@ impl PackageJSON {
                     bstr::BStr::new(input_path)
                 ),
             );
-            return None;
+            return Load::Failed(Stamp::new(input_path, None));
         };
         let package_json_path = r_fs
             .dirname_store
@@ -437,19 +466,19 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
-                if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
-                    r_log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Cannot read file \"{}\": {}",
-                            bstr::BStr::new(input_path),
-                            bstr::BStr::new(err.name())
-                        ),
-                    );
+                if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
+                    return Load::Absent;
                 }
-
-                return None;
+                r_log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Cannot read file \"{}\": {}",
+                        bstr::BStr::new(input_path),
+                        bstr::BStr::new(err.name())
+                    ),
+                );
+                return Load::Failed(Stamp::new(package_json_path, None));
             }
         };
         // Reshaped for borrowck — `mem::take` the contents (leaving
@@ -484,7 +513,7 @@ impl PackageJSON {
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
         // allocation lives for the life of the returned `PackageJSON`. On every
-        // early `return None` below `entry_contents` drops and frees normally, after
+        // early return below `entry_contents` drops and frees normally, after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
@@ -492,7 +521,9 @@ impl PackageJSON {
 
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
-            Ok(None) => return None,
+            Ok(None) => {
+                return Load::Failed(Stamp::new(package_json_path, Some(&entry_contents)));
+            }
             Err(err) => {
                 if cfg!(debug_assertions) {
                     Output::print_error(format_args!(
@@ -501,7 +532,7 @@ impl PackageJSON {
                         bstr::BStr::new(err.name())
                     ));
                 }
-                return None;
+                return Load::Failed(Stamp::new(package_json_path, Some(&entry_contents)));
             }
         };
         let json: js_ast::Expr = parsed_json.root;
@@ -510,7 +541,7 @@ impl PackageJSON {
             // Invalid package.json in node_modules is noisy.
             // Let's just ignore it.
             // (allocator.free dropped — entry.contents owned by `entry`)
-            return None;
+            return Load::Absent;
         }
 
         let mut package_json = PackageJSON {
@@ -1057,7 +1088,7 @@ impl PackageJSON {
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
         package_json.json_tape = parsed_json.tape;
-        Some(package_json)
+        Load::Loaded(package_json)
     }
 }
 

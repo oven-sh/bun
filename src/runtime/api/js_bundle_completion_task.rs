@@ -1287,6 +1287,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         let env: *mut bun_dotenv::Loader = &raw mut *self.env;
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
+        // Before it reads a directory: most are in the cache, from the runtime or from a build.
+        transpiler.resolver.begin_diagnostics_session();
 
         // Post-init field wiring.
         // Reborrow through a raw ptr so `&mut self` is usable

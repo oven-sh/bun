@@ -471,6 +471,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // inside `if separate_ssr_graph` blocks below — Rust forbids forming
     // `&mut T` to uninitialized memory regardless of later use.
 
+    // One session for the build: its transpilers write to one log.
+    server_transpiler.resolver.begin_diagnostics_session();
+    client_transpiler.resolver.diagnostics_session = server_transpiler.resolver.diagnostics_session;
+    if separate_ssr_graph {
+        // SAFETY: written above by init_transpiler when separate_ssr_graph.
+        unsafe { ssr_transpiler.assume_init_mut() }
+            .resolver
+            .diagnostics_session = server_transpiler.resolver.diagnostics_session;
+    }
+
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];

@@ -126,6 +126,7 @@ impl BuildCommand {
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
+        this_transpiler.resolver.begin_diagnostics_session();
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),

@@ -145,8 +145,16 @@ pub struct DirInfo {
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],
 
+    /// The record of what the package.json and tsconfig.json of this directory reported, or of
+    /// the nearest directory above that has one. 0: none. Otherwise the key of this directory is
+    /// tagged in the index. See `dir_diagnostics`.
+    pub(crate) diagnostics: crate::dir_diagnostics::Id,
+
     pub(crate) flags: Flags,
 }
+
+// `diagnostics` is in what was padding: the map has 2048 of these in one allocation.
+const _: () = assert!(core::mem::size_of::<DirInfo>() == 104);
 
 impl Default for DirInfo {
     fn default() -> Self {
@@ -163,6 +171,7 @@ impl Default for DirInfo {
             package_json: None,
             tsconfig_json: None,
             abs_real_path: b"",
+            diagnostics: 0,
             flags: Flags::empty(),
         }
     }
@@ -352,6 +361,7 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
     if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
         return None;
     }
+    assert!(!index.is_tagged(), "a tagged dir cache index names no slot");
     let raw = hash_map_instance();
     if index.is_overflow() {
         // SAFETY: assigned overflow index; resolver mutex held.
@@ -405,6 +415,17 @@ pub use Flags as Flag;
 //
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
+
+/// What `HashMap::get_or_put` found, for a caller that wants the directory and not what it has
+/// to report: a tagged key is a directory that is in the cache (`DirInfo::diagnostics`).
+#[inline]
+pub(crate) fn cached(mut result: allocators::Result) -> allocators::Result {
+    if result.index.is_tagged() {
+        result.index = result.index.untagged();
+        result.status = allocators::ItemStatus::Exists;
+    }
+    result
+}
 
 /// Insert `value` at `result`'s slot and return a retag-durable slot pointer
 /// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a

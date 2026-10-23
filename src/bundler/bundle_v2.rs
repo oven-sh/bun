@@ -5878,7 +5878,14 @@ pub mod bv2_impl {
                 b"metafile.md".as_slice()
             }),
             output_path: Box::<[u8]>::from(file_path),
-            data: crate::output_file::OptionsData::Saved(content.len()),
+            // With no outdir the build writes nothing, so the artifact holds the bytes.
+            data: if outdir.is_empty() {
+                crate::output_file::OptionsData::Buffer {
+                    data: Box::<[u8]>::from(content),
+                }
+            } else {
+                crate::output_file::OptionsData::Saved(content.len())
+            },
             output_kind,
             is_executable: false,
             side: None,

@@ -66,3 +66,27 @@ Bun.build({
     },
   ],
 });
+
+// BuildConfig.metafile accepts every form the runtime accepts: a boolean, the
+// path of the JSON metafile, or the paths of the JSON and markdown metafiles.
+expectAssignable<Bun.BuildConfig["metafile"]>(true);
+expectAssignable<Bun.BuildConfig["metafile"]>("meta.json");
+expectAssignable<Bun.BuildConfig["metafile"]>({ json: "meta.json" });
+expectAssignable<Bun.BuildConfig["metafile"]>({ markdown: "meta.md" });
+expectAssignable<Bun.BuildConfig["metafile"]>({ json: "meta.json", markdown: "meta.md" });
+// An empty object is the same as `true`.
+expectAssignable<Bun.BuildConfig["metafile"]>({});
+// @ts-expect-error - the only metafiles are json and markdown
+expectAssignable<Bun.BuildConfig["metafile"]>({ yaml: "meta.yaml" });
+
+Bun.build({
+  entrypoints: ["hey"],
+  metafile: { json: "meta.json", markdown: "meta.md" },
+}).then(result => {
+  expectType(result.metafile).is<Bun.BuildMetafile | undefined>();
+  for (const output of result.outputs) {
+    if (output.kind === "metafile-json" || output.kind === "metafile-markdown") {
+      expectType(output.text()).is<Promise<string>>();
+    }
+  }
+});

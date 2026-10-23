@@ -3660,13 +3660,26 @@ declare module "bun" {
     files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
 
     /**
-     * Generate a JSON file containing metadata about the build.
+     * Generate metadata about the build.
      *
      * The metafile contains information about inputs, outputs, imports, and exports
      * which can be used for bundle analysis, visualization, or integration with
      * other tools.
      *
-     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     * - `true`: the metafile is returned as the {@link BuildOutput.metafile} object
+     * - a string: also the path of the JSON metafile
+     * - an object: also the path of the JSON metafile, of a markdown report of
+     *   the module graph, or of both
+     *
+     * A relative path is relative to {@link BuildConfig.outdir}. The build writes
+     * the file only when there is an `outdir`. Each path also adds a
+     * {@link BuildArtifact} of kind `"metafile-json"` or `"metafile-markdown"` to
+     * {@link BuildOutput.outputs} (except when `compile` makes an executable).
+     * Without an `outdir`, nothing is written and the artifact holds the content.
+     * An empty path is the same as no path.
+     *
+     * The `bun build --metafile=<path>` and `--metafile-md=<path>` CLI flags are
+     * different: their paths are relative to the working directory.
      *
      * @default false
      *
@@ -3678,18 +3691,42 @@ declare module "bun" {
      *   metafile: true,
      * });
      *
-     * // Write metafile to disk for analysis
      * if (result.metafile) {
-     *   await Bun.write('./dist/meta.json', result.metafile);
+     *   console.log('Input files:', Object.keys(result.metafile.inputs));
+     *   console.log('Output files:', Object.keys(result.metafile.outputs));
      * }
+     * ```
      *
-     * // Parse and analyze the metafile
-     * const meta = JSON.parse(result.metafile!);
-     * console.log('Input files:', Object.keys(meta.inputs));
-     * console.log('Output files:', Object.keys(meta.outputs));
+     * @example
+     * ```ts
+     * // Writes ./dist/meta.json and ./dist/meta.md
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: { json: 'meta.json', markdown: 'meta.md' },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // No outdir: the build writes nothing, the report is an artifact
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   metafile: { markdown: 'meta.md' },
+     * });
+     * const report = result.outputs.find(output => output.kind === 'metafile-markdown');
+     * console.log(await report?.text());
      * ```
      */
-    metafile?: boolean;
+    metafile?:
+      | boolean
+      | string
+      | {
+          /** Path of the JSON metafile. */
+          json?: string;
+          /** Path of a markdown report of the module graph. */
+          markdown?: string;
+        };
 
     outdir?: string;
 
@@ -4367,7 +4404,11 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+    /**
+     * `"metafile-json"` and `"metafile-markdown"` are the files of a
+     * {@link BuildConfig.metafile} path.
+     */
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "metafile-json" | "metafile-markdown";
     sourcemap: BuildArtifact | null;
   }
 
@@ -4386,7 +4427,7 @@ declare module "bun" {
      * - **outputs**: every generated file with its byte size, the inputs that
      *   contributed to it, imports between chunks, and exports
      *
-     * Only present when {@link BuildConfig.metafile} is `true`.
+     * Only present when {@link BuildConfig.metafile} is `true`, a string, or an object.
      *
      * Use it for bundle size analysis, inspecting the dependency graph, or as
      * input to bundle analyzer tools.

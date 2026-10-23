@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
@@ -29,6 +29,88 @@ function readManifests(api: BundlerTestBundleAPI, file: string): Manifest[] {
     }
   }
   return manifests;
+}
+
+/** The script of the page that a bundled server entry point imports. */
+function readBrowserChunk(api: BundlerTestBundleAPI, file: string): string {
+  const [manifest] = readManifests(api, file);
+  return api.readFile(join("out", manifest.files.find(file => file.loader === "js")!.path));
+}
+
+/**
+ * Packages that a browser build and a server build resolve differently. `/server.js` and the
+ * script of the page it imports both import them, and each side prints what it got.
+ */
+function serverAndPage(target: "bun" | "node", show = "") {
+  const packages = `
+    import map from "browser-map";
+    import mode from "conditions/mode";
+    import platform from "conditions/platform";
+    import addons from "conditions/addons";
+  `;
+  const result = `browser: process.browser, map, mode, platform, addons${show && ", " + show}`;
+  return {
+    // The html loader is on by default for bun and the browser only.
+    "/server.js": `
+      import page from "./client.html"${target === "node" ? ` with { type: "html" }` : ""};
+      ${packages}
+      console.log("server", JSON.stringify({ ${result} }));
+      // Run the script of the page.
+      await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+    `,
+    "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+    "/client.js": `
+      ${packages}
+      import field from "browser-field";
+      console.log("client", JSON.stringify({ ${result}, field }));
+    `,
+
+    // The object form of "browser" replaces files, and removes them with `false`.
+    "/node_modules/browser-map/package.json": JSON.stringify({
+      name: "browser-map",
+      version: "1.0.0",
+      main: "./index.js",
+      browser: { "./impl.js": "./impl-browser.js", "./server-only.js": false, "fs": false },
+    }),
+    "/node_modules/browser-map/index.js": `
+      import impl from "./impl.js";
+      import { value } from "./server-only.js";
+      import * as fs from "fs";
+      export default { impl, serverOnly: typeof value, readFile: typeof fs.readFileSync };
+    `,
+    "/node_modules/browser-map/impl.js": `export default "impl";`,
+    "/node_modules/browser-map/impl-browser.js": `export default "impl-browser";`,
+    "/node_modules/browser-map/server-only.js": `export const value = "server-only";`,
+
+    // The string form of "browser" is a main field.
+    "/node_modules/browser-field/package.json": JSON.stringify({
+      name: "browser-field",
+      version: "1.0.0",
+      main: "./main.js",
+      module: "./module.js",
+      browser: "./browser.js",
+    }),
+    "/node_modules/browser-field/main.js": `module.exports = "main";`,
+    "/node_modules/browser-field/module.js": `export default "module";`,
+    "/node_modules/browser-field/browser.js": `export default "browser";`,
+
+    "/node_modules/conditions/package.json": JSON.stringify({
+      name: "conditions",
+      version: "1.0.0",
+      exports: {
+        "./mode": { custom: "./custom.js", development: "./development.js", default: "./production.js" },
+        "./platform": { bun: "./bun.js", node: "./node.js", browser: "./browser.js" },
+        // Only a server can load a node addon.
+        "./addons": { "node-addons": "./addon.js", default: "./fallback.js" },
+      },
+    }),
+    ...Object.fromEntries(
+      ["custom", "development", "production", "bun", "node", "browser", "addon", "fallback"].map(name => [
+        `/node_modules/conditions/${name}.js`,
+        `export default "${name}";`,
+      ]),
+    ),
+  };
 }
 
 /** `[input, loader]` of every manifest entry that came from a source file, sorted. */
@@ -726,5 +808,201 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('\\\"index\\\":\\\"./index.html\\\"');
       expect(entryCode).toContain('\\\"files\\\":[');
     },
+  });
+  // The page of an HTML import is a browser build, whatever the target of the server is. It is
+  // the page that `Bun.serve` makes from the same files: `--conditions` and `--main-fields` say
+  // how the server resolves a package, and do not reach the page.
+  const serverSees = (target: "bun" | "node", mode: string, rest = "") =>
+    `server {"browser":false,"map":{"impl":"impl","serverOnly":"string","readFile":"function"},` +
+    `"mode":"${mode}","platform":"${target}","addons":"addon"${rest}}`;
+  const pageSees = (mode: string, rest = "") =>
+    `client {"browser":true,"map":{"impl":"impl-browser","serverOnly":"undefined","readFile":"undefined"},` +
+    `"mode":"${mode}","platform":"browser","addons":"fallback"${rest},"field":"browser"}`;
+
+  for (const target of ["bun", "node"] as const) {
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`html-import/browser-chunk-resolves-for-the-browser/${target}/${backend}`, {
+        outdir: "out/",
+        target,
+        backend,
+        files: serverAndPage(target),
+        entryPoints: ["/server.js"],
+        run: { stdout: [serverSees(target, "development"), pageSees("development")].join("\n") },
+        onAfterBundle(api) {
+          // `fs` is not left as an import for the browser to fail on.
+          expect(new Bun.Transpiler().scanImports(readBrowserChunk(api, "out/server.js"))).toEqual([]);
+        },
+      });
+    }
+  }
+
+  for (const backend of ["api", "cli"] as const) {
+    // The shape of #24077: a dependency that only its `require("fs")` keeps out of the browser.
+    itBundled(`html-import/browser-chunk-polyfills-node-builtins/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: {
+        "/server.js": `
+          import page from "./client.html";
+          await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+        `,
+        "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+        "/client.js": `
+          import path from "node:path";
+          import { EventEmitter } from "node:events";
+          import builtins from "uses-builtins";
+          console.log(JSON.stringify({ join: path.join("a", "b"), emitter: typeof EventEmitter, ...builtins }));
+        `,
+        "/node_modules/uses-builtins/package.json": JSON.stringify({
+          name: "uses-builtins",
+          version: "1.0.0",
+          main: "./index.js",
+        }),
+        "/node_modules/uses-builtins/index.js": `
+          var fs = require("fs");
+          var Url = require("url");
+          module.exports = { readFile: typeof fs.readFileSync, parse: typeof Url.parse };
+        `,
+      },
+      entryPoints: ["/server.js"],
+      run: { stdout: `{"join":"a/b","emitter":"function","readFile":"undefined","parse":"function"}` },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(readBrowserChunk(api, "out/server.js"))).toEqual([]);
+      },
+    });
+
+    itBundled(`html-import/browser-chunk-keeps-the-conditions-of-the-browser/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      conditions: ["custom"],
+      files: serverAndPage("bun"),
+      entryPoints: ["/server.js"],
+      run: { stdout: [serverSees("bun", "custom"), pageSees("development")].join("\n") },
+    });
+
+    // An HTML entry point is a page too.
+    itBundled(`html-import/html-entry-point-of-a-server-build/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: serverAndPage("bun"),
+      entryPoints: ["/client.html"],
+      async onAfterBundle(api) {
+        const script = api.readFile("out/client.html").match(/src="([^"]+\.js)"/)![1];
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), api.join(join("out", script))],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr }).toEqual({ stdout: pageSees("development") + "\n", stderr: "" });
+        expect(exitCode).toBe(0);
+      },
+    });
+  }
+
+  // The define table of the page is built again for the browser. What does not depend on the
+  // target stays as it was.
+  const nodeEnv = "env: [process.env.NODE_ENV, process.env.BUN_ENV]";
+  itBundled("html-import/browser-chunk-node-env/default", {
+    outdir: "out/",
+    target: "bun",
+    backend: "cli",
+    files: serverAndPage("bun", nodeEnv),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "development", `,"env":["development","development"]`),
+        pageSees("development", `,"env":["development","development"]`),
+      ].join("\n"),
+    },
+  });
+  itBundled("html-import/browser-chunk-node-env/production", {
+    outdir: "out/",
+    target: "bun",
+    production: true,
+    files: serverAndPage("bun", nodeEnv),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "production", `,"env":["production","production"]`),
+        pageSees("production", `,"env":["production","production"]`),
+      ].join("\n"),
+    },
+  });
+  itBundled("html-import/browser-chunk-node-env/define", {
+    outdir: "out/",
+    target: "bun",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"production"' },
+    files: serverAndPage("bun", nodeEnv),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "production", `,"env":["production","development"]`),
+        pageSees("production", `,"env":["production","development"]`),
+      ].join("\n"),
+    },
+  });
+  itBundled("html-import/browser-chunk-inlines-env", {
+    outdir: "out/",
+    target: "bun",
+    dotenv: "PUBLIC_*",
+    env: { PUBLIC_NAME: "inlined" },
+    files: serverAndPage("bun", "name: process.env.PUBLIC_NAME"),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "development", `,"name":"inlined"`),
+        pageSees("development", `,"name":"inlined"`),
+      ].join("\n"),
+    },
+  });
+
+  test("html-import/browser-chunk-keeps-the-main-fields-of-the-browser", async () => {
+    const fields = { version: "1.0.0", main: "./main.js", module: "./module.js", browser: "./browser.js" };
+    const files = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, ...fields }),
+      [`node_modules/${name}/main.js`]: `module.exports = "main";`,
+      [`node_modules/${name}/module.js`]: `export default "module";`,
+      [`node_modules/${name}/browser.js`]: `export default "browser";`,
+    });
+    using dir = tempDir("html-import-main-fields", {
+      "server.js": `
+        import page from "./client.html";
+        import field from "for-the-server";
+        console.log("server", field);
+        await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+      `,
+      "client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "client.js": `
+        import field from "for-the-page";
+        console.log("client", field);
+      `,
+      ...files("for-the-server"),
+      ...files("for-the-page"),
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "--main-fields=main", "./server.js", "--outdir=out"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "server.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "server main\nclient browser\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });

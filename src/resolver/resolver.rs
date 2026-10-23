@@ -651,6 +651,19 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// [`Self::for_worker`] with `opts` for another target. SAFETY: the same contract.
+    pub unsafe fn for_target(
+        from: &Resolver<'_>,
+        log: NonNull<bun_ast::Log>,
+        opts: options::BundleOptions,
+    ) -> Resolver<'a> {
+        let care_about_browser_field = opts.target == options::Target::Browser;
+        // SAFETY: the caller upholds the contract of `for_worker`.
+        let mut resolver = unsafe { Self::for_worker(from, log, opts) };
+        resolver.care_about_browser_field = care_about_browser_field;
+        resolver
+    }
+
     /// NOTE (Stacked Borrows): returns the RAW `*mut` (NOT `&'a mut`). A
     /// `&'a mut` accessor would let two `fs()` calls manufacture coexisting
     /// aliased unique refs to the same singleton (PORTING.md §Forbidden:

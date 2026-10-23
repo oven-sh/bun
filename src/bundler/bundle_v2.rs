@@ -1970,7 +1970,7 @@ pub mod bv2_impl {
         pub(crate) fn initialize_client_transpiler(
             &mut self,
         ) -> Result<&mut Transpiler<'a>, Error> {
-            // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
+            // Builds a fresh owned `Transpiler` via `Transpiler::for_target`
             // (per-field deep clone), mutates the browser-specific options with
             // ordinary assignment (every field is owned by the clone, so `Drop` on
             // the overwritten value is correct), then boxes it on the global heap
@@ -1980,7 +1980,7 @@ pub mod bv2_impl {
             // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
             // releases it.
 
-            // `arena` is only the scratch param for `Transpiler::for_worker`; the
+            // `arena` holds what the clone's define table points to; the
             // returned `Transpiler` itself is NOT placed in it.
             // SAFETY: `graph.heap` outlives the bundle pass; erase the `&self`
             // borrow so the `'a` widen inside `for_worker` doesn't keep `self`
@@ -1993,24 +1993,17 @@ pub mod bv2_impl {
             let this_env = this_transpiler.env;
 
             // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
-            // outlives this `BundleV2<'a>`; `for_worker` widens those borrows to
+            // outlives this `BundleV2<'a>`; `for_target` widens those borrows to
             // the same `'a`.
-            let mut ct: Transpiler<'a> =
-                unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
+            let mut ct: Transpiler<'a> = unsafe {
+                Transpiler::for_target(this_transpiler, Target::Browser, arena, this_transpiler.log)
+            }?;
 
-            ct.options.target = Target::Browser;
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
                 ct.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
             }
-            ct.options.main_fields = Target::Browser
-                .default_main_fields()
-                .iter()
-                .map(|s| s.as_bytes().to_vec().into_boxed_slice())
-                .collect();
-            ct.options.conditions =
-                options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?;
 
             // We need to make sure it has [hash] in the names so we don't get conflicts.
             if this_compile {
@@ -2038,12 +2031,7 @@ pub mod bv2_impl {
             // handled by `for_worker` + `wire_after_move`.
             boxed.wire_after_move();
 
-            // `configure_defines` early-returns on `options.defines_loaded` (cloned
-            // as `true`); kept for spec parity.
-            boxed.configure_defines()?;
-
-            // Re-project the resolver subset now that `target`/`conditions` etc.
-            // have been overwritten for the browser.
+            // Re-project the resolver subset now that `public_path` has been overwritten.
             boxed.sync_resolver_opts();
             boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
@@ -3268,10 +3256,9 @@ pub mod bv2_impl {
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // The Box is heap-owned and dropped by the caller.
-            transpiler.options.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
-            transpiler.resolver.opts.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            let keeps_builtins_external = transpiler.options.target.keeps_builtins_external();
+            transpiler.options.mark_builtins_as_external = keeps_builtins_external;
+            transpiler.resolver.opts.mark_builtins_as_external = keeps_builtins_external;
 
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all

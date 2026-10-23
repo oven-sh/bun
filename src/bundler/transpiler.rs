@@ -230,21 +230,62 @@ impl<'a> Transpiler<'a> {
         arena: &'a Arena,
         log: *mut bun_ast::Log,
     ) -> Transpiler<'a> {
+        let options = from.options.for_worker();
+        let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
+        // SAFETY: see fn doc — `Resolver::for_worker` widens
+        // `standalone_module_graph` / `env_loader` lifetimes.
+        let resolver = unsafe {
+            Resolver::for_worker(
+                &from.resolver,
+                log_nn,
+                resolver_bundle_options_subset(&options),
+            )
+        };
+        // SAFETY: see fn doc.
+        unsafe { Self::from_clone(from, arena, log, options, resolver) }
+    }
+
+    /// [`Self::for_worker`] for another graph of the same bundle. SAFETY: the same contract.
+    pub(crate) unsafe fn for_target(
+        from: &Transpiler<'_>,
+        target: options::Target,
+        arena: &'a Arena,
+        log: *mut bun_ast::Log,
+    ) -> crate::Result<Transpiler<'a>> {
+        // `from` reported what is wrong with the user's flags when it read them.
+        let mut repeated = bun_ast::Log::init();
+        let mut options =
+            from.options
+                .for_target(target, from.fs().top_level_dir(), &mut repeated)?;
+        options.load_defines(arena, Some(from.env()), &mut repeated)?;
+        let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_target: log is non-null");
+        // SAFETY: see fn doc.
+        let resolver = unsafe {
+            Resolver::for_target(
+                &from.resolver,
+                log_nn,
+                resolver_bundle_options_subset(&options),
+            )
+        };
+        // SAFETY: see fn doc.
+        Ok(unsafe { Self::from_clone(from, arena, log, options, resolver) })
+    }
+
+    /// SAFETY: the contract of [`Self::for_worker`]. `options` and `resolver` are clones of `from`'s.
+    unsafe fn from_clone(
+        from: &Transpiler<'_>,
+        arena: &'a Arena,
+        log: *mut bun_ast::Log,
+        options: options::BundleOptions<'_>,
+        resolver: Resolver<'a>,
+    ) -> Transpiler<'a> {
         // Deep-clone the heavy nested fields at `from`'s lifetime, then
         // lifetime-widen to `'a`. Layout is identical (only the lifetime
         // parameter differs), so `transmute` is a no-op reinterpretation.
         // SAFETY: see fn doc.
         let options: options::BundleOptions<'a> = unsafe {
-            core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(
-                from.options.for_worker(),
-            )
+            core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(options)
         };
-        let resolver_opts = resolver_bundle_options_subset(&options);
-        let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
-        // SAFETY: see fn doc — `Resolver::for_worker` widens
-        // `standalone_module_graph` / `env_loader` lifetimes.
-        let resolver: Resolver<'a> =
-            unsafe { Resolver::for_worker(&from.resolver, log_nn, resolver_opts) };
 
         Transpiler {
             options,
@@ -504,23 +545,14 @@ impl<'a> Transpiler<'a> {
 
         self.run_env_loader(self.options.env.disable_default_env_files)?;
 
-        let env_loader = self.env_mut();
+        let env_loader = self.env();
         let mut is_production = env_loader.is_production();
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
         // explicit sources first so that default isn't mistaken for user intent
         // and `force_node_env` stays `Unspecified` (tsconfig jsx stays in control).
-        let had_explicit_node_env = env_loader.get_node_env().is_some()
-            || self
-                .options
-                .transform_options
-                .define
-                .as_ref()
-                .is_some_and(|m| {
-                    m.keys
-                        .iter()
-                        .any(|k| &**k == options::default_user_defines::node_env::KEY)
-                });
+        let had_explicit_node_env =
+            env_loader.get_node_env().is_some() || self.options.user_defines_node_env();
 
         // `parse_env_json` needs a thread-local AST store to build
         // `E::String` nodes in. That work
@@ -534,7 +566,8 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        self.options
+            .load_defines(self.arena, Some(env_loader), self.log_mut())?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -1048,7 +1081,7 @@ fn resolver_bundle_options_subset(
         // (`from_api` overwrites `main_fields` only when
         // `transform.main_fields` is non-empty — options.rs:2231).
         main_fields: src.main_fields.clone(),
-        main_fields_is_default: src.transform_options.main_fields.is_empty(),
+        main_fields_is_default: src.main_fields_is_default,
         mark_builtins_as_external: src.mark_builtins_as_external,
         polyfill_node_globals: src.polyfill_node_globals,
         install_preference: src.install_preference,

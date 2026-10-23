@@ -1910,41 +1910,68 @@ mod posix_impl {
     /// `openat2` (or when seccomp blocks it), caching the unavailability.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
+        openat2_if_available(
+            super::linux_syscall::openat2_in_root,
+            dir,
+            path,
+            flags,
+            mode,
+        )
+        .unwrap_or_else(|| openat(dir, path, flags, mode))
+    }
+    /// `EXDEV` where a file system is mounted on a component of `path`. `None`: no `openat2`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn openat2_no_xdev(dir: impl AsFd, path: &ZStr, flags: i32) -> Option<Maybe<Fd>> {
+        openat2_if_available(
+            super::linux_syscall::openat2_no_xdev,
+            dir.as_fd(),
+            path,
+            flags | O::CLOEXEC,
+            0,
+        )
+    }
+    /// `None`: this kernel has no `openat2` (or seccomp blocks it), which is remembered.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn openat2_if_available(
+        raw: fn(Fd, &ZStr, i32, Mode) -> core::result::Result<Fd, i32>,
+        dir: Fd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+    ) -> Option<Maybe<Fd>> {
         use core::sync::atomic::{AtomicBool, Ordering};
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
-        let dir = dir.as_fd();
-        let flags = flags | O::CLOEXEC;
-        if !UNAVAILABLE.load(Ordering::Relaxed) {
-            match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
-                Ok(fd) => return Ok(fd),
-                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
-                    let probe = super::linux_syscall::openat2_in_root(
-                        dir,
-                        bun_core::zstr!("."),
-                        O::PATH | O::DIRECTORY | O::CLOEXEC,
-                        0,
-                    );
-                    match probe {
-                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                            UNAVAILABLE.store(true, Ordering::Relaxed);
-                        }
-                        other => {
-                            if let Ok(fd) = other {
-                                let _ = close(fd);
-                            }
-                            return Err(
-                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
-                            );
-                        }
-                    }
+        if UNAVAILABLE.load(Ordering::Relaxed) {
+            return None;
+        }
+        let e = match raw(dir, path, flags, mode) {
+            Ok(fd) => return Some(Ok(fd)),
+            Err(e) => e,
+        };
+        if matches!(e, libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) {
+            let probe = raw(
+                dir,
+                bun_core::zstr!("."),
+                O::PATH | O::DIRECTORY | O::CLOEXEC,
+                0,
+            );
+            match probe {
+                Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                    UNAVAILABLE.store(true, Ordering::Relaxed);
+                    return None;
                 }
-                Err(e) => {
-                    return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
+                Ok(fd) => {
+                    let _ = close(fd);
                 }
+                Err(_) => {}
             }
         }
-        openat(dir, path, flags, mode)
+        Some(Err(
+            Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
+        ))
     }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already

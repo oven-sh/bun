@@ -106,6 +106,7 @@ impl Dir {
     }
     /// Deletes everything inside this directory through its open handle, never through its path.
     /// Continues past an entry that cannot be deleted, and returns the first error.
+    /// A file system that is mounted on this directory is the one it empties: the handle is in it.
     pub fn delete_children(&self) -> Maybe<()> {
         // On POSIX, a listing resumes where the last one through this handle stopped, so rewind.
         // On Windows, every listing starts from the beginning.
@@ -125,6 +126,7 @@ impl Dir {
     }
     /// Recursive `rm -rf`
     /// (stack-based depth-first walk).
+    /// On Linux it enters no mounted file system, at `sub_path` or below it: that one is `EBUSY`.
     pub fn delete_tree(&self, sub_path: &[u8]) -> Maybe<()> {
         // `delete_tree_open_initial_subpath` — try unlinking as a file first; if
         // that yields IsDir/EPERM, open it as an iterable directory.
@@ -157,13 +159,10 @@ impl Dir {
                 let mut unlink_err: Option<Error> = None;
                 'handle_entry: loop {
                     if treat_as_dir {
-                        let new_dir = match openat_a(
-                            top.iter.dir(),
-                            entry.name.slice_u8(),
-                            O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                            0,
-                        ) {
-                            Ok(fd) => fd,
+                        let opened = open_entry_to_delete(top.iter.dir(), entry.name.slice_u8());
+                        let new_dir = match opened {
+                            Ok(Some(fd)) => fd,
+                            Ok(None) => break 'handle_entry,
                             Err(e) => match e.get_errno() {
                                 E::ENOTDIR => match unlink_err.take() {
                                     Some(unlink_err) => return Err(unlink_err),
@@ -230,13 +229,10 @@ impl Dir {
             if need_to_retry {
                 // Since we closed the handle that the previous iterator used, we
                 // need to re-open the dir and re-create the iterator.
-                let new_dir = match openat_a(
-                    parent_dir,
-                    &name,
-                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                    0,
-                ) {
-                    Ok(fd) => fd,
+                let reopened = Dir::borrow(&parent_dir).open_tree_to_delete(&name);
+                let new_dir = match reopened {
+                    Ok(Some(fd)) => fd,
+                    Ok(None) => continue 'process_stack,
                     Err(e) => match e.get_errno() {
                         E::ENOTDIR => {
                             // Racing fs: it became a file; unlink it.
@@ -282,13 +278,8 @@ impl Dir {
                     _ => return Err(e),
                 },
             }
-            match openat_a(
-                self.fd,
-                sub_path,
-                O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                0,
-            ) {
-                Ok(fd) => return Ok(Some(fd)),
+            match self.open_tree_to_delete(sub_path) {
+                Ok(opened) => return Ok(opened),
                 Err(e) => match e.get_errno() {
                     E::ENOENT => return Ok(None),
                     E::ENOTDIR => match unlink_err.take() {
@@ -300,6 +291,77 @@ impl Dir {
             }
         }
     }
+
+    /// The components before the last are resolved as always: a package in a volume goes.
+    fn open_tree_to_delete(&self, sub_path: &[u8]) -> Maybe<Option<Fd>> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let name = bun_paths::basename(sub_path);
+            let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(sub_path);
+            if !name.is_empty() && parent.is_empty() {
+                return open_entry_to_delete(self.fd, name);
+            }
+            if !name.is_empty() {
+                let flags = O::PATH | O::DIRECTORY | O::CLOEXEC;
+                let parent = openat_a(self.fd, parent, flags, 0).map(Dir::from_fd)?;
+                return open_entry_to_delete(parent.fd, name)
+                    .map_err(|e| e.with_fd(self.fd).with_path(sub_path));
+            }
+        }
+        openat_a(self.fd, sub_path, DELETE_TREE_OPEN, 0).map(Some)
+    }
+}
+
+const DELETE_TREE_OPEN: i32 = O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+
+/// `Ok(None)`: the entry `name` is gone. `EBUSY`: a file system is mounted on it, as its `rmdir` says.
+fn open_entry_to_delete(dir: Fd, name: &[u8]) -> Maybe<Option<Fd>> {
+    debug_assert!(!bun_core::strings::contains_char(name, b'/'));
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if name.len() >= buf.0.len() {
+        return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(name));
+    }
+    buf.0[..name.len()].copy_from_slice(name);
+    buf.0[name.len()] = 0;
+    // SAFETY: NUL-terminated above.
+    let name = ZStr::from_buf(&buf.0[..], name.len());
+    // Not elsewhere: there is no `openat2`, and an `rmdir` before each open is a cost to every delete.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    match openat2_no_xdev(dir, name, DELETE_TREE_OPEN) {
+        Some(Err(e)) if e.get_errno() == E::EXDEV => return Err(mounted_on(dir, name)),
+        Some(opened) => return opened.map(Some),
+        // No `openat2`. Linux looks for a mount before it looks for entries, and after permissions.
+        None => match unlinkat_with_flags(dir, name, AT_REMOVEDIR) {
+            Ok(()) => return Ok(None),
+            Err(e) => match e.get_errno() {
+                E::ENOENT => return Ok(None),
+                // It has entries, it is no directory, or it is `.`.
+                E::ENOTEMPTY | E::EEXIST | E::ENOTDIR | E::EINVAL => {}
+                E::EBUSY => return Err(e),
+                // Not allowed, or what a file system such as sshfs says of one that has entries.
+                _ if is_mount_point(dir, name) => return Err(mounted_on(dir, name)),
+                _ => {}
+            },
+        },
+    }
+    openat(dir, name, DELETE_TREE_OPEN, 0).map(Some)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn mounted_on(dir: Fd, name: &ZStr) -> Error {
+    Error::from_code(E::EBUSY, Tag::unlink)
+        .with_fd(dir)
+        .with_path(name.as_bytes())
+}
+
+/// For an `rmdir` that was refused before its own mount test.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_mount_point(dir: Fd, name: &ZStr) -> bool {
+    super::linux_syscall::is_mount_root(dir, name).unwrap_or_else(|| {
+        // Another file system. A bind mount of the same one is not told apart.
+        let around = fstatat(dir, bun_core::zstr!("."));
+        matches!((around, lstatat(dir, name)), (Ok(around), Ok(it)) if around.st_dev != it.st_dev)
+    })
 }
 
 #[cfg(unix)]

@@ -497,7 +497,13 @@ impl PackageManagerCommand {
                     } else {
                         bun_core::prettyln!("Cleared 'bun install' cache");
                     }
-                    if has_global_store {
+                    // A store that is a volume of its own stays: no delete goes into a mount.
+                    let store_stays = !dry_run
+                        && rm_dir.as_ref().is_some_and(|dir| {
+                            bun_sys::directory_exists_at(dir.fd(), bun_core::zstr!("links"))
+                                .unwrap_or(true)
+                        });
+                    if has_global_store && !store_stays {
                         bun_core::note!(
                             "global store {} removed too, run 'bun install' in each project that uses it",
                             if dry_run { "would be" } else { "was" },

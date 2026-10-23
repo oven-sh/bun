@@ -3268,8 +3268,8 @@ declare module "bun" {
      * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
      * wider minimum.
      *
-     * The build fails when two output files get the same path, unless they are
-     * copied assets with identical contents.
+     * The build fails when two entry points, chunks or copied assets get the
+     * same path, unless they are copied assets with identical contents.
      *
      * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
      */

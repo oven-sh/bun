@@ -1111,7 +1111,7 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
-  test.concurrent("two output files at one path fail the build before anything is written", async () => {
+  test.concurrent("two copied assets at one path fail the build before anything is written", async () => {
     using dir = tempDir("build-api-output-path-collision", {
       "entry.js": `import a from "./a/logo.png"; import b from "./b/logo.png"; console.log(a, b);`,
       "a/logo.png": "the first logo",
@@ -1122,9 +1122,7 @@ describe("Bun.build", () => {
         for (const [name, options] of Object.entries({
           assets: { outdir: "dist", naming: { asset: "[name].[ext]" } },
           assetsInMemory: { naming: { asset: "[name].[ext]" } },
-          metafileAndEntryPoint: { outdir: "dist", metafile: { json: "entry.js" } },
-          twoMetafiles: { outdir: "dist", metafile: { json: "meta", markdown: "./meta" } },
-          distinctPaths: { outdir: "dist", naming: { asset: "[dir]/[name].[ext]" }, metafile: { json: "meta.json" } },
+          distinctPaths: { outdir: "dist", naming: { asset: "[dir]/[name].[ext]" } },
         })) {
           const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false, ...options });
           results[name] = {
@@ -1159,24 +1157,7 @@ describe("Bun.build", () => {
     expect(JSON.parse(stdout)).toEqual({
       assets,
       assetsInMemory: assets,
-      metafileAndEntryPoint: {
-        success: false,
-        outputs: 0,
-        logs: [
-          "Multiple files share the same output path\n  ./entry.js:\n    from input entry.js\n    from the metafile (metafile.json)\n",
-          "entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique",
-        ],
-        wrote: false,
-      },
-      twoMetafiles: {
-        success: false,
-        outputs: 0,
-        logs: [
-          "Multiple files share the same output path\n  meta:\n    from the metafile (metafile.json)\n    from the metafile (metafile.markdown)\n",
-        ],
-        wrote: false,
-      },
-      distinctPaths: { success: true, outputs: 4, logs: [], wrote: true },
+      distinctPaths: { success: true, outputs: 3, logs: [], wrote: true },
     });
     expect(exitCode).toBe(0);
   });

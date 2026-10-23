@@ -1033,7 +1033,7 @@ By default, Bun appends a content hash to the name of each embedded file, which 
   </Tab>
 </Tabs>
 
-Without `[hash]`, two embedded files with the same name and different contents get the same path, and the build fails with `Multiple files share the same output path`. Use `[dir]/[name].[ext]` to keep the directory of each file in its name.
+Without `[hash]`, two embedded files with the same name and different contents get the same path, and the build fails with `Multiple files share the same output path`. Keep `[hash]` in the template when two of your embedded files have the same name.
 
 ---
 

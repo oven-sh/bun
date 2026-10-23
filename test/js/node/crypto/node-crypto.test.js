@@ -1116,23 +1116,34 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
 
 // bluebird's promisifyAll(require("crypto")) does this walk on its pre-ES5 path.
 // https://github.com/oven-sh/bun/issues/29533
-it("for..in then read over the prototype of every crypto class does not throw", () => {
-  const walked = [];
-  const failures = [];
-  for (const name in crypto) {
-    const proto = typeof crypto[name] === "function" ? crypto[name].prototype : undefined;
-    if (proto === null || typeof proto !== "object") continue;
-    walked.push(name);
-    for (const key in proto) {
-      try {
-        void proto[key];
-      } catch (e) {
-        failures.push(`${name}.prototype.${key}: ${e.code}`);
+it("for..in then read over the prototype of every crypto class does not throw", async () => {
+  // In a child: the read of `_readableState` on Hash.prototype sets up a stream on that prototype, as in Node.
+  const script = `
+    import crypto from "node:crypto";
+    const walked = [];
+    const failures = [];
+    for (const name in crypto) {
+      const proto = typeof crypto[name] === "function" ? crypto[name].prototype : undefined;
+      if (proto === null || typeof proto !== "object") continue;
+      walked.push(name);
+      for (const key in proto) {
+        try {
+          void proto[key];
+        } catch (e) {
+          failures.push(name + ".prototype." + key + ": " + e.code);
+        }
       }
     }
-  }
-  expect(failures).toEqual([]);
-  expect(walked).toEqual(expect.arrayContaining(["KeyObject", "X509Certificate"]));
+    const expected = walked.filter(name => name === "KeyObject" || name === "X509Certificate").sort();
+    console.log(JSON.stringify({ failures, walked: expected }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { failures: [], walked: ["KeyObject", "X509Certificate"] },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {

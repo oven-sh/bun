@@ -1317,8 +1317,8 @@ impl<'l> Loader<'l> {
         }
         .map_err(|error| Fatal(error.message))?;
         let installed = installed_version(base_path, b"eslint");
-        if installed.is_some_and(|it| minor_of(&it).is_some_and(|it| it.0 < 10)) {
-            config.follow_eslint(9);
+        if let Some((major @ ..10, _)) = installed.and_then(|it| minor_of(&it)) {
+            config.follow_eslint(if major < 9 { 8 } else { 9 });
         }
         config.infer_globals(self.infers_globals_besides());
         Ok(config)

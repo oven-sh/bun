@@ -263,10 +263,19 @@ impl ConfigGlobals {
     fn libs(language: &LanguageOptions) -> (Box<[u8]>, Box<[u16]>) {
         let mut flags = vec![0u8; tables::NAME_ENDS.len().div_ceil(4)].into_boxed_slice();
         let mut order = Vec::new();
-        let find = |name: &[u8]| {
+        let known = |name: &[u8]| {
             tables::LIBS
                 .binary_search_by(|it| it.0.as_bytes().cmp(name))
                 .ok()
+        };
+        // typescript-eslint's table ends at an earlier edition than TypeScript's libraries. What a later one has is in
+        // `esnext` there.
+        let find = |name: &[u8]| {
+            known(name).or_else(|| match name.starts_with(b"es2") {
+                true if name.ends_with(b".full") => known(b"esnext.full"),
+                true => known(b"esnext"),
+                false => None,
+            })
         };
         let mut included: Vec<usize> = match &language.lib {
             Some(libs) => libs.iter().filter_map(|lib| find(lib)).collect(),

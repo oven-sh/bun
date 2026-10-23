@@ -6711,7 +6711,7 @@ maybe(() => { return f; });
     ];
     test.each([
       ["9.39.5", nine],
-      // With an eslint.config.mjs, ESLint 8 is closer to 9 than to 10.
+      // ESLint 8.57.1 reports the same.
       ["8.57.1", nine],
       ["10.12.0", ten],
       [undefined, ten],
@@ -6722,6 +6722,36 @@ maybe(() => { return f; });
         it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
       );
       expect(reports).toEqual(expected);
+    });
+
+    // From ESLint 8.57.1 too. In version 9 the location changed with 9.38.
+    test.each([
+      ["8.57.1", ["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]],
+      ["9.39.5", ["1:1-1:11 11", "5:3-5:9 4", "6:3-6:9 3", "7:11-7:23 3", "9:13-9:15 4", "10:13-10:14 3"]],
+    ])("complexity with an eslint.config.mjs and eslint %s", async (version, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{ rules: { complexity: ["error", 0] } }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": `function a(x, y = 1, { z = 2 } = {}, [w = 3] = []) {
+  return x?.y?.z ?? (x ? y : z) ?? w;
+}
+class B {
+  method(x) { return x?.a || x?.b; }
+  static { if (a) a(); else if (B) a(1); }
+  field = a ? 1 : a?.b;
+}
+const c = x => { ({ x = 1 } = x); [x = 2] = x; x ||= 1; return x; };
+const d = { e(x) { return x && x.y && x.z; } };
+console.log(a, B, c, d);
+`,
+        },
+        ["-f", "json", "a.js"],
+      );
+      const found = (JSON.parse(raw)[0].messages as any[]).map(
+        it => `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${/complexity of (\d+)/.exec(it.message)?.[1]}`,
+      );
+      expect(found).toEqual(expected);
     });
 
     // From ESLint 8.57.1 too.
@@ -9444,6 +9474,52 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(undefinedIn("target")).toEqual(["NotThere", "document"]);
       expect(undefinedIn("only")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
       expect(undefinedIn("explicit")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The same with TypeScript 5.9.3 and 6.0.3, whose default targets differ: each implies `dom`. Neither knows es2026.
+    test.each(["5.9.3", "6.0.3", undefined])(
+      "the libraries of a tsconfig.json without a target, or with one that typescript-eslint doesn't know (typescript: %s)",
+      async version => {
+        const tsconfig = (options: object) =>
+          JSON.stringify({ compilerOptions: { strict: true, module: "esnext", types: [], ...options } });
+        const text = `export type A = [DOMRect, ClientRect, NotThere];\nexport const b = [document, new Promise(() => {}), new Map()];\n`;
+        const { stdout, exitCode } = await lint(
+          {
+            "eslint.config.js": files["eslint.config.js"].replace(`rules: { `, `rules: { "no-undef": "error", `),
+            ...(version && { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) }),
+            "none/tsconfig.json": tsconfig({}),
+            "none/a.ts": text,
+            "target/tsconfig.json": tsconfig({ target: "es2026" }),
+            "target/a.ts": text,
+            "lib/tsconfig.json": tsconfig({ lib: ["es2026"] }),
+            "lib/a.ts": text,
+          },
+          ["-f", "unix"],
+        );
+        const undefinedIn = (directory: string) =>
+          [...stdout.matchAll(/(\w+)\/a\.ts:\d+:\d+: '(\w+)' is not defined/g)]
+            .filter(it => it[1] === directory)
+            .map(it => it[2]);
+        expect(undefinedIn("none")).toEqual(["NotThere", "document"]);
+        expect(undefinedIn("target")).toEqual(["NotThere", "document"]);
+        expect(undefinedIn("lib")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test("without a config file, a script and a module get the same libraries", async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "bunfig.toml": `[lint.rules]\n"no-undef" = "error"\n"@typescript-eslint/no-floating-promises" = "error"\n`,
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, lib: ["dom", "esnext"], types: [] } }),
+          "script.ts": "let x: ClientRect | NotThere | undefined;\nconsole.log(x);\n",
+          "module.ts": "export let x: ClientRect | NotThere | undefined;\n",
+        },
+        ["-f", "unix"],
+      );
+      const found = [...stdout.matchAll(/(\w+\.ts):\d+:\d+: '(\w+)' is not defined/g)].map(it => `${it[1]} ${it[2]}`);
+      expect(found.sort()).toEqual(["module.ts NotThere", "script.ts NotThere"]);
       expect(exitCode).toBe(1);
     });
 

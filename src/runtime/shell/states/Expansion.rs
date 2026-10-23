@@ -504,6 +504,16 @@ impl Expansion {
                 // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
+            ast::SimpleAtom::SpecialParam(param) => {
+                use std::io::Write as _;
+                let value = match param {
+                    ast::SpecialParam::ExitCode => u32::from(shell.last_exit_code),
+                    // A `(...)` and a `$(...)` run in the same process.
+                    ast::SpecialParam::Pid => std::process::id(),
+                };
+                // A write to a `Vec` does not fail.
+                let _ = write!(out, "{value}");
+            }
             ast::SimpleAtom::Asterisk => {
                 meta_offsets.push(out.len() as u32);
                 out.push(b'*');

@@ -1278,6 +1278,60 @@ booga"
       expect(str).toEqual("bar baz\n");
     });
 
+    describe("$?", () => {
+      TestBuilder.command`echo $?`.stdout("0\n").runAsTest("is 0 at the start");
+      TestBuilder.command`false; echo $?`.stdout("1\n").runAsTest("after a builtin");
+      TestBuilder.command`false; echo "$?" a$?b`.stdout("1 a1b\n").runAsTest("in double quotes and in a word");
+      TestBuilder.command`${BUN} -e "process.exit(42)"; echo $?`.stdout("42\n").runAsTest("after a command");
+      TestBuilder.command`false; true; echo $?`.stdout("0\n").runAsTest("is the status of the last statement");
+      TestBuilder.command`false || echo $?`.stdout("1\n").runAsTest("right of ||");
+      TestBuilder.command`true && false; echo $?`.stdout("1\n").runAsTest("after &&");
+      TestBuilder.command`true | false; echo $?; false | true; echo $?`.stdout("1\n0\n").runAsTest("after a pipeline");
+      TestBuilder.command`if false; then echo no; else echo $?; fi`.stdout("1\n").runAsTest("in an else branch");
+      TestBuilder.command`false; if false; then echo no; fi; echo $?`
+        .stdout("0\n")
+        .runAsTest("after an if that takes no branch");
+      TestBuilder.command`(false); echo $?; false; (echo $?)`.stdout("1\n1\n").runAsTest("out of and into a subshell");
+      TestBuilder.command`false; echo $(echo $?)`.stdout("1\n").runAsTest("into a command substitution");
+      // dash prints 1 here and bash prints 0.
+      TestBuilder.command`false; echo $(true)$?`
+        .stdout("1\n")
+        .runAsTest("a $(...) in the same command does not set it");
+      TestBuilder.command`false; STATUS=$?; true; echo $STATUS`.stdout("1\n").runAsTest("as an assignment value");
+      TestBuilder.command`false; [[ $? == 1 ]] && echo yes`.stdout("yes\n").runAsTest("in [[ ]]");
+      TestBuilder.command`false; echo hi > out_$?.txt`
+        .ensureTempDir()
+        .fileEquals("out_1.txt", "hi\n")
+        .runAsTest("in a redirect target");
+      TestBuilder.command`${{ raw: "false; echo é $?" }}`
+        .stdout("é 1\n")
+        .runAsTest("in a script with a non-ASCII character");
+      TestBuilder.command`false; echo '$?' \$? $\?`.stdout("$? $? $?\n").runAsTest("quoted or escaped stays text");
+      TestBuilder.command`false; echo $${"?"} ${"$?"}`.stdout("$? $?\n").runAsTest("an interpolated value stays text");
+
+      // `$?` does not see the status of an assignment from `$(...)` today. #45074 and #37839 change this row to 1.
+      TestBuilder.command`X=$(false); echo $?`.stdout("0\n").runAsTest("after an assignment from a $(...) that fails");
+      TestBuilder.command`shell_test_no_such_command; echo $?`
+        .stdout("1\n")
+        .stderr("bun: command not found: shell_test_no_such_command\n")
+        .runAsTest("after a command that is not found");
+    });
+
+    describe("$$", () => {
+      TestBuilder.command`echo $$ "$$" $$x`
+        .stdout(`${process.pid} ${process.pid} ${process.pid}x\n`)
+        .runAsTest("is the process ID of bun");
+      TestBuilder.command`echo $(echo $$); (echo $$)`
+        .stdout(`${process.pid}\n${process.pid}\n`)
+        .runAsTest("is the same in $(...) and (...)");
+      TestBuilder.command`${{ raw: "echo é $$" }}`
+        .stdout(`é ${process.pid}\n`)
+        .runAsTest("in a script with a non-ASCII character");
+      TestBuilder.command`echo $$(echo hi)`.stdout("$hi\n").runAsTest("$$( is still a $ and a $(...)");
+      TestBuilder.command`echo '$$' \$\$ $\$`.stdout("$$ $$ $$\n").runAsTest("quoted or escaped stays text");
+      TestBuilder.command`echo $${"$"} ${"$$"}`.stdout("$$ $$\n").runAsTest("an interpolated value stays text");
+    });
+
     test("shell var", async () => {
       const { stdout } = await $`FOO=bar BAR=baz && BAZ=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
       const str = stdout.toString();

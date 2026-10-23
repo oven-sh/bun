@@ -660,10 +660,29 @@ pub mod ast {
         }
     }
 
+    /// A parameter that the shell sets: `$?` or `$$`.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SpecialParam {
+        /// `$?`: the exit code of the statement, or the `&&` or `||` operand, that ran last.
+        ExitCode,
+        /// `$$`: the process ID of the shell.
+        Pid,
+    }
+
+    impl SpecialParam {
+        pub const fn as_str(self) -> &'static str {
+            match self {
+                SpecialParam::ExitCode => "$?",
+                SpecialParam::Pid => "$$",
+            }
+        }
+    }
+
     #[derive(Clone)]
     pub enum SimpleAtom<'arena> {
         Var(&'arena [u8]),
         VarArgv(u8),
+        SpecialParam(SpecialParam),
         Text(&'arena [u8]),
         /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
         /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
@@ -1622,6 +1641,16 @@ impl<'bump> Parser<'bump> {
                             }
                         }
                     }
+                    Token::SpecialParam(param) => {
+                        let _ = self.expect(TokenTag::SpecialParam);
+                        atoms.push(ast::SimpleAtom::SpecialParam(param));
+                        if next_delimits {
+                            let _ = self.r#match(TokenTag::Delimit);
+                            if should_break {
+                                break;
+                            }
+                        }
+                    }
                     Token::OpenParen | Token::CloseParen => {
                         self.add_error(format_args!(
                             "Unexpected token: `{}`",
@@ -1970,6 +1999,7 @@ pub enum TokenTag {
     CloseParen,
     Var,
     VarArgv,
+    SpecialParam,
     Text,
     SingleQuotedText,
     DoubleQuotedText,
@@ -2021,6 +2051,7 @@ pub enum Token {
 
     Var(TextRange),
     VarArgv(u8),
+    SpecialParam(ast::SpecialParam),
     Text(TextRange),
     /// Quotation information is lost from the lexer -> parser stage and it is
     /// helpful to disambiguate from regular text and quoted text
@@ -2079,6 +2110,7 @@ impl Token {
             Token::CloseParen => b"`)",
             Token::Var(r) => &strpool[r.start as usize..r.end as usize],
             Token::VarArgv(n) => VARARGV_STRINGS[n as usize],
+            Token::SpecialParam(param) => param.as_str().as_bytes(),
             Token::Text(r) => &strpool[r.start as usize..r.end as usize],
             Token::SingleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::DoubleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
@@ -2646,10 +2678,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             let var_tok = self.eat_var()?;
 
                             match var_tok.len() {
-                                0 => {
-                                    self.append_char_to_str_pool(u32::from(b'$'))?;
-                                    self.break_word(AddDelimiter::No)?;
-                                }
+                                0 => self.eat_special_param()?,
                                 1 => 'blk: {
                                     let c = self.strpool[var_tok.start as usize];
                                     if c >= b'0' && c <= b'9' {
@@ -2959,6 +2988,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             && match self.tokens[self.tokens.len() - 1].tag() {
                 TokenTag::Var
                 | TokenTag::VarArgv
+                | TokenTag::SpecialParam
                 | TokenTag::Text
                 | TokenTag::SingleQuotedText
                 | TokenTag::DoubleQuotedText
@@ -3381,6 +3411,27 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return false;
         }
         true
+    }
+
+    /// After a `$` with no name: lexes `$?` and `$$`. Before any other character the `$` is text.
+    #[cold]
+    fn eat_special_param(&mut self) -> Result<(), LexerError> {
+        let mut chars = self.chars;
+        let next = chars.eat().filter(|c| !c.escaped).map(|c| c.char);
+        let param = if next == Some(u32::from(b'?')) {
+            ast::SpecialParam::ExitCode
+        } else if next == Some(u32::from(b'$'))
+            // `$$(cmd)` stays a `$` followed by `$(cmd)`.
+            && chars.peek().is_none_or(|c| c.escaped || c.char != u32::from(b'('))
+        {
+            ast::SpecialParam::Pid
+        } else {
+            self.append_char_to_str_pool(u32::from(b'$'))?;
+            return self.break_word(AddDelimiter::No);
+        };
+        self.chars = chars;
+        self.tokens.push(Token::SpecialParam(param));
+        Ok(())
     }
 
     fn eat_var(&mut self) -> Result<TextRange, LexerError> {

@@ -1035,10 +1035,15 @@ impl<'a> JSON5Parser<'a> {
         if self.as_written {
             return Ok(0.0);
         }
-        // scanner pre-filters to is_ascii_hexdigit → `_`/sign unreachable
-        let value = bun_core::fmt::parse_int::<u64>(&self.source[hex_start..self.pos], 16)
-            .map_err(|_| ParseError::InvalidHexNumber)?;
-        Ok(value as f64)
+        // A hex number has no size limit. Like a JavaScript literal, it is the nearest double.
+        let mut integer = bun_core::fmt::RadixInteger::default();
+        for digit in self.source[hex_start..self.pos]
+            .iter()
+            .filter_map(|&c| char::from(c).to_digit(16))
+        {
+            integer.push_digit(4, digit);
+        }
+        Ok(integer.to_f64())
     }
 
     fn scan_identifier(&mut self) -> Result<&'a [u8], ParseError> {

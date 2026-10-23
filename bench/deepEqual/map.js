@@ -24,4 +24,9 @@ const x = new CustomMap(genPairs());
 const y = new CustomMap(genPairs());
 bench("deepEqual CustomMap", () => expect(x).toEqual(y));
 
+const undefinedValues = () => new Map(Array.from({ length: MAP_SIZE }, (_, i) => ["k" + i, undefined]));
+const u = undefinedValues();
+const v = undefinedValues();
+bench("deepEqual Map with undefined values", () => expect(u).toEqual(v));
+
 await run();

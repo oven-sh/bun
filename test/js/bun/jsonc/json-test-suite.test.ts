@@ -1,6 +1,6 @@
 // JSONTestSuite (https://github.com/nst/JSONTestSuite @ 1ef36fa01286573e846ac449e8683f8833c5b26a,
 // MIT, (c) Nicolas Seriot) test_parsing/ corpus, vendored inline as UTF-8.
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 type Case = [name: string, source: string];
 
@@ -223,7 +223,6 @@ const N_INVALID: Case[] = [
   ["n_string_unescaped_newline.json", '["new\nline"]'],
   ["n_string_unescaped_tab.json", '["\t"]'],
   ["n_string_unicode_CapitalU.json", '"\\UA66D"'],
-  ["n_structure_100000_opening_arrays.json", Buffer.alloc(100000, "[").toString()],
   ["n_structure_U+2060_word_joined.json", "[⁠]"],
   ["n_structure_UTF8_BOM_no_data.json", "﻿"],
   ["n_structure_angle_bracket_..json", "<.>"],
@@ -242,7 +241,6 @@ const N_INVALID: Case[] = [
   ["n_structure_object_unclosed_no_value.json", '{"":'],
   ["n_structure_open_array_apostrophe.json", "['"],
   ["n_structure_open_array_comma.json", "[,"],
-  ["n_structure_open_array_object.json", Buffer.alloc(250000, '[{"":').toString() + "\n"],
   ["n_structure_open_array_open_object.json", "[{"],
   ["n_structure_open_array_open_string.json", '["a'],
   ["n_structure_open_array_string.json", '["a"'],
@@ -263,6 +261,14 @@ const N_INVALID: Case[] = [
   ["n_structure_unclosed_object.json", '{"asd":"asd"'],
   ["n_structure_unicode-identifier.json", "å"],
   ["n_structure_whitespace_U+2060_word_joiner.json", "[⁠]"],
+];
+
+// Bun.JSONC.parse recurses once per nesting level and throws a RangeError at the native stack limit.
+// A target whose stack holds every level reaches the end of the input and throws a SyntaxError instead:
+// the windows aarch64 release build does that for the first input.
+const N_INVALID_DEEPLY_NESTED: Case[] = [
+  ["n_structure_100000_opening_arrays.json", Buffer.alloc(100000, "[").toString()],
+  ["n_structure_open_array_object.json", Buffer.alloc(250000, '[{"":').toString() + "\n"],
 ];
 
 const N_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = [
@@ -305,7 +311,7 @@ const N_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = 
   ["n_structure_whitespace_formfeed.json", "[\f]", []],
 ];
 
-const I_IMPLEMENTATION_DEFINED: Case[] = [
+const I_VALID: Case[] = [
   ["i_number_double_huge_neg_exp.json", "[123.456e-789]"],
   [
     "i_number_huge_exp.json",
@@ -322,7 +328,6 @@ const I_IMPLEMENTATION_DEFINED: Case[] = [
   ["i_object_key_lone_2nd_surrogate.json", '{"\\uDFAA":0}'],
   ["i_string_1st_surrogate_but_2nd_missing.json", '["\\uDADA"]'],
   ["i_string_1st_valid_surrogate_2nd_invalid.json", '["\\uD888\\u1234"]'],
-  ["i_string_UTF-16LE_with_BOM.json", '��[\u0000"\u0000�\u0000"\u0000]\u0000'],
   ["i_string_UTF-8_invalid_sequence.json", '["日ш�"]'],
   ["i_string_UTF8_surrogate_U+D800.json", '["���"]'],
   ["i_string_incomplete_surrogate_and_escape_valid.json", '["\\uD800\\n"]'],
@@ -340,18 +345,51 @@ const I_IMPLEMENTATION_DEFINED: Case[] = [
   ["i_string_overlong_sequence_6_bytes.json", '["������"]'],
   ["i_string_overlong_sequence_6_bytes_null.json", '["������"]'],
   ["i_string_truncated-utf-8.json", '["��"]'],
-  ["i_string_utf16BE_no_BOM.json", '\u0000[\u0000"\u0000�\u0000"\u0000]'],
-  ["i_string_utf16LE_no_BOM.json", '[\u0000"\u0000�\u0000"\u0000]\u0000'],
   [
     "i_structure_500_nested_arrays.json",
     "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
   ],
-  ["i_structure_UTF-8_BOM_empty_object.json", "﻿{}"],
+];
+
+// JSON.parse rejects the i_ inputs below, so there is no value to compare Bun.JSONC.parse with.
+const I_INVALID: Case[] = [
+  ["i_string_UTF-16LE_with_BOM.json", '��[\u0000"\u0000�\u0000"\u0000]\u0000'],
+  ["i_string_utf16BE_no_BOM.json", '\u0000[\u0000"\u0000�\u0000"\u0000]'],
+  ["i_string_utf16LE_no_BOM.json", '[\u0000"\u0000�\u0000"\u0000]\u0000'],
+];
+
+const I_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = [
+  ["i_structure_UTF-8_BOM_empty_object.json", "﻿{}", {}],
 ];
 
 describe("JSONTestSuite", () => {
+  // CI sets BUN_GARBAGE_COLLECTOR_LEVEL=1, so every expect() requests a collection, and a collection
+  // synchronizes with the GC helper threads. On a Windows agent with every core busy, each yield or
+  // wake-up in that handshake costs about 30ms: this file took 26s there and at most 1.5s elsewhere.
+  let gcLevel: 0 | 1 | 2 = 0;
+  beforeAll(() => {
+    gcLevel = Bun.unsafe.gcAggressionLevel(0);
+  });
+  afterAll(() => {
+    Bun.unsafe.gcAggressionLevel(gcLevel);
+  });
+
   test("the corpus is complete", () => {
-    expect(Y_VALID.length + N_INVALID.length + N_VALID_JSONC.length + I_IMPLEMENTATION_DEFINED.length).toBe(318);
+    const names = [
+      ...Y_VALID,
+      ...N_INVALID,
+      ...N_INVALID_DEEPLY_NESTED,
+      ...N_VALID_JSONC,
+      ...I_VALID,
+      ...I_INVALID,
+      ...I_VALID_JSONC,
+    ].map(([name]) => name);
+    expect(new Set(names).size).toBe(names.length);
+    expect({
+      y: names.filter(name => name.startsWith("y_")).length,
+      n: names.filter(name => name.startsWith("n_")).length,
+      i: names.filter(name => name.startsWith("i_")).length,
+    }).toEqual({ y: 95, n: 188, i: 35 });
   });
 
   describe("y_ (valid JSON parses and matches JSON.parse)", () => {
@@ -360,40 +398,50 @@ describe("JSONTestSuite", () => {
     });
   });
 
-  describe("n_ (invalid JSON and invalid JSONC throws)", () => {
+  describe("n_ (invalid JSON and invalid JSONC throws SyntaxError)", () => {
     test.each(N_INVALID)("%s", (_name, source) => {
-      expect(() => JSON.parse(source)).toThrow();
-      expect(() => Bun.JSONC.parse(source)).toThrow();
+      expect(() => JSON.parse(source)).toThrow(SyntaxError);
+      expect(() => Bun.JSONC.parse(source)).toThrow(SyntaxError);
+    });
+  });
+
+  describe("n_ (deeply nested invalid JSON throws RangeError at the stack limit, or SyntaxError)", () => {
+    test.each(N_INVALID_DEEPLY_NESTED)("%s", (_name, source) => {
+      expect(() => JSON.parse(source)).toThrow(SyntaxError);
+      let error: unknown;
+      try {
+        Bun.JSONC.parse(source);
+      } catch (thrown) {
+        error = thrown;
+      }
+      expect([RangeError, SyntaxError]).toContain((error as Error | undefined)?.constructor);
     });
   });
 
   describe("n_ (invalid JSON but valid JSONC parses to the pinned value)", () => {
     test.each(N_VALID_JSONC)("%s", (_name, source, expected) => {
-      expect(() => JSON.parse(source)).toThrow();
+      expect(() => JSON.parse(source)).toThrow(SyntaxError);
       expect(Bun.JSONC.parse(source)).toStrictEqual(expected);
     });
   });
 
-  describe("i_ (implementation-defined agrees with JSON.parse when it accepts)", () => {
-    test.each(I_IMPLEMENTATION_DEFINED)("%s", (_name, source) => {
-      let jsc: unknown;
-      let jscAccepted = true;
-      try {
-        jsc = JSON.parse(source);
-      } catch {
-        jscAccepted = false;
-      }
-      let bun: unknown;
-      let bunAccepted = true;
-      try {
-        bun = Bun.JSONC.parse(source);
-      } catch {
-        bunAccepted = false;
-      }
-      if (jscAccepted) {
-        expect(bunAccepted).toBe(true);
-        expect(bun).toStrictEqual(jsc);
-      }
+  describe("i_ (JSON.parse accepts: Bun.JSONC.parse returns the same value)", () => {
+    test.each(I_VALID)("%s", (_name, source) => {
+      expect(Bun.JSONC.parse(source)).toStrictEqual(JSON.parse(source));
+    });
+  });
+
+  describe("i_ (JSON.parse rejects: Bun.JSONC.parse throws SyntaxError too)", () => {
+    test.each(I_INVALID)("%s", (_name, source) => {
+      expect(() => JSON.parse(source)).toThrow(SyntaxError);
+      expect(() => Bun.JSONC.parse(source)).toThrow(SyntaxError);
+    });
+  });
+
+  describe("i_ (JSON.parse rejects: Bun.JSONC.parse parses to the pinned value)", () => {
+    test.each(I_VALID_JSONC)("%s", (_name, source, expected) => {
+      expect(() => JSON.parse(source)).toThrow(SyntaxError);
+      expect(Bun.JSONC.parse(source)).toStrictEqual(expected);
     });
   });
 });

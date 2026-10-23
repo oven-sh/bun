@@ -52,6 +52,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
+        // The plugin's compiler is older than facebook/react#37645 and says nothing of `arguments`.
+        implicit_arguments_is_unsupported: is_oxlint || has_no_foreign_config,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,
@@ -116,7 +118,6 @@ impl<'a> Compiler<'a> {
         let is_wanted = |it: &Recorded| {
             wanted.has_thrown()
                 || wanted.has(match it {
-                    Recorded::ImplicitArguments(_) => ErrorCategory::UnsupportedSyntax,
                     Recorded::DuplicateFbtTags { .. }
                     | Recorded::DynamicImport(_)
                     | Recorded::DefaultIsJsx { .. } => ErrorCategory::Todo,
@@ -138,7 +139,6 @@ impl<'a> Compiler<'a> {
                 name,
                 ref tag_spans,
             } => duplicate_fbt_tags(tag, name, tag_spans),
-            Recorded::ImplicitArguments(span) => implicit_arguments(span),
             Recorded::DynamicImport(span) => todo(
                 "(BuildHIR::lowerExpression) Handle Import expressions".to_owned(),
                 span,
@@ -180,25 +180,6 @@ impl<'a> Compiler<'a> {
         Err((all.into_iter())
             .map(|it| with_wrapper_span(wrapped, it))
             .collect())
-    }
-}
-
-/// oxc's `unsupported_implicit_arguments`
-fn implicit_arguments(span: Span) -> Finding {
-    Finding {
-        category: ErrorCategory::UnsupportedSyntax,
-        reason: "Implicit 'arguments' is not supported".to_owned(),
-        description: Some(
-            "React Compiler does not support compiling functions that reference the implicit arguments object"
-                .to_owned(),
-        ),
-        details: vec![Detail::Error {
-            span: Some(span),
-            message: Some("Implicit 'arguments' is not supported".to_owned()),
-        }],
-        suggestions: Vec::new(),
-        is_error_detail: false,
-        function_span: None,
     }
 }
 

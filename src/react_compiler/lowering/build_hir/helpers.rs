@@ -247,6 +247,23 @@ pub(super) fn lower_identifier(
                         suggestions: None,
                     })?;
                 }
+                if name.slice() == b"arguments"
+                    && builder
+                        .environment()
+                        .config
+                        .implicit_arguments_is_unsupported
+                {
+                    builder.record_error(CompilerErrorDetail {
+                        category: ErrorCategory::UnsupportedSyntax,
+                        reason: "Implicit 'arguments' is not supported".to_string(),
+                        description: Some(
+                            "React Compiler does not support compiling functions that reference the implicit arguments object"
+                                .to_string(),
+                        ),
+                        loc,
+                        suggestions: None,
+                    })?;
+                }
             }
             let kind = match binding {
                 VariableBinding::Global { name } => NonLocalKind::Global { name },

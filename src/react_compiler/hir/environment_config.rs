@@ -109,6 +109,9 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
+    /// A function that reads the implicit `arguments` is not compiled, as upstream since facebook/react#37645, which
+    /// is later than `UPSTREAM_PORTED`. To the compiler of eslint-plugin-react-hooks 7.1.1 `arguments` is any global.
+    pub implicit_arguments_is_unsupported: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -168,6 +171,7 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
+            implicit_arguments_is_unsupported: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

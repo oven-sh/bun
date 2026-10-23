@@ -78,7 +78,8 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 44: A block-level function in sloppy code stays a declaration instead of becoming a `let`.
-const EXPECTED_VERSION: u32 = 44;
+/// Version 45: A function declaration as the body of a label or `if` in sloppy code makes an ambiguous file CommonJS.
+const EXPECTED_VERSION: u32 = 45;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

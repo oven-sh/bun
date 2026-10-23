@@ -301,6 +301,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
+    /// Non-strict code has syntax that strict code rejects, so the file cannot be an ES module.
+    pub(crate) has_sloppy_only_syntax: bool,
+
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
@@ -4880,6 +4883,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn is_strict_mode(&self) -> bool {
         self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
+    }
+
+    /// In strict code the same syntax is an error in a CommonJS file too, so it says nothing about the file.
+    #[inline]
+    pub(crate) fn mark_sloppy_only_syntax(&mut self) {
+        if self.options.features.commonjs_at_runtime && !self.is_strict_mode() {
+            self.has_sloppy_only_syntax = true;
+        }
     }
 
     #[inline]
@@ -9750,6 +9761,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             sloppy_mode_block_fn_without_var: Default::default(),
             has_with_scope: false,
+            has_sloppy_only_syntax: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,

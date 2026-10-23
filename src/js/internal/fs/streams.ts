@@ -109,7 +109,7 @@ function getStreamOptions(options, defaultOptions = {}) {
   }
 
   if (typeof options === "string") {
-    if (options !== "buffer" && !Buffer.isEncoding(options)) {
+    if (options && options !== "buffer" && !Buffer.isEncoding(options)) {
       throw $ERR_INVALID_ARG_VALUE("encoding", options, "is invalid encoding");
     }
     return { encoding: options };

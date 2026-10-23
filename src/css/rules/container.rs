@@ -6,22 +6,15 @@ use crate::properties::Property;
 use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
+#[derive(Clone, Copy, css::CssEql, css::DeepClone)]
 pub struct ContainerName {
     pub(crate) v: CustomIdent,
 }
 
 impl ContainerName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        super::custom_ident_to_css(&self.v, dest)
-    }
-}
-
-impl ContainerName {
-    #[inline]
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        Self {
-            v: self.v.deep_clone(bump),
-        }
+        let enabled = dest.css_module.as_ref().is_some_and(|m| m.config.container);
+        self.v.to_css_with_options(dest, enabled)
     }
 }
 
@@ -365,7 +358,7 @@ impl<R> ContainerRule<R> {
         R: css::generics::DeepClone<'bump>,
     {
         Self {
-            name: self.name.as_ref().map(|n| n.deep_clone(bump)),
+            name: self.name,
             condition: self.condition.deep_clone(bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,

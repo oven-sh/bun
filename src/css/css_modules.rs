@@ -254,6 +254,9 @@ pub struct Config {
     /// Default is `true`.
     pub(crate) animation: bool,
 
+    /// Whether to scope container names. Default is `true`.
+    pub(crate) container: bool,
+
     /// Whether to scope custom identifiers
     /// Default is `true`.
     pub(crate) custom_idents: bool,
@@ -265,6 +268,7 @@ impl Default for Config {
             pattern: Pattern::default(),
             dashed_idents: false,
             animation: true,
+            container: true,
             custom_idents: true,
         }
     }

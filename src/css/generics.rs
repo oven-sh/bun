@@ -736,6 +736,10 @@ mod inherent_bridge {
     // Unit enums via DefineEnumProperty — no inherent eql/deep_clone, route through Copy/PartialEq.
     bridge_clone_partialeq!(TransformStyle, TransformBox, BackfaceVisibility);
 
+    // ── properties/contain ──
+    use crate::properties::contain::ContainerType;
+    bridge_clone_partialeq!(ContainerType);
+
     // ── properties/transition ──
     use crate::properties::transition::Transition;
     bridge_deep_clone!(Transition);

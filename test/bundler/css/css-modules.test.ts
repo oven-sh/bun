@@ -149,6 +149,54 @@ describe("css", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/45089
+  // The `container` shorthand and `container-name` longhand must scope their
+  // container name to the SAME hashed name the `@container` rule receives,
+  // otherwise the container query never matches.
+  itBundled("css-module/ContainerNameScopedToContainerRule", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.host, styles.longhand, styles.item);
+      `,
+      "/styles.module.css": `
+        .host { container: page / inline-size; }
+        .longhand { container-name: page; container-type: inline-size; }
+        .multi { container-name: page sidebar; }
+        .scroll { container: page / inline-size scroll-state; }
+        @container page (max-width: 700px) { .item { color: red; } }
+        @container sidebar (min-width: 200px) { .item { color: blue; } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+
+      // Each @container name is scoped (e.g. `page_<hash>`), not left bare.
+      const pageRule = css.match(/@container\s+(page_[A-Za-z0-9_-]+)\s/);
+      const sidebarRule = css.match(/@container\s+(sidebar_[A-Za-z0-9_-]+)\s/);
+      expect(pageRule, "@container page should be scoped").not.toBeNull();
+      expect(sidebarRule, "@container sidebar should be scoped").not.toBeNull();
+      const page = pageRule![1];
+      const sidebar = sidebarRule![1];
+
+      // The `container` shorthand references the SAME scoped name and keeps
+      // its container type.
+      expect(css).toContain(`container: ${page} / inline-size;`);
+      expect(css).toContain(`container: ${page} / inline-size scroll-state;`);
+
+      // The `container-name` longhand references the SAME scoped name.
+      expect(css).toContain(`container-name: ${page};`);
+      expect(css).toContain(`container-name: ${page} ${sidebar};`);
+      expect(css).toContain(`container-type: inline-size;`);
+
+      // The bare (unscoped) names must not survive as container references.
+      expect(css).not.toMatch(/container:\s*page\b/);
+      expect(css).not.toMatch(/container-name:\s*page\b/);
+    },
+  });
+
   // The parser dedupes repeated class/id names through a borrowed lookup
   // (`add_symbol_for_name`); many references to the same names must all map
   // to a single hashed symbol each.

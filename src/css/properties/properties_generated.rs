@@ -24,6 +24,7 @@ use super::border;
 use super::border_image;
 use super::border_radius;
 use super::box_shadow;
+use super::contain;
 use super::css_modules;
 use super::display;
 use super::flex;
@@ -294,6 +295,9 @@ pub enum PropertyIdTag {
     ViewTransitionName,
     ViewTransitionClass,
     ViewTransitionGroup,
+    ContainerType,
+    ContainerName,
+    Container,
     All,
     Unparsed,
     Custom,
@@ -609,6 +613,9 @@ impl PropertyIdTag {
             PropertyIdTag::ViewTransitionName => b"view-transition-name",
             PropertyIdTag::ViewTransitionClass => b"view-transition-class",
             PropertyIdTag::ViewTransitionGroup => b"view-transition-group",
+            PropertyIdTag::ContainerType => b"container-type",
+            PropertyIdTag::ContainerName => b"container-name",
+            PropertyIdTag::Container => b"container",
             PropertyIdTag::All => b"all",
             PropertyIdTag::Unparsed => b"unparsed",
             PropertyIdTag::Custom => b"custom",
@@ -877,6 +884,9 @@ pub enum PropertyId {
     ViewTransitionName,
     ViewTransitionClass,
     ViewTransitionGroup,
+    ContainerType,
+    ContainerName,
+    Container,
     All,
     Unparsed,
     Custom(CustomPropertyName),
@@ -1162,6 +1172,9 @@ impl PropertyId {
             PropertyId::ViewTransitionName => PropertyIdTag::ViewTransitionName,
             PropertyId::ViewTransitionClass => PropertyIdTag::ViewTransitionClass,
             PropertyId::ViewTransitionGroup => PropertyIdTag::ViewTransitionGroup,
+            PropertyId::ContainerType => PropertyIdTag::ContainerType,
+            PropertyId::ContainerName => PropertyIdTag::ContainerName,
+            PropertyId::Container => PropertyIdTag::Container,
             PropertyId::All => PropertyIdTag::All,
             PropertyId::Unparsed => PropertyIdTag::Unparsed,
             PropertyId::Custom(..) => PropertyIdTag::Custom,
@@ -1544,6 +1557,9 @@ impl PropertyId {
                 b"view-transition-name" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionName),
                 b"view-transition-class" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionClass),
                 b"view-transition-group" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionGroup),
+                b"container-type" => (VendorPrefix::NONE, |_| PropertyId::ContainerType),
+                b"container-name" => (VendorPrefix::NONE, |_| PropertyId::ContainerName),
+                b"container" => (VendorPrefix::NONE, |_| PropertyId::Container),
             };
         }
         let &(allowed, make) = KNOWN.get_ascii_case_insensitive(name)?;
@@ -1877,6 +1893,9 @@ pub enum Property {
     ViewTransitionName(transition::ViewTransitionName),
     ViewTransitionClass(css::css_values::ident::NoneOrCustomIdentList),
     ViewTransitionGroup(transition::ViewTransitionGroup),
+    ContainerType(contain::ContainerType),
+    ContainerName(contain::ContainerName),
+    Container(contain::Container),
     All(CSSWideKeyword),
     Unparsed(UnparsedProperty),
     Custom(CustomProperty),
@@ -2147,6 +2166,9 @@ impl Property {
             Property::ViewTransitionName(..) => PropertyId::ViewTransitionName,
             Property::ViewTransitionClass(..) => PropertyId::ViewTransitionClass,
             Property::ViewTransitionGroup(..) => PropertyId::ViewTransitionGroup,
+            Property::ContainerType(..) => PropertyId::ContainerType,
+            Property::ContainerName(..) => PropertyId::ContainerName,
+            Property::Container(..) => PropertyId::Container,
             Property::All(..) => PropertyId::All,
             Property::Unparsed(u) => u.property_id,
             Property::Custom(c) => PropertyId::Custom(c.name),
@@ -2419,6 +2441,9 @@ impl Property {
             Property::ViewTransitionName(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionClass(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionGroup(v) => css::generic::to_css(v, dest),
+            Property::ContainerType(v) => css::generic::to_css(v, dest),
+            Property::ContainerName(v) => css::generic::to_css(v, dest),
+            Property::Container(v) => css::generic::to_css(v, dest),
             Property::All(v) => css::generic::to_css(v, dest),
             Property::Unparsed(u) => u.value.to_css(dest, false),
             Property::Custom(c) => c
@@ -3874,6 +3899,21 @@ impl Property {
                     return Ok(Property::ViewTransitionGroup(c));
                 }
             }
+            PropertyId::ContainerType => {
+                if let Some(c) = parse_value::<contain::ContainerType>(input, options) {
+                    return Ok(Property::ContainerType(c));
+                }
+            }
+            PropertyId::ContainerName => {
+                if let Some(c) = parse_value::<contain::ContainerName>(input, options) {
+                    return Ok(Property::ContainerName(c));
+                }
+            }
+            PropertyId::Container => {
+                if let Some(c) = parse_value::<contain::Container>(input, options) {
+                    return Ok(Property::Container(c));
+                }
+            }
             PropertyId::All => return CSSWideKeyword::parse(input).map(Property::All),
             PropertyId::Custom(name) => {
                 return CustomProperty::parse(name, input, options).map(Property::Custom);
@@ -4478,6 +4518,13 @@ impl Property {
             Property::ViewTransitionGroup(v) => {
                 Property::ViewTransitionGroup(css::generic::deep_clone(v, arena))
             }
+            Property::ContainerType(v) => {
+                Property::ContainerType(css::generic::deep_clone(v, arena))
+            }
+            Property::ContainerName(v) => {
+                Property::ContainerName(css::generic::deep_clone(v, arena))
+            }
+            Property::Container(v) => Property::Container(css::generic::deep_clone(v, arena)),
             Property::All(a) => Property::All(*a),
             Property::Unparsed(u) => Property::Unparsed(u.deep_clone(arena)),
             Property::Custom(c) => Property::Custom(c.deep_clone(arena)),
@@ -5011,6 +5058,9 @@ impl Property {
             (Property::ViewTransitionGroup(a), Property::ViewTransitionGroup(b)) => {
                 css::generic::eql(a, b)
             }
+            (Property::ContainerType(a), Property::ContainerType(b)) => css::generic::eql(a, b),
+            (Property::ContainerName(a), Property::ContainerName(b)) => css::generic::eql(a, b),
+            (Property::Container(a), Property::Container(b)) => css::generic::eql(a, b),
             (Property::All(_), Property::All(_)) => true,
             (Property::Unparsed(a), Property::Unparsed(b)) => a.eql(b),
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),

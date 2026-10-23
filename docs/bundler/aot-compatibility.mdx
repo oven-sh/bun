@@ -732,7 +732,7 @@ This differs:
 | Files that a [computed path](#dynamic-imports) or `import.meta.resolve` names | Not in the executable, so no hook runs | In the executable, so the hooks run for them                               |
 | One import that a file has twice                                              | `onResolve` runs twice                 | `onResolve` runs once                                                      |
 | One path in two namespaces                                                    | One module                             | Two modules                                                                |
-| `minify`                                                                      | Renames functions and classes          | `name` is what you wrote                                                   |
+| `minify`                                                                      | Renames functions and classes          | Shortens the same names in `name`, stack traces and messages               |
 | `sourcemap`                                                                   | A map is one of the outputs            | There's no map. Stack traces have the positions of your sources either way |
 | `metafile`                                                                    | One output for each entry point        | [One output, the executable](#metafile)                                    |
 | `format`, `bytecode`, `--bytecode-depth`, `--bytecode-order`                  | Change what's in the executable        | No effect. Nothing is bundled, and the executable has no bytecode          |

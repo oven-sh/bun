@@ -16,7 +16,7 @@ use crate::ir::{BlockId, PropertyKeyId, ValueId};
 
 pub(in crate::lower) use self::key::{
     created_symbol_key, find_function_name, find_key_text, find_name_under_symbol,
-    lower_computed_key, lower_member_key,
+    function_name_key, lower_computed_key, lower_member_key,
 };
 pub(crate) use self::key::{emit_name_value, lower_property_name, name_key};
 pub(in crate::lower) use self::reference::{

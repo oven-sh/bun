@@ -110,8 +110,9 @@ fn apply_default(
     lowering.continue_in(use_default);
     let default = match hir[node.pat].kind {
         PatKind::Ident(name) => {
-            let name = PropertyName::Constant(member::name_key(lowering.file, name));
-            expression::lower_named_evaluation(lowering, node.default, name)
+            let binding = lowering.file.bound.initialized_binding(node.pat);
+            let key = member::function_name_key(lowering.file, binding, name);
+            expression::lower_named_evaluation(lowering, node.default, PropertyName::Constant(key))
         }
         PatKind::Object(_) | PatKind::Array(_) | PatKind::Missing => {
             expression::lower_expression(lowering, node.default)

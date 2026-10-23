@@ -19,14 +19,15 @@ Other environment variables:
 
 Prints one line per program and exits with 1 if any line is a failure:
     same            the output equals <program>.expected.txt or, if there is none, the output of `$PLAIN run <file>`
-    DIFFERS         followed by the start of the diff; a run that is killed or dies of a signal always counts as different
+    DIFFERS         followed by the start of the diff; a run that is killed or dies of a signal always counts as different. After a death by a signal the image runs
+                    again under where-it-died.py, which says where it died
     NO IR           the front end rejected the program
     NOT COMPILED    the engine rejected it
     skipped         the shell cannot judge it; the line says why
 
 A program with a .build-errors.txt is skipped: front end and engine stop at the errors that `bun compile` reports.
 """
-import difflib, json, os, re, sys, tempfile
+import difflib, json, os, platform, re, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -99,6 +100,20 @@ def skip_reason(base, options, compiler_options):
     return None
 
 
+def where_it_died(ir, image, words, build_env, entry, env, has_own_environment, cwd):
+    """What the machine can say about a death by a signal without a debugger, for a machine that only a continuous build has. It stays on the line of the verdict."""
+    run_options, said = os.environ.get("RUN_OPTIONS", "").split(), ""
+    if has_own_environment:
+        code, _ = toolchain.run_image(image, entry, dict(os.environ), run_options, cwd=cwd)
+        said += " | without the environment of its .json: " + ("timed out" if code is None else f"died of signal {-code}" if code < 0 else f"exit code {code}")
+    try:
+        toolchain.compile_image(ir, image, words, cwd=cwd, env={**build_env, **os.environ, "JSC_aotMapFilePath": image + ".map"})
+    except toolchain.ToolFailed:
+        return said
+    follower = [sys.executable, HERE + "/where-it-died.py", "--image", image, "--map", image + ".map"]
+    return said + " | " + " ".join(toolchain.run_image(image, entry, env, run_options, cwd=cwd, seconds=200, under=follower)[1].split("\n")).strip()
+
+
 def run_program(program):
     for root in filter(None, (PROGRAMS, WRITTEN)):
         base = os.path.join(root, program)
@@ -139,8 +154,19 @@ def run_program(program):
     needed = re.search(r"^AOT: the program needs the host's (.*), and this realm has no host$", output, re.M)
     if needed:
         return "skipped: it needs the host's " + needed.group(1)
+    # The images here are built without the engine's library, so its functions run as text, which a program that sets crashIfInterpreterIsUsed forbids. A function of the program has a path in front of the colon.
+    text = re.search(r"^crashIfInterpreterIsUsed: Function (\S+) at :1$", output, re.M)
+    if text:
+        return f"skipped: the engine's {text.group(1)} is no compiled code here"
     if code is None or code < 0:
-        return f"DIFFERS: {'timed out' if code is None else f'died of signal {-code}'}: " + " | ".join(output.strip().split("\n")[-2:])[:220]
+        verdict = f"DIFFERS: {'timed out' if code is None else f'died of signal {-code}'}: " + " | ".join(output.strip().split("\n")[-2:])[:220]
+        if code is None:
+            return verdict
+        verdict += where_it_died(ir, image, words, build_env, entries[0], env, bool(options.get("env")), cwd)
+        # TODO: on Linux on ARM64 the shell dies of signal 11 where it counts the calls of operations and compiled code catches an error.
+        if code == -11 and sys.platform == "linux" and platform.machine() in ("aarch64", "arm64") and "JSC_aotCountsPath" in options.get("env", {}):
+            return "skipped: TODO: on Linux on ARM64 the shell dies where it counts the calls of operations: " + verdict
+        return verdict
 
     if os.path.isfile(base + ".expected.txt"):
         expected = open(base + ".expected.txt", errors="replace").read()

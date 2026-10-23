@@ -1,5 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::PatParent;
+use bun_sema::bind::{Binding, PatParent};
 use bun_sema::hir::{ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
 use smallvec::SmallVec;
 
@@ -193,10 +193,16 @@ pub(super) fn written_leaf_name(
 pub(super) fn default_function_name(
     file: &FileLowering<'_, '_, '_, '_>,
     node: PatternNode,
-) -> Option<Atom> {
+) -> Option<(Binding, Atom)> {
     match node {
-        PatternNode::Binding(_) => written_leaf_name(file, node),
-        PatternNode::Assignment(target) => identifier_target(file, target).map(|(_, name)| name),
+        PatternNode::Binding(pattern) => {
+            let name = written_leaf_name(file, node)?;
+            Some((file.bound.initialized_binding(pattern), name))
+        }
+        PatternNode::Assignment(target) => {
+            let (identifier, name) = identifier_target(file, target)?;
+            Some((file.bound.binding(identifier), name))
+        }
     }
 }
 

@@ -471,9 +471,22 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
     }
 
+    /// The executable spells its folders with `/`. A program gets them as it gets `__dirname`.
+    fn directory_in_executable_to_js(
+        global_object: &JSGlobalObject,
+        directory: &[u8],
+    ) -> JsResult<JSValue> {
+        if cfg!(windows) {
+            let to_separator = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
+            let spelled: Vec<u8> = directory.iter().map(to_separator).collect();
+            return bun_string_jsc::create_utf8_for_js(global_object, &spelled);
+        }
+        bun_string_jsc::create_utf8_for_js(global_object, directory)
+    }
+
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(directory) = bun_core::working_directory_in_executable() {
-            return bun_string_jsc::create_utf8_for_js(global_object, directory);
+            return directory_in_executable_to_js(global_object, directory);
         }
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
@@ -557,7 +570,7 @@ mod _impl {
             None => {}
             Some(Ok(directory)) => {
                 bun_core::set_working_directory_in_executable(Some(directory));
-                return bun_string_jsc::create_utf8_for_js(global_object, directory);
+                return directory_in_executable_to_js(global_object, directory);
             }
             Some(Err(errno)) => {
                 let e = bun_sys::Error::from_code(errno, bun_sys::Tag::chdir)

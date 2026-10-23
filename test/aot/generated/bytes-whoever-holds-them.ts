@@ -259,6 +259,8 @@ const operations: Record<string, string> = {
 
 export const everyCase = Object.keys(types).flatMap(type => Object.keys(operations).map(operation => `${type} ${operation}`));
 export const sample = (count: number) => spread(everyCase, count);
+// A number that is stored into a BigInt64Array throws a TypeError wherever the index lies: the value is converted before the index is tested.
+export const written = Object.fromEntries(Object.keys(types).flatMap(type => ["store-behind-the-end", "store-far"].map(operation => [`${type} ${operation} | a BigInt64Array | `, "threw TypeError"])));
 
 const head = (isOpened: boolean) => `import { runInNewContext } from "node:vm";
 const seen = ${isOpened ? 'new Function("value", "return value" + String(process.argv.length).slice(9)) as <V>(value: V) => V' : "<V>(value: V): V => value"};

@@ -1,10 +1,11 @@
 mod function;
 mod function_table;
+mod shown_names;
 #[cfg(test)]
 mod tests;
 
 use bun_sema::atom::Atom;
-use bun_sema::bind::Bound;
+use bun_sema::bind::{Binding, Bound};
 use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef, NamedValues, Queries, QueryInputs};
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
 use bun_sema::fold::Decisions;
@@ -13,6 +14,7 @@ use bun_sema::program::{CompiledModule, FileId, FileRole};
 use rustc_hash::FxHashMap;
 
 use self::function_table::FunctionTable;
+use self::shown_names::ShownNames;
 use super::LoweredFile;
 use super::class::ClassState;
 use super::fragment::{FragmentBuilder, ModuleFragment};
@@ -136,6 +138,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     functions: FunctionTable,
     atoms: FxHashMap<Atom, StringId>,
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
+    shown_names: ShownNames,
     counters: Counters,
     scratch: BuilderScratch,
 }
@@ -194,6 +197,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             functions: FunctionTable::default(),
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
+            shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
         }
@@ -270,6 +274,20 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let id = self.fragment.strings.intern(self.queries.atom_bytes(atom));
         self.atoms.insert(atom, id);
         id
+    }
+
+    pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
+        match self.short_binding_name(binding) {
+            Some(name) => name,
+            None => self.intern_atom(written),
+        }
+    }
+
+    pub(crate) fn intern_function_name(&mut self, binding: Binding, written: Atom) -> StringId {
+        match self.short_function_name(binding) {
+            Some(name) => name,
+            None => self.intern_atom(written),
+        }
     }
 
     pub(crate) fn text_key(&mut self, text: StringId) -> PropertyKeyId {

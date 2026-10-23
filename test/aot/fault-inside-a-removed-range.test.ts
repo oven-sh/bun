@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
+import { withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
 // What `bun build --compile --aot` cuts out of the executable leaves a hole in its address space, which later mappings may fill.
@@ -84,16 +85,23 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     const found: Record<string, unknown> = {};
     const said: string[] = [];
     const stride = Math.floor(hole.size / 10 / 0x4000) * 0x4000;
-    const places = [0, 1, -1, 2, -2, 3, -3, 4].map(steps => hole.address + steps * stride);
+    // Later mappings fill the hole from its start: on macOS its middle has held data by the time the program ran, and a call of data is
+    // an ordinary fault. So "call" asks from the end of the hole on, and the others ask where it found nothing mapped.
+    const places = [4, 3, 2, 1, 0, -1, -2, -3].map(steps => hole.address + steps * stride);
+    let free = places[0];
     for (const how of ["call", "read", "call mapped data", "read mapped data"]) {
-      for (const address of how === "call" ? places : [hole.address]) {
-        const { stdout, stderr, exitCode, signalCode } = await spawned([join(folder, "main"), how, String(address)]);
+      for (const address of how === "call" ? places : [free]) {
+        const cmd = withoutCoreDump([join(folder, "main"), how, String(address)]);
+        const { stdout, stderr, exitCode, signalCode } = await spawned(cmd);
         said.push(
           `${how}: exit ${exitCode}, signal ${signalCode}, at ${address} of ${hole.size}\n${stderr.slice(0, 1500)}`,
         );
         const saysRemoved = / removed .* from this executable/.test(stderr);
         found[how] = { stdout, saysRemoved, exits70: exitCode === 70 };
-        if (saysRemoved) break;
+        if (saysRemoved) {
+          free = address;
+          break;
+        }
       }
     }
     const wanted = {

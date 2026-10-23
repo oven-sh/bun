@@ -1,0 +1,1 @@
+{ "skipInVariant": { "trimmed-runtime": "TODO: a bug. --trim removes Bun.deepEquals, which the program names on an awaited import of bun and hands to Array.prototype.every as a callback: the call throws" } }

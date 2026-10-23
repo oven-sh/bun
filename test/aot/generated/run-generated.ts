@@ -38,6 +38,8 @@ export type Generated = {
   mayBeUnjudgeable?: true;
   /** Set where plain Bun runs the program for reference, and nowhere else. */
   plainEnv?: Record<string, string>;
+  /** Lines whose answer is written down in the test and not asked of plain Bun: a line that starts with a key ends with its value. */
+  written?: Record<string, string>;
   /** More flags for the build of this program. */
   flags?: string[];
   /** The executable runs once more under each of these and prints the same. */
@@ -106,7 +108,8 @@ export function generated(title: string, programs: Generated[]) {
               expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode });
               expect(compiled.stderr).toContain("[aot] module: ");
               if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError ")) return;
-              const [ours, theirs] = [compiled.stdout.split("\n"), plain.stdout.split("\n")];
+              const written = Object.entries(program.written ?? {});
+              const [ours, theirs] = [compiled.stdout.split("\n"), plain.stdout.split("\n").map(line => written.find(([start]) => line.startsWith(start))?.join("") ?? line)];
               if (program.groupsMayBeRefused) return void expect({ departing: departingGroups(ours, theirs, program.groupsMayBeRefused), signal: compiled.signal, exitCode: compiled.exitCode }).toEqual({ departing: [], signal: null, exitCode: 0 });
               const departing: string[] = [];
               for (let i = 0; i < Math.max(ours.length, theirs.length) && departing.length < 20; i++) {

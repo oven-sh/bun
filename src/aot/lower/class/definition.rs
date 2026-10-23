@@ -86,7 +86,9 @@ fn evaluate_class(
     }
 
     let has_own_name = node.name.is_some();
-    let own_key = has_own_name.then(|| member::name_key(lowering.file, node.name));
+    let binding = layouts::class_binding(lowering.file, class);
+    let own_key =
+        has_own_name.then(|| member::function_name_key(lowering.file, binding, node.name));
     let name = own_key.map(PropertyName::Constant).or(name);
     let head = emit_class_head(lowering, class, &plan, name, heritage);
     let values = members::define_members(lowering, head, &plan);

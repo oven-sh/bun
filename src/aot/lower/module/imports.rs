@@ -17,7 +17,7 @@ pub(crate) fn get_import(
     let file = &mut *lowering.file;
     let binding = file.inputs.modules.import_binding(file.file, symbol);
     let local_name = file.bound.symbol(symbol).name;
-    let name = file.intern_atom(local_name);
+    let name = file.intern_binding_name(Binding::Symbol(symbol), local_name);
     let path = file.builtins.of_symbol(symbol);
     emit_import_binding(lowering, binding, name, path)
 }

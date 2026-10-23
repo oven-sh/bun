@@ -18,8 +18,7 @@ const root = join(import.meta.dir, "programs");
 const namesInGroup = 300;
 // What a script makes from a few rows of the table of built-ins is listed under one name until it is made (run-programs.ts).
 const programsUnderOneName = 6;
-// TODO: two programs have died on arm64 in code generated directly, in groups that a run happened to take. Until that arm of the generator has been seen whole, a run there takes every group.
-const groupsInShare = process.arch === "arm64" ? Infinity : isASAN ? 1 : 3;
+const groupsInShare = isASAN ? 1 : 3;
 const measure = ["--aot-heat=everything-is-hot"];
 
 const cannotBeJoined = new RegExp(

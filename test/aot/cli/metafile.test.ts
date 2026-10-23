@@ -133,15 +133,16 @@ describe.concurrent("--metafile with --aot", () => {
         ]);
 
         // Nothing is bundled: the one output is the executable, whichever number of entry points the build has.
+        // It is listed by the name of the file that was written. The build without --aot lists the name that --outfile has.
         const app = isWindows ? "./app.exe" : "./app";
-        expect(Object.keys(plain.outputs).sort()).toEqual([app, "./worker.js"]);
+        expect(Object.keys(plain.outputs).sort()).toEqual(["./app", "./worker.js"]);
         expect(Object.keys(aot.outputs)).toEqual([app]);
         const output = aot.outputs[app];
         expect({ ...output, bytes: 0, inputs: Object.keys(output.inputs).sort() }).toEqual({
           bytes: 0,
           inputs: Object.keys(aot.inputs).sort(),
           imports: [],
-          exports: plain.outputs[app].exports,
+          exports: plain.outputs["./app"].exports,
           entryPoint: "main.ts",
         });
         expect(output.exports).toEqual(["first", "second"]);

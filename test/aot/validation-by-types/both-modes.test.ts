@@ -9,11 +9,17 @@ import { test } from "../supported";
 
 const programs = join(import.meta.dir, "..", "programs", "data-from-outside");
 
+// With AddressSanitizer the last has not ended in seven and a half minutes.
+if (isASAN)
+  console.error(
+    "SKIPPED: bun run --aot validation-compiled-and-interpreted-agree.ts: it takes too long with AddressSanitizer",
+  );
+
 test.each([
   "validate-returns-a-copy",
   "validate-takes-what-is-not-json",
   "json-parse-type-argument-by-declared-types",
-  "validation-compiled-and-interpreted-agree",
+  ...(isASAN ? [] : ["validation-compiled-and-interpreted-agree"]),
 ])(
   "bun run --aot %s.ts",
   async name => {

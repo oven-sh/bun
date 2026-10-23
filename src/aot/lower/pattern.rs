@@ -197,8 +197,8 @@ fn apply_default(
         NodeShape::Object | NodeShape::Array | NodeShape::Hole => None,
     };
     let default_value = match name {
-        Some(name) => {
-            let key = member::name_key(lowering.file, name);
+        Some((binding, name)) => {
+            let key = member::function_name_key(lowering.file, binding, name);
             expression::lower_named_evaluation(lowering, default, PropertyName::Constant(key))
         }
         None => expression::lower_expression(lowering, default),

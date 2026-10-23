@@ -278,7 +278,22 @@ pub(crate) fn spawn_sync(
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync(true, cx, args, secondary_args_value, &mut bun_test_deadline);
+    let result = bun_removable_features::call_removable_or!(
+        ChildProcess,
+        Throw,
+        {
+            Err(crate::removed_feature::throw_for_removed_feature(
+                cx.global(),
+                bun_removable_features::Feature::ChildProcess,
+            ))
+        },
+        spawn_maybe_sync,
+        true,
+        cx,
+        args,
+        secondary_args_value,
+        &mut bun_test_deadline
+    );
     // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
@@ -333,6 +348,7 @@ impl Drop for ReportUnwatchedExit {
     }
 }
 
+#[inline(never)]
 fn spawn_maybe_sync(
     is_sync: bool,
     cx: &bun_jsc::JsThread<'_>,

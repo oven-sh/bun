@@ -2064,9 +2064,17 @@
     "default": 12458,
     "windows": 19225
   },
+  "aot/flow-schedules-beside-a-hidden-value.test.ts": {
+    "default": 101445,
+    "musl": 125569
+  },
+  "aot/flow-schedules-of-the-loader.test.ts": {
+    "default": 54104,
+    "musl": 66970
+  },
   "aot/flow-schedules.test.ts": {
-    "default": 169075,
-    "musl": 209282
+    "default": 13526,
+    "musl": 16743
   },
   "aot/fold/fold-matches-transpiler.test.ts": {
     "default": 16252,
@@ -2959,53 +2967,19 @@
     "windows": 82534
   },
   "aot/joined-programs-all-code-direct-1.test.ts": {
-    "default": 4721,
-    "windows": 62
-  },
-  "aot/joined-programs-all-code-direct-10.test.ts": {
-    "default": 24357,
-    "windows": 71
-  },
-  "aot/joined-programs-all-code-direct-11.test.ts": {
-    "default": 25217,
-    "windows": 64
-  },
-  "aot/joined-programs-all-code-direct-12.test.ts": {
-    "default": 16092,
-    "windows": 71
-  },
-  "aot/joined-programs-all-code-direct-2.test.ts": {
-    "default": 11304,
-    "windows": 75
-  },
-  "aot/joined-programs-all-code-direct-3.test.ts": {
-    "default": 66483,
-    "windows": 67
-  },
-  "aot/joined-programs-all-code-direct-4.test.ts": {
-    "default": 41133,
-    "windows": 70
-  },
-  "aot/joined-programs-all-code-direct-5.test.ts": {
-    "default": 18798,
-    "windows": 70
-  },
-  "aot/joined-programs-all-code-direct-6.test.ts": {
-    "default": 18500,
-    "windows": 68,
+    "default": 23152,
+    "windows": 69,
     "windows-aarch64": 80
   },
-  "aot/joined-programs-all-code-direct-7.test.ts": {
-    "default": 15312,
-    "windows": 68
+  "aot/joined-programs-all-code-direct-2.test.ts": {
+    "default": 23152,
+    "windows": 69,
+    "windows-aarch64": 80
   },
-  "aot/joined-programs-all-code-direct-8.test.ts": {
-    "default": 18275,
-    "windows": 69
-  },
-  "aot/joined-programs-all-code-direct-9.test.ts": {
-    "default": 17631,
-    "windows": 73
+  "aot/joined-programs-all-code-direct-3.test.ts": {
+    "default": 23152,
+    "windows": 69,
+    "windows-aarch64": 80
   },
   "aot/joined-programs-predictions-fail-1.test.ts": {
     "default": 90000

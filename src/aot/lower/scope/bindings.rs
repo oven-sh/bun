@@ -208,9 +208,10 @@ pub(super) fn get_container_object(
 pub(super) fn emit_binding_error(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     error: RuntimeErrorKind,
+    binding: Binding,
     name: Atom,
 ) {
-    let name = lowering.file.intern_atom(name);
+    let name = lowering.file.intern_binding_name(binding, name);
     exception::emit_throw_runtime_error(lowering, error, Some(name));
 }
 
@@ -242,7 +243,12 @@ fn get_symbol(
 ) -> ValueId {
     match lowering.file.scopes.form(symbol) {
         BindingForm::NotAValue => {
-            emit_binding_error(lowering, RuntimeErrorKind::UnresolvableReference, name);
+            emit_binding_error(
+                lowering,
+                RuntimeErrorKind::UnresolvableReference,
+                Binding::Free,
+                name,
+            );
             lowering.builder.undefined()
         }
         BindingForm::Import => module::get_import(lowering, symbol),
@@ -270,17 +276,32 @@ fn store_symbol(
             if tests_dead_zone {
                 get_symbol(lowering, symbol, name);
             }
-            emit_binding_error(lowering, RuntimeErrorKind::ConstantAssignment, name);
+            emit_binding_error(
+                lowering,
+                RuntimeErrorKind::ConstantAssignment,
+                Binding::Symbol(symbol),
+                name,
+            );
             return;
         }
         BindingKind::FunctionName => {
             if lowering.mode() == ECMAMode::Strict {
-                emit_binding_error(lowering, RuntimeErrorKind::ConstantAssignment, name);
+                emit_binding_error(
+                    lowering,
+                    RuntimeErrorKind::ConstantAssignment,
+                    Binding::Symbol(symbol),
+                    name,
+                );
             }
             return;
         }
         BindingKind::Import => {
-            emit_binding_error(lowering, RuntimeErrorKind::ImportAssignment, name);
+            emit_binding_error(
+                lowering,
+                RuntimeErrorKind::ImportAssignment,
+                Binding::Symbol(symbol),
+                name,
+            );
             return;
         }
         BindingKind::NoBinding
@@ -331,7 +352,12 @@ fn write_symbol(
                 debug_assert!(false, "a symbol without a value is never initialized");
             }
             BindingStore::Assign => {
-                emit_binding_error(lowering, RuntimeErrorKind::UnresolvableReference, name);
+                emit_binding_error(
+                    lowering,
+                    RuntimeErrorKind::UnresolvableReference,
+                    Binding::Free,
+                    name,
+                );
             }
         },
         BindingForm::Callee { .. } | BindingForm::Import => {

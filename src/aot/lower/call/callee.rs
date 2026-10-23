@@ -152,7 +152,7 @@ pub(super) fn find_callee_name(
     let hir = file.hir;
     let inner = expression::skip_type_syntax(file, callee);
     if let ExprKind::Ident(name) = hir[inner].kind {
-        return Some(file.intern_atom(name));
+        return Some(file.intern_binding_name(file.bound.binding(inner), name));
     }
     let mut path = Vec::new();
     if append_written_path(file, inner, &mut path) {
@@ -184,8 +184,9 @@ fn append_written_path(
             &b""[..]
         }
     };
-    match hir[expression::skip_type_syntax(file, expression)].kind {
-        ExprKind::Ident(name) => path.extend_from_slice(file.queries.atom_bytes(name)),
+    let inner = expression::skip_type_syntax(file, expression);
+    match hir[inner].kind {
+        ExprKind::Ident(name) => append_identifier(file, inner, name, path),
         ExprKind::This => path.extend_from_slice(b"this"),
         ExprKind::Super => path.extend_from_slice(b"super"),
         ExprKind::Dot {
@@ -206,12 +207,23 @@ fn append_written_path(
             }
             path.extend_from_slice(optional(chain));
             path.push(b'[');
-            path.extend_from_slice(file.queries.atom_bytes(key));
+            append_identifier(file, index, key, path);
             path.push(b']');
         }
         _ => return false,
     }
     path.len() <= LONGEST_PATH
+}
+
+fn append_identifier(
+    file: &FileLowering<'_, '_, '_, '_>,
+    identifier: ExprId,
+    name: Atom,
+    path: &mut Vec<u8>,
+) {
+    if !file.append_short_binding_name(file.bound.binding(identifier), path) {
+        path.extend_from_slice(file.queries.atom_bytes(name));
+    }
 }
 
 fn lower_global_path_callee(

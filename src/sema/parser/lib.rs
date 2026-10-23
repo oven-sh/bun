@@ -276,7 +276,8 @@ pub(crate) fn parse_with_own_atoms(
 pub fn appears_to_be_binary(text: &[u8], is_jsx: bool) -> bool {
     const FILE_APPEARS_TO_BE_BINARY: u32 = 1490;
     // The scanner reports it only at bytes that aren't UTF-8 and at U+FFFD.
-    if core::str::from_utf8(text).is_ok_and(|text| !text.contains('\u{FFFD}')) {
+    let has_replacement_character = bun_core::strings::contains(text, "\u{FFFD}".as_bytes());
+    if !has_replacement_character && core::str::from_utf8(text).is_ok() {
         return false;
     }
     let options = Options {

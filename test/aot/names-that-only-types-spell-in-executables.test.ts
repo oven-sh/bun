@@ -6,7 +6,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { built, spawned } from "./run-programs";
-import { beforeAll, describe, eachRow, gap, test } from "./supported";
+import { beforeAll, describe, eachRow, test } from "./supported";
 
 // No name is part of another one: the executable stores a text that is part of another text only once.
 const sources = {
@@ -115,10 +115,10 @@ describe.each([
       "a key of a Record or of a mapped type that nothing stores",
       ["neverStoredKeyT7", "otherNeverStoredKeyT8", "neverStoredMappedT10", "otherNeverStoredMappedT11"],
     ],
-    gap("an object that a store under a computed name may reach has a place for every declared member", [
-      "a declared member that no code names, of such an object",
+    [
+      "a declared member that no code names, of an object that a store under a computed name may reach",
       ["neverNamedT24"],
-    ]),
+    ],
     [
       "a member of a union of literal types that the program never makes and nothing from outside is tested for",
       ["neverMadeT17", "otherNeverMadeT18"],

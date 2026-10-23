@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../scripts/build/flags.ts";
 
 function mockToolchain(): Toolchain {
@@ -85,6 +86,24 @@ test("--ffi=off defines BUN_DISABLE_FFI, and nothing else does", () => {
   expect(computeFlags(config({ ffi: false }, String(dir))).defines).toContain(define);
   expect(computeFlags(config({}, String(dir))).defines).not.toContain(define);
   expect(computeFlags(config({ ffi: true, shadowRealm: false }, String(dir))).defines).not.toContain(define);
+});
+
+test("--web-assembly=off takes a WebKit compiled without WebAssembly: a local one, or the one such prebuilt", () => {
+  using dir = tempDir("build-left-out-features", {});
+  const url = (partial: PartialConfig) => {
+    const source = webkit.source(config({ webkit: "prebuilt", ...partial }, String(dir)));
+    return source.kind === "prebuilt" ? source.url.slice(source.url.lastIndexOf("/") + 1) : source.kind;
+  };
+  const hardened = { hardened: true, lto: true, aot: true };
+  expect(url(hardened)).toBe("bun-webkit-linux-amd64-lto-hardened-aot.tar.gz");
+  expect(url({ ...hardened, webAssembly: false })).toBe(
+    "bun-webkit-linux-amd64-lto-hardened-aot-no-webassembly.tar.gz",
+  );
+  expect(config({ webAssembly: false }, String(dir)).webAssembly).toBe(false);
+  for (const partial of [{}, { hardened: true, lto: false }, { hardened: true, lto: true, aot: false }, { lto: true }])
+    expect(() => config({ webkit: "prebuilt", webAssembly: false, ...partial }, String(dir))).toThrow(
+      "webAssembly=false requires hardened=true, lto=true and aot=true, or webkit=local",
+    );
 });
 
 const hasShadowRealm = typeof ShadowRealm !== "undefined";

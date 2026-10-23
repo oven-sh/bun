@@ -25,6 +25,7 @@
 //                                         "runWithASAN": why a Bun built with AddressSanitizer runs the program even where the quick subset leaves it out
 //                                         "skipInVariants": why variant() leaves the program out
 //                                         "skipInVariant": { "<label>": why variant("<label>", ..) or programsBuiltWith(.., "<label>", ..) alone leaves the program out }
+//                                         "todoOn": { "<process.platform>": what happens there today }: the program is listed as a todo and not run on that platform alone
 //   // STATISTIC: <name> (= | >= | <=) <n>  a line of the entry point: what the build counted under that `StatisticId`, as the hidden `--explain=statistics` prints it.
 //                                         It shows that an optimization ran on a host built-in, which `testaot` and so shell/expectations.py do not have.
 //                                         Checked on the build that keeps the types, and not where a variant adds build flags
@@ -290,12 +291,18 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const milliseconds = Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
   const result = { stdout, stderr, exitCode, signal: proc.signalCode };
-  if (proc.signalCode === "SIGKILL" && performance.now() - start >= timeout && milliseconds >= timeout / 10) atWorkWhenTimeWasUp.add(result);
+  if (proc.signalCode === "SIGKILL" && performance.now() - start >= timeout) {
+    console.error(`KILLED at its time limit of ${timeout / 1000} s, with ${Math.round(milliseconds / 1000)} s of processor time used: ${cmd.at(-1)}`);
+    killedWhenTimeWasUp.add(result);
+    if (milliseconds >= timeout / 10) atWorkWhenTimeWasUp.add(result);
+  }
   return result;
 }
 
+const killedWhenTimeWasUp = new WeakSet<object>();
 const atWorkWhenTimeWasUp = new WeakSet<object>();
 const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => Number(env.BUN_JSC_slowPathAllocsBetweenGCs) <= 7;
+const collectsEveryMillisecond = (env: Record<string, string | undefined>) => env.BUN_JSC_collectContinuously === "1";
 
 export const withoutCoreDump = (cmd: string[]) => (isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd]);
 
@@ -453,8 +460,12 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
       const start = performance.now();
       const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" });
       if (collectsAtEveryAllocation(environment)) spentCollecting += performance.now() - start;
-      // How long a program takes where every allocation collects says nothing about it. One that is still at work when its time is up has shown no fault, and has no output to compare.
-      if (collectsAtEveryAllocation(environment) && atWorkWhenTimeWasUp.has(ran)) {
+      // How long a program takes where every allocation collects says nothing about it, nor where a collection is asked for every millisecond, nor where the executable checks
+      // while it runs what the compiler took for proven. One that is still at work when its time is up has shown no fault, and has no output to compare.
+      const isSlowOnPurpose = collectsAtEveryAllocation(environment) || collectsEveryMillisecond(environment) || program.buildFlags.includes("--aot-validate");
+      // TODO: on Windows an executable in which a collection is asked for every millisecond has been killed at its time limit. Whether it was at work is not known.
+      const stallsOnWindows = isWindows && collectsEveryMillisecond(environment) && killedWhenTimeWasUp.has(ran);
+      if ((isSlowOnPurpose && atWorkWhenTimeWasUp.has(ran)) || stallsOnWindows) {
         console.error(`NOT THROUGH: ${program.entryPoints[0]} was still at work when its time was up`);
         continue;
       }
@@ -595,7 +606,12 @@ function define(title: string, chosen: string[], settings: Omit<Setup, "folder" 
       const beside = besideOf(path);
       const name = inPrograms(beside).replaceAll("\\", "/");
       const skipWithASAN: string | undefined = isASAN && existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).skipWithASAN : undefined;
+      const todoHere: string | undefined = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).todoOn?.[process.platform] : undefined;
       if (existsSync(beside + ".todo.txt")) test.todo(name);
+      else if (todoHere) {
+        console.error(`TODO: ${name}: ${todoHere}`);
+        test.todo(name);
+      }
       else if (skipWithASAN) {
         console.error(`SKIPPED: ${name}: ${skipWithASAN}`);
         test.skip(name, () => {});

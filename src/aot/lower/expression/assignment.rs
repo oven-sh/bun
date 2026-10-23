@@ -217,8 +217,9 @@ fn lower_assigned_value(
     value: ExprId,
 ) -> ValueId {
     match classify_assignment_target(lowering.file, target) {
-        AssignmentTarget::Identifier { name, .. } => {
-            let key = member::name_key(lowering.file, name);
+        AssignmentTarget::Identifier { identifier, name } => {
+            let binding = lowering.file.bound.binding(identifier);
+            let key = member::function_name_key(lowering.file, binding, name);
             lower_named_evaluation(lowering, value, PropertyName::Constant(key))
         }
         _ => lower_expression(lowering, value),

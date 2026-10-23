@@ -705,7 +705,8 @@ pub(super) fn define_container_layout(
     };
     let definition = Layout {
         kind,
-        name: (name.is_some() && !is_module_exports).then(|| file.intern_atom(name)),
+        name: (name.is_some() && !is_module_exports)
+            .then(|| file.intern_binding_name(Binding::Symbol(symbol.id), name)),
         module: Some(file.module_id()),
         position: find_container_position(file, symbol),
         fields: super::own_fields(file, layout).as_slice().to_vec(),

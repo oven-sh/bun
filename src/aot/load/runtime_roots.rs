@@ -2,7 +2,9 @@ use bun_sema::program::{CodeAnswer, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
-use crate::builtins::table::{MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES};
+use crate::builtins::table::{
+    MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES, runtime_function,
+};
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
@@ -22,6 +24,10 @@ struct RootUses {
     imports_uncompiled_code: bool,
 }
 
+fn exists_on(function: RuntimeFunction, platform: Platforms) -> bool {
+    runtime_function(function).is_some_and(|data| data.platforms.contains(platform))
+}
+
 fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
     let language_uses = RuntimeUses::of_language(platform);
     let mut host_loaded: FxHashSet<RuntimeModule> = language_uses.modules.iter().copied().collect();
@@ -30,6 +36,7 @@ fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
         .chain(MODULE_LOADER_FUNCTIONS)
         .chain(language_uses.functions.iter())
         .copied()
+        .filter(|&function| exists_on(function, platform))
         .collect();
     let mut imports_uncompiled_code = false;
     let mut named: Vec<RuntimeModule> = Vec::new();
@@ -170,9 +177,13 @@ mod tests {
                 assert!(has_module_root(&runtime, &roots, module), "{module:?}");
             }
         }
+        let here = crate::load::host_platform();
         for &function in STARTUP_FUNCTIONS.iter().chain(MODULE_LOADER_FUNCTIONS) {
             let path = runtime.function_file_path(function).unwrap();
-            assert!(roots.paths.contains(&path), "{function:?}");
+            assert!(
+                !exists_on(function, here) || roots.paths.contains(&path),
+                "{function:?}"
+            );
         }
         for path in runtime.function_files_without_ids() {
             assert!(roots.paths.contains(&path), "{}", BStr::new(&path));

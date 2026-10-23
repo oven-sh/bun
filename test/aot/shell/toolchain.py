@@ -126,15 +126,16 @@ def print_program(program, until=None, words=(), *, cwd=None, seconds=120):
     return said
 
 
-def run_image(image, entry, env=None, options=(), *, after=(), cwd=None, seconds=120):
+def run_image(image, entry, env=None, options=(), *, after=(), cwd=None, seconds=120, under=()):
     """Runs an entry point of `image` in the shell. Returns (exit code, stdout and stderr together).
 
+    `under` is a command that takes the shell's command line as its last arguments.
     The statements in `after` run once the module has been evaluated, top-level awaits included, and not at all if it throws.
     They wait on the module's promise because the shell does not drain microtasks between two -e scripts."""
     script = f"runCompiledEntryPoint({entry})"
     if after:
         script += ".then(() => {\n" + ";\n".join(after) + "\n})"
-    command = [tool("JSC"), "--aotImagePath=" + image, *options, "-e", open(HERE + "/prelude.js").read(), "-e", script]
+    command = [*under, tool("JSC"), "--aotImagePath=" + image, *options, "-e", open(HERE + "/prelude.js").read(), "-e", script]
     return run(command, cwd, seconds, shell_environment(env or os.environ))
 
 

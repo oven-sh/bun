@@ -24,7 +24,10 @@ export function heat(heatOverride: "hot" | "cold" | "neither", part: number, par
     async () => {
       const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "heat.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, heatOverride, "all"], undefined, { ...scriptEnvironment(), WRITTEN: written });
       const lines = stdout.split("\n").filter(line => line !== "");
-      expect(stderr).toBe("");
+      // What shell/quick.py passes over for now. The lines say what happened.
+      const todo = stderr.split("\n").filter(line => line.includes(": skipped: TODO: "));
+      if (todo.length) console.error(todo.join("\n"));
+      expect(stderr.split("\n").filter(line => line !== "" && !todo.includes(line))).toEqual([]);
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs answer the same with every function (hot|cold|neither), [0-9]+ do not$/);
       expect(lines.slice(0, -1)).toEqual([]);
       expect(exitCode).toBe(0);

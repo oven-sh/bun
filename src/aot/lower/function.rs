@@ -9,7 +9,7 @@ pub(crate) use self::closures::{
 };
 pub(in crate::lower) use self::header::is_derived_constructor;
 pub(crate) use self::header::{
-    create_header, declare_source_function, declare_source_function_with,
+    create_header, declare_source_function, declare_source_function_with, intern_own_name,
 };
 pub(crate) use self::this::{
     bind_this, get_home_object, get_new_target, get_this, lower_this_expression,

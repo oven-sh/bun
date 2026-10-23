@@ -45,7 +45,8 @@ pub(crate) fn lower_variable_declaration(
             expression::lower_expression(lowering, initializer)
         }
         PatKind::Ident(name) => {
-            let key = member::name_key(lowering.file, name);
+            let binding = bound.initialized_binding(decl.pat);
+            let key = member::function_name_key(lowering.file, binding, name);
             let name = PropertyName::Constant(key);
             expression::lower_named_evaluation(lowering, initializer, name)
         }

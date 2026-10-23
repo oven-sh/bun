@@ -1,5 +1,5 @@
 use bun_sema::atom::known;
-use bun_sema::bind::{CodeUnit, FnOwner};
+use bun_sema::bind::{Binding, CodeUnit, Decl, FnOwner};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
 
@@ -10,6 +10,18 @@ use crate::ir::{
     TypeTable,
 };
 use crate::lower::{FileLowering, captures, class, generator, layouts, positions};
+
+/// Of `function f() {}`: the name of the binding `f`.
+pub(crate) fn intern_own_name(file: &mut FileLowering<'_, '_, '_, '_>, function: FnId) -> StringId {
+    let func = file.hir[function];
+    let binding = match func.kind {
+        FnKind::Decl | FnKind::Expr => {
+            Binding::Symbol(file.bound.declared_symbol(Decl::Fn(function)))
+        }
+        _ => Binding::Free,
+    };
+    file.intern_function_name(binding, func.name)
+}
 
 pub(crate) fn create_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -126,7 +138,7 @@ fn create_source_header(
     }
     header.name = match name {
         Some(name) => Some(name),
-        None if func.name.is_some() => Some(file.intern_atom(func.name)),
+        None if func.name.is_some() => Some(intern_own_name(file, function)),
         None if func.flags.contains(Flags::DEFAULT) => Some(file.intern_atom(known::default)),
         None => None,
     };

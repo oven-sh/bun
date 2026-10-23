@@ -21,3 +21,6 @@ runtime-caches/flattened-dictionary    neither    counts the site caches that fl
 writes-to-host-objects/the-global-object-as-this-this-is-used-in-front-of-the-test    both    keeps `console` beside an object of its own; the shell's console is a plain object, which compiled code takes for the program's object
 writes-to-host-objects/the-global-object-a-bound-definition-replaces-a-global    both    keeps `console` beside an object of its own; the shell's console is a plain object, which compiled code takes for the program's object
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it    hot    TODO: the build stops: a guard does not prove what a read of a field relies on
+objects/own-accessors-whose-getters-nobody-can-list    hot    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
+objects/own-accessors-whose-getters-nobody-can-list    cold    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
+untyped-stress/builtin-method-results-in-conditions    hot    hot code takes an object for true and does not ask whether it masquerades as undefined: only the shell's makeMasquerader() makes such an object

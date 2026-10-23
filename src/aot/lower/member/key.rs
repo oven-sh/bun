@@ -1,4 +1,5 @@
 use bun_sema::atom::{Atom, number_to_string};
+use bun_sema::bind::Binding;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{ExprId, MemberKey, PropKey};
 
@@ -17,6 +18,18 @@ pub(crate) fn name_key(file: &mut FileLowering<'_, '_, '_, '_>, name: Atom) -> P
     match file.source.dialect() {
         SourceDialect::Program => file.atom_key(name),
         SourceDialect::Runtime => runtime_name_key(file, name),
+    }
+}
+
+/// The key that names the function in `const f = function () {}`.
+pub(in crate::lower) fn function_name_key(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    binding: Binding,
+    written: Atom,
+) -> PropertyKeyId {
+    match file.short_function_name(binding) {
+        Some(name) => file.text_key(name),
+        None => name_key(file, written),
     }
 }
 

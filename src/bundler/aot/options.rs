@@ -67,7 +67,8 @@ pub(crate) fn options_from_bundler<'r>(
             minifies_syntax: input.bundle_options.minify_syntax,
         },
         lists_modules: input.bundle_options.metafile,
-        minifies_identifiers: input.bundle_options.minify_identifiers,
+        minifies_identifiers: input.bundle_options.minify_identifiers
+            && !input.bundle_options.keep_names,
     })
 }
 

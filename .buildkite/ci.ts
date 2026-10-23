@@ -997,11 +997,9 @@ function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): str
 }
 
 // Debian runs every file. Any other lane runs one file in this many, others for each commit.
-function getAotFileDraw({ os, arch, distro, profile }: Platform, aot: AotTests): number {
+function getAotFileDraw({ os, distro, profile }: Platform, aot: AotTests): number {
   if (aot === "a tenth") return 10;
   if (distro === "debian" && !profile) return 1;
-  // TODO: 8 again once a run has shown every file on Windows: most of them have never begun there.
-  if (os === "windows" && arch === "x64") return 1;
   return os === "darwin" ? 2 : 8;
 }
 
@@ -1063,8 +1061,6 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   } else if (aot) {
     args.push(...aotTests.map(group => `--include=${group}`));
     args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
-    // TODO: until all code that is generated directly has been seen to run on arm64 (test/aot/joined-programs.ts).
-    if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/joined-programs-all-code-direct");
     // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
     if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/engine-tests");
     if (profile === "asan") args.push("--always-draw=aot/exception-checks");

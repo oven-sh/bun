@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunRun, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 import {
@@ -318,6 +318,26 @@ describe("emitAotSchemaUseCheck", () => {
         );
     }
   });
+
+  const webkit = process.env.BUN_WEBKIT_PATH ?? resolve(import.meta.dirname, "..", "..", "vendor", "WebKit");
+  const javaScriptCore = resolve(webkit, "Source", "JavaScriptCore");
+
+  // CI links a prebuilt engine, which brings none of its C++: .github/workflows/lint.yml fetches it for this test.
+  test.skipIf(process.env.BUN_WEBKIT_PATH === undefined && !existsSync(resolve(javaScriptCore, "b3", "B3Limits.h")))(
+    "its command finds a use for every name of the schema, in a checkout of the engine and in this tree",
+    async () => {
+      using dir = tempDir("build-aot-schema-uses-run", {});
+      const { cfg, n, o, dirStamp } = configure(String(dir));
+      const engine = {
+        ...engineAt(javaScriptCore),
+        schema: resolve(javaScriptCore, "aot", "ir", "AOTSchema.def"),
+        schemaGenerator: resolve(javaScriptCore, "aot", "ir", "generator", "index.ts"),
+      };
+      emitAotSchemaUseCheck({ n, cfg: { ...cfg, ci: true }, sources: noSources(), o, dirStamp, engine });
+      expect(await bunRun(edgeArgs(n, schemaUseCheckStamp(cfg)).split(" "))).toSpawn("");
+    },
+    generatorTimeout,
+  );
 });
 
 describe("emitBuiltinsTable", () => {

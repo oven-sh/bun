@@ -20,7 +20,7 @@ use crate::ir::generated::{FieldFlags, LimitId};
 use crate::ir::{DeclaredType, FunctionId, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
 pub(crate) use self::classes::constructor_function_layout;
-pub(in crate::lower) use self::classes::private_key;
+pub(in crate::lower) use self::classes::{class_binding, intern_class_name, private_key};
 pub(in crate::lower) use self::containers::container_layout;
 pub(crate) use self::containers::{
     begins_with_exports_object, module_exports_layout, module_type_layout,

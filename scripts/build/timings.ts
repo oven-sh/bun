@@ -809,6 +809,7 @@ type Lane = (typeof lanes)[number]["name"];
 const ruleLane: Record<RuleName, Lane> = {
   dep_cargo: "dependencies",
   dep_cargo_cross: "dependencies",
+  dep_check_defined: "dependencies",
   dep_check_undefined: "dependencies",
   dep_codegen: "dependencies",
   dep_fetch: "dependencies",

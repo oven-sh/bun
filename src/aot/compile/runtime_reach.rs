@@ -1087,8 +1087,11 @@ impl<'a, 's> Walk<'a, 's> {
                 None => self.reach_every_export(module),
             }
         }
+        let platform = self.input.platform;
         for &function in STARTUP_FUNCTIONS.iter().chain(MODULE_LOADER_FUNCTIONS) {
-            self.reach_function(function);
+            if table::runtime_function(function).is_some_and(|it| it.platforms.contains(platform)) {
+                self.reach_function(function);
+            }
         }
         for &file in application.compiled_files() {
             let read_by_name = self.reach_named_imports(file);

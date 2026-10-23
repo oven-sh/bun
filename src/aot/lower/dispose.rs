@@ -154,7 +154,8 @@ fn lower_resource_declaration(
     let (PatKind::Ident(name), Some(initializer)) = (pattern.kind, decl.init.some()) else {
         return;
     };
-    let key = member::name_key(lowering.file, name);
+    let binding = lowering.file.bound.initialized_binding(decl.pat);
+    let key = member::function_name_key(lowering.file, binding, name);
     let name = PropertyName::Constant(key);
     let value = expression::lower_named_evaluation(lowering, initializer, name);
     lowering.set_position(pattern.pos);

@@ -191,7 +191,9 @@ fn lower_jsx_member_path(
 ) -> Callee {
     let references = lowering.file.bound.runtime.implicit_references();
     let reference = find_jsx_reference(references, element.expression, root);
-    let root_name = lowering.file.intern_atom(reference.name);
+    let root_name = lowering
+        .file
+        .intern_binding_name(reference.binding, reference.name);
     let mut callee = Callee {
         function: scope::get_binding(lowering, reference.binding, reference.name),
         this: None,

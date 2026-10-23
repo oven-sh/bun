@@ -31,7 +31,7 @@ fn validates_at_run_time(options: &AotOptions) -> bool {
         .option_words
         .iter()
         .any(|word| match word.strip_prefix(b"check=") {
-            Some(checks) => checks.split(|&byte| byte == b',').any(names_validate),
+            Some(checks) => bun_core::strings::split(checks, b",").any(names_validate),
             None => &**word == b"validate",
         })
 }

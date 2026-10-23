@@ -228,9 +228,12 @@ export interface Config {
   codeGenerationFromStrings: boolean;
   /**
    * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
-   * false whatever `BUN_JSC_useWasm` says. A WebKit built from source (`webkit: "local"`) is also
-   * built with ENABLE_WEBASSEMBLY=0, which leaves the engine's WebAssembly code out of the binary;
-   * a prebuilt one keeps it.
+   * false whatever `BUN_JSC_useWasm` says, and WebKit is built with ENABLE_WEBASSEMBLY=0, which
+   * leaves the engine's WebAssembly code out of the binary. Every package that loads a WebAssembly
+   * module stops working, and so do the modules that `bun build --compile --aot` compiles ahead of
+   * time: it warns at each one that a program imports, and the executable throws a ReferenceError.
+   * Takes a WebKit built from source (`webkit: "local"`) or the one prebuilt without WebAssembly,
+   * which `hardened`, `lto` and `aot` together select.
    */
   webAssembly: boolean;
   /**
@@ -1253,6 +1256,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
     "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
     { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
+  assert(
+    (partial.webAssembly ?? true) || webkit === "local" || (hardened && lto && (partial.aot ?? true)),
+    "webAssembly=false requires hardened=true, lto=true and aot=true, or webkit=local",
+    { hint: "That is the one WebKit prebuilt without WebAssembly (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(
     !hardened || toolchain.llvmStrip !== undefined,

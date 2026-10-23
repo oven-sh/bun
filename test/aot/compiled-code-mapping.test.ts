@@ -356,6 +356,57 @@ test.skipIf(!isLinux)(
   120_000,
 );
 
+test.skipIf(!isLinux || !isGlibc)(
+  "the offsets of the stubs that native functions are called through lie behind the code, in pages that cannot be executed",
+  async () => {
+    using dir = tempDir("aot-code-mapping-ffi", {
+      "program.ts": `import { dlopen, FFIType, JSCallback, ptr } from "bun:ffi";
+const libc = dlopen("libc.so.6", {
+  abs: { args: [FFIType.i32], returns: FFIType.i32 },
+  qsort: { args: [FFIType.ptr, FFIType.u64, FFIType.u64, FFIType.function], returns: FFIType.void },
+});
+let calls = 0;
+const compare = new JSCallback(() => (calls++, 0), { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 });
+libc.symbols.qsort(ptr(new Int32Array([3, 1, 2])), 3, 4, compare.ptr);
+console.log(libc.symbols.abs(-5), calls > 0);
+`,
+    });
+    const { executable, map } = await buildWithMap(String(dir));
+    expect(await run([executable])).toEqual({ stdout: "5 true\n", stderr: "", exitCode: 0, signalCode: null });
+
+    const file = readFileSync(executable);
+    const image = findImage(file);
+    const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+    const codeSize = Number(file.readBigUInt64LE(image + imageHeader.codeSize));
+    const executableSize = Number(file.readBigUInt64LE(image + imageHeader.executableSize));
+    const endOfConstants =
+      file.readUInt32LE(image + imageHeader.constantsOffset) + file.readUInt32LE(image + imageHeader.constantsSize);
+    const stubs = rowsOfMap(map, "N").map(([, offset, size]) => ({ offset: Number(offset), size: Number(size) }));
+    expect(stubs).toEqual([{ offset: expect.any(Number), size: expect.any(Number) }]);
+    expect(stubs[0].offset + stubs[0].size).toBeLessThanOrEqual(executableSize);
+
+    const start = Math.ceil(endOfConstants / 4) * 4;
+    expect(start).toBeGreaterThanOrEqual(executableSize);
+    const [invoke, context, contextSize, numberOfEntries, ...entries] = Array.from(
+      { length: (codeSize - start) / 4 },
+      (_, index) => file.readUInt32LE(codeOffset + start + index * 4),
+    );
+    expect({ end: context + contextSize, numberOfEntries }).toEqual({
+      end: stubs[0].size,
+      numberOfEntries: entries.length,
+    });
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries).toEqual([...new Set(entries)].sort((a, b) => a - b));
+    expect([invoke, ...entries].filter(offset => offset >= context)).toEqual([]);
+    expect(
+      loadSegments(executable)
+        .filter(segment => segment.start <= codeOffset + start && codeOffset + codeSize <= segment.end)
+        .map(segment => segment.flags),
+    ).toEqual([mayRead]);
+  },
+  120_000,
+);
+
 test.skipIf(!isLinux)("Bun has room for the program headers of an executable", async () => {
   const [note, descriptorSizeOffset, noteHeaderBytes] = [4, 4, 16];
   const rooms = readElf64ProgramHeaders(bunExe()).filter(header => header.type === note && header.align === 8n);

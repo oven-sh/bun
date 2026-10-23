@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, written_name};
-use bun_sema::bind::{FnOwner, Parent};
+use bun_sema::bind::{Binding, Decl, FnOwner, Parent};
 use bun_sema::check::aot::{
     ClassDeclaration, ClassMemberSource, ClassParent, ClassRef, ClassShape, FunctionRef,
     MemberLookup, MemberName, ObjectMember, ObjectMemberKind, PositionTypes, ShapeKind,
@@ -17,16 +17,32 @@ use crate::ir::generated::{
 };
 use crate::ir::{
     ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, Mapped, OpaqueKind,
-    PositionFlags, PropertyKey, PropertyKeyId, Type, VariableKey,
+    PositionFlags, PropertyKey, PropertyKeyId, StringId, Type, VariableKey,
 };
 use crate::lower::module::LibraryFunctionForm;
 use crate::lower::positions::{self, SiteOrigin};
 use crate::lower::types::map_type_at;
 use crate::lower::{
-    CheckerTypeId, FileLowering, SourceKind, class, convert, function_types, member, module, scope,
+    CheckerTypeId, FileLowering, SourceKind, class, convert, function, function_types, member,
+    module, scope,
 };
 
 type Supertypes = SmallVec<[LayoutId; 4]>;
+
+pub(in crate::lower) fn class_binding(
+    file: &FileLowering<'_, '_, '_, '_>,
+    class: ClassId,
+) -> Binding {
+    Binding::Symbol(file.bound.declared_symbol(Decl::Class(class)))
+}
+
+pub(in crate::lower) fn intern_class_name(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    class: ClassId,
+) -> StringId {
+    let binding = class_binding(file, class);
+    file.intern_function_name(binding, file.hir[class].name)
+}
 
 #[derive(Copy, Clone)]
 struct FieldOwner {
@@ -649,7 +665,7 @@ pub(super) fn define_class_layout(
     };
     let definition = Layout {
         kind: LayoutKind::Instance,
-        name: node.name.is_some().then(|| file.intern_atom(node.name)),
+        name: node.name.is_some().then(|| intern_class_name(file, class)),
         module: Some(file.module_id()),
         position: class_position(&node),
         base,
@@ -793,7 +809,10 @@ fn define_constructor_function_layout(
     let base = find_parent_layout(file, function).filter(|&it| it != layout);
     let definition = Layout {
         kind: LayoutKind::Instance,
-        name: node.name.is_some().then(|| file.intern_atom(node.name)),
+        name: node
+            .name
+            .is_some()
+            .then(|| function::intern_own_name(file, function.function)),
         module: Some(file.module_id()),
         position: node.start,
         base,

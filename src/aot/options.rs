@@ -20,7 +20,7 @@ pub struct Options<'a> {
     pub removable: RemovableOptions,
     // --metafile
     pub lists_modules: bool,
-    // --minify-identifiers
+    // --minify-identifiers without --keep-names
     pub minifies_identifiers: bool,
 }
 

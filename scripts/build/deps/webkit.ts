@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-91ef8f6e";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-4184cc97";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -79,6 +79,8 @@ function prebuiltSuffix(cfg: Config): string {
       hint: "Build with --aot=on, or with a local WebKit checkout (--webkit=local)",
     });
   }
+  // config.ts refuses every other combination.
+  if (!cfg.webAssembly) s += "-no-webassembly";
   return s;
 }
 

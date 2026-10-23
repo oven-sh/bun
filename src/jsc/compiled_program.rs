@@ -490,7 +490,9 @@ pub fn refuse_variables_that_are_never_read() {
         .filter_map(|&entry| {
             // SAFETY: an entry of the environment ends with a NUL and lives as long as the process.
             let entry = unsafe { core::ffi::CStr::from_ptr(entry) };
-            let name = entry.to_bytes().split(|&byte| byte == b'=').next()?;
+            let bytes = entry.to_bytes();
+            let end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
+            let name = &bytes[..end];
             is_never_read(entry, name).then_some(name)
         })
         .collect();

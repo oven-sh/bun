@@ -9,7 +9,7 @@ programsBuiltWith("every-member-of-a-host-object", "in-every-run", [], {}, 1, 1,
   "every-member-of-bun-is-read",
   "every-member-of-process-is-read",
 ]);
-// Linux on ARM64: in the engine's shell the program died of a signal under each of the three heats.
+// Linux on ARM64: in the engine's shell, where its counts are written, the program died of a signal under each of the three heats.
 for (const [label, flags] of [
   ["in-every-run", []],
   ["in-every-run-every-function-hot", ["--aot-heat=everything-is-hot"]],
@@ -17,4 +17,9 @@ for (const [label, flags] of [
   ["in-every-run-every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]],
 ] as const) {
   programsBuiltWith("arrays", label, [...flags], {}, 1, 1, ["index-fill-grows-like-push"]);
+  programsBuiltWith("arrays", `${label}-with-counts`, [...flags], { BUN_JSC_aotCountsPath: "/dev/null" }, 1, 1, [
+    "index-fill-grows-like-push",
+  ]);
 }
+// Windows: process.cwd() spelled a folder of the executable with `/` where `__dirname` has `\`.
+programsBuiltWith("modules", "in-every-run", [], {}, 1, 1, ["the-working-directory-is-a-folder-of-the-executable"]);

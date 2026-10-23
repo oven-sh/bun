@@ -13,7 +13,7 @@ a large program is neither, and `neither` compiles every function that way. A fo
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
 Prints one line per program that is `same` normally and not at that heat, or dies of a signal at that heat, and exits with 1 if there is one. Not counted: the programs in
-heat-known.txt, which count runtime calls or check which code the compiler generated.
+heat-known.txt, which count runtime calls or check which code the compiler generated. A verdict `skipped: TODO: ..` of quick.py goes to stderr.
 """
 import os, subprocess, sys, tempfile
 
@@ -50,6 +50,9 @@ if __name__ == "__main__":
     known = {line.split()[0] for line in open(HERE + "/heat-known.txt") if line.strip() and not line.startswith("#") and line.split()[1] in (heat, "both")}
     with tempfile.TemporaryDirectory(prefix="aot-heat") as folder:
         forced = verdicts([*jobs, *programs], folder + "/forced", HEATS[heat])
+        for name, verdict in forced.items():
+            if verdict.startswith("skipped: TODO: "):
+                print(f"{name}: {verdict}", file=sys.stderr)
         suspects = [name for name, verdict in forced.items() if not verdict.startswith(("same", "skipped")) and name not in known]
         baseline = verdicts([*jobs, *suspects], folder + "/baseline", "none") if suspects else {}
     failures = [name for name in suspects if baseline.get(name, "").startswith("same") or "died of signal" in forced[name]]

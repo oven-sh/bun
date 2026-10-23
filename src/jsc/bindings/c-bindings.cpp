@@ -29,7 +29,7 @@
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #if ENABLE(AOT_GUARDED_PAGES)
-#include <sys/personality.h>
+#include <wtf/WTFConfig.h>
 #endif
 #endif
 #else
@@ -527,8 +527,7 @@ void* mapAtRandomAddress(size_t mappingSize)
     constexpr uintptr_t lowestRandomAddress = 64ull << 30;
     constexpr uintptr_t highestRandomAddress = 124ull << 40;
     constexpr unsigned maxDraws = 16;
-    int persona = personality(0xffffffff);
-    if (persona != -1 && persona & ADDR_NO_RANDOMIZE)
+    if (WTF::isAddressRandomizationDisabled())
         return MAP_FAILED;
     uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - mappingSize) / unsafeStackPageSize;
     for (unsigned draw = 0; draw < maxDraws; ++draw) {

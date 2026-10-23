@@ -65,6 +65,7 @@ const needNoCompiler = [
   "cli/hand-over-to-the-real-bun-aot.test.ts",
   "cli/test/test-aot-mocks-and-lazy-constants.test.ts",
   "internal/build-hardened-flags.test.ts",
+  "internal/build-left-out-features.test.ts",
   "internal/builtins-manifest.test.ts",
   "js/bun/jsc/sealed-global-object-error-message.test.ts",
 ];

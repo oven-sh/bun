@@ -25,7 +25,7 @@ pub(crate) fn finish_constructor_header(
     let hir = file.hir;
     let node = hir[class];
     if node.name.is_some() {
-        header.name = Some(file.intern_atom(node.name));
+        header.name = Some(layouts::intern_class_name(file, class));
         header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
     } else {
         header.name = name;

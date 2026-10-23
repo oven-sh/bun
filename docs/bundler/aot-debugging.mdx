@@ -244,7 +244,7 @@ RangeError: bad id -1
 
 ### Minified and obfuscated executables
 
-`--minify` doesn't change a stack trace. The compiler works from your source files, so a trace has their names, lines and columns with or without it. `--sourcemap` has no effect on an executable that `bun compile` builds, and the build says so.
+`--minify` shortens the names of functions, classes and variables in stack traces, in error messages and in `name`, and the executable no longer has the names you wrote. It's the same set of names that a bundle renames, but not the same letters. Methods and other properties keep their names, and so does everything that a direct `eval` can see. Paths, lines and columns are still those of your source files. With `--keep-names`, no name changes. `--sourcemap` has no effect on an executable that `bun compile` builds, and the build says so.
 
 With `--obfuscate`, a frame has two numbers in place of the name, the path, the line and the column.
 

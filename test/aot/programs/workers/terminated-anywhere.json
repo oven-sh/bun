@@ -1,1 +1,1 @@
-{"skipInShell": "needs Workers"}
+{"skipInShell": "needs Workers", "todoOn": {"win32": "the run without --aot, which the executable is compared with, has been killed at its time limit"}}

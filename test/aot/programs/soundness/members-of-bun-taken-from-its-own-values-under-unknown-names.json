@@ -1,0 +1,1 @@
+{ "skipInVariant": { "trimmed-runtime": "it calls members of Bun under names that are put together at run time, and the source names none of them: --trim removes them, and the calls throw" } }

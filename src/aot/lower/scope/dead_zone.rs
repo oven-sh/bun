@@ -1,5 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Binding, InitialState, ScopeId, ScopeKind, SymbolId};
 
 use super::{BindingRef, DeadZone, ScopeSlot, bindings};
 use crate::ir::{ClassSlot, DeclaredType, TypeTable, ValueId};
@@ -69,17 +69,17 @@ pub(super) fn get_checked(
         if !has_dead_zone(lowering.file, binding) {
             return value;
         }
-        return emit_initialization_check(lowering, value, name);
+        return emit_initialization_check(lowering, value, symbol, name);
     };
     match local.dead_zone {
         DeadZone::Never | DeadZone::Initialized => lowering.builder.read_variable(local.variable),
         DeadZone::Uninitialized => {
             let absent = lowering.builder.absent();
-            emit_initialization_check(lowering, absent, name)
+            emit_initialization_check(lowering, absent, symbol, name)
         }
         DeadZone::DecidedAtRunTime => {
             let value = lowering.builder.read_variable(local.variable);
-            let checked = emit_initialization_check(lowering, value, name);
+            let checked = emit_initialization_check(lowering, value, symbol, name);
             lowering.builder.write_variable(local.variable, checked);
             checked
         }
@@ -116,8 +116,10 @@ pub(super) fn is_tested_before_value(
 fn emit_initialization_check(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     value: ValueId,
+    symbol: SymbolId,
     name: Atom,
 ) -> ValueId {
-    let name = lowering.file.intern_atom(name);
+    let binding = Binding::Symbol(symbol);
+    let name = lowering.file.intern_binding_name(binding, name);
     lowering.builder.check_initialized(value, name)
 }

@@ -1,4 +1,4 @@
-import { everyCase, program, sample, ways } from "./generated/bytes-whoever-holds-them";
+import { everyCase, program, sample, ways, written } from "./generated/bytes-whoever-holds-them";
 import { generated, type Generated } from "./generated/run-generated";
 
 const casesInOneProgram = 70;
@@ -16,6 +16,7 @@ for (const [way, flags] of Object.entries(ways)) {
       isAlwaysRun: true,
       isOnlyCompiled: true,
       flags,
+      written,
       make: () => program((sampled ??= sample(casesInOneProgram)), isOpened),
     });
     for (let first = 0; first < everyCase.length; first += casesInOneProgram)
@@ -24,6 +25,7 @@ for (const [way, flags] of Object.entries(ways)) {
         isAlwaysRun: false,
         isOnlyCompiled: true,
         flags,
+        written,
         make: () => program(everyCase.slice(first, first + casesInOneProgram), isOpened),
       });
   }

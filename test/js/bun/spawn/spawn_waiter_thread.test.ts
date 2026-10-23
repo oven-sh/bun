@@ -102,7 +102,8 @@ test.skipIf(!isLinux)("a child that exits does not interrupt a system call of th
   expect(exitCode).toBe(0);
 });
 
-// The first spawn starts the waiter thread, which needs its own file descriptor.
+// The first spawn starts the waiter thread, which needs its own file descriptor. Its child must still run when that
+// fails: a child that has ended by itself is reported with its exit status, not with the error.
 test.skipIf(!isLinux)("`exited` rejects when the waiter thread can't start, and the next spawn retries", async () => {
   const script = `
     const fs = require("node:fs");
@@ -111,7 +112,10 @@ test.skipIf(!isLinux)("`exited` rejects when the waiter thread can't start, and 
     try {
       for (;;) held.push(fs.openSync("/dev/null", "r"));
     } catch {}
-    console.log(await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited.catch(e => e.code));
+    const unwatched = Bun.spawn({ cmd: ["sleep", "1000"], stdio });
+    // If the thread did start, this ends the child and the output shows its status.
+    unwatched.kill("SIGKILL");
+    console.log(await unwatched.exited.catch(e => e.code));
     for (const fd of held) fs.closeSync(fd);
     console.log(await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited);
   `;

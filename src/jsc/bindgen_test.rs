@@ -743,10 +743,10 @@ impl TestProtoCaller {
         cx: &mut JsScope<'a>,
         callee: JsLocal<'a>,
         arguments: &'a [JsLocal<'a>],
-        function: impl Fn(&mut JsScope<'a>) -> JsResult<JSValue>,
+        function: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         self.calls.set(self.calls.get() + 1);
-        let returned = function(cx)?;
+        let returned = function(this_value, cx, arguments)?;
         JSValue::create_array_from_slice(
             cx.global(),
             &[
@@ -764,6 +764,15 @@ impl TestProtoCaller {
 
     pub(crate) fn first(&self, _: &mut JsScope<'_>, first: JsLocal<'_>) -> JsResult<JSValue> {
         Ok(first.to_js())
+    }
+
+    pub(crate) fn rest(
+        &self,
+        _: &mut JsScope<'_>,
+        _first: JsLocal<'_>,
+        rest: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::from(rest.len() as u32))
     }
 
     pub(crate) fn fail(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

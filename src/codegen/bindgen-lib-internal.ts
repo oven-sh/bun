@@ -1986,7 +1986,7 @@ export interface ClassOptions {
   overridesToJS?: boolean;
   /** JavaScript only sees a function bound to the instance. Members are called with that function as `this` and get its `boundThis`. */
   forBind?: boolean;
-  /** The struct's method that calls every native function of `proto`. It receives the function as a closure. */
+  /** The struct's method that calls every native function of `proto`. It receives a pointer to the function. */
   protoCaller?: string;
   /** Traits to bring into scope, for members that are trait methods. */
   rustTraits?: readonly string[];
@@ -2294,10 +2294,12 @@ export class ClassType extends NamedType {
             overloads.length === 0 &&
             signature.capability === "js" &&
             signature.throws &&
-            signature.returns instanceof AnyType,
+            signature.returns instanceof AnyType &&
+            signature.args.every(({ type }) => type instanceof AnyType || type instanceof VariadicType),
         ),
-      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true and returns: b.any',
+      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true, returns: b.any and arguments that are b.any',
     );
+    assert(!(this.protoCaller !== undefined && this.refCounted), "protoCaller is not for a refCounted class");
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);

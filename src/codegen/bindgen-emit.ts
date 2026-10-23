@@ -850,7 +850,7 @@ ${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisO
 const cppCastThisValue = (type: ClassType, value: string) =>
   `${type.forBind ? "Bun::Bindgen::boundThisAs" : "dynamicDowncast"}<${type.cpp}>(${value})`;
 
-/** Extra thunk arguments, after `this`, for a function that `protoCaller` calls. */
+/** Thunk arguments, after `this`, for a function that `protoCaller` calls. Rust reads the function's own arguments from `allArguments`. */
 const protoCallerArguments = [
   { name: "callee", type: new AnyType() },
   { name: "allArguments", type: new VariadicType() },
@@ -858,10 +858,16 @@ const protoCallerArguments = [
 const isCalledByProtoCaller = (type: ClassType, fn: FunctionDefinition) =>
   type.protoCaller !== undefined && type.functions.includes(fn);
 
-function cppMethod(type: ClassType, fn: FunctionDefinition): string {
-  const host = methodHostFunctionName(type, fn);
-  const symbol = (method: Signature) => methodSymbolName(type, method as Method);
-  const throughCaller = isCalledByProtoCaller(type, fn);
+function cppMethod(type: ClassType, declared: FunctionDefinition): string {
+  const host = methodHostFunctionName(type, declared);
+  const throughCaller = isCalledByProtoCaller(type, declared);
+  const symbol = (method: Signature) =>
+    methodSymbolName(type, (throughCaller ? Object.getPrototypeOf(method) : method) as Method);
+  const fn: FunctionDefinition = throughCaller
+    ? Object.create(declared, {
+        signatures: { value: declared.signatures.map(method => Object.create(method, { args: { value: [] } })) },
+      })
+    : declared;
   const leadingTypes = isStaticFunction(fn)
     ? []
     : ["JSC::JSCell*", ...(throughCaller ? protoCallerArguments.map(({ type }) => externType(type)) : [])];
@@ -874,7 +880,7 @@ ${cppHostFunction(
   symbol,
   isStaticFunction(fn)
     ? ""
-    : fn === type.callInstance
+    : declared === type.callInstance
       ? `    auto* thisObject = uncheckedDowncast<${type.cpp}>(callFrame->jsCallee());
 `
       : `    auto* thisObject = ${cppCastThisValue(type, "callFrame->thisValue()")};
@@ -888,7 +894,7 @@ ${throughCaller ? "    auto allArguments = Bun::Bindgen::variadicArguments(callF
   throughCaller ? ["JSC::JSValue::encode(callFrame->jsCallee())", toExtern("allArguments")] : [],
 )}
 ${
-  fn === type.callInstance
+  declared === type.callInstance
     ? `
 JSC::CallData ${type.cpp}::getCallData(JSC::JSCell*)
 {
@@ -1645,20 +1651,29 @@ ${
 
   for (const method of type.methods) {
     const isStatic = method.receiver === "static";
+    const throughCaller = isCalledByProtoCaller(type, functionOf(type, method));
     const call = `<${rustPath}>::${method.rustName}(${[
       ...leading(method.receiver, method.passThis, method.capability),
-      ...rustArguments(method),
+      ...(throughCaller
+        ? method.args.map(({ type }, i) =>
+            type instanceof VariadicType
+              ? `all_arguments.get(${i}..).unwrap_or_default()`
+              : `all_arguments.get(${i}).copied().unwrap_or(bindgen::JsLocal::UNDEFINED)`,
+          )
+        : rustArguments(method)),
     ].join(", ")})`;
-    const callerArguments = isCalledByProtoCaller(type, functionOf(type, method)) ? protoCallerArguments : [];
-    const throughCaller = callerArguments.length > 0;
-    const args = { args: [...callerArguments, ...method.args] } as unknown as Signature;
+    const args = throughCaller ? protoCallerArguments : method.args;
     thunks += rustThunk(
       methodSymbolName(type, method),
-      [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(args, scope)],
+      [
+        ...(isStatic ? [] : ["this: *mut core::ffi::c_void"]),
+        ...rustExternParameters({ args } as unknown as Signature, scope),
+      ],
       "JSValue",
-      `${takeThis(method.receiver, method.passThis || throughCaller)}${rustTakeArguments(args.args, scope)}let result = ${
+      `${takeThis(method.receiver, method.passThis || throughCaller)}${rustTakeArguments(args, scope)}let result = ${
         throughCaller
-          ? `<${rustPath}>::${type.protoCaller}(${[...leading("ref", true, "js"), ...callerArguments.map(rustArgumentName)].join(", ")}, |cx| ${call})`
+          ? // It captures nothing, so it's passed as a function pointer.
+            `<${rustPath}>::${type.protoCaller}(${[...leading("ref", true, "js"), ...args.map(rustArgumentName)].join(", ")}, |this, cx, ${method.args.length ? "all_arguments" : "_"}| ${call})`
           : infallible(call, method.throws, method.returns)
       };
 bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`,

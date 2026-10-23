@@ -366,6 +366,8 @@ export const TestProtoCaller = b.class({
     /** How many calls `describe_call` made. */
     calls: { getter: b.u32 },
     first: { ...calledByProtoCaller, args: { first: b.any } },
+    /** How many arguments follow the first. */
+    rest: { ...calledByProtoCaller, args: { first: b.any, rest: b.any.variadic } },
     fail: calledByProtoCaller,
   },
   static: {

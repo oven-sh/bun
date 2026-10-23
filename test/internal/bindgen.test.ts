@@ -273,15 +273,19 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     { ...calledByProtoCaller, returns: b.i32 },
     { ...calledByProtoCaller, capability: "heap" },
     { ...calledByProtoCaller, throws: false },
+    { ...calledByProtoCaller, args: { x: b.i32 } },
     [
       { ...calledByProtoCaller, rustName: "f_number", args: { x: b.i32 } },
       { ...calledByProtoCaller, rustName: "f_string", args: { x: b.string } },
     ],
   ] as const) {
     expect(() => b.class({ rustPath: "T", protoCaller: "caller", proto: { f } })).toThrow(
-      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true and returns: b.any',
+      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true, returns: b.any and arguments that are b.any',
     );
   }
+  expect(() => b.class({ rustPath: "T", protoCaller: "caller", refCounted: true })).toThrow(
+    "protoCaller is not for a refCounted class",
+  );
   expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call needs a constructor object: add construct");
   // @ts-expect-error
   expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
@@ -2361,6 +2365,13 @@ describe("classes", () => {
       expect(instance.first("a", "b", "c")).toEqual([instance, TestProtoCaller.prototype.first, 3, "a"]);
       expect(instance.first()).toEqual([instance, TestProtoCaller.prototype.first, 0, undefined]);
       expect(instance.calls).toBe(2);
+    });
+
+    it("the function takes its arguments out of the list", () => {
+      const rest = (...args: unknown[]) => new TestProtoCaller().rest(...args).slice(2);
+      expect(rest()).toEqual([0, 0]);
+      expect(rest("a")).toEqual([1, 0]);
+      expect(rest("a", "b", "c")).toEqual([3, 2]);
     });
 
     it("gets what the function throws", () => {

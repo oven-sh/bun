@@ -924,22 +924,22 @@ const NOT_POLLED: [&[u8]; 6] = [
 ];
 
 impl Expect {
-    /// The `protoCaller` in expect.bind.ts.
-    #[inline]
+    /// The `protoCaller` in expect.bind.ts. Inlined into the thunk of every matcher, it took 32 KB.
+    #[inline(never)]
     pub(crate) fn call_matcher<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
         callee: JsLocal<'a>,
         arguments: &'a [JsLocal<'a>],
-        matcher: impl Fn(&mut JsScope<'a>) -> JsResult<JSValue>,
+        matcher: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         let call = MatcherCall {
             this: this_value.to_js(),
             callee: callee.to_js(),
             arguments: JsLocal::to_js_slice(arguments),
         };
-        self.run_matcher(cx, &call, matcher)
+        self.run_matcher(cx, &call, |cx| matcher(this_value, cx, arguments))
     }
 
     /// Every matcher runs through here.

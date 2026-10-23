@@ -1355,7 +1355,9 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Function => {
-                    let printable = value.get_name_property(self.global_this)?;
+                    // The function's own name; `get_name_property` yields Symbol.toStringTag first,
+                    // which is "AsyncFunction" etc. for async and generator functions
+                    let printable = value.get_name(self.global_this)?;
 
                     if printable.is_empty() {
                         writer.print(format_args!(

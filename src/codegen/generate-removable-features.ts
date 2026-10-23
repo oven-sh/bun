@@ -12,6 +12,7 @@ import {
   type FeatureName,
   type TrimFeature,
 } from "../../scripts/build/trim/features.ts";
+import { rustTableFormat } from "../../scripts/build/trim/table-format.ts";
 import { writeIfNotChanged } from "./helpers.ts";
 
 const generatorPath = "src/codegen/generate-removable-features.ts";
@@ -144,7 +145,7 @@ export function cppHeader(model: FeatureModel): string {
 function generate(repositoryRoot: string, codegenDir: string): void {
   const model = loadFeatures(repositoryRoot);
   const outputs = {
-    "removable_features.rs": rustSource(model),
+    "removable_features.rs": rustSource(model) + rustTableFormat().join("\n") + "\n",
     "BunRemovableFeatures.h": cppHeader(model),
     "removable-features.json": serializeFeatureModel(model),
   };

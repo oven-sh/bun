@@ -452,10 +452,7 @@ export interface Provides {
    * like `libs`. Only for a `prebuilt` source.
    */
   files?: string[];
-  /**
-   * The graph follows from what the tarball holds. It is then an input of configure like the Rust plans: ninja
-   * fetches it first, reconfigures, and starts over with the new manifest. Only for a `prebuilt` source.
-   */
+  /** The graph follows from what the tarball holds: ninja fetches it first and reconfigures, as for the Rust plans. */
   contentsDecideGraph?: boolean;
 }
 

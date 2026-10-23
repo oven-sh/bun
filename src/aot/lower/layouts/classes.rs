@@ -61,7 +61,7 @@ fn hidden_key(
     file.fragment.property_keys.intern(key)
 }
 
-pub(super) fn private_key(
+pub(in crate::lower) fn private_key(
     file: &mut FileLowering<'_, '_, '_, '_>,
     owner: LayoutId,
     name: Atom,
@@ -832,7 +832,7 @@ fn declare_constructor_function_layout(
     Some(file.fragment.declare_layout(key))
 }
 
-pub(super) fn constructor_function_layout(
+pub(crate) fn constructor_function_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionRef,
 ) -> Option<LayoutId> {

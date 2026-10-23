@@ -1,3 +1,0 @@
-# TS2502 for a circular auto-accessor has no node in TypeScript. In a declaration file it must not stop the build.
-main.ts:0 role `` = Checked
-absent: -:0 diagnostic TS2502 = Semantic StopsBuild

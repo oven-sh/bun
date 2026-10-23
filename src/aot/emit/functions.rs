@@ -5,11 +5,6 @@ use std::sync::Arc;
 
 const FUNCTIONS_PER_SLICE: usize = 256;
 
-#[cfg(test)]
-pub(super) fn create_function_tasks<'p, 'o>(functions: Vec<Function>) -> Vec<Task<'p, 'o>> {
-    create_function_tasks_in_parallel(functions, &crate::ir::run_serially)
-}
-
 // Each slice is a list of its own, which its task frees. A function is a large record, so the threads share the copying.
 pub(super) fn create_function_tasks_in_parallel<'p, 'o>(
     mut functions: Vec<Function>,

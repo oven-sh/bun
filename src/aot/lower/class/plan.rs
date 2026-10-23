@@ -352,7 +352,7 @@ fn find_member_slot(
     }
 }
 
-pub(super) fn class_slots(
+pub(crate) fn class_slots(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     settings: &TranspileSettings,

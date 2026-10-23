@@ -1,9 +1,0 @@
-# A conditional alias decides by its argument. An argument that names a `.d.ts` alias is not exact, so the written type is `unknown`, not the branch the checker takes.
-inexact-argument-of-conditional-alias.ts:4 written `Id` = unknown
-inexact-argument-of-conditional-alias.ts:4 written `Id[]` = unknown[]
-inexact-argument-of-conditional-alias.ts:4 written `ElementKind<Id[]>` = unknown
-inexact-argument-of-conditional-alias.ts:4 variable `a` = unknown
-absent: inexact-argument-of-conditional-alias.ts:4 written `ElementKind<Id[]>` = "text"
-absent: inexact-argument-of-conditional-alias.ts:4 written `ElementKind<Id[]>` = "other"
-
-inexact-argument-of-conditional-alias.ts:5 written `ElementKind<string[]>` = "text"

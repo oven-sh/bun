@@ -34,8 +34,7 @@ runs:
 
     - name: Setup system deps
       # cmake/ninja for `--configure-only`; clang for toolchain detection
-      # (configure resolves cfg.cc/cxx). Only `engine-test-programs` compiles and
-      # links C++, in a debug build: libclang-rt has AddressSanitizer's runtime.
+      # (configure resolves cfg.cc/cxx). `engine-test-programs` links with AddressSanitizer.
       shell: bash
       env:
         LLVM_VERSION_MAJOR: ${{ inputs.llvm-version }}

@@ -21,7 +21,6 @@ generated(
     {
       name: `${road}: what does not fit`,
       isAlwaysRun: alwaysRun.has(road),
-      linesMayBeRefused: true as const,
       modeFailsToday: modeDeparts.has(road) ? "r.a++ where a is missing" : undefined,
       make: () => program(road, expression, "does not fit"),
     },

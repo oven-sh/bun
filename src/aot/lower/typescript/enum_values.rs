@@ -205,31 +205,7 @@ fn find_known_primitive(
                 Some(TranspilerConstant::NumberLeftToRunTime) | None => KnownPrimitive::Other,
             }
         }
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Assign { op: Some(_), .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => KnownPrimitive::Other,
+        _ => KnownPrimitive::Other,
     }
 }
 

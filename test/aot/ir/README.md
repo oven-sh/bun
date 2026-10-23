@@ -114,7 +114,7 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`RUN`.** A file has at least one. Each `RUN` is a build of its own. A prefix is capitals and digits, and it is not `RUN`, `FORM`,
   `OPTIONS`, `DIAGNOSTIC`, `STATISTIC` or `CHECK`. A prefix needs at least one check line.
 - **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file.
-- **`OPTIONS`** takes `erase-types`, `type-errors=throw`, `type-errors=log` and `threads=<n>`. The engine's option words are unknown here.
+- **`OPTIONS`** takes `erase-types`, `type-errors=silent`, `type-errors=log` and `threads=<n>`. The engine's option words are unknown here.
   How a mismatch is reported is a policy of the engine, so `type-errors=` changes one thing in the IR: only with `log` does a type
   site have the text of its type, which only the log prints.
 - **`DIAGNOSTIC`** takes one of these names. With a count, the diagnostic must be reported that many times.

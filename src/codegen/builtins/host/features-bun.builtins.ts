@@ -233,7 +233,6 @@ export default b.declarations(
   ),
   extendAll(
     ["InternalForTesting", ...runtimeTranspilerFeatures],
-    ...nativeBindings("NewRustFunction", "checker_queries_testing.rs", "describeCheckerQueries"),
     ...nativeBindings(
       "NewRustFunction",
       "code_resolver_testing.rs",

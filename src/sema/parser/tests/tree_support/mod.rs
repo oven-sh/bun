@@ -5,7 +5,7 @@ pub(crate) use bun_sema::hir::*;
 pub(crate) use bun_sema::session::{Arena, Session};
 pub(crate) use bun_sema_parser::{CompileParseOptions, parse_for_compile, summarize};
 
-use bun_sema_standalone::{for_each_parallel, hir_dump, native};
+use bun_sema_standalone::{for_each_parallel, native};
 use bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -15,7 +15,6 @@ const STACK_RESERVE: usize = 256 << 10;
 const MIN_PROGRAM_COUNT: usize = 1_000;
 const DECLARATION_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
-pub(crate) const TYPESCRIPT_EXTENSIONS: [&str; 4] = [".ts", ".tsx", ".mts", ".cts"];
 pub(crate) const JAVASCRIPT_EXTENSIONS: [&str; 4] = [".js", ".jsx", ".mjs", ".cjs"];
 pub(crate) const SOURCE_EXTENSIONS: [&str; 8] =
     [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
@@ -189,37 +188,32 @@ impl<'s> Workspace<'s> {
         hir
     }
 
-    pub(crate) fn dump(&self, hir: &File<'s>) -> String {
-        hir_dump::dump_and_orphans(hir, &self.atoms).0
-    }
-
     #[track_caller]
     pub(crate) fn ident(&self, hir: &File<'s>, name: &str, nth: usize) -> ExprId {
         let atom = self.atom(name);
         let is_match = |expr: &Expr| matches!(expr.kind, ExprKind::Ident(text) if text == atom);
         let found = find_ids(&hir.exprs, is_match).nth(nth);
-        self.expect_node(found, hir, "identifier", name, nth)
+        self.expect_node(found, "identifier", name, nth)
     }
 
     #[track_caller]
     pub(crate) fn function(&self, hir: &File<'s>, name: &str) -> FnId {
         let atom = self.atom(name);
         let found = find_ids(&hir.fns, |func| func.name == atom && has_body(func)).next();
-        self.expect_node(found, hir, "function with a body", name, 0)
+        self.expect_node(found, "function with a body", name, 0)
     }
 
     #[track_caller]
     fn expect_node<Id>(
         &self,
         found: Option<Id>,
-        hir: &File<'s>,
         kind: &str,
         name: &str,
         nth: usize,
     ) -> Id {
         match found {
             Some(id) => id,
-            None => panic!("no {kind} `{name}` number {nth} in\n{}", self.dump(hir)),
+            None => panic!("no {kind} `{name}` number {nth}"),
         }
     }
 

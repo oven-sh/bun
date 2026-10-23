@@ -107,7 +107,6 @@ export const rows: Row[] = [
   variant("every-function-hot", ["--aot-heat=everything-is-hot"]),
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
   variant("full-collections-beside-the-program", [], { ...besideTheProgram, BUN_JSC_useGenerationalGC: "0" }),
-  variant("inner-objects-flattened-wherever-legal", ["--aot-testing=FlattenUntilHeldWhereverLegal"]),
   variant("no-flow-results", ["--aot-disable=flow-results"]),
   variant("no-inlining", [withoutInlining]),
   variant("program-is-very-large", ["--aot-limit=MaxWarmCodeValues:1"]),

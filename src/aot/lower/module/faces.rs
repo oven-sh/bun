@@ -42,7 +42,7 @@ fn finish_body(mut lowering: FunctionLowering<'_, '_, '_, '_, '_>) {
 }
 
 // An ES importer holds what the file had under a name when the file was first linked into an ES graph.
-pub(super) fn lower_face_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
+pub(crate) fn lower_face_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
     let modules = file.inputs.modules;
     let own_file = file.file;
     let mut lowering = FunctionLowering::begin(file, function);
@@ -81,7 +81,7 @@ pub(super) fn lower_face_body(file: &mut FileLowering<'_, '_, '_, '_>, function:
 }
 
 // Every CommonJS file of the graph has run by now, as under `bun run`, which reports the first missing name behind them.
-pub(super) fn lower_check_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
+pub(crate) fn lower_check_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
     let modules = file.inputs.modules;
     let own_file = file.file;
     let mut lowering = FunctionLowering::begin(file, function);

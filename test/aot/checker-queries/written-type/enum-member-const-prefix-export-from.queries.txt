@@ -1,3 +1,0 @@
-# `bun run` ends the const local prefix of a file where it parses `export { .. } from`. The prefix of a function in it is not affected.
-enum-member-const-prefix-export-from.ts:6 enum member `FromLeading = leading` = 5 reads other file or variable
-enum-member-const-prefix-export-from.ts:6 enum member `FromInner = inner` = 3

@@ -44,7 +44,7 @@ fn has_instantiated_result(file: &mut FileLowering<'_, '_, '_, '_>, target: Call
 }
 
 // The type comes from the call, not from the type of the callee: a function type lists the functions that were converted to it, and says nothing of what they return.
-pub(super) fn claim_call_result(
+pub(crate) fn claim_call_result(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
     value: ValueId,
@@ -74,7 +74,7 @@ pub(super) fn claim_call_result(
     super::convert_read(lowering, value, declared, construct)
 }
 
-pub(super) fn convert_arguments(
+pub(crate) fn convert_arguments(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
     arguments: &mut [ValueId],
@@ -185,7 +185,7 @@ fn convert_argument(
 }
 
 // No operation holds one element of a spread argument, so the flow into the first `int32` parameter that the spread can reach is a request for the list, which no proof admits.
-pub(super) fn convert_argument_list(
+pub(crate) fn convert_argument_list(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
     list: ValueId,

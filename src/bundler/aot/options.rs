@@ -610,6 +610,3 @@ fn glob_matches(pattern: &[u8], working_directory: &[u8]) -> Option<Vec<Vec<u8>>
     matches.sort_unstable();
     Some(matches)
 }
-
-#[cfg(all(test, not(windows)))]
-mod tests;

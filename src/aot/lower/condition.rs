@@ -16,6 +16,7 @@ use super::expression::{
 use super::{FileLowering, FunctionLowering, call, operator, scope};
 use crate::ir::{BlockId, Edge, TypeId, TypeTable, ValueId};
 
+pub(in crate::lower) use self::leaf_test::find_typeof_operand;
 pub(in crate::lower) use self::tested_field::{
     TestedField, find_tested_field, is_holder_unchanged, narrow_holder,
 };
@@ -223,44 +224,7 @@ fn tested_identifier(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
             AssignmentTarget::Identifier { identifier, .. } => Some(identifier),
             _ => None,
         },
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { op: Some(_), .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => None,
+        _ => None,
     }
 }
 
@@ -548,13 +512,6 @@ fn lower_typeof_object(
     let object_or_null = types.union(TypeTable::OBJECT, TypeTable::NULL);
     let second = split_expression_on_type(lowering, Some(operand), remaining, object_or_null);
     finish_split(lowering, second, passed, failed);
-}
-
-pub(in crate::lower) fn find_typeof_operand(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> Option<ExprId> {
-    leaf_test::find_typeof_operand(lowering, expression)
 }
 
 /// `switch (typeof operand)` over written names.

@@ -1,4 +1,0 @@
-# A generic alias instantiated with `int32` gives `int32`.
-generic-alias.ts:4 written `Id<int32>` = int32
-generic-alias.ts:4 shape `Id<int32>` = Constrained(number; Int32)
-generic-alias.ts:4 variable `a` = int32

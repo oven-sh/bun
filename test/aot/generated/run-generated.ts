@@ -20,10 +20,6 @@ export type Generated = {
   make: () => { file: string; text: string; files?: Record<string, string> };
   /** The program tries what --aot does not allow. It may fail to build, or catch a TypeError and print "THROWS TypeError". It may not print anything else that plain Bun does not. */
   mayBeRefused?: true;
-  /** Its lines are `<what>: <answer>`, and some try what --aot does not allow. Where plain Bun answers, the executable may say that it threw. It may not give another answer. */
-  linesMayBeRefused?: true;
-  /** Its lines are `<case> <answer>`. A case whose name matches puts a value of another type where a type is written: the executable may answer `threw TypeError`, and nothing else, whatever plain Bun answers. */
-  casesMayBeRefused?: RegExp;
   /**
    * Its lines are `<group> | <line>`. A group that tries what is not allowed may end early, with a line that says REFUSED or THROWS: what stands ahead of that
    * line is the same in the executable and in plain Bun. The groups that match the expression print what differs from run to run and are not compared.
@@ -48,20 +44,6 @@ export type Generated = {
 
 const wanted = process.env.AOT_GENERATED ?? "";
 export const moreFlags = process.env.AOT_GENERATED_FLAGS?.split(" ").filter(flag => flag) ?? [];
-
-function isRefused(ours: string | undefined, theirs: string | undefined) {
-  if (ours === undefined || theirs === undefined) return false;
-  const what = ours.slice(0, ours.lastIndexOf(": ") + 2);
-  const threw = (answer: string) => ["THROWS", "caught", "T:"].filter(word => answer.includes(word)).length;
-  return what.length > 1 && theirs.startsWith(what) && threw(ours.slice(what.length)) > threw(theirs.slice(what.length));
-}
-
-function isRefusedCase(ours: string | undefined, theirs: string | undefined, cases: RegExp) {
-  const answer = " threw TypeError";
-  if (!ours?.trimEnd().endsWith(answer)) return false;
-  const name = ours.trimEnd().slice(0, -answer.length);
-  return cases.test(name) && !!theirs?.startsWith(name + " ");
-}
 
 function departingGroups(ours: string[], theirs: string[], notCompared: RegExp) {
   const groups = (lines: string[]) => Map.groupBy(lines.filter(line => line.includes(" | ")), line => line.slice(0, line.indexOf(" | ")));
@@ -122,8 +104,7 @@ export function generated(title: string, programs: Generated[]) {
               if (program.groupsMayBeRefused) return void expect({ departing: departingGroups(ours, theirs, program.groupsMayBeRefused), signal: compiled.signal, exitCode: compiled.exitCode }).toEqual({ departing: [], signal: null, exitCode: 0 });
               const departing: string[] = [];
               for (let i = 0; i < Math.max(ours.length, theirs.length) && departing.length < 20; i++) {
-                if (ours[i] === theirs[i] || (program.linesMayBeRefused && isRefused(ours[i], theirs[i]))) continue;
-                if (!(program.casesMayBeRefused && isRefusedCase(ours[i], theirs[i], program.casesMayBeRefused))) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
+                if (ours[i] !== theirs[i]) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
               }
               expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode, lines: theirs.length });
             } finally {

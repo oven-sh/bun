@@ -52,13 +52,15 @@ test("a computed name that can only be a path does not make bun run --aot compil
     expect({ entry, stdout: stdout.trim(), exitCode }).toEqual({ entry, stdout: "run", exitCode: 0 });
     cost[entry] = Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
   }
-  // The bytes of the image: the same from run to run, which seconds are not. The functions of the loader come with a computed path. A built-in module such as node:zlib is more than they are.
+  // The bytes of the image: the same from run to run, which seconds are not. The functions of the loader come with a computed path. A built-in module such as node:zlib comes on top of them.
+  // How much code the loader is beside a plain program differs between processors, so the yardstick is the cheapest program that does compile the module.
+  const withTheModule = Math.min(...Object.keys(withADoor).map(entry => cost[entry]!));
   for (const entry of Object.keys({ ...withoutADoor, ...withADoor })) {
     expect({
       entry,
       cost: cost[entry],
       plain: cost[plain],
-      costsAsMuchAsABuiltinModule: !(cost[entry] <= 2.5 * cost[plain]),
+      costsAsMuchAsABuiltinModule: !(cost[entry] <= 0.75 * withTheModule),
     }).toEqual({
       entry,
       cost: expect.any(Number),

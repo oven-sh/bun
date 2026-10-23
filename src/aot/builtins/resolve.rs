@@ -12,6 +12,8 @@ mod runtime_dialect;
 mod tests;
 mod walked_texts;
 
+pub use self::imports::find_module_export;
+pub use self::module_values::commonjs_variable_builtin;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
 use super::table::{
@@ -295,17 +297,4 @@ pub fn resolve_file(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
 /// The built-ins of a part of a file: the code in these ranges of positions, which are in order and do not overlap.
 pub fn resolve_within(input: &ResolveInput<'_, '_>, ranges: &[Range<u32>]) -> ResolvedBuiltins {
     resolver::run(input, Some(ranges))
-}
-
-pub fn commonjs_variable_builtin(variable: CommonJsVariable) -> Option<BuiltinId> {
-    module_values::commonjs_variable_builtin(variable)
-}
-
-pub fn find_module_export(
-    names: &BuiltinNames,
-    module: RuntimeModule,
-    name: Atom,
-    platform: Platforms,
-) -> ModuleExport {
-    imports::find_module_export(names, module, name, platform)
 }

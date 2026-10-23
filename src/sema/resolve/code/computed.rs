@@ -582,6 +582,3 @@ fn compare_candidates(a: &ComputedCandidate<'_>, b: &ComputedCandidate<'_>) -> O
         (ComputedCandidate::HostModule(a), ComputedCandidate::HostModule(b)) => a.cmp(b),
     }
 }
-
-#[cfg(test)]
-mod tests;

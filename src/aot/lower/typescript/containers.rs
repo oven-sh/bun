@@ -103,7 +103,7 @@ pub(super) fn ensure_container(
     object
 }
 
-pub(super) fn lower_namespace(
+pub(crate) fn lower_namespace(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     declaration: hir::ModuleId,
 ) {

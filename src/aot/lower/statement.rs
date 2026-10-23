@@ -1,8 +1,9 @@
 mod declarations;
 mod loops;
 
-use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind, VarDeclId};
+use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
 
+pub(crate) use self::declarations::lower_variable_declaration;
 use super::control::{self, BreakTargetKind};
 use super::{
     FunctionLowering, commonjs, condition, dispose, exception, expression, generator, iteration,
@@ -123,13 +124,6 @@ fn lower_statement_in_place(
         StmtKind::With { object, body } => lower_with(lowering, statement, object, body),
     }
     lowering.leave_nesting();
-}
-
-pub(crate) fn lower_variable_declaration(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    declaration: VarDeclId,
-) {
-    declarations::lower_variable_declaration(lowering, declaration);
 }
 
 fn lower_block(

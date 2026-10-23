@@ -1,6 +1,0 @@
-# Stores follow the written members, in source order.
-ordered: stores-after-members.js:2 class member `S` = written Field Member 6 unwritten checked number
-ordered: stores-after-members.js:2 class member `S` = m Method Member 7 unwritten checked () => void
-ordered: stores-after-members.js:2 class member `S` = early Field ThisStore 4 unwritten checked number
-ordered: stores-after-members.js:2 class member `S` = late Field ThisStore 7 unwritten checked number optional
-ordered: stores-after-members.js:2 class member `S` = label Field StaticStore 9 unwritten checked string static optional

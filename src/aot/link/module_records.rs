@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use super::entries::build_entries;
 use super::keys::MergedKeys;

@@ -1,8 +1,5 @@
 //! What the build knows of the module graph, as the rest of the front end asks for it.
 
-#[cfg(test)]
-mod tests;
-
 use super::bindings::{
     Holder, ImportBinding, ModuleExport, ModuleRequest, SyntheticExport, SyntheticExportId,
 };
@@ -108,8 +105,8 @@ pub(super) struct Plan {
     erased_statements: Vec<(FileId, StmtId)>,
     named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
     variables: FxHashMap<(ModuleRef, Atom), SyntheticExportId>,
-    /// What the inner modules ask for, as ranges of the graph's list of requests.
-    pub(super) inner_requests: Vec<Range<u32>>,
+    /// What the inner modules ask for.
+    pub(super) inner_requests: Vec<Vec<ModuleRequest>>,
     final_requests: Vec<ModuleRequest>,
     final_ranges: FxHashMap<ModuleRef, Range<u32>>,
     is_finished: bool,
@@ -490,7 +487,7 @@ impl ModuleGraph {
             ModuleRef::Inner { file, callback } => {
                 let inner_modules = self.plan().inner_modules();
                 match inner_modules.binary_search(&(file, callback)) {
-                    Ok(position) => self.requests_in(&self.plan().inner_requests[position]),
+                    Ok(position) => &self.plan().inner_requests[position],
                     Err(_) => &[],
                 }
             }
@@ -553,10 +550,9 @@ impl ModuleGraph {
         };
         let needs_object: Vec<bool> = self
             .all_holders()
-            .iter()
             .map(|holder| !self.stands_without_object(module_of(holder.view)))
             .collect();
-        for (holder, needs_object) in self.all_holders_mut().iter_mut().zip(needs_object) {
+        for (holder, needs_object) in self.all_holders_mut().zip(needs_object) {
             holder.is_needed_as_value |= needs_object;
         }
     }

@@ -188,7 +188,7 @@ fn is_stored_as_prototype_object(file: &FileLowering<'_, '_, '_, '_>, literal: E
     false
 }
 
-pub(super) fn holds_dictionary_literal(
+pub(crate) fn holds_dictionary_literal(
     file: &mut FileLowering<'_, '_, '_, '_>,
     root: ExprId,
 ) -> bool {
@@ -372,7 +372,7 @@ fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
         )
 }
 
-pub(super) fn lower_object_literal(
+pub(crate) fn lower_object_literal(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     literal: ExprId,
 ) -> ValueId {

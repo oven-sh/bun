@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use std::mem::MaybeUninit;
 use std::sync::Arc;

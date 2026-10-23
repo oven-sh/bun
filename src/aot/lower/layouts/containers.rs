@@ -40,7 +40,7 @@ fn find_container_position(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> 
     position.unwrap_or(0)
 }
 
-pub(super) fn container_layout(
+pub(in crate::lower) fn container_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     container: SymbolId,
 ) -> LayoutId {
@@ -60,7 +60,7 @@ fn has_exports_object(file: &FileLowering<'_, '_, '_, '_>, module: FileId) -> bo
 }
 
 // The layout of the object that the body of a CommonJS module begins with as its `exports`, where its exports are one value.
-pub(super) fn module_exports_layout(
+pub(crate) fn module_exports_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     module: FileId,
 ) -> Option<LayoutId> {
@@ -91,7 +91,7 @@ pub(super) fn module_exports_layout(
     has_fields.then_some(layout)
 }
 
-pub(super) fn module_type_layout(
+pub(crate) fn module_type_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> Option<LayoutId> {
@@ -573,7 +573,7 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
 }
 
 // `false`: nobody can see the object, so the body does not make it. A module that is required while its body runs shows it.
-pub(super) fn begins_with_exports_object(
+pub(crate) fn begins_with_exports_object(
     file: &FileLowering<'_, '_, '_, '_>,
     module: FileId,
 ) -> bool {

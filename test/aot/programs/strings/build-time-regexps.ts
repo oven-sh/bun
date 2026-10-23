@@ -1,4 +1,5 @@
 // Regular expressions that are not literals but are still known at build time, built the way the packages ansi-regex and wrap-ansi build them.
+// KNOWN regexp2 (?:(?:\u001B\]|\u009D)[^\u0007\u001B\u009C\u009D]*(?:\u0007|\u001B\u005C|\u009C))|[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]
 // KNOWN regexp2 cho+sen
 // PARTLY regexp2 unkno+wnflags
 // KNOWN fold1 lo+ng0123456789012345678901234567890123456789012345678901234567890123456789|sho+rt

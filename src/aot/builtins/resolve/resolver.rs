@@ -367,18 +367,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 Some(value) => ExprState::Held(value),
                 None => ExprState::Unresolved,
             },
-            ExprKind::Missing
-            | ExprKind::PrivateIdentifier(_) | ExprKind::This | ExprKind::Super | ExprKind::Null
-            | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_)
-            | ExprKind::BigInt(_) | ExprKind::Regex { .. } | ExprKind::Template { .. }
-            | ExprKind::TaggedTemplate(_) | ExprKind::Array(_) | ExprKind::Object(_)
-            | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::New(_) | ExprKind::Unary { .. }
-            | ExprKind::Binary { .. } | ExprKind::Cond { .. }
-            | ExprKind::Spread(_) | ExprKind::Await(_) | ExprKind::Yield { .. }
-            | ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_) | ExprKind::Instantiation { .. } | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. } | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => ExprState::Unresolved,
+            _ => ExprState::Unresolved,
         }
     }
 

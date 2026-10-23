@@ -10,7 +10,7 @@ use crate::lower::{
     FunctionLowering, class, commonjs, convert, expression, pattern, positions, scope,
 };
 
-pub(super) fn lower_variable_declaration(
+pub(crate) fn lower_variable_declaration(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     declaration: VarDeclId,
 ) {

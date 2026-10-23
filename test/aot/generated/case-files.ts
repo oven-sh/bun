@@ -68,18 +68,16 @@ export interface Expectations {
   alone: number;
   /** The cases that depart from plain Bun today, and how. They are listed as todos and left out of the programs. */
   failsToday?: { cases: RegExp; how: string }[];
-  /** The cases that put a value of another type where a type is written. The executable may answer `threw TypeError`, and nothing else, whatever plain Bun answers. */
-  mayBeRefused?: RegExp;
   /** The cases that leave an error that nobody catches. */
   leaveAnError?: RegExp;
 }
 
 /** Each file as one program, and each case as a program of its own. */
-export function programsOf(files: CaseFile[], { alone, failsToday = [], mayBeRefused, leaveAnError }: Expectations): Generated[] {
+export function programsOf(files: CaseFile[], { alone, failsToday = [], leaveAnError }: Expectations): Generated[] {
   const failure = (name: string) => failsToday.find(({ cases }) => cases.test(name))?.how;
   const names = files.flatMap(file => file.cases.map(({ name }) => name));
   const alwaysAlone = new Set(spread(names, Number(process.env.AOT_GENERATED_ALONE ?? alone)));
-  const common = { isOnlyCompiled: true as const, ...(mayBeRefused ? { casesMayBeRefused: mayBeRefused } : {}) };
+  const common = { isOnlyCompiled: true as const };
   const error = (names: string[]) => (names.some(name => leaveAnError?.test(name)) ? { leavesAnError: true as const } : {});
   return files.flatMap(file => {
     const main = "main" + extname(file.name);

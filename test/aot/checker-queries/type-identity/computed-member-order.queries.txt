@@ -1,5 +1,0 @@
-# No declaration orders the members of a computed object type, and its layout lists them by key, so two orders are one identity. Other members are another identity.
-computed-member-order.ts:7 origin `typeof first` = computed
-computed-member-order.ts:8 origin `typeof second` = computed
-same: computed-member-order.ts:7 identity `typeof first` <=> computed-member-order.ts:8 identity `typeof second`
-different: computed-member-order.ts:7 identity `typeof first` <=> computed-member-order.ts:9 identity `typeof other`

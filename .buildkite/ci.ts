@@ -917,6 +917,7 @@ const aotSources = [
 // A git pathspec that names no directory or file matches nothing, so a file name prefix becomes a glob.
 const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
 const linuxX64AotGroups = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
+const tooSlowForAsan = ["aot/frameworks/nuxt.test", "aot/frameworks/astro.test", "aot/frameworks/angular"];
 const fullRunAotGroups = [...linuxX64AotGroups, "aot/heat/", "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
@@ -943,8 +944,9 @@ function getAotTests(platform: Platform, options: PipelineOptions): AotTests | u
 }
 
 function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): string[] {
-  if (aot === "a tenth") return fullRunAotGroups;
-  return arch === "x64" && distro === "debian" && !profile ? [] : linuxX64AotGroups;
+  const groups = aot === "a tenth" ? fullRunAotGroups : linuxX64AotGroups;
+  if (profile === "asan") return [...groups, ...tooSlowForAsan];
+  return aot === "all" && arch === "x64" && distro === "debian" && !profile ? [] : groups;
 }
 
 // Debian runs every file. Any other lane runs one file in this many, others for each commit.

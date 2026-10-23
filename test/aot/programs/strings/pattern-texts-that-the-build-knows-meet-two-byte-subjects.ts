@@ -1,6 +1,8 @@
 // A pattern whose text the build predicts has to earn its code for 16-bit subjects. One that has to match its subject from end to end with characters of one byte (an address, a version, a name)
 // matches no subject with a wider character: it has code for 8-bit subjects alone, half the bytes. A 16-bit subject compiles it at run time, once, and the answer is the same. Every other
 // predicted pattern, and every literal, has both.
+// COUNTER: RegExpsCreatedWithoutRecord = 0
+// COUNTER: RegExpsCompiledToBytecode = 1
 // COUNTER: RegExpMatchesInterpreted >= 2
 const RULES = [
   { source: "([a-z]+)-([a-z]+)", flags: "" },

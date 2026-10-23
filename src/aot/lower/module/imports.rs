@@ -10,7 +10,7 @@ use crate::lower::member::{self, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression, scope};
 use crate::modules::{ImportBinding, ModuleRef, Shape, Site, SyntheticExportId, View};
 
-pub(super) fn get_import(
+pub(crate) fn get_import(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     symbol: SymbolId,
 ) -> ValueId {
@@ -175,7 +175,7 @@ fn text_key_of_name(file: &mut FileLowering<'_, '_, '_, '_>, name: BuiltinName) 
 }
 
 // A module that is not in the program has no object.
-pub(super) fn lower_namespace_receiver(
+pub(crate) fn lower_namespace_receiver(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     object: ExprId,
 ) -> ValueId {
@@ -218,7 +218,7 @@ fn find_required_namespace(file: &FileLowering<'_, '_, '_, '_>, name: ExprId) ->
     }
 }
 
-pub(super) fn lower_namespace_member(
+pub(crate) fn lower_namespace_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
 ) -> Option<ValueId> {

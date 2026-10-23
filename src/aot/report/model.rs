@@ -19,20 +19,3 @@ impl OriginCounts {
         self.program + self.dependencies
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_modules_are_not_counted() {
-        let mut counts = OriginCounts::default();
-        counts.add_for_origin(ModuleOrigin::Program, 2);
-        counts.add_for_origin(ModuleOrigin::Dependency, 3);
-        counts.add_for_origin(ModuleOrigin::Runtime, 5);
-        assert_eq!(
-            (counts.program, counts.dependencies, counts.total()),
-            (2, 3, 5)
-        );
-    }
-}

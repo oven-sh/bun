@@ -1,6 +1,0 @@
-# An object type accepts the primitives that have its members with matching types.
-accepted-primitives.ts:2 primitives `{ length: number }` = string
-accepted-primitives.ts:3 primitives `{ toString(): string }` = string number boolean bigint symbol
-accepted-primitives.ts:4 primitives `Iterable<string>` = string
-accepted-primitives.ts:5 primitives `{ x: number }` = none
-accepted-primitives.ts:6 primitives `{ length: string }` = none

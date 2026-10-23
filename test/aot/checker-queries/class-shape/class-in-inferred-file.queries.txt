@@ -1,5 +1,0 @@
-# A class of a JavaScript file: nobody wrote a type, so every member is unwritten and has the type that the checker concludes.
-class-in-inferred-file.js:2 class member `Point` = x Field Member 3 unwritten checked number
-class-in-inferred-file.js:2 class member `Point` = label Field Member 4 unwritten checked string
-class-in-inferred-file.js:2 class member `Point` = move Method Member 5 unwritten checked (by: any) => Point
-class-in-inferred-file.js:2 class binding `Point` = yes

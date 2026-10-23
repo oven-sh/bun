@@ -74,6 +74,3 @@ pub(crate) fn count_files(
         .count();
     statistics.count(StatisticId::SourceFilesDemoted, demoted_count as u64);
 }
-
-#[cfg(test)]
-mod tests;

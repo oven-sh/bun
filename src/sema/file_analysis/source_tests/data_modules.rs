@@ -54,7 +54,6 @@ const VALUES_WITHOUT_KEYS: &[Data<'static>] = &[
 fn module<'s>(w: &Workspace<'s>, module: &DataModule<'s>) -> DataModuleTree<'s> {
     let tree = module_from_data(module, &w.atoms, w.arena);
     let hir = &tree.file;
-    assert_eq!(hir.validate(), Ok(()));
     assert_eq!(hir.source_len, 0);
     assert!(hir.text.is_empty());
     assert!(hir.exprs.iter().all(|expr| expr.pos == 0 && expr.end == 0));

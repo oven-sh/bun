@@ -1,4 +1,5 @@
 // `xs.filter(f).map(g).length` in a function that runs often, over an array that only the program holds, with callbacks that write nothing: the chain is one walk of the array.
+// STATISTIC: ArrayChainsFused >= 1
 function chain(xs: number[]): number {
   const doubled = xs.filter(x => x > 0).map(x => x * 2);
   return doubled.length;

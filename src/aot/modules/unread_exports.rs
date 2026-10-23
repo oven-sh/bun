@@ -1,6 +1,6 @@
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ImportBinding, ModuleExport};
-use super::graph::{FileParts, StoredSiteAnswer};
+use super::graph::{FileRow, StoredSiteAnswer};
 use super::interop::{ImportPhase, ModuleKind, RequireResult};
 use bun_sema::atom::known;
 use bun_sema::bind::SymbolId;
@@ -38,7 +38,7 @@ struct ExportReads {
 }
 
 impl ExportReads {
-    fn new(files: &[FileParts]) -> ExportReads {
+    fn new(files: &[FileRow]) -> ExportReads {
         let mut reads = ExportReads {
             index_by_file: FxHashMap::default(),
             modules: Vec::new(),
@@ -132,7 +132,7 @@ impl ExportReads {
         }
     }
 
-    fn add_site(&mut self, parts: &FileParts, site: ImportSiteKind, answer: &StoredSiteAnswer) {
+    fn add_site(&mut self, parts: &FileRow, site: ImportSiteKind, answer: &StoredSiteAnswer) {
         let value = loaded_value(site);
         match answer {
             StoredSiteAnswer::Module(module) => self.load(*module, value),
@@ -146,7 +146,7 @@ impl ExportReads {
         }
     }
 
-    fn add_file(&mut self, parts: &FileParts) {
+    fn add_file(&mut self, parts: &FileRow) {
         for &(_, binding) in &parts.imports {
             self.add_import(binding);
         }
@@ -184,7 +184,7 @@ impl ExportReads {
     }
 }
 
-pub(super) fn remove_unread_data_exports(files: &mut [FileParts]) {
+pub(super) fn remove_unread_data_exports(files: &mut [FileRow]) {
     let mut reads = ExportReads::new(files);
     if reads.modules.is_empty() {
         return;

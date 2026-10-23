@@ -127,6 +127,3 @@ fn find_matching_subpath(key: &[u8], target: &[u8], relative: &[u8]) -> Option<V
     let matched = match_pattern(target, relative)?;
     Some([&key[..star], matched, &key[star + 1..]].concat())
 }
-
-#[cfg(test)]
-mod tests;

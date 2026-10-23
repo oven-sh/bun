@@ -24,7 +24,6 @@ else {
         .map((seed, index) => ({
           name: `${title} ${seed}`,
           isAlwaysRun: index < 2 || (options.foundByFreshSeeds ?? []).includes(seed),
-          linesMayBeRefused: options.linesMayBeRefused,
           plainEnv: options.plainEnv,
           failsToday: typeof options.failsToday === "string" ? options.failsToday : options.failsToday?.[seed],
           modeFailsToday: options.modeFailsToday?.[seed],

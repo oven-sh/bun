@@ -736,7 +736,7 @@ fn exports_that_the_statement_has_handed_out_are_not_untouched() {
             .map(|(_, values)| values.certainty)
             .collect()
     };
-    let helper = "__importDefault = (this && this.__importDefault) || function (mod) {\n    return (mod && mod.__esModule) ? mod : { \"default\": mod };\n}";
+    let helper = "__createBinding = (this && this.__createBinding) || function (o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    o[k2] = m[k];\n}";
     assert_eq!(
         certainty(&format!("var {helper};")),
         [Certainty::OnceInitialized]

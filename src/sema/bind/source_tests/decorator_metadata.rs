@@ -147,9 +147,7 @@ fn recorded_type_names(s: &Analyzed<'_>) -> Vec<String> {
         ImplicitReferenceKind::DecoratorMetadata(MetadataReference::TypeName(node)) => {
             Some(dotted_name(s, node))
         }
-        ImplicitReferenceKind::DecoratorMetadata(MetadataReference::Global(..))
-        | ImplicitReferenceKind::JsxFactory
-        | ImplicitReferenceKind::JsxFragment => None,
+        _ => None,
     });
     names.collect()
 }

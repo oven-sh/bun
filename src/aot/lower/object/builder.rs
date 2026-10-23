@@ -48,7 +48,7 @@ pub(super) fn finish_head(
     object.is_finished = true;
 }
 
-pub(super) fn set_prototype(
+pub(in crate::lower) fn set_prototype(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     object: &mut ObjectBuilder,
     prototype: ValueId,
@@ -94,7 +94,7 @@ pub(super) fn add_member(
     define_member(lowering, object, name, value);
 }
 
-pub(super) fn emit_object_rest(
+pub(crate) fn emit_object_rest(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     source: ValueId,
     excluded: &[PropertyName],

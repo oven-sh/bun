@@ -6,7 +6,7 @@ use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Parent, has_mapped_arg
 use bun_sema::hir::{ExprId, ExprKind, NodeData, StmtKind};
 use bun_sema::module_format::ModuleFormat;
 
-pub(super) fn commonjs_variable_builtin(variable: CommonJsVariable) -> Option<BuiltinId> {
+pub fn commonjs_variable_builtin(variable: CommonJsVariable) -> Option<BuiltinId> {
     match variable {
         CommonJsVariable::Require => Some(BuiltinId::ModuleRequire),
         CommonJsVariable::Module => Some(BuiltinId::ModuleObject),

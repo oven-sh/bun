@@ -21,10 +21,11 @@ use super::types::map_type_at;
 use super::{CheckerTypeId, FileLowering, FunctionLowering};
 use crate::ir::generated::{IllTypedCause, TypeSiteKind};
 use crate::ir::{
-    ContentsSlot, DeclaredType, FunctionId, Id, Mapped, PositionFlags, Primitives, Type, TypeFlags,
-    TypeId, TypeTable, ValueId,
+    DeclaredType, FunctionId, Id, Mapped, PositionFlags, Primitives, Type, TypeFlags, TypeId,
+    TypeTable, ValueId,
 };
 
+pub(crate) use self::calls::{claim_call_result, convert_argument_list, convert_arguments};
 pub(crate) use self::family_facts::FamilyFacts;
 pub(in crate::lower) use self::int32_flows::{
     FlowDescription as Int32FlowDescription, Subject as Int32Subject,
@@ -33,10 +34,12 @@ pub(in crate::lower) use self::literals::{
     record_array_literal_flow, record_list_flow, record_spread_flow,
 };
 pub(in crate::lower) use self::members::find_array_element_type;
+pub(crate) use self::members::{claim_member_read, convert_to_member};
 pub(in crate::lower) use self::narrowed::{convert_narrowed_reference, convert_pattern_element};
 pub(in crate::lower) use self::patterns::{
     record_assigned_type_flow, record_assignment_pattern_flow, record_binding_pattern_flow,
 };
+pub(crate) use self::supertypes::{record_construction_by_library, record_contents_flow};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct ConvertedValue {
@@ -350,23 +353,6 @@ pub(in crate::lower) fn describe_int32_tail_call(
     int32_flows::record_flow(lowering, returned, description);
 }
 
-pub(crate) fn record_contents_flow(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    container: ExprId,
-    slot: ContentsSlot,
-    position: DeclaredType,
-) {
-    supertypes::record_contents_flow(file, container, slot, position);
-}
-
-pub(crate) fn record_construction_by_library(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-    callee: ExprId,
-) {
-    supertypes::record_construction_by_library(file, expression, callee);
-}
-
 pub(crate) fn record_type_flow(
     file: &mut FileLowering<'_, '_, '_, '_>,
     source: CheckerTypeId,
@@ -406,39 +392,6 @@ pub(crate) fn assertion_position(
     positions::annotation_position(file, ty, TypeSiteKind::Assertion)
 }
 
-pub(crate) fn convert_to_member(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-    value: ValueId,
-    source: Option<ExprId>,
-) -> ValueId {
-    members::convert_to_member(lowering, access, value, source)
-}
-
-pub(crate) fn convert_arguments(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-    arguments: &mut [ValueId],
-) {
-    calls::convert_arguments(lowering, call, arguments);
-}
-
-pub(crate) fn convert_argument_list(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-    list: ValueId,
-) {
-    calls::convert_argument_list(lowering, call, list);
-}
-
-pub(crate) fn claim_member_read(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-    value: ValueId,
-) -> ValueId {
-    members::claim_member_read(lowering, access, value)
-}
-
 // No container says what it holds, so what is read out of one is tested where it is read.
 pub(crate) fn claim_contents_read(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
@@ -471,12 +424,4 @@ fn convert_read(
         return value;
     }
     convert_as(lowering, value, position, None, construct)
-}
-
-pub(crate) fn claim_call_result(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-    value: ValueId,
-) -> ValueId {
-    calls::claim_call_result(lowering, call, value)
 }

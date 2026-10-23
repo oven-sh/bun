@@ -1,12 +1,7 @@
 // Runs the engine's own tests in Bun's CI: the IR text tests and the native tests that were packed with the WebKit this
 // Bun was linked against. `testaot all` runs them in one go, which takes longer than one test may: here the IR text tests
 // are one test and the native tests four, each a part of the list, at the same time.
-//
-// This `testaot` is WebKit's objects linked with Bun's table of built-ins (scripts/build/deps/webkit.ts jscPrograms).
-// engine-tests/ has the IR text tests of the engine that name entries, classes, modules or function numbers of that table:
-// they lie here and not in WebKit so that whoever changes an entry can change its tests with it. The native tests of Bun's
-// entries are WebKit's. Its own `testaot` has the table of a stand-in host, leaves those out and ends its last line with how
-// many: here that line has no such end.
+// engine-tests/ has the IR text tests that name entries of Bun's table of built-ins.
 //
 // Needs `testaot`, the `aot-tests` folder for two of the tests, and `jsc` for two: the engine's own tests want it in the
 // folder of `testaot`. shell/tools.ts says where each is looked for. A test whose tool is missing is skipped, and stderr

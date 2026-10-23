@@ -28,7 +28,7 @@ import {
   writeLinkInputs,
 } from "./toy-program.ts";
 
-const tools = Object.fromEntries(["clang", "clang-cl", "lld-link", "llvm-lib"].map(name => [name, Bun.which(name)]));
+const tools = Object.fromEntries(["clang", "clang-cl", "lld-link", "llvm-lib", "llvm-cxxfilt", "llvm-undname"].map(name => [name, Bun.which(name)]));
 export const nm = Bun.which("llvm-nm");
 export const objcopy = Bun.which("llvm-objcopy");
 export const rustc = Bun.which("rustc");
@@ -108,7 +108,7 @@ export async function wrapped(folder: string, options: LinkOptions = {}) {
   await prepareInputs(folder, options, name => name);
   const { minimums, builtins } = options;
   const linkInputs = writeLinkInputs(folder, { minimums, builtins });
-  return await run(linkArguments(linkInputs, linkCommand(options, name => name)), folder);
+  return await run(linkArguments(linkInputs, linkCommand(options, name => name), { demangler: tools["llvm-cxxfilt"]! }), folder);
 }
 
 export async function plainLink(folder: string, options: LinkOptions = {}) {

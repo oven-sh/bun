@@ -35,17 +35,7 @@ pub(super) fn mentioned_id(state: ExprState) -> Option<BuiltinId> {
     };
     match intrinsic {
         Intrinsic::Builtin(id) | Intrinsic::Construct(id) | Intrinsic::NativeBinding(id) => Some(id),
-        Intrinsic::Operation(_) | Intrinsic::Conversion(_) | Intrinsic::Throw(_)
-        | Intrinsic::IfAbruptCloseIterator | Intrinsic::SymbolKey(_)
-        | Intrinsic::HasJSType { .. } | Intrinsic::LinkTimeConstant(_) | Intrinsic::NativeCall(_)
-        | Intrinsic::IsNullish | Intrinsic::IsObject | Intrinsic::IsCallable
-        | Intrinsic::Undefined | Intrinsic::Int(_) | Intrinsic::Bool(_) | Intrinsic::Double(_)
-        | Intrinsic::Call { .. } | Intrinsic::Apply | Intrinsic::ArrayPush
-        | Intrinsic::PutByValDirect { .. } | Intrinsic::GetOwnProperty { .. }
-        | Intrinsic::ArgumentCount | Intrinsic::Argument | Intrinsic::PrivateGlobal
-        | Intrinsic::ReplaceablePrivateGlobal | Intrinsic::PrivateName | Intrinsic::LinkedFunction(_)
-        | Intrinsic::Directive(_) | Intrinsic::PrependArgument { .. }
-        | Intrinsic::HasPromiseStatus(_) | Intrinsic::Erased | Intrinsic::BundleError => None,
+        _ => None,
     }
 }
 
@@ -58,9 +48,7 @@ fn implicit_reference_path(
         ImplicitReferenceKind::DecoratorMetadata(MetadataReference::TypeName(node)) => {
             hir.texts(entity_names(hir, node)).collect()
         }
-        ImplicitReferenceKind::DecoratorMetadata(MetadataReference::Global(..))
-        | ImplicitReferenceKind::JsxFactory
-        | ImplicitReferenceKind::JsxFragment => smallvec![reference.name],
+        _ => smallvec![reference.name],
     }
 }
 

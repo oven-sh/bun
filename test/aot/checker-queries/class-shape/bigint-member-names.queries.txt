@@ -1,6 +1,0 @@
-# A BigInt literal as a member name names the property whose name is its decimal digits. A getter of that name is a member, and a store to the same name runs into the getter and adds no field.
-bigint-member-names.js:2 class member `A` = 99999999999999999999 Getter Member 3 unwritten checked number
-absent: bigint-member-names.js:2 class member `A` = 99999999999999999999 Field ThisStore 4 unwritten checked 2 optional
-
-bigint-member-names.js:6 constructor function member `F` = 99999999999999999999 Getter PrototypeStore 7 unwritten checked () => number optional
-absent: bigint-member-names.js:6 constructor function member `F` = 99999999999999999999 Field ThisStore 6 unwritten checked 1 optional

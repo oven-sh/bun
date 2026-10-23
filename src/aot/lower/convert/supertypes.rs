@@ -211,7 +211,7 @@ pub(super) fn find_target_type(
         .or_else(|| find_mapped_source(file, position.ty))
 }
 
-pub(super) fn record_contents_flow(
+pub(crate) fn record_contents_flow(
     file: &mut FileLowering<'_, '_, '_, '_>,
     container: ExprId,
     slot: ContentsSlot,
@@ -904,7 +904,7 @@ fn admit_asserted_members(
 }
 
 // `new EventEmitter()`: a declaration file gives the expression its type, and a function of Bun's own modules makes the object.
-pub(super) fn record_construction_by_library(
+pub(crate) fn record_construction_by_library(
     file: &mut FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
     callee: ExprId,

@@ -4727,13 +4727,6 @@
           "multiple": false
         },
         {
-          "name": "dts",
-          "description": "Write TypeScript declaration files (.d.ts) to --outdir. Implies --check",
-          "hasValue": false,
-          "required": false,
-          "multiple": false
-        },
-        {
           "name": "compile-inspector",
           "description": "With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower",
           "hasValue": false,

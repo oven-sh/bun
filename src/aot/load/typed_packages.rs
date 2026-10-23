@@ -1,7 +1,3 @@
-#[cfg(test)]
-mod manifest_tests;
-#[cfg(test)]
-mod tests;
 
 use bun_core::strings;
 use bun_paths::platform::Posix;

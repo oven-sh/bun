@@ -1,5 +1,0 @@
-# An intersection with a type parameter is a type variable, and the other parts are its constraint.
-intersection-of-type-parameter-and-object.ts:2 shape `T & { a: number }` = TypeVariable({ a: number; })
-intersection-of-type-parameter-and-object.ts:2 shape `T & string` = TypeVariable(string)
-intersection-of-type-parameter-and-object.ts:2 shape `T & { a: number } & { b: string }` = TypeVariable({ a: number; } & { b: string; })
-intersection-of-type-parameter-and-object.ts:3 shape `T & { a: number }` = TypeVariable({ a: number; })

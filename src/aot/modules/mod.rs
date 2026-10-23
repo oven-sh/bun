@@ -19,8 +19,6 @@ mod side_effects;
 mod synthetic_exports;
 #[cfg(test)]
 pub(crate) mod testing;
-#[cfg(test)]
-mod tests;
 mod unloadable;
 mod unread_exports;
 mod wrapped;
@@ -54,7 +52,7 @@ use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
 use exports::{ExportTables, collect_export_entries, finish_exports, resolve_exports};
 use failures::{NumberedFailures, PendingFailure, number_failures};
-use graph::{FileParts, GraphParts};
+use graph::{FileRow, GraphParts};
 use imports::{FileImports, FinishedImports, bind_imports, finish_imports};
 use module_set::{ModuleSet, collect_modules};
 use order::{PlannedSites, SiteKey, SitePosition, compute_order};
@@ -100,7 +98,7 @@ struct FileDraft {
     imports: Option<FileImports>,
 }
 
-type FileSlot = (Option<FileDraft>, Option<FileParts>);
+type FileSlot = (Option<FileDraft>, Option<FileRow>);
 
 pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let file_count = input.files.modules.len();
@@ -349,7 +347,7 @@ fn finish_files(
     in_parallel: InParallel<'_>,
     finish_input: &FinishInput<'_, '_>,
     drafts: Vec<FileDraft>,
-) -> Vec<FileParts> {
+) -> Vec<FileRow> {
     let drafts = drafts.into_iter();
     let mut slots: Vec<FileSlot> = drafts.map(|draft| (Some(draft), None)).collect();
     for_each_mut(&mut slots, in_parallel, &|(draft, parts)| {
@@ -361,7 +359,7 @@ fn finish_files(
         .collect()
 }
 
-fn finish_file(finish_input: &FinishInput<'_, '_>, draft: FileDraft) -> FileParts {
+fn finish_file(finish_input: &FinishInput<'_, '_>, draft: FileDraft) -> FileRow {
     let FinishInput {
         files,
         sources,
@@ -412,7 +410,7 @@ fn finish_file(finish_input: &FinishInput<'_, '_>, draft: FileDraft) -> FilePart
         })
         .collect();
     evaluating_sites.shared_sort_unstable_by_key(|&(key, _)| key);
-    FileParts {
+    FileRow {
         file,
         interop,
         runtime_module,

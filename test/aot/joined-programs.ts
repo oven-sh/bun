@@ -34,7 +34,7 @@ const cannotBeJoined = new RegExp(
   ].join("|"),
   "m",
 );
-const filesBeside = [".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"];
+const filesBeside = [".json", ".expected.txt", ".build-errors.txt", ".todo.txt"];
 
 const isOneFile = (name: string) => /^[^/]+\/[^/]+(?<!\.d)\.(ts|tsx|js)$/.test(name);
 

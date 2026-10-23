@@ -39,12 +39,7 @@ fn classify_binary_operand(op: BinOp, node: ExprId, right: ExprId, parent: ExprI
     match op {
         BinOp::And | BinOp::Or | BinOp::Nullish => ControlFlow::Continue(parent),
         BinOp::Comma if node == right => ControlFlow::Continue(parent),
-        BinOp::Comma
-        | BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl
-        | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Lt
-        | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq
-        | BinOp::NotEqEq | BinOp::In
-        | BinOp::Instanceof => ControlFlow::Break(MentionUse::Inspected),
+        _ => ControlFlow::Break(MentionUse::Inspected),
     }
 }
 
@@ -54,19 +49,9 @@ fn classify_stmt_parent(hir: &hir::File<'_>, node: ExprId, stmt: StmtId) -> Ment
         StmtKind::Expr(_) | StmtKind::Switch { .. } => MentionUse::Inspected,
         StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } if node == test => MentionUse::Inspected,
         StmtKind::For { test, update, .. } if node == test || node == update => MentionUse::Inspected,
-        StmtKind::If { .. }
-        | StmtKind::While { .. } | StmtKind::DoWhile { .. } | StmtKind::For { .. }
-        | StmtKind::Empty | StmtKind::Debugger | StmtKind::Var(_) | StmtKind::Fn(_)
-        | StmtKind::Class(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Enum(_)
-        | StmtKind::Module(_) | StmtKind::Return(_)
-        | StmtKind::ForOf { .. } | StmtKind::Block(_) | StmtKind::Try { .. } | StmtKind::Throw(_)
-        | StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Labeled { .. }
-        | StmtKind::Import(_) | StmtKind::ImportEquals(_) | StmtKind::ExportNamed(_)
-        | StmtKind::ExportStar { .. } | StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
-        | StmtKind::ExportAsNamespace(_)
-        | StmtKind::Directive { .. } => MentionUse::Exposed,
         // The host makes a member when it is first looked for, and each step looks for the name that it hands out.
         StmtKind::ForIn { .. } | StmtKind::With { .. } => MentionUse::Exposed,
+        _ => MentionUse::Exposed,
     }
 }
 

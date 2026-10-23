@@ -3,7 +3,6 @@
 
 #![feature(linkage)]
 
-pub mod hir_dump;
 pub mod native;
 pub mod native_libraries;
 #[path = "../../runtime/cli/typescript_libs.rs"]

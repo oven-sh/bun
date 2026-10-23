@@ -377,6 +377,3 @@ fn position_text(diagnostic: &driver::Diagnostic) -> Vec<u8> {
     let line_and_column = format!(":{}:{}", diagnostic.line, diagnostic.column);
     [to_native(&diagnostic.path), line_and_column.as_bytes()].concat()
 }
-
-#[cfg(test)]
-mod tests;

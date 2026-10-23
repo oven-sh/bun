@@ -120,11 +120,7 @@ export function hashTableInputs(ctx: Pick<Ctx, "cfg" | "engine">): string[] {
   return [...guardInputs(ctx), builtinsTableScript(ctx.cfg, "collect-static-tables.ts")];
 }
 
-/**
- * None in a graph without an engine: nothing compiles the C++ it generates. guards.ts imports files of the engine
- * (src/codegen/engine-directory.ts), and with the prebuilt WebKit only the flag says where they are. `--builtin-uses` is last:
- * two of the scripts look for it there.
- */
+/** None in a graph without an engine: nothing compiles the C++ it generates. Two of the scripts look for `--builtin-uses` last. */
 export function builtinUsesArguments({ cfg, engine }: Pick<Ctx, "cfg" | "engine">): string[] {
   return engine === undefined
     ? []
@@ -143,6 +139,7 @@ export function emitRemovableFeatures({ n, cfg, sources, o, dirStamp }: Ctx): vo
     inputs: [
       script,
       trimScript(cfg, "features.ts"),
+      trimScript(cfg, "table-format.ts"),
       trimScript(cfg, "types.ts"),
       resolve(cfg.cwd, "scripts", "build", "error.ts"),
       resolve(cfg.cwd, "src", "codegen", "helpers.ts"),

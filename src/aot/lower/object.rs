@@ -4,8 +4,11 @@ mod literal;
 use bun_sema::hir::ExprId;
 use smallvec::SmallVec;
 
+pub(crate) use self::builder::emit_object_rest;
+pub(in crate::lower) use self::builder::set_prototype;
+pub(crate) use self::literal::{holds_dictionary_literal, lower_object_literal};
 use super::member::PropertyName;
-use super::{FileLowering, FunctionLowering, layouts};
+use super::{FunctionLowering, layouts};
 use crate::ir::{LayoutId, ValueId};
 
 pub(crate) struct ObjectBuilder {
@@ -47,21 +50,7 @@ impl InitialFields {
     }
 }
 
-pub(crate) fn lower_object_literal(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    literal: ExprId,
-) -> ValueId {
-    literal::lower_object_literal(lowering, literal)
-}
-
 // Each object of a record of data has a layout, so a literal of constants that holds a dictionary is built by operations.
-pub(crate) fn holds_dictionary_literal(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-) -> bool {
-    literal::holds_dictionary_literal(file, literal)
-}
-
 pub(crate) fn begin_object(
     _lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     layout: LayoutId,
@@ -131,14 +120,6 @@ pub(crate) fn add_spread(
         .copy_data_properties(head, source, &[], &[]);
 }
 
-pub(in crate::lower) fn set_prototype(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: &mut ObjectBuilder,
-    prototype: ValueId,
-) {
-    builder::set_prototype(lowering, object, prototype);
-}
-
 pub(crate) fn finish_object(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     mut object: ObjectBuilder,
@@ -149,13 +130,4 @@ pub(crate) fn finish_object(
         return head;
     }
     lowering.builder.finish_object(head)
-}
-
-pub(crate) fn emit_object_rest(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    source: ValueId,
-    excluded: &[PropertyName],
-    layout: Option<LayoutId>,
-) -> ValueId {
-    builder::emit_object_rest(lowering, source, excluded, layout)
 }

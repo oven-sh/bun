@@ -1,3 +1,0 @@
-# A call to an overloaded function reports the overload it resolved to.
-overloads.ts:5 call `o("x")` = declaration overloads.ts:3
-overloads.ts:5 call result `o("x")` = string checked string

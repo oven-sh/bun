@@ -6,7 +6,6 @@ generated(
   "an object is altered between the two halves of a typed function",
   programsOf(caseFiles(), {
     alone: 100,
-    mayBeRefused: /^\S+ (store-text|store-text-assign|store-text-reflect|store-object) /,
     failsToday: [
       {
         cases: /^interface-over-a-class method-hidden-by-a-text(-assigned)? /,

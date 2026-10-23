@@ -1,2 +1,0 @@
-# Two type literals that list the same members in another order are two declarations with two orders of fields, so they have two identities.
-different: member-order.ts:2 identity `{ a: number; b: string }` <=> member-order.ts:3 identity `{ b: string; a: number }`

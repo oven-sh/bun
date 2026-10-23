@@ -1,2 +1,0 @@
-# `Schema.Strict` is a constraint on an object type.
-strict-object.ts:3 shape `{ id: number } & Schema.Strict` = Constrained({ id: number; }; Strict)

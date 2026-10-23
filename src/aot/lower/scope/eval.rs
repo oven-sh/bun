@@ -29,7 +29,7 @@ enum EvalText {
     FirstElement(ValueId),
 }
 
-pub(super) fn lower_direct_eval(
+pub(crate) fn lower_direct_eval(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> ValueId {

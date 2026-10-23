@@ -1,4 +1,0 @@
-# The same where `allowJs` brings the JavaScript file into the types program.
-import-type.js:6 parameter `p` = Point
-import-type.js:6 returns `norm` = number
-reached-from-typescript.ts:3 type `norm({ x: 3, y: 4 })` = number

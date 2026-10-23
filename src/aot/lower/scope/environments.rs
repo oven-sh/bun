@@ -16,7 +16,7 @@ use crate::ir::{
 use crate::lower::captures::{self, Capture};
 use crate::lower::{FileLowering, FunctionLowering, class, layouts, positions};
 
-pub(super) fn environment_layout(
+pub(in crate::lower) fn environment_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     scope: ScopeId,
 ) -> LayoutId {
@@ -30,7 +30,7 @@ pub(super) fn environment_layout(
     layout
 }
 
-pub(super) fn get_environment(
+pub(in crate::lower) fn get_environment(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     scope: ScopeId,
 ) -> ValueId {
@@ -41,7 +41,7 @@ pub(super) fn get_environment(
     }
 }
 
-pub(super) fn stored_position(
+pub(in crate::lower) fn stored_position(
     file: &mut FileLowering<'_, '_, '_, '_>,
     binding: BindingRef,
 ) -> DeclaredType {

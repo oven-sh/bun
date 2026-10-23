@@ -345,7 +345,7 @@ fn find_object_type_layout(
     declare_object_type(file, ty, None)
 }
 
-pub(super) fn object_type_layout(
+pub(crate) fn object_type_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> Option<LayoutId> {
@@ -1000,7 +1000,7 @@ fn untyped_layout_at(
     layout
 }
 
-pub(super) fn untyped_layout(
+pub(crate) fn untyped_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     members: &[(PropertyKeyId, ObjectMemberKind)],
 ) -> LayoutId {
@@ -1109,7 +1109,10 @@ fn compute_literal_layout(file: &mut FileLowering<'_, '_, '_, '_>, literal: Expr
     untyped_layout_at(file, &members, position)
 }
 
-pub(super) fn literal_layout(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> LayoutId {
+pub(in crate::lower) fn literal_layout(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    literal: ExprId,
+) -> LayoutId {
     if let Some(&layout) = file.layouts.literals.get(&literal) {
         return layout;
     }

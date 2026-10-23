@@ -106,7 +106,7 @@ pub(super) fn find_enclosing_member(
     Some((class, member))
 }
 
-pub(super) fn get_class_home(
+pub(crate) fn get_class_home(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
 ) -> (HomeObjectKind, ValueId) {
     let Some((class, member)) = find_enclosing_member(lowering) else {

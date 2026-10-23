@@ -96,7 +96,6 @@ describe("which builds compile WebKit", () => {
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     const objects = (name: string) => join("lib", `lib${name}-objects.a`);
 
-    // Not fetched yet, or a tarball that only has the programs linked. What it holds decides, so configure reads it.
     expect(webkit.provides(cfg).contentsDecideGraph).toBe(true);
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     expect(jscPrograms(cfg)).toEqual([]);
@@ -119,7 +118,6 @@ describe("which builds compile WebKit", () => {
         [join(source.destDir!, objects(name))],
       ]),
     );
-    // The fetch makes them.
     expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
     expect([webkitJSCPath(cfg), webkitTestAotPath(cfg)]).toEqual([join(buildDir, "jsc"), join(buildDir, "testaot")]);
   });

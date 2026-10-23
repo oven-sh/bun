@@ -147,32 +147,7 @@ impl TrimInput<'_> {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum EdgeStrength {
-    Reference = 0,
-    AbortingGuard = 1,
-    RecoverableGuard = 2,
-}
-
-impl EdgeStrength {
-    pub fn from_byte(byte: u8) -> Option<EdgeStrength> {
-        match byte {
-            0 => Some(EdgeStrength::Reference),
-            1 => Some(EdgeStrength::AbortingGuard),
-            2 => Some(EdgeStrength::RecoverableGuard),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct FeatureEdge {
-    pub from: Feature,
-    pub to: Feature,
-    pub strength: EdgeStrength,
-    pub is_followed: bool,
-}
+bun_removable_features::trim_table_records!();
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct FeatureEdges {
@@ -262,45 +237,6 @@ pub struct SetIndex(pub u16);
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct LocaleGroup(pub u16);
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct RemovableRange {
-    pub range: AddressRange,
-    pub set: SetIndex,
-    pub is_code: bool,
-    pub can_be_cut: bool,
-    pub can_be_filled: bool,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct ModuleText {
-    pub range: AddressRange,
-    pub module: u16,
-    pub set: SetIndex,
-    pub readers: Option<SetIndex>,
-    pub can_be_cut: bool,
-    pub can_be_filled: bool,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct IcuItemRun {
-    pub first_item: u32,
-    pub item_count: u32,
-    pub set: SetIndex,
-    pub locale_group: Option<LocaleGroup>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct IcuPackage {
-    pub range: AddressRange,
-    pub runs: Vec<IcuItemRun>,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct IcuLanguage {
-    pub name: [u8; 4],
-    pub group: LocaleGroup,
-}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TrimTable {

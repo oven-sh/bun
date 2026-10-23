@@ -10,6 +10,7 @@ use bun_sema::hir::{FnId, MemberId, TypeNodeId};
 use bun_sema::program::Sym;
 use rustc_hash::FxHashMap;
 
+pub(crate) use self::sites::add_type_site;
 use super::{CheckerTypeId, FileLowering, types};
 use crate::ir::generated::{TypeSite, TypeSiteKind};
 use crate::ir::{
@@ -378,12 +379,4 @@ pub(crate) fn class_this_type(
     member: Option<MemberId>,
 ) -> DeclaredType {
     functions::compute_class_this_type(file, class, member)
-}
-
-pub(crate) fn add_type_site(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    origin: SiteOrigin,
-    text: Option<CheckerTypeId>,
-) -> TypeSiteId {
-    sites::add_type_site(file, origin, text)
 }

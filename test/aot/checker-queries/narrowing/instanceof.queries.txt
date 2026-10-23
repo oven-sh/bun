@@ -1,4 +1,0 @@
-# `instanceof` narrows a union of classes in both branches.
-instanceof.ts:5 type `x` = A | B
-instanceof.ts:6 type `x` = A
-instanceof.ts:8 type `x` = B

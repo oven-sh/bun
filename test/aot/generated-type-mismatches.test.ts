@@ -7,7 +7,6 @@ generated(
     name: place,
     isAlwaysRun,
     modeFailsToday,
-    linesMayBeRefused: true as const,
     make: () => program(place),
   })),
 );

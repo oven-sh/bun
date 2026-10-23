@@ -1,1 +1,0 @@
-# Paths under $TEST262_DIR that the run over test262 still gets wrong. Sorted. Empty at first: bring-up fills it, and each fix removes a line.

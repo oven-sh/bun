@@ -1,7 +1,0 @@
-# A test of a property path narrows the reads of that path. The object and the member keep their declared types.
-property-path.ts:3 type `p.value` = string | number
-property-path.ts:4 type `p.value` = string
-property-path.ts:6 type `p.value` = number
-
-property-path.ts:4 type `p` = { value: string | number; }
-property-path.ts:4 member `p.value` = member value Field string | number checked string | number

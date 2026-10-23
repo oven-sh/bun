@@ -2,8 +2,6 @@
 
 mod faces;
 mod own_text;
-#[cfg(test)]
-mod tests;
 mod text;
 
 use self::faces::collect_members_of_namespaces;

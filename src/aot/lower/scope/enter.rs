@@ -28,12 +28,12 @@ impl ScopeEntry<'_> {
 
 type EntryValues = SmallVec<[(BindingRef, Option<ValueId>); 8]>;
 
-pub(super) fn enter_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ScopeId) {
+pub(crate) fn enter_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ScopeId) {
     allocate_scope(lowering, scope, &[]);
     instantiate_functions(lowering, scope);
 }
 
-pub(super) fn leave_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ScopeId) {
+pub(crate) fn leave_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ScopeId) {
     let left = lowering.scopes.pop_scope();
     debug_assert!(
         left.is_some_and(|left| left.scope == scope),
@@ -41,7 +41,7 @@ pub(super) fn leave_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, s
     );
 }
 
-pub(super) fn enter_with_scope(
+pub(crate) fn enter_with_scope(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     scope: ScopeId,
     object: ValueId,
@@ -50,7 +50,7 @@ pub(super) fn enter_with_scope(
     allocate_scope(lowering, scope, &[(binding, object)]);
 }
 
-pub(super) fn allocate_scope(
+pub(in crate::lower) fn allocate_scope(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     scope: ScopeId,
     initial: &[(BindingRef, ValueId)],
@@ -85,7 +85,7 @@ pub(super) fn allocate_scope(
     }
 }
 
-pub(super) fn instantiate_functions(
+pub(in crate::lower) fn instantiate_functions(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     scope: ScopeId,
 ) {
@@ -102,7 +102,7 @@ pub(super) fn instantiate_functions(
     }
 }
 
-pub(super) fn create_loop_header(
+pub(crate) fn create_loop_header(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     statement: StmtId,
 ) -> BlockId {
@@ -121,7 +121,7 @@ pub(super) fn create_loop_header(
     block
 }
 
-pub(super) fn copy_iteration_bindings(
+pub(crate) fn copy_iteration_bindings(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     scope: ScopeId,
 ) {

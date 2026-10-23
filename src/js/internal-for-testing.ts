@@ -47,6 +47,11 @@ export const highwayStringsForTesting: (
     | "countChar"
     | "indexOfAny"
     | "lastIndexOfAny"
+    | "indexOfUntidySlash"
+    | "lastIndexOfSlash"
+    | "lastIndexOfSlashOrDot"
+    | "commonPrefixLength"
+    | "countSlashes"
     | "memmem"
     | "memrmem"
     | "memmem16"
@@ -106,12 +111,6 @@ export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "
   kind: "module" | "script" | "builtin" | "internal",
   chunkPaths?: string,
 ) => string | null | undefined;
-
-/** What the checker's queries answer for every node of every compiled file that `entryPoint` (an absolute path) reaches, and every diagnostic with its class and effect. `threads` 0 or absent: one per core. */
-export const describeCheckerQueries = $newRustFunction("checker_queries_testing.rs", "describeCheckerQueries", 2) as (
-  entryPoint: string,
-  threads?: number,
-) => string;
 
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(

@@ -1,3 +1,0 @@
-# An inferred file has no written types, whatever its JSDoc says.
-inferred-unwritten-types.js:3 written `number` = unwritten
-inferred-unwritten-types.js:2 class member `J` = x Field Member 4 unwritten checked number

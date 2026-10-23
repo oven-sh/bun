@@ -110,7 +110,7 @@ struct ComputedSpecifier<'g> {
     candidates: Candidates<'g>,
 }
 
-pub(super) fn lower_import_call(
+pub(crate) fn lower_import_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> ValueId {
@@ -211,7 +211,7 @@ fn emit_import_of_module(
     lowering.builder.import_module(module, referrer)
 }
 
-pub(super) fn try_lower_module_call(
+pub(crate) fn try_lower_module_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
     chain_exit: Option<BlockId>,
@@ -458,7 +458,7 @@ fn try_lower_choice_of_builtin_modules(
     ))
 }
 
-pub(super) fn lower_import_equals_require(
+pub(crate) fn lower_import_equals_require(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     declaration: ImportEqualsId,
 ) -> Option<ValueId> {

@@ -1,2 +1,0 @@
-# The written type of a member of a class is as declared, whatever the type arguments. The checked type has them.
-generic-class.ts:3 has `Box<number>` = value Field T checked number

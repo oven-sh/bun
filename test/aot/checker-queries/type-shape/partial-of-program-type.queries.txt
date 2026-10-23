@@ -1,5 +1,0 @@
-# A mapped type over a type of the program has the trust of that type.
-partial-of-program-type.ts:3 shape `Partial<Mine>` = Object
-partial-of-program-type.ts:4 shape `Readonly<Mine>` = Object
-partial-of-program-type.ts:5 shape `Pick<Mine, "a">` = Object
-absent: partial-of-program-type.ts:3 shape `Partial<Mine>` = Object untrusted

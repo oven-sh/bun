@@ -34,7 +34,7 @@ fn imported_namespace_value(module: RuntimeModule) -> ResolvedValue {
     }
 }
 
-pub(super) fn find_module_export(
+pub fn find_module_export(
     names: &BuiltinNames,
     module: RuntimeModule,
     name: Atom,

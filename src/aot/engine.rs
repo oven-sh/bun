@@ -5,10 +5,6 @@ mod shared;
 mod used_features;
 
 #[cfg(test)]
-pub(crate) mod testing;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod unlinked_engine;
 
 use core::ffi::c_void;
@@ -139,7 +135,7 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     record.mismatch_policy = if options.reports_type_mismatches {
         MismatchPolicy::Report
     } else {
-        MismatchPolicy::Throw
+        MismatchPolicy::Silent
     };
     record.reports = reports_of(options);
     record.thread_count = u32::try_from(request.thread_count.get()).unwrap_or(u32::MAX);

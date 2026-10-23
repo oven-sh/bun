@@ -64,7 +64,7 @@ fn get_capture(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, index: usize) ->
     }
 }
 
-pub(super) fn bind_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
+pub(crate) fn bind_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
     let captures: CaptureList = SmallVec::from_slice(lowering.file.scopes.captures(lowering.key));
     let first_copy = captures.iter().find_map(|&capture| match capture {
         Capture::Environment(_) => None,
@@ -92,7 +92,7 @@ pub(super) fn bind_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>)
     }
 }
 
-pub(super) fn capture_positions(
+pub(in crate::lower) fn capture_positions(
     file: &mut FileLowering<'_, '_, '_, '_>,
     key: FunctionKey,
 ) -> Vec<DeclaredType> {
@@ -120,7 +120,7 @@ fn list_positions(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> 
     positions.collect()
 }
 
-pub(super) fn collect_capture_values(
+pub(in crate::lower) fn collect_capture_values(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     key: FunctionKey,
     home: Option<ValueId>,
@@ -144,7 +144,10 @@ pub(super) fn collect_capture_values(
     SmallVec::from_slice(&[pack])
 }
 
-pub(super) fn captures_home_object(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> bool {
+pub(in crate::lower) fn captures_home_object(
+    file: &FileLowering<'_, '_, '_, '_>,
+    key: FunctionKey,
+) -> bool {
     file.scopes
         .captures(key)
         .iter()
@@ -154,7 +157,7 @@ pub(super) fn captures_home_object(file: &FileLowering<'_, '_, '_, '_>, key: Fun
         })
 }
 
-pub(super) fn find_captured_value(
+pub(in crate::lower) fn find_captured_value(
     lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
     capture: Capture,
 ) -> Option<ValueId> {

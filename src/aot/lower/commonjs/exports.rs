@@ -36,7 +36,9 @@ fn top_scope_of(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option
 }
 
 /// The module that the code of the function belongs to: the file, or the inner module of a bundle that is written around it.
-pub(super) fn current_module(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> ModuleRef {
+pub(in crate::lower) fn current_module(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+) -> ModuleRef {
     let file = &*lowering.file;
     let modules = file.inputs.modules;
     let own_file = ModuleRef::File(file.file);
@@ -55,20 +57,24 @@ pub(super) fn current_module(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) ->
     own_file
 }
 
-pub(super) fn current_module_id(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ModuleId {
+pub(in crate::lower) fn current_module_id(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+) -> ModuleId {
     let module = current_module(lowering);
     lowering.file.fragment.declare_module(module)
 }
 
 /// `return e` there ends the evaluation of a CommonJS module, and nobody gets `e`.
-pub(super) fn drops_returned_value(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
+pub(in crate::lower) fn drops_returned_value(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+) -> bool {
     match lowering.key {
         FunctionKey::ModuleBody(_) => variables::body_form(lowering.file) == BodyForm::Plain,
         _ => is_module_body(lowering),
     }
 }
 
-pub(super) fn is_module_body(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
+pub(in crate::lower) fn is_module_body(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     let file = &*lowering.file;
     match lowering.key {
         FunctionKey::ModuleBody(_) => true,
@@ -105,7 +111,7 @@ pub(super) fn get_own_exports(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_
 }
 
 /// What `require` of an evaluated module answers. `None`: the module has no object, and nobody asks for one.
-pub(super) fn emit_module_value(
+pub(in crate::lower) fn emit_module_value(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     module: ModuleRef,
 ) -> Option<ValueId> {
@@ -200,7 +206,7 @@ fn emit_member_read(
 }
 
 /// What an ES module gets under a name that it imports from a CommonJS module. `None`: the module does not have the name.
-pub(super) fn read_imported_name(
+pub(in crate::lower) fn read_imported_name(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     module: ModuleRef,
     name: Atom,
@@ -213,7 +219,7 @@ pub(super) fn read_imported_name(
 }
 
 /// What `require` of a module has under a name that no member access spells: a key of a pattern.
-pub(super) fn read_named_export(
+pub(in crate::lower) fn read_named_export(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     module: ModuleRef,
     name: Atom,
@@ -324,7 +330,7 @@ pub(in crate::lower) fn test_holder(
 }
 
 /// What stands in front of a member that is bound to a variable is evaluated as it always was.
-pub(super) fn check_member_root(
+pub(in crate::lower) fn check_member_root(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
 ) {
@@ -339,7 +345,7 @@ fn find_bound_member(file: &FileLowering<'_, '_, '_, '_>, access: ExprId) -> Opt
     }
 }
 
-pub(super) fn lower_export_member(
+pub(in crate::lower) fn lower_export_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
 ) -> Option<ValueId> {
@@ -375,7 +381,7 @@ fn find_receiver_view(
 }
 
 /// `this` of a call of a bound member. A module without an object has only functions that do not look at it.
-pub(super) fn lower_export_receiver(
+pub(in crate::lower) fn lower_export_receiver(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
 ) -> ValueId {
@@ -517,7 +523,7 @@ fn find_exports_mention(
 }
 
 /// A read of `module.exports` is a read of the variable, and of one of the five names what the name stands for.
-pub(super) fn try_lower_mention(
+pub(in crate::lower) fn try_lower_mention(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,
 ) -> Option<ValueId> {
@@ -565,7 +571,7 @@ pub(super) fn lower_module_exports_reference(
 }
 
 /// `delete module.exports`: from then on `module.exports` reads `undefined`, and so does whoever requires the module.
-pub(super) fn try_lower_exports_deletion(
+pub(in crate::lower) fn try_lower_exports_deletion(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
 ) -> Option<ValueId> {
@@ -593,7 +599,7 @@ fn find_described_value(file: &FileLowering<'_, '_, '_, '_>, descriptor: ExprId)
 }
 
 /// `Object.defineProperty(exports, "n", { value: v })` where `n` is a variable, and the definition of the marker.
-pub(super) fn try_lower_export_definition(
+pub(in crate::lower) fn try_lower_export_definition(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> Option<ValueId> {
@@ -628,7 +634,7 @@ pub(super) fn try_lower_export_definition(
 }
 
 /// The module whose names the pattern takes, where `source` is a call of `require` that nobody reads as a value.
-pub(super) fn find_destructured_module(
+pub(in crate::lower) fn find_destructured_module(
     file: &FileLowering<'_, '_, '_, '_>,
     source: ExprId,
 ) -> Option<ModuleRef> {
@@ -732,7 +738,7 @@ fn lower_exported_literal(
 }
 
 /// A statement that stores `module.exports` of a module without an object: a literal gives each of its names its value.
-pub(super) fn try_lower_exports_statement(
+pub(in crate::lower) fn try_lower_exports_statement(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,
 ) -> bool {
@@ -747,7 +753,7 @@ pub(super) fn try_lower_exports_statement(
 }
 
 /// `export = value` of TypeScript is `module.exports = value` as a statement.
-pub(super) fn try_lower_export_assignment(
+pub(in crate::lower) fn try_lower_export_assignment(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     value: ExprId,
 ) -> bool {
@@ -760,6 +766,6 @@ pub(super) fn try_lower_export_assignment(
 }
 
 /// The statement is `var require_x = __commonJS(..)` or another one that the graph of modules has taken all there is from.
-pub(super) fn is_erased(file: &FileLowering<'_, '_, '_, '_>, statement: StmtId) -> bool {
+pub(in crate::lower) fn is_erased(file: &FileLowering<'_, '_, '_, '_>, statement: StmtId) -> bool {
     file.inputs.modules.erased(file.file, statement)
 }

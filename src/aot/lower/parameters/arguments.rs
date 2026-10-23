@@ -5,7 +5,7 @@ use crate::ir::generated::FunctionFlags;
 use crate::lower::FunctionLowering;
 use crate::lower::scope::ArgumentsObject;
 
-pub(super) fn create_arguments_object(
+pub(in crate::lower) fn create_arguments_object(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     unit: CodeUnit,
     parameters: &[ValueId],

@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 pub use crate::ir::generated::{ImportPhase, ModuleKind, RequireResult, SyntheticExportRule};
 

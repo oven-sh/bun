@@ -123,7 +123,7 @@ Five independent jobs over the Rust workspace. They share `.github/actions/rust-
 | `clippy`         | `cargo clippy`        | `bun run rust:clippy`, then `cargo check --workspace --all-targets`                                             | yes                            |
 | `miri`           | `cargo miri test`     | `bun run rust:miri` (`scripts/rust-miri.ts`)                                                                    | yes                            |
 | `lolhtml`        | `lol-html cargo test` | `cargo test` in `vendor/lolhtml`                                                                                | yes                            |
-| `aot-rust-tests` | `AoT cargo test`      | the schema's `--check` and tests, `cargo test` of the ten AoT crates                                            | yes                            |
+| `aot-rust-tests` | `AoT cargo test`      | the schema's `--check` and tests, `cargo test` of the nine AoT crates                                           | yes                            |
 | `mordant`        | `mordant`             | `bun run rust:mordant`                                                                                          | advisory (`continue-on-error`) |
 
 - `clippy` lints the default targets only (lib and bin): test code was never held to the clippy lint set. Its second step, `cargo check --workspace --all-targets`, type-checks `#[cfg(test)]` code, `tests/` and `benches/` so they keep compiling. Nothing else builds them except the crates `rust:miri` runs.

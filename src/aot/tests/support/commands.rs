@@ -103,7 +103,7 @@ pub fn parse_option_words(words: &[OptionWord]) -> Result<FrontEndWords, TestFai
 fn try_apply_option_word(words: &mut FrontEndWords, word: &str) -> bool {
     match word {
         "erase-types" => words.erases_types = true,
-        "type-errors=throw" => words.reports_type_mismatches = false,
+        "type-errors=silent" => words.reports_type_mismatches = false,
         "type-errors=log" => words.reports_type_mismatches = true,
         _ => {
             let count = word.strip_prefix("threads=");
@@ -414,7 +414,7 @@ mod tests {
         let words = [
             "type-errors=log",
             "threads=4",
-            "type-errors=throw",
+            "type-errors=silent",
             "threads=2",
         ];
         let expected = FrontEndWords {

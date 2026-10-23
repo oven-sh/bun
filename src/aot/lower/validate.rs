@@ -10,7 +10,8 @@ use bun_sema::check::aot::{GaveUp, WrittenPlace};
 use bun_sema::hir::ExprId;
 use rustc_hash::FxHashMap;
 
-use super::{CheckerTypeId, FileLowering, FunctionLowering};
+pub(in crate::lower) use self::misuse::report_misused_compiler_functions;
+use super::{CheckerTypeId, FunctionLowering};
 use crate::ir::ExpectedResultId;
 use crate::ir::generated::ValidationNode;
 
@@ -32,8 +33,4 @@ pub(crate) fn find_expected_result(
     call: ExprId,
 ) -> Option<ExpectedResultId> {
     expected_result::find_expected_result(lowering.file, call)
-}
-
-pub(in crate::lower) fn report_misused_compiler_functions(file: &mut FileLowering<'_, '_, '_, '_>) {
-    misuse::report_misused_compiler_functions(file);
 }

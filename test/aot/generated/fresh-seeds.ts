@@ -28,7 +28,6 @@ export function freshSeeds(part: number, parts: number) {
           name: `${title} ${freshSeed}`,
           isAlwaysRun: true,
           mayBeUnjudgeable: true,
-          linesMayBeRefused: options.linesMayBeRefused,
           plainEnv: options.plainEnv,
           modeFailsToday: options.modeFailsToday && Object.values(options.modeFailsToday)[0],
           make: () => program(name, extension, options, freshSeed),

@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use super::ModuleRef;
 use bun_sema::atom::Atom;

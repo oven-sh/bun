@@ -435,12 +435,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return WrittenType::from_result(self.resolved(ty));
         }
         let annotated = match member_kind(prop.flags) {
-            ObjectMemberKind::Getter
-            | ObjectMemberKind::Setter
-            | ObjectMemberKind::GetterAndSetter => self.accessor_annotation(&declarations),
             ObjectMemberKind::Field | ObjectMemberKind::Method => {
                 Ok(self.field_annotation(&declarations))
             }
+            _ => self.accessor_annotation(&declarations),
         };
         let annotated = match annotated {
             Ok(Some(annotated)) => annotated,
@@ -532,42 +530,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     MemberKind::Setter => {
                         hir[member.func].effective_set_accessor_type_annotation_node(hir)
                     }
-                    MemberKind::Constructor
-                    | MemberKind::CallSignature
-                    | MemberKind::ConstructSignature
-                    | MemberKind::IndexSignature
-                    | MemberKind::StaticBlock => TypeNodeId::NONE,
+                    _ => TypeNodeId::NONE,
                 }
             }
             Decl::ParameterProperty(parameter) => hir[parameter].ty,
-            Decl::Var(_)
-            | Decl::Param(_)
-            | Decl::Fn(_)
-            | Decl::Class(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::Enum(_)
-            | Decl::EnumMember(_)
-            | Decl::Module(_)
-            | Decl::TypeParam(_)
-            | Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::ImportEquals(_)
-            | Decl::ExportSpec(_)
-            | Decl::ExportStarAs(_)
-            | Decl::ExportExpr(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => TypeNodeId::NONE,
+            _ => TypeNodeId::NONE,
         };
         node.some().map_or(Annotation::Missing, Annotation::Node)
     }

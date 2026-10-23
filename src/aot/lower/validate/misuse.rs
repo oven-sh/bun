@@ -10,7 +10,7 @@ use crate::diagnostic_codes::Code;
 use crate::lower::FileLowering;
 use crate::modules::ImportBinding;
 
-pub(super) fn report_misused_compiler_functions(file: &mut FileLowering<'_, '_, '_, '_>) {
+pub(in crate::lower) fn report_misused_compiler_functions(file: &mut FileLowering<'_, '_, '_, '_>) {
     let mentioned = file.builtins.mentioned();
     let mentions = |id: BuiltinId| mentioned.binary_search(&id).is_ok();
     let mentions_validate = mentions(BuiltinId::BunBundleValidate);

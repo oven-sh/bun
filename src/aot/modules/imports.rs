@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use super::bindings::{AccessedModule, Holder, ImportBinding, RequiredName};
 use super::exports::{ExportTables, Resolution};

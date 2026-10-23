@@ -18,21 +18,21 @@ pub(super) enum BindingRead {
     TypeOf,
 }
 
-pub(super) fn lower_identifier(
+pub(crate) fn lower_identifier(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     identifier: ExprId,
 ) -> ValueId {
     read_identifier(lowering, identifier, BindingRead::Value)
 }
 
-pub(super) fn lower_identifier_for_typeof(
+pub(crate) fn lower_identifier_for_typeof(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     identifier: ExprId,
 ) -> ValueId {
     read_identifier(lowering, identifier, BindingRead::TypeOf)
 }
 
-pub(super) fn lower_identifier_callee(
+pub(crate) fn lower_identifier_callee(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     identifier: ExprId,
 ) -> (ValueId, Option<ValueId>) {
@@ -52,7 +52,7 @@ pub(super) fn lower_identifier_callee(
     (function, Some(object))
 }
 
-pub(super) fn delete_identifier(
+pub(crate) fn delete_identifier(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     identifier: ExprId,
 ) -> ValueId {
@@ -64,7 +64,7 @@ pub(super) fn delete_identifier(
     delete_binding(lowering, binding, name)
 }
 
-pub(super) fn resolve_identifier_target(
+pub(crate) fn resolve_identifier_target(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     identifier: ExprId,
 ) -> IdentifierTarget {
@@ -73,7 +73,7 @@ pub(super) fn resolve_identifier_target(
     }
 }
 
-pub(super) fn resolve_pattern_target(
+pub(crate) fn resolve_pattern_target(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     pattern: PatId,
 ) -> IdentifierTarget {
@@ -95,7 +95,7 @@ pub(super) fn resolve_pattern_target(
     IdentifierTarget { kind }
 }
 
-pub(super) fn get_identifier_target(
+pub(crate) fn get_identifier_target(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     target: &IdentifierTarget,
 ) -> ValueId {
@@ -111,7 +111,7 @@ pub(super) fn get_identifier_target(
     }
 }
 
-pub(super) fn set_identifier_target(
+pub(crate) fn set_identifier_target(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     target: &IdentifierTarget,
     value: ValueId,
@@ -138,7 +138,7 @@ pub(super) fn set_identifier_target(
     }
 }
 
-pub(super) fn initialize_pattern_name(
+pub(crate) fn initialize_pattern_name(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     pattern: PatId,
     value: ValueId,
@@ -156,7 +156,7 @@ pub(super) fn initialize_pattern_name(
     }
 }
 
-pub(super) fn find_tested_local(
+pub(crate) fn find_tested_local(
     lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,
 ) -> Option<SymbolId> {
@@ -185,7 +185,7 @@ pub(super) fn find_tested_local(
     }
 }
 
-pub(super) fn read_local(
+pub(crate) fn read_local(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     symbol: SymbolId,
 ) -> ValueId {
@@ -194,7 +194,7 @@ pub(super) fn read_local(
     lowering.builder.read_variable(local.variable)
 }
 
-pub(super) fn rebind_local(
+pub(crate) fn rebind_local(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     symbol: SymbolId,
     value: ValueId,

@@ -209,7 +209,7 @@ fn note_views_of_receiver(file: &mut FileLowering<'_, '_, '_, '_>, access: ExprI
     }
 }
 
-pub(super) fn convert_to_member(
+pub(crate) fn convert_to_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
     value: ValueId,
@@ -245,7 +245,7 @@ pub(super) fn convert_to_member(
 }
 
 // The slot of a field holds what the type of the field says, and an accessor returns what its getter was converted to.
-pub(super) fn claim_member_read(
+pub(crate) fn claim_member_read(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
     value: ValueId,

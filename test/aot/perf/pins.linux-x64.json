@@ -664,24 +664,28 @@
     }
   },
   "built-in/path-join": {
-    "typed": 747.8,
-    "untyped": 747.7,
-    "jit": 854.1
+    "typed": 482.5,
+    "untyped": 477.6,
+    "jit": 573.5
   },
   "built-in/path-normalize": {
-    "typed": 402,
-    "untyped": 402,
-    "jit": 473.2
+    "typed": 128.8,
+    "untyped": 116.8,
+    "jit": 185.5
   },
   "built-in/path-relative": {
-    "typed": 1258,
-    "untyped": 1258.1,
-    "jit": 1367.3
+    "typed": 615.8,
+    "untyped": 609,
+    "jit": 707.3
   },
   "built-in/path-resolve": {
-    "typed": 787.7,
-    "untyped": 787.6,
-    "jit": 868.7
+    "typed": 495.8,
+    "untyped": 491.5,
+    "jit": 562.6,
+    "best": {
+      "typed": 495.6,
+      "untyped": 491.5
+    }
   },
   "built-in/path-16-bit": {
     "typed": 22484.4,
@@ -693,9 +697,13 @@
     }
   },
   "built-in/path-of-untidy-paths": {
-    "typed": 4193.5,
-    "untyped": 4192.8,
-    "jit": 4440.5
+    "typed": 2916.7,
+    "untyped": 2923.1,
+    "jit": 3157.5,
+    "best": {
+      "typed": 2916.7,
+      "untyped": 2920.7
+    }
   },
   "built-in/process-argv": {
     "typed": 117,

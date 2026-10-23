@@ -18,7 +18,6 @@ pub use crate::model::{
 
 pub const TABLE_MAGIC: [u8; 8] = *b"BUNTRIM\0";
 pub const TABLE_VERSION: u32 = 4;
-pub const TABLE_HEADER_BYTES: usize = 96;
 pub const TRIMMED_MAGIC: [u8; 8] = *b"BUNTRMD\0";
 pub const REMOVED_RANGES_HEADER_BYTES: usize = 16;
 pub const MAX_TABLE_BYTES: u64 = 16 << 20;
@@ -34,15 +33,6 @@ const BASE_ADDRESS_OFFSET: usize = 24;
 const DIRECTORY_OFFSET: usize = 32;
 const DIRECTORY_ENTRY_BYTES: usize = 8;
 const SECTION_ALIGNMENT: u64 = 4;
-
-const EDGE_RECORD_BYTES: usize = 6;
-const FEATURE_SET_RECORD_BYTES: usize = 8;
-const SET_MEMBER_RECORD_BYTES: usize = 2;
-const RANGE_RECORD_BYTES: usize = 12;
-const ICU_PACKAGE_RECORD_BYTES: usize = 16;
-const ICU_RUN_RECORD_BYTES: usize = 12;
-const ICU_LANGUAGE_RECORD_BYTES: usize = 8;
-const MODULE_TEXT_RECORD_BYTES: usize = 16;
 
 const FILL_ONLY: u8 = 0;
 const CUT_OR_FILL: u8 = 1;
@@ -78,16 +68,14 @@ pub struct EncodedRemovedRanges {
     pub dropped: u32,
 }
 
-struct Sections<'a> {
-    edges: &'a [u8],
-    feature_sets: &'a [u8],
-    set_members: &'a [u8],
-    ranges: &'a [u8],
-    icu_packages: &'a [u8],
-    icu_runs: &'a [u8],
-    icu_languages: &'a [u8],
-    module_texts: &'a [u8],
+struct Context<'a> {
+    sections: &'a Sections<'a>,
+    base_address: u64,
+    sets: &'a [FeatureSet],
+    languages: &'a [IcuLanguage],
 }
+
+bun_removable_features::trim_table_decoders!();
 
 struct Tiling<'a> {
     remaining: &'a [u8],
@@ -223,56 +211,68 @@ fn check_header(section: &[u8]) -> Result<&[u8], TableError> {
     Ok(table)
 }
 
-fn parse_sections(table: &[u8]) -> Result<Sections<'_>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::Directory);
-    let directory = &table[DIRECTORY_OFFSET..TABLE_HEADER_BYTES];
-    let mut entries = directory.as_chunks::<DIRECTORY_ENTRY_BYTES>().0.iter();
-    let mut previous_end = TABLE_HEADER_BYTES as u64;
-    let mut next_section = |record_bytes: usize| -> Result<&[u8], TableError> {
-        let entry = entries.next().ok_or(MALFORMED)?;
-        let offset = u64::from(read_u32(entry, 0));
-        let end = offset + u64::from(read_u32(entry, 4)) * record_bytes as u64;
-        if offset % SECTION_ALIGNMENT != 0 || offset < previous_end || end > table.len() as u64 {
-            return Err(MALFORMED);
-        }
-        previous_end = end;
-        Ok(&table[offset as usize..end as usize])
-    };
-    Ok(Sections {
-        edges: next_section(EDGE_RECORD_BYTES)?,
-        feature_sets: next_section(FEATURE_SET_RECORD_BYTES)?,
-        set_members: next_section(SET_MEMBER_RECORD_BYTES)?,
-        ranges: next_section(RANGE_RECORD_BYTES)?,
-        icu_packages: next_section(ICU_PACKAGE_RECORD_BYTES)?,
-        icu_runs: next_section(ICU_RUN_RECORD_BYTES)?,
-        icu_languages: next_section(ICU_LANGUAGE_RECORD_BYTES)?,
-        module_texts: next_section(MODULE_TEXT_RECORD_BYTES)?,
-    })
+struct Directory<'a> {
+    table: &'a [u8],
+    entries: core::slice::Iter<'a, [u8; DIRECTORY_ENTRY_BYTES]>,
+    previous_end: u64,
 }
 
-fn parse_edges(sections: &Sections<'_>) -> Result<FeatureEdges, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::Edges);
-    let mut edges = Vec::with_capacity(sections.edges.len() / EDGE_RECORD_BYTES);
-    let mut previous: Option<(u16, u16)> = None;
-    for record in sections.edges.as_chunks::<EDGE_RECORD_BYTES>().0 {
-        let pair = (read_u16(record, 0), read_u16(record, 2));
-        if pair.0 == pair.1 || previous.is_some_and(|previous| previous >= pair) {
-            return Err(MALFORMED);
+impl<'a> Directory<'a> {
+    fn new(table: &'a [u8]) -> Directory<'a> {
+        Directory {
+            table,
+            entries: table[DIRECTORY_OFFSET..TABLE_HEADER_BYTES].as_chunks().0.iter(),
+            previous_end: TABLE_HEADER_BYTES as u64,
         }
-        let strength = EdgeStrength::from_byte(record[4]).ok_or(MALFORMED)?;
-        let is_followed = read_flag(u32::from(record[5])).ok_or(MALFORMED)?;
-        if strength == EdgeStrength::Reference && !is_followed {
-            return Err(MALFORMED);
-        }
-        edges.push(FeatureEdge {
-            from: read_feature(pair.0, MALFORMED)?,
-            to: read_feature(pair.1, MALFORMED)?,
-            strength,
-            is_followed,
-        });
-        previous = Some(pair);
     }
-    Ok(FeatureEdges::new(edges))
+
+    fn next_section(&mut self, record_bytes: usize) -> Result<&'a [u8], TableError> {
+        const MALFORMED: TableError = TableError::Malformed(MalformedTable::Directory);
+        let entry = self.entries.next().ok_or(MALFORMED)?;
+        let offset = u64::from(read_u32(entry, 0));
+        let end = offset + u64::from(read_u32(entry, 4)) * record_bytes as u64;
+        if offset % SECTION_ALIGNMENT != 0
+            || offset < self.previous_end
+            || end > self.table.len() as u64
+        {
+            return Err(MALFORMED);
+        }
+        self.previous_end = end;
+        Ok(&self.table[offset as usize..end as usize])
+    }
+}
+
+impl FeatureEdge {
+    fn may_follow(&self, previous: Option<&FeatureEdge>, _: &Context<'_>) -> bool {
+        self.from != self.to
+            && previous.is_none_or(|previous| (previous.from, previous.to) < (self.from, self.to))
+            && (self.is_followed || self.strength != EdgeStrength::Reference)
+    }
+}
+
+impl IcuLanguage {
+    fn may_follow(&self, previous: Option<&IcuLanguage>, _: &Context<'_>) -> bool {
+        previous.is_none_or(|previous| previous.name < self.name)
+            && u32::from(self.group.0) < LOCALE_GROUP_LIMIT
+    }
+}
+
+impl IcuItemRun {
+    fn may_follow(&self, previous: Option<&IcuItemRun>, context: &Context<'_>) -> bool {
+        let previous_end =
+            previous.map_or(0, |run| u64::from(run.first_item) + u64::from(run.item_count));
+        let is_known = |group| context.languages.iter().any(|language| language.group == group);
+        u64::from(self.first_item) >= previous_end
+            && self.item_count != 0
+            && self.locale_group.is_none_or(is_known)
+    }
+}
+
+impl ModuleText {
+    fn may_follow(&self, _: Option<&ModuleText>, context: &Context<'_>) -> bool {
+        self.readers
+            .is_none_or(|readers| are_some_of_set(readers, self.set, context.sets))
+    }
 }
 
 fn parse_set_members(members: &[u8]) -> Result<FeatureSet, TableError> {
@@ -321,175 +321,41 @@ fn parse_feature_sets(sections: &Sections<'_>) -> Result<Vec<FeatureSet>, TableE
     Ok(sets)
 }
 
-fn parse_ranges(
-    sections: &Sections<'_>,
-    base_address: u64,
-    set_count: usize,
-) -> Result<Vec<RemovableRange>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::Ranges);
-    let mut ranges = Vec::with_capacity(sections.ranges.len() / RANGE_RECORD_BYTES);
-    let mut previous = None;
-    for record in sections.ranges.as_chunks::<RANGE_RECORD_BYTES>().0 {
-        let range = read_address_range(base_address, record, previous).ok_or(MALFORMED)?;
-        let methods = read_removal_methods(record[11]).ok_or(MALFORMED)?;
-        ranges.push(RemovableRange {
-            range,
-            set: read_set_index(read_u16(record, 8), set_count).ok_or(MALFORMED)?,
-            is_code: read_flag(u32::from(record[10])).ok_or(MALFORMED)?,
-            can_be_cut: methods.can_be_cut,
-            can_be_filled: methods.can_be_filled,
-        });
-        previous = Some(range);
-    }
-    Ok(ranges)
-}
-
-fn parse_icu_languages(sections: &Sections<'_>) -> Result<Vec<IcuLanguage>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::IcuLanguages);
-    let language_count = sections.icu_languages.len() / ICU_LANGUAGE_RECORD_BYTES;
-    let mut languages = Vec::with_capacity(language_count);
-    let mut previous: Option<[u8; 4]> = None;
-    for record in sections
-        .icu_languages
-        .as_chunks::<ICU_LANGUAGE_RECORD_BYTES>()
-        .0
-    {
-        let name = read_language_name(record).ok_or(MALFORMED)?;
-        let group = read_u16(record, 4);
-        let is_ascending = previous.is_none_or(|previous| previous < name);
-        if !is_ascending || u32::from(group) >= LOCALE_GROUP_LIMIT || read_u16(record, 6) != 0 {
-            return Err(MALFORMED);
-        }
-        languages.push(IcuLanguage {
-            name,
-            group: LocaleGroup(group),
-        });
-        previous = Some(name);
-    }
-    Ok(languages)
-}
-
-fn parse_icu_runs(
-    package_runs: &[u8],
-    set_count: usize,
-    languages: &[IcuLanguage],
-) -> Result<Vec<IcuItemRun>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::IcuRuns);
-    let mut runs = Vec::with_capacity(package_runs.len() / ICU_RUN_RECORD_BYTES);
-    let mut previous_end = 0u64;
-    for record in package_runs.as_chunks::<ICU_RUN_RECORD_BYTES>().0 {
-        let first_item = read_u32(record, 0);
-        let item_count = read_u32(record, 4);
-        let locale_group = read_u16(record, 10).checked_sub(1).map(LocaleGroup);
-        let has_known_group = locale_group
-            .is_none_or(|group| languages.iter().any(|language| language.group == group));
-        if u64::from(first_item) < previous_end || item_count == 0 || !has_known_group {
-            return Err(MALFORMED);
-        }
-        runs.push(IcuItemRun {
-            first_item,
-            item_count,
-            set: read_set_index(read_u16(record, 8), set_count).ok_or(MALFORMED)?,
-            locale_group,
-        });
-        previous_end = u64::from(first_item) + u64::from(item_count);
-    }
-    Ok(runs)
-}
-
-fn parse_icu_packages(
-    sections: &Sections<'_>,
-    base_address: u64,
-    set_count: usize,
-    languages: &[IcuLanguage],
-) -> Result<Vec<IcuPackage>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::IcuPackages);
-    let mut runs = Tiling::new(sections.icu_runs, ICU_RUN_RECORD_BYTES);
-    let mut packages = Vec::with_capacity(sections.icu_packages.len() / ICU_PACKAGE_RECORD_BYTES);
-    let mut previous = None;
-    for record in sections
-        .icu_packages
-        .as_chunks::<ICU_PACKAGE_RECORD_BYTES>()
-        .0
-    {
-        let range = read_address_range(base_address, record, previous).ok_or(MALFORMED)?;
-        let package_runs = runs
-            .take(read_u32(record, 8), read_u32(record, 12))
-            .ok_or(MALFORMED)?;
-        packages.push(IcuPackage {
-            range,
-            runs: parse_icu_runs(package_runs, set_count, languages)?,
-        });
-        previous = Some(range);
-    }
-    if !runs.is_complete() {
-        return Err(MALFORMED);
-    }
-    Ok(packages)
-}
-
 fn are_some_of_set(readers: SetIndex, set: SetIndex, sets: &[FeatureSet]) -> bool {
     readers != set && sets[usize::from(readers.0)].is_subset_of(&sets[usize::from(set.0)])
 }
 
-fn parse_module_texts(
-    sections: &Sections<'_>,
-    base_address: u64,
-    sets: &[FeatureSet],
-) -> Result<Vec<ModuleText>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::ModuleTexts);
-    let text_count = sections.module_texts.len() / MODULE_TEXT_RECORD_BYTES;
-    let mut texts = Vec::with_capacity(text_count);
-    let mut modules = Vec::with_capacity(text_count);
-    let mut previous = None;
-    for record in sections
-        .module_texts
-        .as_chunks::<MODULE_TEXT_RECORD_BYTES>()
-        .0
-    {
-        let range = read_address_range(base_address, record, previous).ok_or(MALFORMED)?;
-        let module = read_u16(record, 8);
-        let set = read_set_index(read_u16(record, 10), sets.len()).ok_or(MALFORMED)?;
-        let readers = match read_u16(record, 12).checked_sub(1) {
-            Some(index) => Some(read_set_index(index, sets.len()).ok_or(MALFORMED)?),
-            None => None,
-        };
-        let methods = read_removal_methods(record[14]).ok_or(MALFORMED)?;
-        if readers.is_some_and(|readers| !are_some_of_set(readers, set, sets)) || record[15] != 0 {
-            return Err(MALFORMED);
-        }
-        texts.push(ModuleText {
-            range,
-            module,
-            set,
-            readers,
-            can_be_cut: methods.can_be_cut,
-            can_be_filled: methods.can_be_filled,
-        });
-        modules.push(module);
-        previous = Some(range);
-    }
+fn have_distinct_modules(texts: &[ModuleText]) -> bool {
+    let mut modules: Vec<u16> = texts.iter().map(|text| text.module).collect();
     modules.sort_unstable();
-    if !modules.is_sorted_by(|left, right| left < right) {
-        return Err(MALFORMED);
-    }
-    Ok(texts)
+    modules.is_sorted_by(|left, right| left < right)
 }
 
 pub fn parse_trim_table(section: &[u8]) -> Result<TrimTable, TableError> {
     let table = check_header(section)?;
     let sections = parse_sections(table)?;
-    let base_address = read_u64(table, BASE_ADDRESS_OFFSET);
     let sets = parse_feature_sets(&sections)?;
-    let set_count = sets.len();
-    let icu_languages = parse_icu_languages(&sections)?;
-    let edges = parse_edges(&sections)?;
-    let ranges = parse_ranges(&sections, base_address, set_count)?;
-    let icu_packages = parse_icu_packages(&sections, base_address, set_count, &icu_languages)?;
-    let module_texts = parse_module_texts(&sections, base_address, &sets)?;
+    let without_languages = Context {
+        sections: &sections,
+        base_address: read_u64(table, BASE_ADDRESS_OFFSET),
+        sets: &sets,
+        languages: &[],
+    };
+    let icu_languages = parse_icu_languages(sections.icu_languages, &without_languages)?;
+    let context = Context {
+        languages: &icu_languages,
+        ..without_languages
+    };
+    let edges = FeatureEdges::new(parse_edges(sections.edges, &context)?);
+    let ranges = parse_ranges(sections.ranges, &context)?;
+    let icu_packages = parse_icu_packages(sections.icu_packages, &context)?;
+    let module_texts = parse_module_texts(sections.module_texts, &context)?;
+    if !have_distinct_modules(&module_texts) {
+        return Err(TableError::Malformed(MalformedTable::ModuleTexts));
+    }
     Ok(TrimTable {
         features_hash: read_u64(table, FEATURES_HASH_OFFSET),
-        base_address,
+        base_address: context.base_address,
         edges,
         sets,
         ranges,

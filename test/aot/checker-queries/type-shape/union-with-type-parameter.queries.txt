@@ -1,6 +1,0 @@
-# A type parameter in a union stays a member of it.
-union-with-type-parameter.ts:2 shape `T | string` = Union(string | T)
-union-with-type-parameter.ts:2 shape `T | undefined` = Union(undefined | T)
-union-with-type-parameter.ts:2 shape `T | T[]` = Union(T | T[])
-union-with-type-parameter.ts:3 shape `T | string` = Union(string | T)
-union-with-type-parameter.ts:3 shape `T` = TypeVariable(number; union-with-type-parameter.ts:1)

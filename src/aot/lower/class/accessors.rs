@@ -32,7 +32,7 @@ pub(in crate::lower) fn declare_accessor_function(
     })
 }
 
-pub(super) fn lower_accessor_function(
+pub(crate) fn lower_accessor_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     member: MemberId,
@@ -59,7 +59,7 @@ pub(super) fn lower_accessor_function(
     lowering.finish();
 }
 
-pub(super) fn lower_private_name_test(
+pub(crate) fn lower_private_name_test(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     member: MemberId,

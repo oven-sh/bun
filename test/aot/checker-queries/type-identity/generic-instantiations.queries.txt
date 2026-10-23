@@ -1,4 +1,0 @@
-# An instantiated generic interface is identified by the interface and its type arguments, not by its structure.
-same: generic-instantiations.ts:3 identity `Pair<number>` <=> generic-instantiations.ts:5 identity `Pair<number>`
-different: generic-instantiations.ts:5 identity `Pair<number>` <=> generic-instantiations.ts:6 identity `Pair<string>`
-different: generic-instantiations.ts:3 identity `Pair<number>` <=> generic-instantiations.ts:4 identity `{ first: number; second: number }`

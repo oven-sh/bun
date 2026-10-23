@@ -761,6 +761,3 @@ pub(super) fn trim_blocker_code(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::OptionAdmitsCode => "build-option",
     }
 }
-
-#[cfg(test)]
-mod tests;

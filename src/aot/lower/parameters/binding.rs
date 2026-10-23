@@ -12,7 +12,7 @@ use crate::lower::{
 
 type InitialBindings = SmallVec<[(BindingRef, ValueId); 4]>;
 
-pub(super) fn lower_parameters(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, source: FnId) {
+pub(crate) fn lower_parameters(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, source: FnId) {
     let hir = lowering.file.hir;
     let top = lowering.file.bound.fns[source.idx()].scope;
     let positions = positions::function_positions(lowering.file, source);

@@ -1021,9 +1021,7 @@ fn boolean(b: bool) -> Decision<'static> {
 #[track_caller]
 fn last_expr(s: &Analyzed<'_>, test: impl Fn(&ExprKind) -> bool) -> ExprId {
     let found = find_exprs(&s.hir, test);
-    *found
-        .last()
-        .unwrap_or_else(|| panic!("no such expression in\n{}", s.workspace.dump(&s.hir)))
+    *found.last().expect("the expression is in the file")
 }
 
 #[track_caller]

@@ -13,7 +13,7 @@ use crate::ir::{PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, ValueId};
 use crate::lower::{FileLowering, FunctionLowering, expression};
 use crate::modules::ModuleRef;
 
-pub(super) fn name_key(file: &mut FileLowering<'_, '_, '_, '_>, name: Atom) -> PropertyKeyId {
+pub(crate) fn name_key(file: &mut FileLowering<'_, '_, '_, '_>, name: Atom) -> PropertyKeyId {
     match file.source.dialect() {
         SourceDialect::Program => file.atom_key(name),
         SourceDialect::Runtime => runtime_name_key(file, name),
@@ -92,7 +92,7 @@ fn find_locked_symbol_key(
     }
 }
 
-pub(super) fn lower_property_name(
+pub(crate) fn lower_property_name(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     key: PropKey,
 ) -> PropertyName {
@@ -118,7 +118,7 @@ fn lower_converted_key(
     PropertyName::Computed(lowering.builder.to_property_key(value))
 }
 
-pub(super) fn emit_name_value(
+pub(crate) fn emit_name_value(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     name: PropertyName,
 ) -> ValueId {

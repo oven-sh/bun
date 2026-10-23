@@ -10,11 +10,8 @@ mod type_parameters;
 
 use std::rc::Rc;
 
-use bun_sema::atom::Atom;
-use bun_sema::bind::SymbolId;
-use bun_sema::check::aot::{ClassRef, FunctionRef, ListedMember, ObjectMemberKind};
+use bun_sema::check::aot::{ClassRef, ListedMember};
 use bun_sema::hir::{ClassId, ExprId};
-use bun_sema::program::FileId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -22,15 +19,22 @@ use super::{CheckerTypeId, FileLowering};
 use crate::ir::generated::{FieldFlags, LimitId};
 use crate::ir::{DeclaredType, FunctionId, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
-#[cfg(test)]
-pub(crate) use self::defined_object_types::late_answers;
+pub(crate) use self::classes::constructor_function_layout;
+pub(in crate::lower) use self::classes::private_key;
+pub(in crate::lower) use self::containers::container_layout;
+pub(crate) use self::containers::{
+    begins_with_exports_object, module_exports_layout, module_type_layout,
+};
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 use self::defined_object_types::{
     HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,
 };
 pub(in crate::lower) use self::dictionaries::is_dictionary_type;
+pub(in crate::lower) use self::object_types::literal_layout;
 use self::object_types::{FieldName, ListedFields};
+pub(crate) use self::object_types::{object_type_layout, untyped_layout};
 pub(in crate::lower) use self::own_fields::OwnFields;
+pub(crate) use self::reached::collect_reached_layouts;
 pub(in crate::lower) use self::type_parameters::{
     record_call_type_arguments, type_parameter_layout,
 };
@@ -168,27 +172,6 @@ pub(crate) fn class_type_layout(
     class_layout(file, class)
 }
 
-pub(crate) fn constructor_function_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<LayoutId> {
-    classes::constructor_function_layout(file, function)
-}
-
-pub(crate) fn object_type_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> Option<LayoutId> {
-    object_types::object_type_layout(file, ty)
-}
-
-pub(crate) fn untyped_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    members: &[(PropertyKeyId, ObjectMemberKind)],
-) -> LayoutId {
-    object_types::untyped_layout(file, members)
-}
-
 pub(crate) fn find_field(
     file: &mut FileLowering<'_, '_, '_, '_>,
     layout: LayoutId,
@@ -234,14 +217,6 @@ pub(crate) fn field_position(
         Some(listed) => object_types::listed_field_position(file, layout, &listed, field),
         None => own_fields(file, layout).get(field).declared,
     }
-}
-
-pub(crate) fn collect_reached_layouts(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: TypeId,
-    limit: LimitId,
-) -> Option<Vec<LayoutId>> {
-    reached::collect_reached_layouts(file, ty, limit)
 }
 
 // Whoever builds a value of the type makes objects with every layout that the type leads to, and puts their names into them.
@@ -365,47 +340,4 @@ pub(in crate::lower) fn define_class_layout(
     constructor: FunctionId,
 ) -> LayoutId {
     classes::define_class_layout(file, class, Some(constructor))
-}
-
-pub(in crate::lower) fn private_key(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: LayoutId,
-    name: Atom,
-) -> PropertyKeyId {
-    classes::private_key(file, owner, name)
-}
-
-pub(in crate::lower) fn literal_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-) -> LayoutId {
-    object_types::literal_layout(file, literal)
-}
-
-pub(crate) fn module_exports_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    module: FileId,
-) -> Option<LayoutId> {
-    containers::module_exports_layout(file, module)
-}
-
-pub(crate) fn begins_with_exports_object(
-    file: &FileLowering<'_, '_, '_, '_>,
-    module: FileId,
-) -> bool {
-    containers::begins_with_exports_object(file, module)
-}
-
-pub(crate) fn module_type_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> Option<LayoutId> {
-    containers::module_type_layout(file, ty)
-}
-
-pub(in crate::lower) fn container_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    container: SymbolId,
-) -> LayoutId {
-    containers::container_layout(file, container)
 }

@@ -263,7 +263,6 @@ const nativeFiles = [
   "ZigSourceProvider.cpp",
   "bake/config/plugins.rs",
   "bindgen_test.bind.ts",
-  "checker_queries_testing.rs",
   "code_resolver_testing.rs",
   "collections/linear_fifo.rs",
   "crash_handler.rs",

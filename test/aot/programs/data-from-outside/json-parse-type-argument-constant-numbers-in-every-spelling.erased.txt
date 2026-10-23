@@ -1,8 +1,0 @@
-a member: 28 spellings: 0 differ
-a member that is zero: 28 spellings: 0 differ
-the root: 28 spellings: 0 differ
-elements: 28 spellings: 0 differ
-a tuple: 28 spellings: 0 differ
-a dictionary: 28 spellings: 0 differ
-a tag: 28 spellings: 0 differ
-a value: 28 spellings: 0 differ

@@ -1,4 +1,4 @@
-// Random programs of CommonJS and ES modules. `python3 static-modules-generated/<generator>.py <seed> <folder>` writes one into the folder,
+// Random programs of CommonJS and ES modules. `python3 three-ways/made/<script>.py <seed> <folder>` writes one into the folder,
 // and the same seed always writes the same program. The top of each generator says what its programs are about. Each program is run by
 // plain Bun and built with --aot, and the two must print the same.
 //
@@ -19,17 +19,17 @@ import { describe, test } from "./supported";
 const python = Bun.which("python3");
 if (!python) console.error("SKIPPED: test/aot/static-modules-generated.test.ts: python3 is not installed");
 
-const generators: { name: string; takesEsEntryPoints: boolean; seeds: number }[] = [
-  { name: "exports-and-cycles", takesEsEntryPoints: false, seeds: 80 },
-  { name: "hooks-and-dead-zones", takesEsEntryPoints: false, seeds: 80 },
-  { name: "namespaces-as-values", takesEsEntryPoints: true, seeds: 30 },
+const generators: { name: string; script: string; takesEsEntryPoints: boolean; seeds: number }[] = [
+  { name: "exports-and-cycles", script: "random-commonjs-and-esm", takesEsEntryPoints: false, seeds: 80 },
+  { name: "hooks-and-dead-zones", script: "random-commonjs-and-esm-with-hooks", takesEsEntryPoints: false, seeds: 80 },
+  { name: "namespaces-as-values", script: "random-esm-namespace-as-value", takesEsEntryPoints: true, seeds: 30 },
 ];
 
 const [first, count] = (process.env.AOT_STATIC_MODULES_SEEDS ?? "").split(":").map(Number);
 const only = process.env.AOT_STATIC_MODULES_GENERATOR;
 const countOf = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
 
-for (const { name, takesEsEntryPoints, seeds } of generators) {
+for (const { name, script, takesEsEntryPoints, seeds } of generators) {
   if (only && !name.includes(only)) continue;
   describe.concurrent(`compile/aot/static-modules-generated/${name}`, () => {
     if (!python) return void test.skip("python3 is not installed", () => {});
@@ -41,7 +41,7 @@ for (const { name, takesEsEntryPoints, seeds } of generators) {
             using directory = tempDir("aot-static-modules-generated", {});
             const folder = join(String(directory), "program");
             const generated = await spawned(
-              [python!, "-B", join(import.meta.dir, "static-modules-generated", `${name}.py`), String(seed), folder],
+              [python!, "-B", join(import.meta.dir, "three-ways", "made", `${script}.py`), String(seed), folder],
               String(directory),
               { ...process.env, PYTHONUTF8: "1" },
             );

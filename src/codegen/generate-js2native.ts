@@ -54,7 +54,6 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
   "bake/config/plugins.rs": "runtime/bake/config/plugins.rs",
-  "checker_queries_testing.rs": "runtime/checker_queries_testing.rs",
   "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/router/js.rs",

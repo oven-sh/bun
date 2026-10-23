@@ -16,7 +16,7 @@ use crate::lower::{
     FileLowering, FunctionLowering, condition, convert, exception, layouts, parameters, positions,
 };
 
-pub(super) fn finish_constructor_header(
+pub(crate) fn finish_constructor_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
     name: Option<StringId>,
@@ -68,7 +68,7 @@ pub(super) fn declare_constructor(
     }
 }
 
-pub(super) fn lower_constructor(
+pub(crate) fn lower_constructor(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     source: FnId,
@@ -97,7 +97,7 @@ pub(super) fn lower_constructor(
     lowering.finish();
 }
 
-pub(super) fn lower_implicit_constructor(
+pub(crate) fn lower_implicit_constructor(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     class: ClassId,
@@ -115,7 +115,7 @@ pub(super) fn lower_implicit_constructor(
     lowering.finish();
 }
 
-pub(super) fn lower_super_call(
+pub(crate) fn lower_super_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> ValueId {
@@ -164,7 +164,7 @@ pub(super) fn lower_super_call(
     this
 }
 
-pub(super) fn emit_constructor_result(
+pub(crate) fn emit_constructor_result(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     value: ValueId,
 ) -> ValueId {

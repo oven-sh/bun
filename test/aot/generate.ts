@@ -33,7 +33,7 @@ export type Generator = {
   };
 };
 
-const besidePrograms = /\.(json|expected\.txt|erased\.txt|build-errors\.txt|todo\.txt)$/;
+const besidePrograms = /\.(json|expected\.txt|build-errors\.txt|todo\.txt)$/;
 
 /**
  * Files, by their paths below a folder of programs, as programs, by the rules at the top of run-programs.ts: a folder with a main.<extension> is one program,
@@ -41,10 +41,13 @@ const besidePrograms = /\.(json|expected\.txt|erased\.txt|build-errors\.txt|todo
  */
 export function programsOf(files: Record<string, string>): WrittenProgram[] {
   const names = Object.keys(files);
-  const mainOf = new Map(names.filter(name => /\/main\.([cm]?[jt]s|tsx)$/.test(name)).map(main => [dirname(main), main]));
+  const mainOf = new Map(
+    names.filter(name => /\/main\.([cm]?[jt]s|tsx)$/.test(name)).map(main => [dirname(main), main]),
+  );
   const mainAbove = (name: string) => {
     const parts = name.split("/");
-    for (let depth = 1; depth < parts.length; depth++) if (mainOf.has(parts.slice(0, depth).join("/"))) return mainOf.get(parts.slice(0, depth).join("/"))!;
+    for (let depth = 1; depth < parts.length; depth++)
+      if (mainOf.has(parts.slice(0, depth).join("/"))) return mainOf.get(parts.slice(0, depth).join("/"))!;
   };
   const programs = new Map<string, WrittenProgram>();
   const byName = new Map<string, WrittenProgram[]>();
@@ -58,26 +61,103 @@ export function programsOf(files: Record<string, string>): WrittenProgram[] {
     }
     programs.get(entry)!.files[name] = files[name];
   }
-  for (const name of names) if (!mainAbove(name) && besidePrograms.test(name)) for (const program of byName.get(name.replace(besidePrograms, "")) ?? []) program.files[name] = files[name];
+  for (const name of names)
+    if (!mainAbove(name) && besidePrograms.test(name))
+      for (const program of byName.get(name.replace(besidePrograms, "")) ?? []) program.files[name] = files[name];
   return [...programs.values()];
+}
+
+/** A text in which blocks of lines stand again and again with other numbers, or with what a row of a table holds between its tabs. */
+export const text = (...pieces: (string | [rows: number | string, block: (n: number, ...row: string[]) => string])[]) =>
+  pieces
+    .map(piece => {
+      if (typeof piece === "string") return piece;
+      const rows =
+        typeof piece[0] === "number"
+          ? Array.from({ length: piece[0] }, () => [])
+          : piece[0].split("\n").map(row => row.split("\t"));
+      return rows.map((row, n) => piece[1](n, ...row)).join("\n");
+    })
+    .join("\n");
+
+/** Files that are one text but for a few places. The table has a row for each: its name, then what stands in those places. */
+export const family = (rows: string, file: (...row: string[]) => string) =>
+  Object.fromEntries(
+    rows
+      .split("\n")
+      .map(row => row.split("\t"))
+      .map(([name, ...row]) => [name, file(...row)]),
+  );
+
+/** `<name>-untyped.<extension>` for each name: what `<name>.ts` of the folder is without its types. */
+export function untypedTwins(
+  topic: string,
+  extension: "js" | "ts",
+  names: string[],
+  written: Record<string, string> = {},
+): Record<string, string> {
+  const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false, inline: false });
+  const typed = (name: string) =>
+    written[`${name}.ts`] ?? readFileSync(join(import.meta.dir, "programs", topic, `${name}.ts`), "utf8");
+  return Object.fromEntries(names.map(name => [`${name}-untyped.${extension}`, transpiler.transformSync(typed(name))]));
 }
 
 /** By the folder of ./programs. A script is loaded when somebody asks for its folder. */
 export const generators: Record<string, () => Generator> = {
+  "arrays": () => require("./generate/arrays"),
+  "async-and-generators": () => require("./generate/async-and-generators"),
   "awaited-objects": () => require("./generate/awaited-objects"),
   "built-ins-alone": () => require("./generate-built-ins-alone"),
   "built-ins-asked-in-place": () => require("./generate-built-ins-asked-in-place"),
   "built-ins-on-written-structure": () => require("./programs/generate-replaced-iteration"),
+  "builtin-modules": () => require("./generate/builtin-modules"),
+  "calls": () => require("./generate/calls"),
+  "classes": () => require("./generate/classes"),
+  "classes-and-closures": () => require("./generate/classes-and-closures"),
   "classes-below-built-in-classes": () => require("./generate/classes-below-built-in-classes"),
+  "closed-world": () => require("./generate/closed-world"),
   "copies-born-in-their-holders": () => require("./programs/generate-copies-born-in-their-holders"),
+  "copies-of-heirs": () => require("./generate/copies-of-heirs"),
+  "data-from-outside": () => require("./generate/data-from-outside"),
+  "effects": () => require("./generate/effects"),
+  "escape-analysis": () => require("./generate/escape-analysis"),
+  "every-member-of-a-host-object": () => require("./generate/every-member-of-a-host-object"),
+  "function-prototypes": () => require("./generate/function-prototypes"),
+  "host-classes": () => require("./generate/host-classes"),
+  "impostors": () => require("./generate/impostors"),
+  "impostors-typed": () => require("./generate/impostors-typed"),
+  "inner-objects": () => require("./generate/inner-objects"),
+  "kept-attacks": () => require("./generate/kept-attacks"),
+  "language": () => require("./generate/language"),
+  "method-table": () => require("./generate/method-table"),
+  "modules": () => require("./generate/modules"),
   "native-callbacks": () => ({
     programs: () =>
-      ["one-for-each-caller", "one-for-each-caller-2", "one-for-each-caller-3", "one-for-each-caller-4", "models", "array-likes", "members"].flatMap(
-        part => (require(`./generate/native-callbacks-${part}`) as Generator).programs(),
-      ),
+      [
+        "one-for-each-caller",
+        "one-for-each-caller-2",
+        "one-for-each-caller-3",
+        "one-for-each-caller-4",
+        "models",
+        "array-likes",
+        "members",
+      ].flatMap(part => (require(`./generate/native-callbacks-${part}`) as Generator).programs()),
   }),
   "nothing-throws-because-of-a-type": () => require("./programs/generate-nothing-throws-because-of-a-type"),
+  "objects": () => require("./generate/objects"),
+  "objects-that-are-not-what-their-layout-says": () =>
+    require("./generate/objects-that-are-not-what-their-layout-says"),
+  "private-class-members": () => require("./generate/private-class-members"),
+  "site-records": () => require("./generate/site-records"),
+  "soundness": () => require("./generate/soundness"),
+  "strings": () => require("./generate/strings"),
+  "structural-types": () => require("./generate/structural-types"),
   "type-predicates": () => require("./programs/generate-type-predicates"),
+  "type-rules": () => require("./generate/type-rules"),
+  "typed-objects": () => require("./generate/typed-objects"),
+  "untyped-code": () => require("./generate/untyped-code"),
+  "untyped-loops": () => require("./generate/untyped-loops"),
+  "untyped-stress": () => require("./generate/untyped-stress"),
   "ways-into-library-modules": () => require("./generate/ways-into-library-modules"),
   "writes-to-host-objects": () => require("./generate/writes-to-host-objects"),
 };
@@ -88,7 +168,9 @@ export const generators: Record<string, () => Generator> = {
  */
 export function findBuiltinTable(bun: string): string | undefined {
   const name = "aot_builtin_table.json";
-  return process.env.AOT_BUILTIN_TABLE ?? [join(dirname(bun), name), join(dirname(bun), "codegen", name)].find(existsSync);
+  return (
+    process.env.AOT_BUILTIN_TABLE ?? [join(dirname(bun), name), join(dirname(bun), "codegen", name)].find(existsSync)
+  );
 }
 
 export function writeProgram(folder: string, program: WrittenProgram) {
@@ -99,7 +181,14 @@ export function writeProgram(folder: string, program: WrittenProgram) {
 }
 
 /** Writes the programs of these groups into <where>/<topic>, in `jobs` processes at a time. Answers the entry points of each group. */
-export function writeGroups(bun: string, topic: string, groups: Map<string, Row[]>, where: string, jobs: number, env?: Record<string, string | undefined>): Map<string, string[]> {
+export function writeGroups(
+  bun: string,
+  topic: string,
+  groups: Map<string, Row[]>,
+  where: string,
+  jobs: number,
+  env?: Record<string, string | undefined>,
+): Map<string, string[]> {
   const entries = new Map<string, string[]>();
   if (groups.size === 0) return entries;
   const work = join(where, `.${topic}.${process.pid}`);
@@ -107,8 +196,17 @@ export function writeGroups(bun: string, topic: string, groups: Map<string, Row[
   try {
     writeFileSync(join(work, "groups.json"), JSON.stringify([...groups]));
     const cmd = [bun, import.meta.path, "--write-groups", topic, where, work, String(jobs)];
-    const { stderr, exitCode, signalCode } = Bun.spawnSync({ cmd, env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-    if (exitCode !== 0) throw new Error(`the programs of ${topic} could not be written: ${cmd.join(" ")} ended with ${exitCode ?? signalCode}\n${stderr.toString().split("\n").slice(-30).join("\n")}`);
+    const { stderr, exitCode, signalCode } = Bun.spawnSync({
+      cmd,
+      env,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    if (exitCode !== 0)
+      throw new Error(
+        `the programs of ${topic} could not be written: ${cmd.join(" ")} ended with ${exitCode ?? signalCode}\n${stderr.toString().split("\n").slice(-30).join("\n")}`,
+      );
     const written = new Map<string, string[]>(JSON.parse(readFileSync(join(work, "written.json"), "utf8")));
     // A group may come to nothing: no call of its built-ins with sample operands succeeds.
     for (const group of groups.keys()) entries.set(group, written.get(group) ?? []);
@@ -154,11 +252,18 @@ async function writeGroupsHere(topic: string, where: string, work: string, jobs:
       const folder = join(work, String(share));
       mkdirSync(folder);
       writeFileSync(join(folder, "groups.json"), JSON.stringify(groupsOf(share)));
-      const child = Bun.spawn({ cmd: [process.execPath, import.meta.path, "--write-groups", topic, where, folder, "1"], stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+      const child = Bun.spawn({
+        cmd: [process.execPath, import.meta.path, "--write-groups", topic, where, folder, "1"],
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
       const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
       if (exitCode !== 0) {
         const names = groupsOf(share).map(([group]) => group);
-        throw new Error(`the process that wrote ${names.join(" ")} ended with ${exitCode ?? child.signalCode}\n${stderr.split("\n").slice(-20).join("\n")}`);
+        throw new Error(
+          `the process that wrote ${names.join(" ")} ended with ${exitCode ?? child.signalCode}\n${stderr.split("\n").slice(-20).join("\n")}`,
+        );
       }
       written[share] = JSON.parse(readFileSync(join(folder, "written.json"), "utf8"));
     }
@@ -172,18 +277,27 @@ if (import.meta.main && process.argv[2] === "--write-groups") {
   await writeGroupsHere(topic, where, work, Number(jobs));
 } else if (import.meta.main) {
   const flags = ["--table", "--jobs"];
-  const option = (name: string): string | undefined => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
-  const [topic, where] = process.argv.slice(2).filter((argument, index, all) => !flags.includes(argument) && !flags.includes(all[index - 1]));
+  const option = (name: string): string | undefined =>
+    process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
+  const [topic, where] = process.argv
+    .slice(2)
+    .filter((argument, index, all) => !flags.includes(argument) && !flags.includes(all[index - 1]));
   const topics = topic === "all" ? Object.keys(generators) : [topic];
   if (where === undefined || topics.some(each => !(each in generators))) {
-    console.log(`bun test/aot/generate.ts <folder> <where>\n\nThe folders: ${Object.keys(generators).join(" ")}, or all`);
+    console.log(
+      `bun test/aot/generate.ts <folder> <where>\n\nThe folders: ${Object.keys(generators).join(" ")}, or all`,
+    );
     process.exit(topic === undefined ? 0 : 1);
   }
   const tablePath = option("--table") ?? findBuiltinTable(process.execPath);
   let rows: Row[] | undefined;
 
   mkdirSync(where, { recursive: true });
-  if (!existsSync(join(where, "tsconfig.json"))) writeFileSync(join(where, "tsconfig.json"), JSON.stringify({ extends: join(import.meta.dir, "programs", "tsconfig.json") }) + "\n");
+  if (!existsSync(join(where, "tsconfig.json")))
+    writeFileSync(
+      join(where, "tsconfig.json"),
+      JSON.stringify({ extends: join(import.meta.dir, "programs", "tsconfig.json") }) + "\n",
+    );
   for (const each of topics) {
     const generator = generators[each]();
     const kept = join(import.meta.dir, "programs", each);
@@ -193,13 +307,17 @@ if (import.meta.main && process.argv[2] === "--write-groups") {
     if (existsSync(kept)) cpSync(kept, join(where, each), { recursive: true });
     const entries = programs.map(program => program.entry);
     if (generator.fromTable && (tablePath === undefined || !existsSync(tablePath))) {
-      console.error(`${each}: the programs that follow from the table of built-ins are not written: there is no aot_builtin_table.json in $AOT_BUILTIN_TABLE, beside ${process.execPath} or in the folder codegen beside it. --table <file> names it`);
+      console.error(
+        `${each}: the programs that follow from the table of built-ins are not written: there is no aot_builtin_table.json in $AOT_BUILTIN_TABLE, beside ${process.execPath} or in the folder codegen beside it. --table <file> names it`,
+      );
       process.exitCode = 1;
     } else if (generator.fromTable) {
       const { describedRows, readTable } = require("./built-ins-alone/table");
       rows ??= describedRows(readTable(tablePath)) as Row[];
       const jobs = Number(option("--jobs")) || Math.min(4 * availableParallelism(), 64);
-      entries.push(...[...writeGroups(process.execPath, each, generator.fromTable.groups(rows), where, jobs).values()].flat());
+      entries.push(
+        ...[...writeGroups(process.execPath, each, generator.fromTable.groups(rows), where, jobs).values()].flat(),
+      );
     }
     const seen = new Set<string>();
     const twice = entries.filter(entry => seen.size === seen.add(entry).size);

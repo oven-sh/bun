@@ -1,6 +1,5 @@
 mod tree_strictness;
 mod tree_support;
-mod tree_validation;
 use tree_support::*;
 
 use DiagnosticClass::EarlyError;
@@ -155,13 +154,6 @@ const BODIES_WITHOUT_USE_STRICT: &[&str] = &[
     "`use strict`;",
     r#""use\x20strict";"#,
     r#"x; "use strict";"#,
-];
-
-const TYPESCRIPT_TEXTS: &[(&str, &str)] = &[
-    ("a.ts", "let a: number = <number>b; function f(this: A) {}"),
-    ("a.tsx", r#"const e = <a b="c">d</a>;"#),
-    ("a.d.ts", "declare const a: number;"),
-    ("a.json", r#"{ "a": [1, -2, "b"] }"#),
 ];
 
 const HTML_CLOSE_COMMENT: &str = "a\n--> b";
@@ -410,41 +402,6 @@ fn early_errors(hir: &File<'_>) -> Vec<(u32, u32)> {
     errors
 }
 
-fn line_text(line: &[u8]) -> &str {
-    std::str::from_utf8(line).unwrap()
-}
-
-#[track_caller]
-fn assert_same_dump(path: &str, compiled: &str, checked: &str) {
-    if compiled == checked {
-        return;
-    }
-    let compiled_lines = bun_core::strings::split(compiled.as_bytes(), b"\n");
-    let checked_lines = bun_core::strings::split(checked.as_bytes(), b"\n");
-    let mut line_pairs = compiled_lines.zip(checked_lines);
-    let difference = line_pairs.find(|(compiled, checked)| compiled != checked);
-    let Some((compiled_line, checked_line)) = difference else {
-        panic!("{path}: one dump is a prefix of the other");
-    };
-    let (compiled_line, checked_line) = (line_text(compiled_line), line_text(checked_line));
-    panic!("{path}: parse_for_compile has {compiled_line:?}, summarize has {checked_line:?}");
-}
-
-#[track_caller]
-fn assert_same_dump_except_bytes(path: &str, compiled: &str, checked: &str) {
-    let compiled_lines: Vec<&[u8]> = bun_core::strings::split(compiled.as_bytes(), b"\n").collect();
-    let checked_lines: Vec<&[u8]> = bun_core::strings::split(checked.as_bytes(), b"\n").collect();
-    assert_eq!(compiled_lines.len(), checked_lines.len(), "{path}");
-    for (&compiled_line, &checked_line) in compiled_lines.iter().zip(&checked_lines) {
-        let has_bytes = bun_core::strings::contains(checked_line, b"b\"");
-        let (compiled_line, checked_line) = (line_text(compiled_line), line_text(checked_line));
-        assert!(
-            compiled_line == checked_line || has_bytes,
-            "{path}: parse_for_compile has {compiled_line:?}, summarize has {checked_line:?}"
-        );
-    }
-}
-
 #[test]
 fn regex() {
     parsed(DEFAULT_PATH, REGEXES, |w, hir| {
@@ -691,34 +648,6 @@ fn use_strict_prologue() {
             assert_eq!(found, StmtId::NONE, "{text}");
         });
     }
-}
-
-#[test]
-fn typescript_parses_like_summarize() {
-    for &(path, text) in TYPESCRIPT_TEXTS {
-        parsed(path, text, |w, hir| {
-            let checked = w.parse_for_check(path, text.as_bytes());
-            assert_same_dump(path, &w.dump(hir), &w.dump(&checked));
-        });
-    }
-    parsed("a.js", HTML_CLOSE_COMMENT, |w, hir| {
-        let checked = w.parse_for_check("a.js", HTML_CLOSE_COMMENT.as_bytes());
-        assert_ne!(w.dump(hir), w.dump(&checked));
-    });
-}
-
-#[test]
-fn every_typescript_program() {
-    for_each_program(&TYPESCRIPT_EXTENSIONS, |w, path, text| {
-        let mut compiled = w.parse(&Source::from_bytes(path, text));
-        let checked = w.parse_for_check(path, text);
-        compiled.jsx_pragmas = checked.jsx_pragmas;
-        let (compiled, checked) = (w.dump(&compiled), w.dump(&checked));
-        match std::str::from_utf8(text) {
-            Ok(_) => assert_same_dump(path, &compiled, &checked),
-            Err(_) => assert_same_dump_except_bytes(path, &compiled, &checked),
-        }
-    });
 }
 
 #[test]

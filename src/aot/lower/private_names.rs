@@ -12,6 +12,7 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, Edge, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
 use crate::known_helpers::{FilePrivateStates, PrivateStateKind};
 
+pub(crate) use self::access::lower_private_in;
 pub(in crate::lower) use self::access::{
     emit_brand_definition, emit_field_definition, emit_name_get, emit_name_set, emit_name_test,
     emit_storage_definition, emit_storage_get, emit_storage_set,
@@ -71,13 +72,6 @@ pub(crate) fn emit_private_set(
             access::emit_undeclared_name_error(lowering);
         }
     }
-}
-
-pub(crate) fn lower_private_in(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> ValueId {
-    access::lower_private_in(lowering, expression)
 }
 
 fn find_referenced_name(

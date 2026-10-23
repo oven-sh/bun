@@ -7,6 +7,7 @@
 //   AOT_BUILTINS_UPDATE=1   checks every hand-written overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
+//   AOT_SHARE=all           every entry: a run takes one in four, others for each commit, because all of them take twenty minutes of one core
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
@@ -14,6 +15,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
+import { inShare } from "../run-programs";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";
 import { Realm } from "./differential/members";
@@ -57,7 +59,7 @@ const isChecked = (overload: DumpedOverload) =>
 type CheckedCall = { entry: DumpedEntry; mode: CallMode; overloads: DumpedOverload[] };
 
 const checkedCalls = dump.entries
-  .filter(entry => filter.test(entry.path))
+  .filter(entry => filter.test(entry.path) && (isUpdate || inShare(entry.path, 4)))
   .flatMap((entry): CheckedCall[] => {
     const overloads = entry.overloads.filter(isChecked);
     return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({

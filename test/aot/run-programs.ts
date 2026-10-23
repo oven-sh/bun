@@ -9,9 +9,7 @@
 //   programs/<topic>/<name>/main.ts       a program that consists of several files (main.ts, .tsx, .mts, .cts, .js, .mjs or .cjs)
 //   <program>.expected.txt                the output under --aot where it is meant to differ from plain Bun, for example
 //                                         because a value that does not match its declared type throws a TypeError
-//   <program>.erased.txt                  the output under --aot --aot-erase-types where that is meant to differ from plain Bun too:
-//                                         the difference does not come from a type (a locked built-in, `f.caller`). Same text form
-//                                         as .expected.txt. Without it the build with erased types must print what plain Bun prints
+//                                         The build with --aot-erase-types is held to it too: the difference does not come from a type (a locked built-in, `f.caller`)
 //   <program>.build-errors.txt            the build must fail with exit code 1 and exactly these `error:` lines
 //   <program>.todo.txt                    the program fails today, and why; it is listed as a todo and not run
 //   <program>.json                        { "build": [flags for `bun build`], "buildEnv": { .. }, "env": { .. }, "reference": "compiled" }
@@ -19,6 +17,7 @@
 //                                         "entryPoints": further entry points, behind the program's own, which stays the one that starts.
 //                                         A computed import() or require() finds an entry point and no other file of the executable
 //                                         "buildEnv": only the six BUN_JSC_* options that log (loggingOptions below); any other fails the test
+//                                         "erased": "as plain Bun": there is an .expected.txt, and the build with erased types prints what plain Bun prints all the same
 //                                         "compiled": compare with `bun build --compile` without --aot, for features that
 //                                         only the bundler provides (--define, --feature, files imported as text)
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
@@ -53,7 +52,7 @@
 //   AOT_PROGRAMS= bun test ..                             everything, packages/ too, even with a debug or ASAN build of Bun
 //   AOT_PROGRAMS=replace bun test ..                      the programs whose path contains the text
 //   AOT_PROGRAMS_JOBS=4 bun test ..                       how many programs run at once (default: one per core)
-//   AOT_PROGRAMS_UPDATE=1 bun test ..                     rewrites the .expected.txt, .erased.txt and .build-errors.txt files that exist
+//   AOT_PROGRAMS_UPDATE=1 bun test ..                     rewrites the .expected.txt and .build-errors.txt files that exist
 //
 // shell/ has two tools for working on the compiler without building Bun; perf/ has an opt-in performance test; servers/ has
 // opt-in tests of HTTP servers written with Bun.serve, node:http and popular frameworks, and the tools that measure them.
@@ -232,7 +231,7 @@ export function taken(listed: string[], takes: (path: string) => boolean): strin
     if (!unwritten) continue;
     writeProgram(join(writtenRoot!, unwritten.topic), unwritten.program);
     // What somebody has decided about such a program is kept in ./programs, under its name.
-    for (const suffix of [".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"]) {
+    for (const suffix of [".json", ".expected.txt", ".build-errors.txt", ".todo.txt"]) {
       const kept = join(root, inPrograms(besideOf(path)) + suffix);
       if (existsSync(kept)) copyFileSync(kept, besideOf(path) + suffix);
     }
@@ -284,8 +283,10 @@ export async function slot<T>(work: () => Promise<T>): Promise<T> {
 
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
-  // A build that verifies the IR after every pass takes sixteen times as long as one that does not.
-  const timeout = cmd.includes("--aot-check=verify-each-pass") ? 240_000 : 90_000;
+  // A build that verifies the IR after every pass takes sixteen times as long as one that does not, and so does a run that
+  // collects at every allocation that leaves the fast path.
+  const isSlow = cmd.includes("--aot-check=verify-each-pass") || env.BUN_JSC_slowPathAllocsBetweenGCs === "1";
+  const timeout = isSlow ? 240_000 : 90_000;
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signal: proc.signalCode };
@@ -343,7 +344,7 @@ export function withoutDebugInformation(_folder?: string): string[] {
 
 let executables = 0;
 
-type ProgramOptions = { build?: string[]; entryPoints?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled" };
+type ProgramOptions = { build?: string[]; entryPoints?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled"; erased?: "as plain Bun" };
 // How the programs of one describe() are built and run.
 type Setup = { folder: string; carrier: string[]; buildFlags: string[]; runEnv: Record<string, string>; erasesTypes: boolean; stubCopies?: number };
 export type RunResult = ReturnType<typeof told>;
@@ -525,7 +526,7 @@ async function run(path: string, beside: string, setup: Setup) {
   const isBuiltAsWritten = setup.buildFlags.length === 0 && setup.stubCopies === undefined;
   const ways = [{ way: "compiled", stored: beside + ".expected.txt", program: createProgram([], isBuiltAsWritten ? bounds : []) }];
   if (setup.stubCopies !== undefined) ways[0].program = await withStubCopies(ways[0].program, setup.stubCopies);
-  if (setup.erasesTypes && hasTypes(path)) ways.push({ way: "compiled with types erased", stored: beside + ".erased.txt", program: createProgram(["--aot-erase-types"], []) });
+  if (setup.erasesTypes && hasTypes(path)) ways.push({ way: "compiled with types erased", stored: options.erased ? "" : beside + ".expected.txt", program: createProgram(["--aot-erase-types"], []) });
   let reference: RunResult | undefined;
   for (const { way, stored, program } of ways) {
     if (existsSync(stored)) await runCompiled(program, result => expectStored(stored, result));

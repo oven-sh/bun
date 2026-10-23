@@ -1,4 +1,0 @@
-# The identity of a member of a cycle of types does not depend on which member a file asks about first, nor on what the checker has answered in an earlier file. One checker visits the two short files one after the other, because the long file makes them a small part of the program.
-same: cycle-in-two-files-of-one-task.ts:6 identity `First` <=> cycle-in-two-files-of-one-task-other.ts:6 identity `First`
-same: cycle-in-two-files-of-one-task.ts:5 identity `Second` <=> cycle-in-two-files-of-one-task-other.ts:7 identity `Second`
-different: cycle-in-two-files-of-one-task.ts:6 identity `First` <=> cycle-in-two-files-of-one-task.ts:5 identity `Second`

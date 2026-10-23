@@ -1,7 +1,0 @@
-# The instantiations of one generic type literal are told apart by their type arguments: equal arguments are one identity wherever they are written.
-same: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:5 identity `Box<number>`
-different: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:6 identity `Box<string>`
-different: generic-type-literal-instantiations.ts:7 identity `Pair<number, string>` <=> generic-type-literal-instantiations.ts:8 identity `Pair<string, number>`
-same: generic-type-literal-instantiations.ts:9 identity `Box<Box<number>>` <=> generic-type-literal-instantiations.ts:10 identity `Box<Box<number>>`
-different: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:9 identity `Box<Box<number>>`
-different: generic-type-literal-instantiations.ts:4 identity `Box<number>` <=> generic-type-literal-instantiations.ts:2 identity `{ value: T }`

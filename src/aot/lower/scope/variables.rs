@@ -8,7 +8,7 @@ use crate::ir::{ClassSlot, DeclaredType, ModuleId, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function, layouts};
 use crate::modules::ModuleRef;
 
-pub(super) fn ensure_variable(
+pub(crate) fn ensure_variable(
     file: &mut FileLowering<'_, '_, '_, '_>,
     key: VariableKey,
 ) -> VariableId {

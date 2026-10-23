@@ -43,7 +43,7 @@ pub(super) fn solve(input: &CaptureInput<'_>) -> CapturePlan {
     create_plan(&needs, captures)
 }
 
-pub(super) fn is_initialized_before(
+pub(in crate::lower) fn is_initialized_before(
     functions: &[WalkedFunction],
     binding: &CapturedBinding,
     function: WalkedFunctionId,

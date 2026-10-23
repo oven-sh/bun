@@ -1214,6 +1214,7 @@ describe("findCxxFunctionEntryPoints", () => {
 });
 
 describe("findStaticTableEntryPoints", () => {
+  const cxxfilt = Bun.which("llvm-undname") === null ? undefined : (Bun.which("llvm-cxxfilt") ?? undefined);
   const [main, table, otherTable, open, close, text] = [0, 1, 2, 3, 4, 5];
   const outputs = [".text", ".data.rel.ro", ".data.rel.ro", ".text", ".text", ".rodata"];
   const mangled = new Map([
@@ -1256,7 +1257,8 @@ describe("findStaticTableEntryPoints", () => {
       model,
       uses: { entries },
       isCode: output => output === ".text",
-      demangle: list => new Demangler(undefined).demangle(list.map(name => mangled.get(name) ?? name)),
+      demangle: list =>
+        new Demangler(format === "coff" ? cxxfilt : undefined).demangle(list.map(name => mangled.get(name) ?? name)),
     });
   }
 
@@ -1301,7 +1303,7 @@ describe("findStaticTableEntryPoints", () => {
     expect(find(entries, names, "elf")).toEqual([]);
   });
 
-  test("a function is found by the name that the Microsoft ABI gives it, in a namespace and outside", () => {
+  test.skipIf(cxxfilt === undefined)("a function is found by the name that the Microsoft ABI gives it, in a namespace and outside", () => {
     const names = [
       ["main"],
       ["?table@Bun@@3QBUHashTableValue@JSC@@B"],

@@ -10,7 +10,7 @@ use crate::lower::{FileLowering, FunctionLowering, captures, convert};
 
 type EntryOperands = SmallVec<[ValueId; 8]>;
 
-pub(super) fn lower_function_expression(
+pub(crate) fn lower_function_expression(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     function: FnId,
     name: Option<PropertyName>,
@@ -18,7 +18,7 @@ pub(super) fn lower_function_expression(
     create_named_closure(lowering, function, name, None)
 }
 
-pub(super) fn lower_method(
+pub(crate) fn lower_method(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     function: FnId,
     name: PropertyName,
@@ -27,12 +27,12 @@ pub(super) fn lower_method(
     create_named_closure(lowering, function, Some(name), Some(home))
 }
 
-pub(super) fn captures_home_object(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> bool {
+pub(crate) fn captures_home_object(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> bool {
     let key = file.scopes.function_key(CodeUnit::Function(function));
     captures::captures_home_object(file, key)
 }
 
-pub(super) fn emit_closure(
+pub(crate) fn emit_closure(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     function: FunctionId,
     home: Option<ValueId>,
@@ -42,7 +42,7 @@ pub(super) fn emit_closure(
     lowering.builder.new_closure(function, &values)
 }
 
-pub(super) fn emit_direct_call(
+pub(crate) fn emit_direct_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     function: FunctionId,
     arguments: EntryArguments<'_>,

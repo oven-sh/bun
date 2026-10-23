@@ -356,7 +356,7 @@ fn emit_static_field_test(
     lowering.builder.read_variable(result)
 }
 
-pub(super) fn lower_private_in(
+pub(crate) fn lower_private_in(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,
 ) -> ValueId {

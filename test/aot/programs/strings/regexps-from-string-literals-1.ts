@@ -7,6 +7,7 @@
 // KNOWN hints1 do+llar$&-aa-$-b
 // KNOWN hints1 repea+t ab ab ab 3
 // KNOWN hints1 fro+mobject7
+// KNOWN hints1 metho+d:x:y
 // KNOWN hints1 ^ {0,2}facto+ry
 // KNOWN hints1 sla+sh</?x
 // KNOWN hints1 reu+sed:sla+sh<\/?x[/]
@@ -20,6 +21,7 @@
 // KNOWN hints1 fromca+ll
 // KNOWN hints1 byfu+nctionX
 // KNOWN hints1 na+med
+// KNOWN hints1 ti+me
 declare const console: { log(...values: unknown[]): void };
 function make(text: string): string { return Array.from(text).join(""); }
 const other = { caret: /(^|[^\[])\^/g };

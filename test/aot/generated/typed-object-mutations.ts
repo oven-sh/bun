@@ -916,7 +916,6 @@ export interface Plane {
   /** The programs that run in every run of the test. */
   alwaysRun: string[];
   /** Some of its changes put a value of another type under the key. */
-  mayBeRefused: boolean;
   programs: { name: string; text: string }[];
 }
 
@@ -933,7 +932,6 @@ export function testPlanes(): Plane[] {
     {
       title: "a field declared as a number keeps its type and changes in every other way",
       alwaysRun: ["class-fields", "interface-two-layouts"],
-      mayBeRefused: false,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -950,7 +948,6 @@ export function testPlanes(): Plane[] {
     {
       title: "a value of another type arrives in a field declared as a number",
       alwaysRun: ["class-constructor"],
-      mayBeRefused: true,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -967,7 +964,6 @@ export function testPlanes(): Plane[] {
     {
       title: "the object that a field holds is replaced by another layout of its type",
       alwaysRun: ["class-fields", "interface-literal"],
-      mayBeRefused: false,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -983,7 +979,6 @@ export function testPlanes(): Plane[] {
     {
       title: "the object that a field holds is replaced by what does not satisfy its type",
       alwaysRun: ["class-constructor"],
-      mayBeRefused: true,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -999,7 +994,6 @@ export function testPlanes(): Plane[] {
     {
       title: "a method is replaced",
       alwaysRun: ["subclass-held-as-parent"],
-      mayBeRefused: false,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -1016,7 +1010,6 @@ export function testPlanes(): Plane[] {
     {
       title: "an optional field is absent and the prototype is changed",
       alwaysRun: ["class-fields"],
-      mayBeRefused: true,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -1035,7 +1028,6 @@ export function testPlanes(): Plane[] {
     {
       title: "an array of numbers keeps its type and changes in every other way",
       alwaysRun: ["array"],
-      mayBeRefused: false,
       programs: programsBy(
         byHolder,
         axesOf({
@@ -1051,7 +1043,6 @@ export function testPlanes(): Plane[] {
     {
       title: "a hole or a value of another type arrives in an array of numbers",
       alwaysRun: ["tuple"],
-      mayBeRefused: true,
       programs: programsBy(
         byHolder,
         axesOf({

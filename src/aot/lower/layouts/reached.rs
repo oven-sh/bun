@@ -45,7 +45,7 @@ impl Reached {
 }
 
 /// `None`: more than `limit` layouts.
-pub(super) fn collect_reached_layouts(
+pub(crate) fn collect_reached_layouts(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: TypeId,
     limit: LimitId,

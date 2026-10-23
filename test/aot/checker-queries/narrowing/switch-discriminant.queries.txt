@@ -1,4 +1,0 @@
-# Each clause of a `switch` over a discriminant property narrows the object.
-switch-discriminant.ts:4 type `s` = S
-switch-discriminant.ts:6 type `s` = { kind: "a"; x: number; }
-switch-discriminant.ts:9 type `s` = { kind: "b"; y: string; }

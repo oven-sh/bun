@@ -40,7 +40,7 @@ pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Bi
     }
 }
 
-pub(super) fn get_stored(
+pub(in crate::lower) fn get_stored(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: BindingRef,
 ) -> ValueId {
@@ -101,7 +101,7 @@ pub(super) fn set_stored(
     }
 }
 
-pub(super) fn get_binding(
+pub(crate) fn get_binding(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: Binding,
     name: Atom,
@@ -158,7 +158,7 @@ pub(super) fn initialize_binding(
     }
 }
 
-pub(super) fn initialize_converted_symbol(
+pub(crate) fn initialize_converted_symbol(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     symbol: SymbolId,
     name: Atom,
@@ -175,7 +175,7 @@ pub(super) fn get_arguments_object(
     get_stored(lowering, slot)
 }
 
-pub(super) fn get_mapped_argument(
+pub(in crate::lower) fn get_mapped_argument(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     unit: CodeUnit,
     index: u32,
@@ -184,7 +184,7 @@ pub(super) fn get_mapped_argument(
     lowering.builder.get_mapped_argument(arguments, index)
 }
 
-pub(super) fn set_mapped_argument(
+pub(in crate::lower) fn set_mapped_argument(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     unit: CodeUnit,
     index: u32,

@@ -22,7 +22,7 @@ enum FieldTarget {
     Private(PrivateNameId),
 }
 
-pub(super) fn static_field_position(
+pub(crate) fn static_field_position(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
     member: MemberId,
@@ -177,7 +177,7 @@ fn create_initializer_header(
     header
 }
 
-pub(super) fn lower_instance_initializer(
+pub(crate) fn lower_instance_initializer(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     class: ClassId,
@@ -186,7 +186,7 @@ pub(super) fn lower_instance_initializer(
     lower_initializer_body(file, function, class, &plan.instance_elements);
 }
 
-pub(super) fn lower_static_initializer(
+pub(crate) fn lower_static_initializer(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     class: ClassId,

@@ -1,4 +1,0 @@
-# A parameter whose type does not resolve gives up alone: the other parameter and the result keep their types.
-parameter-with-unresolved-type.ts:2 signature `f` = (gave up: ErrorType checked gave up: ErrorType, number checked number) this unwritten checked any returns string checked string
-parameter-with-unresolved-type.ts:3 call result `f(0, 1)` = string checked string
-parameter-with-unresolved-type.ts:3 call signature `f(0, 1)` = (gave up: ErrorType checked gave up: ErrorType, number checked number) this unwritten checked any returns string checked string

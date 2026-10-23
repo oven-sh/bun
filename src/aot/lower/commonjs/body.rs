@@ -16,7 +16,10 @@ use crate::modules::{ModuleRef, Shape};
 
 type EntryValues = SmallVec<[(BindingRef, ValueId); 6]>;
 
-pub(super) fn lower_commonjs_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
+pub(in crate::lower) fn lower_commonjs_body(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FunctionId,
+) {
     match variables::body_form(file) {
         BodyForm::Plain => lower_plain_body(file, function),
         BodyForm::Wrapped => lower_calling_body(file, function),
@@ -67,7 +70,10 @@ fn emit_first_exports(
     Some(created)
 }
 
-pub(super) fn set_own_exports(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, value: ValueId) {
+pub(in crate::lower) fn set_own_exports(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    value: ValueId,
+) {
     let own_module = ModuleRef::File(lowering.file.file);
     if !has_exports_variable(lowering.file, own_module) {
         return;
@@ -156,7 +162,10 @@ fn lower_calling_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Functio
     finish_body(lowering, None);
 }
 
-pub(super) fn lower_wrapped_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
+pub(in crate::lower) fn lower_wrapped_body(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FunctionId,
+) {
     let scope = module::file_scope(file);
     let mut lowering = FunctionLowering::begin(file, function);
     enter_wrapped_file_scope(&mut lowering, scope);
@@ -226,7 +235,7 @@ fn find_inner_module(file: &FileLowering<'_, '_, '_, '_>, callback: FnId) -> Mod
 }
 
 // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module: nobody passes it anything, and nobody gets what it returns.
-pub(super) fn declare_inner_module_body(
+pub(in crate::lower) fn declare_inner_module_body(
     file: &mut FileLowering<'_, '_, '_, '_>,
     callback: FnId,
 ) -> FunctionId {
@@ -240,7 +249,7 @@ pub(super) fn declare_inner_module_body(
     })
 }
 
-pub(super) fn lower_inner_module_body(
+pub(in crate::lower) fn lower_inner_module_body(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     callback: FnId,

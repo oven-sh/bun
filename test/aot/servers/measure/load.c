@@ -5,6 +5,9 @@
 // The expected file holds the status, the content type ("-" for any) and "exact" or "length", one per line, followed by
 // the body. Every response is checked: status, content type, and either the whole body ("exact") or only its length
 // ("length", for pages that embed a timestamp). The first mismatch ends the run with exit code 1.
+// A connection that the server ends is reported with how it ended (FIN or the error), its age, the responses it had carried, and
+// how long its request had been waiting or how long it had been idle. node:http closes a connection that was idle for
+// keepAliveTimeout (5 s + 1 s); a server that the machine held that long closes, on resuming, connections whose requests wait unread.
 // With more than one pair of files, requests cycle through the pairs round-robin.
 // Connections and requests are split evenly across the threads; each thread has its own epoll instance.
 //
@@ -45,6 +48,10 @@ typedef struct {
     size_t capacity;
     size_t length;
     double startedAt;
+    double openedAt;
+    double answeredAt;
+    long answered;
+    int isWaiting;
 } Connection;
 
 typedef struct {
@@ -76,6 +83,15 @@ static void fail(const char* what, const char* detail)
 {
     fprintf(stderr, "load: %s: %.300s\n", what, detail ? detail : "");
     exit(1);
+}
+
+static void failClosed(const Connection* c, ssize_t got)
+{
+    char detail[200];
+    double t = now();
+    snprintf(detail, sizeof detail, "%s, open for %.3f s, %ld answered, %s for %.3f s, %zu bytes of this answer", got ? strerror(errno) : "FIN", t - c->openedAt, c->answered,
+        c->isWaiting ? "waiting" : "idle", t - (c->isWaiting ? c->startedAt : c->answered ? c->answeredAt : c->openedAt), c->length);
+    fail("the server closed the connection", detail);
 }
 
 static char* readFile(const char* path, size_t* length)
@@ -142,6 +158,7 @@ static void sendRequest(Connection* c, Exchange* e)
 {
     c->exchange = e;
     c->length = 0;
+    c->isWaiting = 1;
     c->startedAt = now();
     size_t sent = 0;
     while (sent < e->requestLength) {
@@ -211,6 +228,9 @@ static int checkResponse(Worker* w, Connection* c)
     if (bodyLength != e->bodyLength || (e->compareBytes && memcmp(body, e->body, bodyLength)))
         fail("another body", c->buffer);
     w->headerBytes += headEnd + 4 - c->buffer;
+    c->isWaiting = 0;
+    c->answered++;
+    c->answeredAt = now();
     return 1;
 }
 
@@ -222,6 +242,7 @@ static void* runClientThread(void* argument)
     for (int i = 0; i < w->connectionCount; i++) {
         Connection* c = &connections[i];
         c->fd = connectToServer();
+        c->openedAt = now();
         c->capacity = 1 << 20;
         c->buffer = malloc(c->capacity);
         struct epoll_event event = { .events = EPOLLIN, .data.ptr = c };
@@ -251,7 +272,7 @@ static void* runClientThread(void* argument)
                 Connection* c = events[i].data.ptr;
                 ssize_t got = recv(c->fd, c->buffer + c->length, c->capacity - c->length - 1, 0);
                 if (got <= 0)
-                    fail("the server closed the connection", "");
+                    failClosed(c, got);
                 c->length += got;
                 c->buffer[c->length] = 0;
                 if (!checkResponse(w, c))
@@ -277,7 +298,7 @@ static void* runClientThread(void* argument)
             Connection* c = events[i].data.ptr;
             ssize_t got = recv(c->fd, c->buffer + c->length, c->capacity - c->length - 1, 0);
             if (got <= 0)
-                fail("the server closed the connection", "");
+                failClosed(c, got);
             c->length += got;
             c->buffer[c->length] = 0;
             if (!checkResponse(w, c))

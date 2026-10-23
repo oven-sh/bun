@@ -1,8 +1,0 @@
-# A duplicate private name or constructor, `??` mixed with `||`, and a rest element before the end are EarlyError. A duplicate public field is valid JavaScript, so it is Semantic.
-duplicate-sites.ts:4 diagnostic TS2300 = EarlyError StopsBuild
-duplicate-sites.ts:8 diagnostic TS2804 = EarlyError StopsBuild
-duplicate-sites.ts:12 diagnostic TS2392 = EarlyError StopsBuild
-duplicate-sites.ts:19 diagnostic TS5076 = EarlyError StopsBuild
-duplicate-sites.ts:20 diagnostic TS2462 = EarlyError StopsBuild
-
-duplicate-sites.ts:16 diagnostic TS2300 = Semantic StopsBuild

@@ -549,7 +549,9 @@ pub(super) fn emit_passed_value(
     emit_module_value(lowering, builtin_of(variable))
 }
 
-pub(super) fn initialize_path_variables(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
+pub(in crate::lower) fn initialize_path_variables(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+) {
     for variable in [CommonJsVariable::Filename, CommonJsVariable::Dirname] {
         match find_source(lowering.file, variable) {
             VariableSource::ModuleVariable => {}
@@ -610,7 +612,7 @@ fn find_wrapper_path(
     }
 }
 
-pub(super) fn emit_module_builtin(
+pub(crate) fn emit_module_builtin(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     builtin: BuiltinId,
 ) -> ValueId {

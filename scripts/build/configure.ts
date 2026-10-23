@@ -540,7 +540,6 @@ async function generate<N extends string | undefined>(
   // auto-trigger).
   const targets = [output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun"];
   if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-  // CI packs them beside bun (ci.ts packageAndUpload): test/aot runs the engine's tests and compiled images with them.
   if (cfg.ci) targets.push("engine-test-programs");
   n.default(targets);
 

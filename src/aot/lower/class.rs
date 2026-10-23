@@ -8,25 +8,33 @@ mod slots;
 
 use std::rc::Rc;
 
-use bun_sema::bind::Bound;
-use bun_sema::hir::{self, ClassId, ExprId, FnId, MemberId, ParamId};
-use bun_sema::resolve::TranspileSettings;
+use bun_sema::hir::{ClassId, ExprId, FnId, MemberId, ParamId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use super::FileLowering;
 use super::decorators::Decoration;
 use super::member::PropertyName;
-use super::{FileLowering, FunctionLowering};
-use crate::ir::generated::{Function, HomeObjectKind, MethodKind};
-use crate::ir::{ClassSlot, DeclaredType, FunctionId, LayoutId, PropertyKeyId, StringId, ValueId};
+use crate::ir::{LayoutId, PropertyKeyId, StringId, ValueId};
 
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
+pub(crate) use self::accessors::{lower_accessor_function, lower_private_name_test};
+pub(crate) use self::constructor::{
+    emit_constructor_result, finish_constructor_header, lower_constructor,
+    lower_implicit_constructor, lower_super_call,
+};
+pub(crate) use self::definition::{lower_class_declaration, lower_class_expression};
 pub(in crate::lower) use self::fields::{find_private_state_field, private_state_fields};
+pub(crate) use self::fields::{
+    lower_instance_initializer, lower_static_initializer, static_field_position,
+};
+pub(crate) use self::plan::class_slots;
 pub(in crate::lower) use self::plan::{
     decorators_of, has_decorators, has_instance_brand, has_private_static_storage,
     is_auto_accessor, is_declaration_only, is_decorated_private_name, is_derived_class,
     runtime_members,
 };
+pub(crate) use self::slots::get_class_home;
 pub(in crate::lower) use self::slots::{
     create_private_state_variable, get_class_slot, get_private_state_slot, set_class_slot,
     set_private_state_slot,
@@ -105,116 +113,6 @@ pub(in crate::lower) struct ClassEvaluation {
 pub(crate) struct ClassState {
     plans: FxHashMap<ClassId, Rc<ClassPlan>>,
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
-}
-
-pub(crate) fn class_slots(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
-    settings: &TranspileSettings,
-    class: ClassId,
-) -> SmallVec<[ClassSlot; 4]> {
-    plan::class_slots(hir, bound, settings, class)
-}
-
-pub(crate) fn static_field_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-    member: MemberId,
-) -> DeclaredType {
-    fields::static_field_position(file, class, member)
-}
-
-pub(crate) fn finish_constructor_header(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-    name: Option<StringId>,
-    header: &mut Function,
-) {
-    constructor::finish_constructor_header(file, class, name, header);
-}
-
-pub(crate) fn lower_constructor(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    source: FnId,
-) {
-    constructor::lower_constructor(file, function, source);
-}
-
-pub(crate) fn lower_implicit_constructor(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    class: ClassId,
-) {
-    constructor::lower_implicit_constructor(file, function, class);
-}
-
-pub(crate) fn lower_instance_initializer(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    class: ClassId,
-) {
-    fields::lower_instance_initializer(file, function, class);
-}
-
-pub(crate) fn lower_static_initializer(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    class: ClassId,
-) {
-    fields::lower_static_initializer(file, function, class);
-}
-
-pub(crate) fn lower_accessor_function(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    member: MemberId,
-    kind: MethodKind,
-) {
-    accessors::lower_accessor_function(file, function, member, kind);
-}
-
-pub(crate) fn lower_private_name_test(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionId,
-    member: MemberId,
-) {
-    accessors::lower_private_name_test(file, function, member);
-}
-
-pub(crate) fn lower_class_expression(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    name: Option<PropertyName>,
-) -> ValueId {
-    definition::lower_class_expression(lowering, class, name)
-}
-
-pub(crate) fn lower_class_declaration(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-) {
-    definition::lower_class_declaration(lowering, class);
-}
-
-pub(crate) fn lower_super_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-) -> ValueId {
-    constructor::lower_super_call(lowering, call)
-}
-
-pub(crate) fn emit_constructor_result(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    value: ValueId,
-) -> ValueId {
-    constructor::emit_constructor_result(lowering, value)
-}
-
-pub(crate) fn get_class_home(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-) -> (HomeObjectKind, ValueId) {
-    slots::get_class_home(lowering)
 }
 
 pub(in crate::lower) fn class_plan(

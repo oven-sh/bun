@@ -1,6 +1,0 @@
-getter of one object: 120000, few entries
-two hundred objects of the literal, in turn: 3980000, few entries
-absent name: 20000, few entries
-property added later: 1990000, few entries
-getter at a polymorphic site: 60000, few entries
-new objects, each read once: 300000, few entries

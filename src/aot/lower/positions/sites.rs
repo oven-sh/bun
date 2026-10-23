@@ -7,7 +7,7 @@ use crate::lower::{CheckerTypeId, FileLowering};
 
 const MAX_UNION_MEMBERS_IN_TEXT: usize = 4;
 
-pub(super) fn add_type_site(
+pub(crate) fn add_type_site(
     file: &mut FileLowering<'_, '_, '_, '_>,
     origin: SiteOrigin,
     text: Option<CheckerTypeId>,

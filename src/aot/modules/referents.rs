@@ -1,7 +1,3 @@
-#[cfg(test)]
-mod named_value_tests;
-#[cfg(test)]
-mod tests;
 
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ExportLookup, ImportBinding, SiteAnswer};

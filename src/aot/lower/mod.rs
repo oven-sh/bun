@@ -51,15 +51,11 @@ use crate::statistics::Counters;
 
 pub use self::context::{FileInputs, LoweringInputs, LoweringOptions, SourceKind};
 pub use self::fragment::{Fragment, ModuleFragment};
-#[cfg(test)]
-pub(crate) use self::layouts::late_answers;
 pub use self::layouts::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 pub use self::module::{LeftOutDeclarations, LibraryFunctions, collect_library_functions};
 
 pub(crate) use self::context::{FileLowering, FunctionLowering};
 pub(crate) use self::convert::FamilyFacts;
-#[cfg(test)]
-pub(crate) use self::fragment::FragmentBuilder;
 pub(crate) use bun_sema::types::TypeId as CheckerTypeId;
 
 pub struct LoweredFile {

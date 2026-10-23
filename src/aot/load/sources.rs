@@ -1,6 +1,4 @@
 mod freeze;
-#[cfg(test)]
-mod tests;
 
 use std::sync::OnceLock;
 
@@ -256,16 +254,5 @@ impl Sources {
         let mut functions = self.evaluated_functions.iter();
         let entry = functions.find(|entry| entry.1.file == text_file)?;
         Some(entry.0.0)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn evaluated_functions_of(
-        &self,
-        file: FileId,
-    ) -> &[((FileId, ExprId), FunctionRef)] {
-        let functions = &self.evaluated_functions;
-        let start = functions.partition_point(|entry| entry.0.0 < file);
-        let end = functions.partition_point(|entry| entry.0.0 <= file);
-        &functions[start..end]
     }
 }

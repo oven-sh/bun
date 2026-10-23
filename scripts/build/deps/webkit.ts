@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-eda6a0d4";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-50788cdb";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -124,27 +124,18 @@ export function webkitTestFFIPath(cfg: Config): string {
     : resolve(cfg.buildDir, `testFFI${cfg.exeSuffix}`);
 }
 
-/**
- * Whether the tarball has `jsc` and `testaot` as libraries of their objects, without a table of built-ins. Those that CI
- * links and then tests have, and Linux x64's debug build (`programs` in oven-sh/WebKit's .github/scripts/lanes.mjs).
- * The unpacked tarball is asked, so nothing here repeats that list; false until it is fetched (`contentsDecideGraph`).
- */
+/** Whether the unpacked tarball has the objects of `jsc` and `testaot` (`programs` in oven-sh/WebKit's lanes.mjs). False until it is fetched. */
 export function prebuiltHasProgramObjects(cfg: Config): boolean {
   if (cfg.webkit !== "prebuilt") return false;
   return ["jsc", "testaot"].every(name => existsSync(resolve(prebuiltDestDir(cfg), programObjects(cfg, name))));
 }
 
-/**
- * The `jsc` that has bun's table of built-ins, which runs what bun and `testaot` compile: built next to bun on request
- * (`--target=jsc`). A tarball without the program's objects only has the one in bin/, with the table of WebKit's stand-in host.
- */
 export function webkitJSCPath(cfg: Config): string {
   return cfg.webkit === "prebuilt" && !prebuiltHasProgramObjects(cfg)
     ? resolve(prebuiltDestDir(cfg), "bin", `jsc${cfg.exeSuffix}`)
     : resolve(cfg.buildDir, `jsc${cfg.exeSuffix}`);
 }
 
-/** `testaot`, likewise. */
 export function webkitTestAotPath(cfg: Config): string {
   return cfg.webkit === "prebuilt" && !prebuiltHasProgramObjects(cfg)
     ? resolve(prebuiltDestDir(cfg), "bin", `testaot${cfg.exeSuffix}`)
@@ -247,7 +238,6 @@ function bmallocLib(cfg: Config): string {
   return wkLib(cfg, "bmalloc");
 }
 
-/** Everything of one of WebKit's programs but the table of built-ins (shell/CMakeLists.txt). */
 function programObjects(cfg: Config, program: string): string {
   return wkLib(cfg, `${program}-objects`);
 }
@@ -1845,7 +1835,6 @@ export interface JSCProgram {
   sources: string[];
   cxxflags: string[];
   ldflags: string[];
-  /** The rest of the program, where the prebuilt WebKit brings it compiled. Absolute. */
   libs?: string[];
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
@@ -1893,12 +1882,6 @@ function outOfMemoryHook(cfg: Config, program: string): string {
  * says how: the sources, the flags a JSC-family TU compiles with, and what a
  * standalone JSC executable needs at link. None is a default target:
  * `bun run build:local --target=jsc`.
- *
- * With the prebuilt WebKit: `jsc` and `testaot`, whose objects the tarball has
- * as libraries. JavaScriptCore leaves the table of built-ins to whoever links
- * it, and the programs in the tarball's bin/ have the table of a stand-in host:
- * that `testaot` leaves out the tests of bun's entries, and that `jsc` runs
- * nothing that was compiled with bun's table.
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (prebuiltHasProgramObjects(cfg)) {
@@ -1906,7 +1889,6 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
       name,
       sources: [outOfMemoryHook(cfg, name)],
       cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
-      // As the tarball's own programs: no copy of the libraries' debug information.
       ldflags: [
         ...standaloneExeLinkFlags(cfg),
         ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),

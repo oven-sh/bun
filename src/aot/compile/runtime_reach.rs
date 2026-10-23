@@ -1290,10 +1290,7 @@ impl<'a, 's> Walk<'a, 's> {
                 | ModuleRef::Check(target),
             ) => self.input.graph.runtime_module(target),
             SiteAnswer::Module(ModuleRef::Runtime(module)) => Some(module),
-            SiteAnswer::Module(ModuleRef::External { .. })
-            | SiteAnswer::Computed(_)
-            | SiteAnswer::Failed(_)
-            | SiteAnswer::Erased => None,
+            _ => None,
         }
     }
 

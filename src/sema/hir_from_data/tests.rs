@@ -79,7 +79,6 @@ fn exprs_resolved_at_runtime(hir: &File<'_>) -> impl Iterator<Item = ExprId> {
 fn file_is_strict_javascript_module() {
     with_atoms(|atoms, arena| {
         let hir = default_export_module(&DataValue::Null, atoms, arena).file;
-        assert_eq!(hir.validate(), Ok(()));
         assert_eq!(hir.kind, FileKind::Tsx);
         assert!(hir.is_js && hir.has_module_syntax);
         assert!(hir.is_strict && hir.is_strict_by_syntax);
@@ -95,7 +94,6 @@ fn local_names_skip_keys() {
         let properties = keys.map(|key| (key, DataValue::Null));
         let object = DataValue::Object(&properties);
         let hir = key_export_module(&object, atoms, arena).file;
-        assert_eq!(hir.validate(), Ok(()));
         let names = intern_all(atoms, ["_1", "_3", "_4", "_5"]);
         assert_eq!(declared_names(&hir), names);
         let exported = [known::default, keys[0], keys[1], keys[2]];
@@ -115,7 +113,6 @@ fn object_keys_are_read_from_default_export() {
         ];
         let object = DataValue::Object(&properties);
         let hir = key_export_module(&object, atoms, arena).file;
-        assert_eq!(hir.validate(), Ok(()));
         assert_eq!(hir.body.len(), 3);
         let expected = [(object_name, known::default), (a_name, a), (b_name, b)];
         assert_eq!(exports(&hir), expected);
@@ -143,7 +140,6 @@ fn object_without_exported_keys() {
         for properties in [&only_default[..], no_properties] {
             let object = DataValue::Object(properties);
             let hir = key_export_module(&object, atoms, arena).file;
-            assert_eq!(hir.validate(), Ok(()));
             assert_eq!(hir.body.len(), 2);
             assert_eq!(hir.var_decls.len(), 1);
             let exported: Vec<Atom> = exports(&hir).into_iter().map(|it| it.1).collect();
@@ -159,7 +155,6 @@ fn other_value_exports_default_and_marker() {
         let elements = [DataValue::Null];
         for value in [DataValue::Array(&elements), DataValue::String(known::value)] {
             let hir = key_export_module(&value, atoms, arena).file;
-            assert_eq!(hir.validate(), Ok(()));
             assert_eq!(hir.body.len(), 2);
             let expected = [
                 (default_name, known::default),
@@ -187,7 +182,6 @@ fn nested_properties_are_contiguous() {
         let value = DataValue::Object(&outer);
         let tree = key_export_module(&value, atoms, arena);
         let hir = &tree.file;
-        assert_eq!(hir.validate(), Ok(()));
         let root = tree.host_values[0].0;
         let ExprKind::Object(props) = hir[root].kind else {
             panic!("root: {:?}", hir[root].kind);
@@ -230,7 +224,6 @@ fn page_is_deferred() {
     with_atoms(|atoms, arena| {
         let tree = module_from_data(&DataModule::Page, atoms, arena);
         let hir = &tree.file;
-        assert_eq!(hir.validate(), Ok(()));
         assert_eq!(hir.body.len(), 1);
         let manifest = default_value(hir);
         let kind = hir[manifest].kind;
@@ -254,7 +247,6 @@ fn runtime_require_call_is_resolved_at_runtime() {
             };
             let tree = module_from_data(&module, atoms, arena);
             let hir = &tree.file;
-            assert_eq!(hir.validate(), Ok(()));
             assert!(tree.host_values.is_empty());
             let flagged: Vec<ExprId> = exprs_resolved_at_runtime(hir).collect();
             let [request] = flagged[..] else {
@@ -289,7 +281,6 @@ fn native_addon_is_loaded_by_process_dlopen() {
         let [path, dlopen] = intern_all(atoms, ["/x.node", "dlopen"]);
         let tree = module_from_data(&DataModule::NativeAddon { path }, atoms, arena);
         let hir = &tree.file;
-        assert_eq!(hir.validate(), Ok(()));
         assert!(tree.host_values.is_empty());
         assert_eq!(exprs_resolved_at_runtime(hir).count(), 0);
 
@@ -361,7 +352,6 @@ fn values_have_no_call_resolved_at_runtime() {
         ];
         for module in &modules {
             let hir = module_from_data(module, atoms, arena).file;
-            assert_eq!(hir.validate(), Ok(()));
             assert_eq!(exprs_resolved_at_runtime(&hir).count(), 0, "{module:?}");
         }
     });
@@ -371,7 +361,6 @@ fn values_have_no_call_resolved_at_runtime() {
 fn undefined_is_void_zero() {
     with_atoms(|atoms, arena| {
         let hir = default_export_module(&DataValue::Undefined, atoms, arena).file;
-        assert_eq!(hir.validate(), Ok(()));
         let kind = hir[default_value(&hir)].kind;
         let ExprKind::Unary {
             op: UnOp::Void,
@@ -395,7 +384,6 @@ fn negative_number_is_negated_literal() {
         for (number, magnitude) in cases {
             let value = DataValue::Number(number);
             let hir = default_export_module(&value, atoms, arena).file;
-            assert_eq!(hir.validate(), Ok(()));
             let kind = hir[default_value(&hir)].kind;
             let ExprKind::Unary {
                 op: UnOp::Minus,
@@ -419,7 +407,6 @@ fn other_number_is_literal() {
         for number in [0.0f64, 1.5, f64::INFINITY, f64::NAN, -f64::NAN] {
             let value = DataValue::Number(number);
             let hir = default_export_module(&value, atoms, arena).file;
-            assert_eq!(hir.validate(), Ok(()));
             let root = default_value(&hir);
             assert_eq!(number_bits(&hir, root), Some(number.to_bits()), "{number}");
         }
@@ -435,7 +422,6 @@ fn proto_key_defines_own_property() {
         ];
         let object = DataValue::Object(&properties);
         let hir = default_export_module(&object, atoms, arena).file;
-        assert_eq!(hir.validate(), Ok(()));
         let name_kinds: Vec<NameKind> = hir.props.iter().map(|prop| prop.name_kind).collect();
         assert_eq!(
             name_kinds,

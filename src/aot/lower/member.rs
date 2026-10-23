@@ -1,10 +1,10 @@
 mod key;
 mod reference;
 
-use bun_sema::atom::{Atom, known};
+use bun_sema::atom::known;
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{Chain, ExprId, ExprKind, MemberKey, NodeData, PropKey};
+use bun_sema::hir::{Chain, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::types::EnumValue;
 
 use super::{
@@ -18,6 +18,7 @@ pub(in crate::lower) use self::key::{
     created_symbol_key, find_function_name, find_key_text, find_name_under_symbol,
     lower_computed_key, lower_member_key,
 };
+pub(crate) use self::key::{emit_name_value, lower_property_name, name_key};
 pub(in crate::lower) use self::reference::{
     KeyConversion, Reference, get_reference, lower_reference, put_reference,
 };
@@ -54,24 +55,6 @@ fn resolve_access(
         },
         PropertyName::Computed(value) => Access::Element(value),
     }
-}
-
-pub(crate) fn name_key(file: &mut FileLowering<'_, '_, '_, '_>, name: Atom) -> PropertyKeyId {
-    key::name_key(file, name)
-}
-
-pub(crate) fn lower_property_name(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    key: PropKey,
-) -> PropertyName {
-    key::lower_property_name(lowering, key)
-}
-
-pub(crate) fn emit_name_value(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    name: PropertyName,
-) -> ValueId {
-    key::emit_name_value(lowering, name)
 }
 
 pub(crate) fn emit_get(

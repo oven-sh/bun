@@ -111,25 +111,7 @@ fn is_undeclared_intrinsic(intrinsic: Intrinsic) -> bool {
         | Intrinsic::BigInt
         | Intrinsic::Symbol
         | Intrinsic::Object => true,
-        Intrinsic::Unresolved
-        | Intrinsic::Any
-        | Intrinsic::Error
-        | Intrinsic::Auto
-        | Intrinsic::Unknown
-        | Intrinsic::Never
-        | Intrinsic::SilentNever
-        | Intrinsic::UnreachableNever
-        | Intrinsic::ImplicitNever
-        | Intrinsic::UniqueLiteral
-        | Intrinsic::Void
-        | Intrinsic::Undefined
-        | Intrinsic::Missing
-        | Intrinsic::UndefinedWidening
-        | Intrinsic::Null
-        | Intrinsic::NullWidening
-        | Intrinsic::IntrinsicMarker
-        | Intrinsic::Wildcard
-        | Intrinsic::NonInferrableAny => false,
+        _ => false,
     }
 }
 
@@ -159,34 +141,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let pattern = match decl {
                 Decl::Var(pattern) | Decl::Param(pattern) => pattern,
                 _ if declares_type_alone(decl) => continue,
-                Decl::Fn(_)
-                | Decl::Class(_)
-                | Decl::Interface(_)
-                | Decl::Alias(_)
-                | Decl::Enum(_)
-                | Decl::EnumMember(_)
-                | Decl::Module(_)
-                | Decl::TypeParam(_)
-                | Decl::ImportDefault(_)
-                | Decl::ImportNamespace(_)
-                | Decl::ImportSpec(_)
-                | Decl::ImportEquals(_)
-                | Decl::ExportSpec(_)
-                | Decl::ExportStarAs(_)
-                | Decl::ExportExpr(_)
-                | Decl::UmdGlobal(_)
-                | Decl::File
-                | Decl::Require(_)
-                | Decl::ModuleExports(_)
-                | Decl::ExportsProperty(_)
-                | Decl::Expando(_)
-                | Decl::ObjectLiteral(_)
-                | Decl::CommonJsVariable
-                | Decl::Member(_)
-                | Decl::ParameterProperty(_)
-                | Decl::ThisProperty(_)
-                | Decl::Property(_)
-                | Decl::TypeLiteral(_) => return WrittenType::Unwritten,
+                _ => return WrittenType::Unwritten,
             };
             let node = self.c.type_annotation_of_pat(file, pattern);
             let declared =
@@ -458,25 +413,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | TypeData::Fns { .. }
             | TypeData::Synth(_)
             | TypeData::ReverseMapped { .. } => !self.object_type_trust(ty).is_trusted(),
-            TypeData::Intrinsic(_)
-            | TypeData::UnresolvedName { .. }
-            | TypeData::StringLit { .. }
-            | TypeData::NumberLit { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::BoolLit { .. }
-            | TypeData::EnumLit { .. }
-            | TypeData::Enum { .. }
-            | TypeData::EvolvingArray(_)
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::Marker(_)
-            | TypeData::Cond { .. }
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Keyof(_)
-            | TypeData::Substitution { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. } => false,
+            _ => false,
         }
     }
 
@@ -882,19 +819,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 true => TypeId::UNKNOWN,
                 false => ty,
             },
-            TypeData::StringLit { .. }
-            | TypeData::NumberLit { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::BoolLit { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. }
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::UnresolvedName { .. }
-            | TypeData::EvolvingArray(_)
-            | TypeData::Cond { .. }
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Keyof(_)
-            | TypeData::Substitution { .. } => TypeId::UNKNOWN,
             TypeData::EnumLit { .. }
             | TypeData::Enum { .. }
             | TypeData::TypeParam(..)
@@ -939,6 +863,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             // It has no declaration: that the value is an array of that length is the word of whoever wrote the type.
             TypeData::Tuple { .. } => TypeId::UNKNOWN,
+            _ => TypeId::UNKNOWN,
         }
     }
 

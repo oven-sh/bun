@@ -1,4 +1,0 @@
-# The receiver's type arguments may be inferred, so they do not instantiate the written result of the call. They do instantiate the signature.
-receiver-type-arguments.ts:6 call `box.get()` = declaration receiver-type-arguments.ts:3
-receiver-type-arguments.ts:6 call result `box.get()` = T checked number
-receiver-type-arguments.ts:6 call signature `box.get()` = () this unwritten checked any returns number checked number

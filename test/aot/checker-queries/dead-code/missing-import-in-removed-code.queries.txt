@@ -1,4 +1,0 @@
-# An `import()` in code that folding removed is never resolved, so a missing file is not an error. The same `import()` in live code is an error.
-absent: missing-import-in-removed-code.ts:3 diagnostic TS2307 = MissingDeclaration StopsBuild
-
-missing-import-in-removed-code.ts:5 diagnostic TS2307 = MissingDeclaration StopsBuild

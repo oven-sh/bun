@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use crate::builtins::RuntimeModule;
 use crate::ir::{FunctionKey, LayoutKey, VariableKey};

@@ -1,3 +1,0 @@
-# A type argument the call wrote instantiates the written result, but not what the signature has written.
-written-type-argument.ts:3 call result `wrap<number>(1)` = number checked number
-written-type-argument.ts:3 call signature `wrap<number>(1)` = (T checked number) this unwritten checked any returns T checked number generic

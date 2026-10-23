@@ -48,7 +48,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
   ],
   [
-    /createNativeFrameForTesting|TestingAPIs\.(orderedRemoveProbe|noProxyMatches)|createStatsForIno|describeCheckerQueries|createMemfdForTesting|jsFunction_readFreedStringUnderASAN/,
+    /createNativeFrameForTesting|TestingAPIs\.(orderedRemoveProbe|noProxyMatches)|createStatsForIno|createMemfdForTesting|jsFunction_readFreedStringUnderASAN/,
     "a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose",
   ],
   [

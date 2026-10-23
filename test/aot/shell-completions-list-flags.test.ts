@@ -9,7 +9,7 @@ test("the table of flags for shell completions lists every --aot flag of bun bui
     ...new Set(
       [
         ...(help + errors).matchAll(
-          /^\s+--(aot[a-z-]*|explain|no-compile-function-source|compile-in-place|compile-inspector|obfuscate|trim(?:-locales)?|dts)(?![a-z-])/gm,
+          /^\s+--(aot[a-z-]*|explain|no-compile-function-source|compile-in-place|compile-inspector|obfuscate|trim(?:-locales)?)(?![a-z-])/gm,
         ),
       ].map(match => match[1]),
     ),

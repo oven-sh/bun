@@ -7,9 +7,9 @@ mod library_functions;
 mod loads;
 mod runtime_value;
 
-use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{self, ExprId, FnId, ImportEqualsId, StmtId};
+use bun_sema::hir::{self, FnId, StmtId};
 use bun_sema::program::{FileId, Files};
 use core::ops::Range;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -17,15 +17,20 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::commonjs::{self, CommonJsState};
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
-use super::fragment::ModuleFragment;
 use super::validate::ValidationState;
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::{BuiltinId, RuntimeFunction};
-use crate::ir::{BlockId, DataId, FunctionId, StringId, ValueId};
+use crate::ir::{DataId, FunctionId, StringId, ValueId};
 use crate::load::Sources;
 use crate::modules::ImportBinding;
 
+pub(crate) use self::body::{finish_module, lower_export_default, lower_module_body};
+pub(crate) use self::faces::{lower_check_body, lower_face_body};
+pub(crate) use self::imports::{get_import, lower_namespace_member, lower_namespace_receiver};
+pub(crate) use self::loads::{
+    lower_import_call, lower_import_equals_require, try_lower_module_call,
+};
 pub use left_out::LeftOutDeclarations;
 pub(in crate::lower) use library::LibraryFunctionForm;
 
@@ -136,32 +141,6 @@ pub(crate) fn declare_module_roots(file: &mut FileLowering<'_, '_, '_, '_>) -> M
     }
 }
 
-pub(crate) fn lower_module_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
-    body::lower_module_body(file, function);
-}
-
-pub(crate) fn lower_face_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
-    faces::lower_face_body(file, function);
-}
-
-pub(crate) fn lower_check_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
-    faces::lower_check_body(file, function);
-}
-
-pub(crate) fn finish_module(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    roots: ModuleRoots,
-) -> ModuleFragment {
-    body::finish_module(file, roots)
-}
-
-pub(crate) fn get_import(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    symbol: SymbolId,
-) -> ValueId {
-    imports::get_import(lowering, symbol)
-}
-
 pub(crate) fn emit_import_binding(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
@@ -170,50 +149,6 @@ pub(crate) fn emit_import_binding(
     imports::emit_import_binding(lowering, binding, name, None)
 }
 
-pub(crate) fn lower_namespace_receiver(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ExprId,
-) -> ValueId {
-    imports::lower_namespace_receiver(lowering, object)
-}
-
-pub(crate) fn lower_namespace_member(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-) -> Option<ValueId> {
-    imports::lower_namespace_member(lowering, access)
-}
-
 pub(crate) fn lower_import_meta(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
     commonjs::emit_module_builtin(lowering, BuiltinId::ImportMeta)
-}
-
-pub(crate) fn lower_import_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-) -> ValueId {
-    loads::lower_import_call(lowering, call)
-}
-
-pub(crate) fn try_lower_module_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-    chain_exit: Option<BlockId>,
-) -> Option<ValueId> {
-    loads::try_lower_module_call(lowering, call, chain_exit)
-}
-
-pub(crate) fn lower_import_equals_require(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    declaration: ImportEqualsId,
-) -> Option<ValueId> {
-    loads::lower_import_equals_require(lowering, declaration)
-}
-
-pub(crate) fn lower_export_default(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    statement: StmtId,
-    expression: ExprId,
-) {
-    body::lower_export_default(lowering, statement, expression);
 }

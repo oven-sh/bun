@@ -78,7 +78,7 @@ fn ensure_exported_variables(file: &mut FileLowering<'_, '_, '_, '_>) {
     }
 }
 
-pub(super) fn lower_module_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
+pub(crate) fn lower_module_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
     validate::report_misused_compiler_functions(file);
     match file.inputs.modules.kind(file.file) {
         ModuleKind::SourceText | ModuleKind::Data => lower_es_module_body(file, function),
@@ -119,7 +119,7 @@ fn lower_runtime_module_body(file: &mut FileLowering<'_, '_, '_, '_>, function: 
     lowering.finish();
 }
 
-pub(super) fn lower_export_default(
+pub(crate) fn lower_export_default(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     statement: StmtId,
     expression: ExprId,
@@ -133,7 +133,7 @@ pub(super) fn lower_export_default(
     scope::initialize_binding(lowering, Binding::Symbol(symbol), known::default, value);
 }
 
-pub(super) fn finish_module(
+pub(crate) fn finish_module(
     file: &mut FileLowering<'_, '_, '_, '_>,
     roots: ModuleRoots,
 ) -> ModuleFragment {

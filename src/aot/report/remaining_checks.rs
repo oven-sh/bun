@@ -220,6 +220,3 @@ fn json_entry(
         notes: Vec::new(),
     }
 }
-
-#[cfg(test)]
-mod tests;

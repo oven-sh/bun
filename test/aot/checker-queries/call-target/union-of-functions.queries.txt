@@ -1,4 +1,0 @@
-# A signature the checker composed for a union has no declaration and nothing written.
-union-of-functions.ts:3 call `u(1 as never)` = declaration none
-union-of-functions.ts:3 call result `u(1 as never)` = unwritten checked void
-union-of-functions.ts:3 call signature `u(1 as never)` = (unwritten checked never) this unwritten checked any returns unwritten checked void

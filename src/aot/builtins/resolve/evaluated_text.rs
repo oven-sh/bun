@@ -64,19 +64,7 @@ impl Resolver<'_, '_> {
         let (call, is_construct) = match input.hir[expr].kind {
             ExprKind::Call(call) => (call, false),
             ExprKind::New(call) => (call, true),
-            ExprKind::Missing
-            | ExprKind::Ident(_) | ExprKind::PrivateIdentifier(_) | ExprKind::This
-            | ExprKind::Super | ExprKind::Null | ExprKind::True | ExprKind::False
-            | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. } | ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_)
-            | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Unary { .. }
-            | ExprKind::Binary { .. } | ExprKind::Assign { .. } | ExprKind::Cond { .. }
-            | ExprKind::Spread(_) | ExprKind::Await(_) | ExprKind::Yield { .. }
-            | ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_) | ExprKind::Instantiation { .. } | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. } | ExprKind::ImportMeta | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => return None,
+            _ => return None,
         };
         let callee = self.value_of(input.hir[call].callee)?;
         let form = evaluated_text_form(callee.path.id)?;

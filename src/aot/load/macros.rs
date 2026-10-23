@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{FileDiagnostic, LoadMessages, range_of_node};

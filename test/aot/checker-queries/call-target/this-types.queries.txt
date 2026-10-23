@@ -1,5 +1,0 @@
-# Only a `this` parameter writes `this`. In an instance method the checker says the class, in a static method and in a plain function `any`.
-this-types.ts:2 signature `f` = () this Date checked Date returns unwritten checked void
-this-types.ts:4 signature `m` = () this unwritten checked C returns unwritten checked void
-this-types.ts:5 signature `s` = () this unwritten checked any returns unwritten checked void
-this-types.ts:7 signature `g` = () this unwritten checked any returns unwritten checked void

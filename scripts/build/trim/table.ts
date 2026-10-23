@@ -1,5 +1,6 @@
 import { BuildError } from "../error.ts";
 import type { IcuPackageRuns } from "./icu-data.ts";
+import { fieldBytes, recordBytes, sectionNames, type SectionName } from "./table-format.ts";
 import {
   edgeStrengths,
   type IcuItemRun,
@@ -76,25 +77,11 @@ interface SectionRecords {
     reserved: number,
   ];
 }
-type SectionName = keyof SectionRecords;
 type Sections = Record<SectionName, Buffer>;
-
-// The bytes of each field of a record, in directory order. src/trim/table.rs reads the same format.
-const fieldBytes: Record<SectionName, readonly number[]> = {
-  edges: [2, 2, 1, 1],
-  featureSets: [4, 4],
-  setMembers: [2],
-  ranges: [4, 4, 2, 1, 1],
-  icuPackages: [4, 4, 4, 4],
-  icuRuns: [4, 4, 2, 2],
-  icuLanguages: [4, 2, 2],
-  moduleTexts: [4, 4, 2, 2, 2, 1, 1],
-};
-const sectionNames = Object.keys(fieldBytes) as SectionName[];
 
 const malformed = (rule: string) => new BuildError(`the trim table is malformed: ${rule}`);
 const hex = (address: number) => "0x" + address.toString(16);
-export const recordBytes = (name: SectionName) => fieldBytes[name].reduce((sum, bytes) => sum + bytes, 0);
+export { recordBytes };
 const alignSection = (offset: number) => Math.ceil(offset / sectionAlignment) * sectionAlignment;
 const isUnsignedBelow = (value: number, limit: number) => Number.isInteger(value) && value >= 0 && value < limit;
 
@@ -216,7 +203,7 @@ function packRecords<Name extends SectionName>(name: Name, records: readonly Sec
   let at = 0;
   for (const record of records) {
     const fields: readonly number[] = record;
-    fieldBytes[name].forEach((width, field) => {
+    fieldBytes(name).forEach((width, field) => {
       bytes.writeUIntLE(fields[field]!, at, width);
       at += width;
     });

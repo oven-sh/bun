@@ -581,26 +581,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let literal = match bound.parent_of_expr(expression) {
             Parent::Prop(property) => bound.prop_owner[property.idx()],
             Parent::Expr(outer) => outer,
-            Parent::None
-            | Parent::File
-            | Parent::Stmt(_)
-            | Parent::VarInit(_)
-            | Parent::ParamDefault(_)
-            | Parent::PatPropDefault(_)
-            | Parent::PatElemDefault(_)
-            | Parent::PropKey(_)
-            | Parent::PatKey(_)
-            | Parent::MemberKey(_)
-            | Parent::MethodKey(_)
-            | Parent::MemberInit(_)
-            | Parent::FnBody(_)
-            | Parent::EnumInit(_)
-            | Parent::Case(_)
-            | Parent::ClassExtends(_)
-            | Parent::ClassDecorator(_)
-            | Parent::MemberDecorator(_)
-            | Parent::ParamDecorator(_)
-            | Parent::Module(_) => return None,
+            _ => return None,
         };
         let literal = literal.some()?;
         matches!(hir[literal].kind, ExprKind::Object(_) | ExprKind::Array(_)).then_some(literal)
@@ -1247,33 +1228,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Decl::Interface(id) => hir[id].name_pos,
                 Decl::Alias(id) => hir[id].name_pos,
                 Decl::Class(id) => hir[id].name_pos,
-                Decl::Var(_)
-                | Decl::Param(_)
-                | Decl::Fn(_)
-                | Decl::Enum(_)
-                | Decl::EnumMember(_)
-                | Decl::Module(_)
-                | Decl::TypeParam(_)
-                | Decl::ImportDefault(_)
-                | Decl::ImportNamespace(_)
-                | Decl::ImportSpec(_)
-                | Decl::ImportEquals(_)
-                | Decl::ExportSpec(_)
-                | Decl::ExportStarAs(_)
-                | Decl::ExportExpr(_)
-                | Decl::UmdGlobal(_)
-                | Decl::File
-                | Decl::Require(_)
-                | Decl::ModuleExports(_)
-                | Decl::ExportsProperty(_)
-                | Decl::Expando(_)
-                | Decl::ObjectLiteral(_)
-                | Decl::CommonJsVariable
-                | Decl::Member(_)
-                | Decl::ParameterProperty(_)
-                | Decl::ThisProperty(_)
-                | Decl::Property(_)
-                | Decl::TypeLiteral(_) => return None,
+                _ => return None,
             };
             Some((file, position))
         });

@@ -20,12 +20,10 @@ mod module_syntax;
 mod runtime_syntax;
 #[cfg(test)]
 mod tests;
-mod validate;
 
 pub use crate::check::aot::DiagnosticClass;
 pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
 pub use runtime_syntax::{has_runtime_member, is_moved_to_file_start, is_proto_setter};
-pub use validate::{FileRule, InvalidFile};
 
 macro_rules! define_id {
     ($($name:ident),* $(,)?) => {$(

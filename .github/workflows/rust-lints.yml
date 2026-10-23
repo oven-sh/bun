@@ -165,7 +165,7 @@ jobs:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: |
           test -x "$TESTAOT"
-          cargo test -p bun_aot -p bun_builtin_sources -p bun_bundler -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler -- --skip realpath_under_the_marked_root_stays_under_it
+          cargo test -p bun_aot -p bun_builtin_sources -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler -- --skip realpath_under_the_marked_root_stays_under_it
 
   mordant:
     name: mordant

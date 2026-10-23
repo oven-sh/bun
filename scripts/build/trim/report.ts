@@ -13,7 +13,6 @@ import {
   type GraphFailure,
   type SectionGraph,
 } from "./graph.ts";
-import { demangleMsvcName, isMsvcName } from "./msvc-names.ts";
 import { smallestGroupBytes } from "./partition.ts";
 import type { RangeFailure } from "./ranges.ts";
 import {
@@ -73,6 +72,13 @@ export function megabytes(bytes: number): string {
   return (bytes / 1e6).toFixed(2) + " MB";
 }
 
+const isMsvcName = (name: string): boolean => name.startsWith("?");
+// The qualified name and the parameters, close to what llvm-cxxfilt prints for an Itanium name.
+const undnameFlags = ["access-specifier", "calling-convention", "member-type", "return-type", "variable-type"].map(
+  part => `--no-${part}`,
+);
+
+/** `path` is llvm-cxxfilt's. llvm-undname, which reads the names of the Microsoft ABI, lies beside it. */
 export class Demangler {
   private readonly path: string | undefined;
   private readonly demangledNames = new Map<string, string>();
@@ -83,9 +89,26 @@ export class Demangler {
 
   demangle(names: string[]): string[] {
     const unknown = [...new Set(names)].filter(name => !this.demangledNames.has(name));
-    for (const name of unknown.filter(isMsvcName)) this.demangledNames.set(name, demangleMsvcName(name) ?? name);
+    this.demangleMsvcNames(unknown.filter(isMsvcName));
     this.demangleWithTool(unknown.filter(name => !isMsvcName(name)));
     return names.map(name => this.demangledNames.get(name) ?? name);
+  }
+
+  private demangleMsvcNames(names: string[]): void {
+    if (this.path === undefined || names.length === 0) return;
+    const tool = this.path.replace(/llvm-cxxfilt(?=[^/\\]*$)/, "llvm-undname");
+    const demangled = spawnSync(tool, undnameFlags, {
+      input: names.map(name => name.replace(/\.llvm\.\d+$/, "") + "\n").join(""),
+      encoding: "utf8",
+      maxBuffer: 1 << 30,
+    });
+    if (demangled.error !== undefined) throw new BuildError(`failed to run ${tool}`, { cause: demangled.error });
+    // For each name: the name, a line with what it reads as unless it cannot be read, and an empty line.
+    const answers = demangled.stdout.split(/\r?\n\r?\n/);
+    names.forEach((name, index) => {
+      const text = answers[index]?.split(/\r?\n/)[1];
+      this.demangledNames.set(name, text?.replace(/\b(?:class|struct|union|enum) /g, "") ?? name);
+    });
   }
 
   private demangleWithTool(names: string[]): void {

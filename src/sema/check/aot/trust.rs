@@ -117,27 +117,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 trust
             }
             TypeData::Synth(_) | TypeData::ReverseMapped { .. } => self.members_trust(ty),
-            TypeData::Intrinsic(_)
-            | TypeData::UnresolvedName { .. }
-            | TypeData::StringLit { .. }
-            | TypeData::NumberLit { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::BoolLit { .. }
-            | TypeData::EnumLit { .. }
-            | TypeData::Enum { .. }
-            | TypeData::EvolvingArray(_)
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::Marker(_)
-            | TypeData::Union(_)
-            | TypeData::Tuple { .. }
-            | TypeData::Cond { .. }
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Keyof(_)
-            | TypeData::Substitution { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. } => Trust::Untrusted,
+            _ => Trust::Untrusted,
         }
     }
 

@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod tests;
 
 use bun_sema::util::SharedSort;
 

@@ -296,14 +296,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
             ShapeKind::Constrained { .. } => {
                 unreachable!("fill reads the base of a constrained type")
             }
-            ShapeKind::Anything(AnythingReason::Void)
-            | ShapeKind::TypeVariable { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Class(_)
-            | ShapeKind::Builtin { .. }
-            | ShapeKind::BigIntLiteral { .. } => Err(self.unsupported(source)),
+            _ => Err(self.unsupported(source)),
         }
     }
 

@@ -1,6 +1,0 @@
-# A key known only at run time sets a flag and adds no member; a string literal key is a static name. A field under a symbol that a constant holds is a member.
-computed-names.ts:3 class `A` = computed instance false computed static true
-computed-names.ts:3 class member `A` = [symbol] Field Member 4 unwritten checked number
-computed-names.ts:3 class member `A` = a Field Member 6 unwritten checked number
-computed-names.ts:8 class `B` = computed instance false computed static false
-computed-names.ts:11 class `C` = computed instance true computed static false

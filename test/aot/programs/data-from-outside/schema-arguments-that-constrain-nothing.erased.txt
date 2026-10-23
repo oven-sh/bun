@@ -1,3 +1,0 @@
-what a dropped argument would have rejected: accepted
-the argument that stands: rejected
-the rest of each type: rejected, rejected, rejected

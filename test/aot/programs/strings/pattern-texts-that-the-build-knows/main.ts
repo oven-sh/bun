@@ -4,6 +4,7 @@
 // String.raw over substitutions whose types say nothing, a number of another module in a template.
 // The last group is texts that only the run knows: they are made as in plain Bun, and each of them is counted.
 // COUNTER: RegExpsCreatedWithoutRecord = 3
+// COUNTER: RegExpsCompiledToBytecode = 2
 import { INVISIBLE_CLASS, INVISIBLE_CHARACTER, INVISIBLE_RUN, MOST, escapeText, spread } from "./classes";
 
 const KEY_TEST = new RegExp(spread(String.raw`api[_-]?key|secret|token|pass(?:word|wd)`), "i");

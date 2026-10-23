@@ -7,7 +7,7 @@ use crate::lower::commonjs::{self, BodyForm};
 use crate::lower::member::{self, PropertyName};
 use crate::lower::{FunctionLowering, expression, module, scope};
 
-pub(super) fn lower_import_equals(
+pub(crate) fn lower_import_equals(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     declaration: ImportEqualsId,
 ) {
@@ -45,7 +45,7 @@ pub(super) fn lower_import_equals(
     }
 }
 
-pub(super) fn lower_export_assignment(
+pub(crate) fn lower_export_assignment(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,
 ) {

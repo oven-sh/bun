@@ -1,9 +1,0 @@
-# A type that JSDoc imports is the checker's type of the parameter.
-import-type.js:6 parameter `p` = Point
-import-type.js:7 type `p.x` = number
-import-type.js:6 returns `norm` = number
-import-type.js:11 parameter `q` = Point
-import-type.js:12 type `q.x` = number
-import-type.js:16 parameter `s` = Size
-import-type.js:17 type `s.width` = number
-import-type.js:16 returns `area` = number

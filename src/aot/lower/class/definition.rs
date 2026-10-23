@@ -21,7 +21,7 @@ struct Heritage {
     prototype_parent: ValueId,
 }
 
-pub(super) fn lower_class_expression(
+pub(crate) fn lower_class_expression(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     class: ClassId,
     name: Option<PropertyName>,
@@ -29,7 +29,7 @@ pub(super) fn lower_class_expression(
     evaluate_class(lowering, class, name, None)
 }
 
-pub(super) fn lower_class_declaration(
+pub(crate) fn lower_class_declaration(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     class: ClassId,
 ) {

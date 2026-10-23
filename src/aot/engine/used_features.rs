@@ -90,6 +90,3 @@ fn used_locales(
 fn witness_at(index: usize) -> Option<WitnessIndex> {
     u32::try_from(index).ok().map(WitnessIndex)
 }
-
-#[cfg(test)]
-mod tests;

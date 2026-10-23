@@ -223,6 +223,3 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
             .map(|decline| decline_entry(input, &mut positions, decline)),
     );
 }
-
-#[cfg(test)]
-mod tests;

@@ -11,6 +11,7 @@ import {
   parseFeatures,
   serializeFeatureModel,
 } from "../../../scripts/build/trim/features.ts";
+import { rustTableFormat } from "../../../scripts/build/trim/table-format.ts";
 import { cppHeader, rustSource } from "../../../src/codegen/generate-removable-features.ts";
 import {
   beginGuardedBody,
@@ -234,7 +235,9 @@ describe.concurrent("command line", () => {
         "removable-features.json",
         "removable_features.rs",
       ]);
-      expect(readFileSync(join(codegenDir, "removable_features.rs"), "utf8")).toBe(rustSource(model));
+      expect(readFileSync(join(codegenDir, "removable_features.rs"), "utf8")).toBe(
+        rustSource(model) + rustTableFormat().join("\n") + "\n",
+      );
       expect(readFileSync(join(codegenDir, "BunRemovableFeatures.h"), "utf8")).toBe(cppHeader(model));
       expect(readFileSync(join(codegenDir, "removable-features.json"), "utf8")).toBe(serializeFeatureModel(model));
     },

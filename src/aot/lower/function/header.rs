@@ -13,7 +13,7 @@ use crate::ir::{
 };
 use crate::lower::{FileLowering, captures, class, generator, layouts, positions};
 
-pub(super) fn create_header(
+pub(crate) fn create_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
     key: FunctionKey,
     kind: FunctionKind,
@@ -55,7 +55,7 @@ pub(super) fn create_header(
     }
 }
 
-pub(super) fn declare_source_function(
+pub(crate) fn declare_source_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,
     name: Option<StringId>,
@@ -65,7 +65,7 @@ pub(super) fn declare_source_function(
     })
 }
 
-pub(super) fn declare_source_function_with(
+pub(crate) fn declare_source_function_with(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,
     adjust_header: &mut dyn FnMut(&mut FileLowering<'_, '_, '_, '_>, &mut Function),
@@ -77,7 +77,10 @@ pub(super) fn declare_source_function_with(
     })
 }
 
-pub(super) fn is_derived_constructor(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> bool {
+pub(in crate::lower) fn is_derived_constructor(
+    file: &FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+) -> bool {
     let class = file.bound.function_class(function);
     file.hir.runtime_function_kind(function) == FnKind::Constructor
         && class.is_some_and(|class| class::is_derived_class(file.hir, class))

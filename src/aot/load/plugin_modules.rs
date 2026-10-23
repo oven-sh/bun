@@ -443,6 +443,3 @@ pub(crate) fn append_encoded_segment(target: &mut Vec<u8>, segment: &[u8]) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

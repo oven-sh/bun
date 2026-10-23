@@ -9,7 +9,7 @@ use crate::lower::{
     positions, scope, statement,
 };
 
-pub(super) fn lower_source_function(
+pub(crate) fn lower_source_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
     source: FnId,
@@ -28,7 +28,7 @@ pub(super) fn lower_source_function(
 }
 
 // Nothing that the build sees names the function.
-pub(super) fn lower_left_out_function(
+pub(crate) fn lower_left_out_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
 ) {
@@ -54,7 +54,7 @@ fn bind_naked_constructor_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '
     }
 }
 
-pub(super) fn lower_function_body(
+pub(crate) fn lower_function_body(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     source: FnId,
 ) {

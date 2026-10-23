@@ -1,1 +1,0 @@
-{ "skipInShell": "it calls host functions (Buffer, URL, structuredClone), which the jsc shell does not have" }

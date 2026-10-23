@@ -10,7 +10,7 @@ pub(crate) use bun_sema::module_format::DeclaredModuleType;
 pub(crate) use bun_sema::session::{Arena, Session};
 pub(crate) use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
-use bun_sema_standalone::{for_each_parallel, hir_dump, native};
+use bun_sema_standalone::{for_each_parallel, native};
 use bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -294,7 +294,7 @@ impl<'s> Workspace<'s> {
         let atom = self.atom(name);
         let is_match = |expr: &Expr| matches!(expr.kind, ExprKind::Ident(text) if text == atom);
         let found = find_ids(&hir.exprs, is_match).nth(nth);
-        self.expect_node(found, hir, "identifier", name, nth)
+        self.expect_node(found, "identifier", name, nth)
     }
 
     #[track_caller]
@@ -302,38 +302,28 @@ impl<'s> Workspace<'s> {
         let atom = self.atom(name);
         let is_match = |pat: &Pat| matches!(pat.kind, PatKind::Ident(text) if text == atom);
         let found = find_ids(&hir.pats, is_match).nth(nth);
-        self.expect_node(found, hir, "identifier pattern", name, nth)
+        self.expect_node(found, "identifier pattern", name, nth)
     }
 
     #[track_caller]
     pub(crate) fn function(&self, hir: &File<'s>, name: &str) -> FnId {
         let atom = self.atom(name);
         let found = find_ids(&hir.fns, |func| func.name == atom && has_body(func)).next();
-        self.expect_node(found, hir, "function with a body", name, 0)
+        self.expect_node(found, "function with a body", name, 0)
     }
 
     #[track_caller]
     pub(crate) fn class(&self, hir: &File<'s>, name: &str) -> ClassId {
         let atom = self.atom(name);
         let found = find_ids(&hir.classes, |class| class.name == atom).next();
-        self.expect_node(found, hir, "class", name, 0)
+        self.expect_node(found, "class", name, 0)
     }
 
     #[track_caller]
-    fn expect_node<Id>(
-        &self,
-        found: Option<Id>,
-        hir: &File<'s>,
-        kind: &str,
-        name: &str,
-        nth: usize,
-    ) -> Id {
+    fn expect_node<Id>(&self, found: Option<Id>, kind: &str, name: &str, nth: usize) -> Id {
         match found {
             Some(id) => id,
-            None => {
-                let tree = hir_dump::dump_and_orphans(hir, &self.atoms).0;
-                panic!("no {kind} `{name}` number {nth} in\n{tree}")
-            }
+            None => panic!("no {kind} `{name}` number {nth}"),
         }
     }
 }

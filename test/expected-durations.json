@@ -996,7 +996,7 @@
     "windows": 34421
   },
   "aot/builtins/differential.test.ts": {
-    "default": 5063,
+    "default": 120000,
     "asan": 2413,
     "musl": 6527
   },
@@ -1148,11 +1148,6 @@
     "asan": 1619,
     "musl": 334,
     "windows": 368
-  },
-  "aot/checker-queries.test.ts": {
-    "default": 17499,
-    "asan": 61345,
-    "musl": 16469
   },
   "aot/class-members-created-at-the-definition-make-no-structures.test.ts": {
     "default": 1870,

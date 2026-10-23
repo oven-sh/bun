@@ -34,7 +34,7 @@ fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> b
     })
 }
 
-pub(super) fn lower_enum(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, declaration: EnumId) {
+pub(crate) fn lower_enum(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, declaration: EnumId) {
     let (hir, bound) = (lowering.file.hir, lowering.file.bound);
     let data = hir[declaration];
     if data.flags.contains(Flags::AMBIENT) {

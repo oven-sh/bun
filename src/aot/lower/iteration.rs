@@ -2,8 +2,8 @@ mod for_in;
 mod for_of;
 mod loop_head;
 
-use bun_sema::hir::StmtId;
-
+pub(crate) use self::for_in::lower_for_in;
+pub(crate) use self::for_of::lower_for_of;
 use super::FunctionLowering;
 use crate::ir::ValueId;
 use crate::ir::generated::{IteratorCompletion, IteratorKind, IteratorResumeResult, ResumeMode};
@@ -18,14 +18,6 @@ pub(crate) struct IteratorStep {
 pub(crate) struct PatternShape {
     pub(crate) element_count: u32,
     pub(crate) has_rest: bool,
-}
-
-pub(crate) fn lower_for_of(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, statement: StmtId) {
-    for_of::lower_for_of(lowering, statement);
-}
-
-pub(crate) fn lower_for_in(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, statement: StmtId) {
-    for_in::lower_for_in(lowering, statement);
 }
 
 pub(crate) fn emit_iterator_open(

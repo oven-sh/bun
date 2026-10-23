@@ -6,10 +6,14 @@ mod values;
 use bun_sema::bind::ScopeId;
 use smallvec::SmallVec;
 
+pub(in crate::lower) use self::needs::is_initialized_before;
+pub(crate) use self::values::bind_captures;
+pub(in crate::lower) use self::values::{
+    capture_positions, captures_home_object, collect_capture_values, find_captured_value,
+};
+use super::FunctionLowering;
 use super::scope::{BindingRef, Initialization, WalkedFunction, WalkedFunctionId};
-use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::LimitId;
-use crate::ir::{DeclaredType, FunctionKey, ValueId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(in crate::lower) enum Capture {
@@ -53,49 +57,7 @@ pub(in crate::lower) fn compute_captures(input: &CaptureInput<'_>) -> CapturePla
     needs::solve(input)
 }
 
-pub(in crate::lower) fn is_initialized_before(
-    functions: &[WalkedFunction],
-    binding: &CapturedBinding,
-    function: WalkedFunctionId,
-    time: u32,
-) -> bool {
-    needs::is_initialized_before(functions, binding, function, time)
-}
-
 /// At the entry of every function.
 pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
     values::unpack_captures(lowering);
-}
-
-pub(crate) fn bind_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
-    values::bind_captures(lowering);
-}
-
-pub(in crate::lower) fn capture_positions(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    key: FunctionKey,
-) -> Vec<DeclaredType> {
-    values::capture_positions(file, key)
-}
-
-pub(in crate::lower) fn collect_capture_values(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    key: FunctionKey,
-    home: Option<ValueId>,
-) -> SmallVec<[ValueId; 4]> {
-    values::collect_capture_values(lowering, key, home)
-}
-
-pub(in crate::lower) fn captures_home_object(
-    file: &FileLowering<'_, '_, '_, '_>,
-    key: FunctionKey,
-) -> bool {
-    values::captures_home_object(file, key)
-}
-
-pub(in crate::lower) fn find_captured_value(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    capture: Capture,
-) -> Option<ValueId> {
-    values::find_captured_value(lowering, capture)
 }

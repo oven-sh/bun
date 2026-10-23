@@ -35,7 +35,9 @@ fn find_lexical_owner(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> Lexica
     }
 }
 
-pub(super) fn get_entry_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
+pub(in crate::lower) fn get_entry_this(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+) -> ValueId {
     let bound_this = lowering.scopes.entry_this();
     match bound_this.or_else(|| lowering.builder.this_value()) {
         Some(this) => this,
@@ -44,7 +46,7 @@ pub(super) fn get_entry_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>
 }
 
 // `bun run` replaces the `this` of a file that has ES module syntax with `undefined`, in a CommonJS file with `import.meta` too.
-pub(super) fn lower_this_expression(
+pub(crate) fn lower_this_expression(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
 ) -> ValueId {
     match find_lexical_owner(lowering) {
@@ -55,7 +57,7 @@ pub(super) fn lower_this_expression(
     }
 }
 
-pub(super) fn get_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
+pub(crate) fn get_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
     match find_lexical_owner(lowering) {
         LexicalOwner::Generated => get_entry_this(lowering),
         LexicalOwner::File(scope) => match lowering.file.inputs.modules.kind(lowering.file.file) {
@@ -74,12 +76,12 @@ pub(super) fn get_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> V
 }
 
 // The exports object of a CommonJS module, `undefined` in an ES module: what the loader passes, whatever the checker says.
-pub(super) fn is_this_of_module(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
+pub(in crate::lower) fn is_this_of_module(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     matches!(find_lexical_owner(lowering), LexicalOwner::File(_))
 }
 
 // An arrow function reads the `this` of the function around it.
-pub(super) fn find_this_position(
+pub(in crate::lower) fn find_this_position(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
 ) -> Option<DeclaredType> {
     match find_lexical_owner(lowering) {
@@ -120,7 +122,7 @@ fn rebind_this(
     }
 }
 
-pub(super) fn bind_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, value: ValueId) {
+pub(crate) fn bind_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, value: ValueId) {
     let owner = match find_lexical_owner(lowering) {
         LexicalOwner::File(scope)
         | LexicalOwner::Function(scope, _)
@@ -141,7 +143,7 @@ pub(super) fn bind_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, val
     scope::set_slot(lowering, owner, ScopeSlot::This, value);
 }
 
-pub(super) fn get_new_target(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
+pub(crate) fn get_new_target(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
     match find_lexical_owner(lowering) {
         LexicalOwner::Function(scope, function) => {
             match lowering.file.hir.runtime_function_kind(function) {
@@ -157,7 +159,7 @@ pub(super) fn get_new_target(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>
     }
 }
 
-pub(super) fn get_home_object(
+pub(crate) fn get_home_object(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
 ) -> (HomeObjectKind, ValueId) {
     match find_lexical_owner(lowering) {

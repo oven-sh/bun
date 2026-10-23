@@ -132,7 +132,7 @@ fn classify_equality(
     LeafTest::Comparison { op, left, right }
 }
 
-pub(super) fn find_typeof_operand(
+pub(in crate::lower) fn find_typeof_operand(
     lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
     side: ExprId,
 ) -> Option<ExprId> {

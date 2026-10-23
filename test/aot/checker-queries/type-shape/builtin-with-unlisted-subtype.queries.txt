@@ -1,5 +1,0 @@
-# A built-in type is exact while every subtype that a declaration file outside the default library declares is in the list of built-in types. One subtype outside the list makes it a view. bun-types declares such subtypes of `Error`.
-builtin-with-unlisted-subtype.ts:3 shape `Date` = Builtin(5.0 View)
-builtin-with-unlisted-subtype.ts:4 shape `RegExp` = Builtin(4.0 Exact)
-builtin-with-unlisted-subtype.ts:5 shape `Error` = Builtin(3.0 View)
-absent: builtin-with-unlisted-subtype.ts:5 shape `Error` = Builtin(3.0 Exact)

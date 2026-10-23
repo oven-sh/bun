@@ -7,6 +7,5 @@ generated(
   programsOf(caseFiles(), {
     alone: 200,
     // A number is refused where a class is declared, before the body is entered.
-    mayBeRefused: /^\S+ a-number /,
   }),
 );

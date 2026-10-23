@@ -1977,8 +1977,8 @@ impl NodeHTTPResponse {
                             ab.unpin();
                             None
                         }
-                        Some(ab) if ab.pinned => Some(buffer_value),
-                        Some(_) | None => Some(JSValue::ZERO),
+                        Some(_) => Some(buffer_value),
+                        None => Some(JSValue::ZERO),
                     },
                     None => Some(JSValue::ZERO),
                 };

@@ -6,6 +6,7 @@ use std::time::Instant;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
+use bun_errno::SystemErrno;
 use bun_ptr::RefPtr;
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
@@ -513,6 +514,8 @@ impl HttpThread {
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
+        // The hostname is passed to the socket layer as a C string, so it must not contain a NUL.
+        crate::validate_request_target(hn)?;
         ctx.connect(client, hn, pt)
     }
 
@@ -788,6 +791,27 @@ impl HttpThread {
         }
     }
 
+    /// Parks a request that found every connection taken. Parked requests start in the order they
+    /// came, except that the ones with `yields_to_other_requests` start after all the others.
+    fn defer(&mut self, http: NonNull<AsyncHttp<'static>>) {
+        // A parked `AsyncHttp` is alive and nobody else borrows it; see `drain_events`.
+        let yields = |http: &NonNull<AsyncHttp<'static>>| {
+            bun_ptr::ParentRef::from(*http)
+                .client
+                .flags
+                .yields_to_other_requests
+        };
+        // The list keeps the requests that yield at its end, so the last one tells if there are any.
+        if yields(&http) || !self.deferred_tasks.last().is_some_and(yields) {
+            self.deferred_tasks.push(http);
+            return;
+        }
+        let first_that_yields = self
+            .deferred_tasks
+            .partition_point(|parked| !yields(parked));
+        self.deferred_tasks.insert(first_that_yields, http);
+    }
+
     pub(crate) fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -874,7 +898,7 @@ impl HttpThread {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
                 // behind it that we can fail-fast right now.
-                self.deferred_tasks.push(http);
+                self.defer(http);
                 continue;
             }
             start_queued_task(http.as_ptr(), &mut self.in_flight);
@@ -1219,8 +1243,27 @@ mod _event_loop_draft {
             Ok(t) => {
                 let _ = HTTP_THREAD_HANDLE.set(t);
             }
-            Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
+            Err(err) => exit_spawn_failed(&err),
         }
+    }
+
+    /// A refused thread is the environment's limit, not a bug: no crash reporter.
+    #[cold]
+    #[inline(never)]
+    fn exit_spawn_failed(err: &std::io::Error) -> ! {
+        match SystemErrno::from_io_error(err) {
+            Some(errno) => {
+                bun_core::err_generic!("Failed to start HTTP Client thread: {}", errno);
+                if errno == SystemErrno::EAGAIN {
+                    bun_core::note!(
+                        "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
+                    );
+                }
+            }
+            // No errno name for this OS code (most Windows thread-creation failures).
+            None => bun_core::err_generic!("Failed to start HTTP Client thread: {}", err),
+        }
+        bun_core::Global::crash()
     }
 
     fn on_start(opts: InitOpts) {

@@ -6,6 +6,7 @@
 
 #include "BunClientData.h"
 #include "BunStreamSource.h"
+#include "JSBuffer.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
 #include "JSDirectStreamSource.h"
@@ -397,9 +398,7 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
         }
     }
     Bun::attachAsyncStackFromPromise(globalObject, error, awaited);
-    rejectPromise(globalObject, reader->m_closedPromise.get(), error);
-    RETURN_IF_EXCEPTION(scope, void());
-    markPromiseAsHandled(vm, reader->m_closedPromise.get());
+    rejectPromiseAsHandled(globalObject, reader->m_closedPromise.get(), error);
     if (!reader->isBYOB())
         RELEASE_AND_RETURN(scope, readableStreamDefaultReaderErrorReadRequests(globalObject, static_cast<JSReadableStreamDefaultReader*>(reader), error));
     RELEASE_AND_RETURN(scope, readableStreamBYOBReaderErrorReadIntoRequests(globalObject, static_cast<JSReadableStreamBYOBReader*>(reader), error));
@@ -486,31 +485,60 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     return result;
 }
 
+// ReadableStreamCancel for a cancel that a link deferred to a microtask. The cancel was requested first, so a later error doesn't reject it.
+static JSPromise* readableStreamCancelDeferred(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    if (stream->m_state != ReadableStreamState::Errored)
+        RELEASE_AND_RETURN(scope, readableStreamCancel(globalObject, stream, reason));
+    stream->m_disturbed = true;
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+}
+
 // ReadableStreamReaderGenericInitialize(reader, stream)
 void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReadableStreamReaderBase* reader, JSReadableStream* stream)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    reader->m_stream.set(vm, reader, stream);
-    stream->m_reader.set(vm, stream, reader);
+    // Link the reader and the stream last, because the stream settles its linked reader's promise.
+    JSPromise* closedPromise = nullptr;
     switch (stream->m_state) {
     case ReadableStreamState::Readable:
-        reader->m_closedPromise.set(vm, reader, JSPromise::create(vm, globalObject->promiseStructure()));
-        return;
-    case ReadableStreamState::Closed: {
-        auto* closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
-        RETURN_IF_EXCEPTION(scope, void());
-        reader->m_closedPromise.set(vm, reader, closedPromise);
-        return;
+        closedPromise = JSPromise::create(vm, globalObject->promiseStructure());
+        break;
+    case ReadableStreamState::Closed:
+        closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        break;
+    case ReadableStreamState::Errored:
+        closedPromise = promiseRejectedWithAsHandled(globalObject, stream->m_storedError.get());
+        break;
     }
-    case ReadableStreamState::Errored: {
-        auto* closedPromise = promiseRejectedWith(globalObject, stream->m_storedError.get());
-        RETURN_IF_EXCEPTION(scope, void());
-        reader->m_closedPromise.set(vm, reader, closedPromise);
-        markPromiseAsHandled(vm, closedPromise);
+    reader->m_closedPromise.set(vm, reader, closedPromise);
+    reader->m_stream.set(vm, reader, stream);
+    stream->m_reader.set(vm, stream, reader);
+}
+
+// Bun: drop the native handle's event-loop ref when its consumer releases the lock.
+static void releaseNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (stream->m_controllerKind != ControllerKind::Default)
         return;
-    }
-    }
+    auto* controller = defaultControllerOf(stream);
+    if (controller->m_algorithms.kind != SourceKind::Native)
+        return;
+    auto* handle = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
+    if (!handle)
+        return;
+    JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!updateRef || !updateRef.isCallable())
+        return;
+    MarkedArgumentBuffer args;
+    args.append(jsBoolean(false));
+    ASSERT(!args.hasOverflowed());
+    scope.release();
+    JSC::call(globalObject, updateRef, JSC::getCallData(updateRef), handle, args);
 }
 
 // ReadableStreamReaderGenericRelease(reader)
@@ -522,56 +550,41 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     ASSERT(stream);
     ASSERT(stream->m_reader.get() == reader);
 
+    // Do everything that can throw first, so the release steps don't need exception checks between them.
     JSObject* releaseError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Reader released"_s);
     RETURN_IF_EXCEPTION(scope, void());
-    if (stream->m_state == ReadableStreamState::Readable) {
-        rejectPromise(globalObject, reader->m_closedPromise.get(), releaseError);
-        RETURN_IF_EXCEPTION(scope, void());
-    } else {
-        auto* rejected = promiseRejectedWith(globalObject, releaseError);
-        RETURN_IF_EXCEPTION(scope, void());
-        reader->m_closedPromise.set(vm, reader, rejected);
+    JSPromise* pendingDirectRead = nullptr;
+    JSObject* pendingReadError = nullptr;
+    if (stream->m_controllerKind == ControllerKind::Direct) {
+        pendingDirectRead = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->m_pendingRead.get();
+        if (pendingDirectRead) {
+            pendingReadError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
-    markPromiseAsHandled(vm, reader->m_closedPromise.get());
+    releaseNativeSourceRef(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    if (stream->m_state == ReadableStreamState::Readable)
+        rejectPromiseAsHandled(globalObject, reader->m_closedPromise.get(), releaseError);
+    else
+        reader->m_closedPromise.set(vm, reader, promiseRejectedWithAsHandled(globalObject, releaseError));
 
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
     case ControllerKind::NativeSink:
         break;
-    case ControllerKind::Direct: {
+    case ControllerKind::Direct:
         // A direct stream's in-flight read lives on the controller (not in the reader's
         // read-request queue), so releasing the reader must settle it here.
-        auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        if (auto* pendingRead = controller->m_pendingRead.get()) {
-            controller->m_pendingRead.clear();
-            JSObject* pendingReadError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
-            RETURN_IF_EXCEPTION(scope, void());
-            pendingRead->reject(vm, pendingReadError);
-            RETURN_IF_EXCEPTION(scope, void());
+        if (pendingDirectRead) {
+            uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->m_pendingRead.clear();
+            pendingDirectRead->reject(vm, pendingReadError);
         }
         break;
-    }
-    case ControllerKind::Default: {
-        auto* controller = defaultControllerOf(stream);
-        controller->releaseSteps();
-        // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        if (controller->m_algorithms.kind == SourceKind::Native) {
-            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->handle()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-                RETURN_IF_EXCEPTION(scope, void());
-                if (updateRef && updateRef.isCallable()) {
-                    auto callData = JSC::getCallData(updateRef);
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(false));
-                    ASSERT(!args.hasOverflowed());
-                    JSC::call(globalObject, updateRef, callData, handle, args);
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
-        }
+    case ControllerKind::Default:
+        defaultControllerOf(stream)->releaseSteps();
         break;
-    }
     case ControllerKind::Byte:
         byteControllerOf(stream)->releaseSteps();
         break;
@@ -920,6 +933,9 @@ JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableS
         auto* runtime = JSStreamsRuntime::from(globalObject);
         const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
         JSObject* iterator = context->iterator();
+        // JSC's wrapper tracks one step at a time, and a next() can still be pending here.
+        if (auto* wrapper = dynamicDowncast<JSAsyncFromSyncIterator>(iterator))
+            iterator = JSAsyncFromSyncIterator::create(vm, wrapper->structure(), wrapper->syncIterator(), wrapper->nextMethod(), wrapper->iterationMode());
         JSValue returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (returnMethod.isUndefinedOrNull())
@@ -1023,11 +1039,33 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     if (!reader || !reader->m_stream)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    if (reader->m_stream->m_state == ReadableStreamState::Readable && streamLinkMustDefer(vm)) [[unlikely]] {
+        // The caller clears algorithmContext once this returns, so pass the reader to the job.
+        auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+        auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), reader, result);
+        queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeCancelDeferred(), reason, context);
+        return result;
+    }
     auto* result = readableStreamReaderGenericCancel(globalObject, reader, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     readableStreamDefaultReaderRelease(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
+}
+
+static void textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(context->getInternalField(0));
+    JSValue cancelResult = jsUndefined();
+    if (auto* stream = reader->m_stream.get()) {
+        cancelResult = readableStreamCancelDeferred(globalObject, stream, reason);
+        RETURN_IF_EXCEPTION(scope, void());
+        readableStreamDefaultReaderRelease(globalObject, reader);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult));
 }
 
 void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
@@ -1039,12 +1077,17 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     // WebIDL "get a copy of the bytes held by the buffer source": a detached
     // buffer is still a BufferSource whose bytes are the empty sequence.
     std::span<const uint8_t> bytes;
+    bool isShared = false;
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
+        if (!view->isDetached()) {
             bytes = view->span();
+            isShared = view->isShared();
+        }
     } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (buffer->impl() && !buffer->impl()->isDetached())
+        if (buffer->impl() && !buffer->impl()->isDetached()) {
             bytes = buffer->impl()->span();
+            isShared = buffer->impl()->isShared();
+        }
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1066,7 +1109,13 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         }
         return;
     }
-    auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
+    JSString* decoded;
+    if (isShared) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(globalObject, scope, bytes);
+        RETURN_IF_EXCEPTION(scope, void());
+        decoded = streamingUTF8Decode(globalObject, copy.span(), controller->m_algorithms.textDecodeState, /* flush */ false);
+    } else
+        decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
     RETURN_IF_EXCEPTION(scope, void());
     if (!decoded || !decoded->length()) {
         // No output from this chunk (held back as an incomplete sequence). Arm
@@ -1133,12 +1182,25 @@ JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeSt
     if ((!branch && teeState->m_canceled2) || (branch && teeState->m_canceled1)) {
         JSArray* compositeReason = constructArrayPair(globalObject, teeState->reason1(), teeState->reason2());
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (teeState->stream()->m_state == ReadableStreamState::Readable && streamLinkMustDefer(vm)) [[unlikely]] {
+            queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onTeeCancelDeferred(), compositeReason, teeState);
+            return teeState->cancelPromise();
+        }
         auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), compositeReason);
         RETURN_IF_EXCEPTION(scope, nullptr);
         resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return teeState->cancelPromise();
+}
+
+static void teeCancelDeferred(JSGlobalObject* globalObject, JSValue compositeReason, JSStreamTeeState* teeState)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* cancelResult = readableStreamCancelDeferred(globalObject, teeState->stream(), compositeReason);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->cancelPromise(), cancelResult));
 }
 
 // Spec chunk steps 3.2 (an abrupt cloneResult): error both branches and cancel the source.
@@ -1570,6 +1632,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReadIntoChunkMicrotask, (J
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReaderClosedRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return Streams::byteTeeReaderClosedRejected(globalObject, callFrame->argument(0), uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTextDecodeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
+    return Streams::enterStreams(globalObject, [&] { Streams::textDecodeCancelDeferred(globalObject, callFrame->argument(0), context); }, [&](JSValue error) { Streams::rejectPromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), error); });
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTeeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* teeState = uncheckedDowncast<JSStreamTeeState>(callFrame->argument(1));
+    return Streams::enterStreams(globalObject, [&] { Streams::teeCancelDeferred(globalObject, callFrame->argument(0), teeState); }, [&](JSValue error) { Streams::rejectPromise(globalObject, teeState->cancelPromise(), error); });
 }
 
 } // namespace WebCore

@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+var File = __webpack_require__(789);
+// CONCATENATED MODULE: ./a.js
+var isFile = __webpack_require__(5302);
+// CONCATENATED MODULE: ./b.js
+
+const c = 1;
+
+// CONCATENATED MODULE: ./c.js
+const d = 1;
+function f() {
+  a();
+  // d
+  b(); // e
+}
+x(); // f
+y();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+var File = __webpack_require__(789);
+// CONCATENATED MODULE: ./a.js
+var isFile = __webpack_require__(5302);
+// CONCATENATED MODULE: ./b.js
+
+const c = 1;
+
+// CONCATENATED MODULE: ./c.js
+const d = 1;
+function f() {
+  a();
+  // d
+  b(); // e
+}
+x(); // f
+y();
+
+===================== End =====================

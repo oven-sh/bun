@@ -724,6 +724,7 @@ pub(crate) fn execute_simple_s3_request(
             http_proxy,
             verbose: Some(verbose),
             reject_unauthorized: Some(reject_unauthorized),
+            tls_props: crate::socket::http_client_defaults(vm),
             // SAFETY: `task_ptr` outlives the request; the store is only read
             // through these pointers by the HTTP client.
             signals: Some(unsafe { (*task_ptr).signal_store.to() }),

@@ -159,6 +159,7 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
 describe("Bun.Image", () => {
   test("constructor exists and is exposed on Bun", () => {
     expect(typeof Bun.Image).toBe("function");
+    // @ts-expect-error
     expect(() => new Bun.Image()).toThrow();
   });
 
@@ -1067,7 +1068,7 @@ describe("Bun.Image", () => {
     expect(
       () =>
         new Bun.Image(cornersPng, {
-          get maxPixels() {
+          get maxPixels(): number {
             throw new Error("boom");
           },
         }),
@@ -1328,6 +1329,11 @@ describe("Bun.Image", () => {
   });
 });
 
+test("a subclass inherits Bun.Image.backend", () => {
+  class Subclass extends Bun.Image {}
+  expect(Subclass.backend).toBe(Bun.Image.backend);
+});
+
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // Several tests here flip the process-global backend; restore after the
   // describe so leaks can't reach the suites below regardless of throw paths.
@@ -1421,7 +1427,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
       Buffer.from(new Uint32Array([0, 8, 0, 0, 0, 0]).buffer),     // BI_RGB, biSizeImage, ppm×2, clrUsed, clrImportant
       Buffer.from([0, 0, 255, 0,  0, 255, 0, 0]),                  // BGRX × 2
     ]);
-    const png = await new Bun.Image(bmp, { backend: "bun" }).png().bytes();
+    const png = await new Bun.Image(bmp, { backend: "bun" } as any).png().bytes();
     const { data } = decodePngRaw(png);
     expect([...data.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
     expect([...data.subarray(4, 8)]).toEqual([0, 255, 0, 255]);

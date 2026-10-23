@@ -545,6 +545,12 @@ unsafe impl Allocator for &MimallocArena {
     }
 }
 
+// SAFETY: a copy of `&MimallocArena` names the same heap, so a block that was allocated through one
+// is freed through the other. Copying a reference does not unwind, and moving or dropping one does
+// not touch the heap. `core` has this only for `&A` where `A: Allocator`. `Rc` and `Arc` need it to
+// be `Clone`.
+unsafe impl core::alloc::AllocatorClone for &MimallocArena {}
+
 /// Pick `mi_heap_malloc_aligned` only
 /// when `align > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`,
 /// then debug-assert the returned block's usable size covers `len`.

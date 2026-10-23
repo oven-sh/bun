@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  BUN_VERSION: "1.4.2"
+  # `bun lint` and `bun fmt` aren't in a release yet. Pin this to 1.5.0 once it's out.
+  BUN_VERSION: "canary"
 
 jobs:
   lint-js:
@@ -22,11 +23,13 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          # The action's default bucket can be many commits behind for canary.
+          download-url: https://github.com/oven-sh/bun/releases/download
       - name: Setup Dependencies
         run: |
           bun install --frozen-lockfile
       - name: Lint
-        run: bun lint
+        run: bun lint --format=github
       - name: Typecheck the build system and the CI scripts
         run: |
           bun x tsc --noEmit -p scripts/build/tsconfig.json

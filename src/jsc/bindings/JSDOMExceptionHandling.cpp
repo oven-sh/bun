@@ -205,11 +205,6 @@ template<typename... StringTypes> static String makeArgumentTypeErrorMessage(uns
         " must be "_s, strings...);
 }
 
-JSC::EncodedJSValue throwArgumentMustBeEnumError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, unsigned argumentIndex, ASCIILiteral argumentName, ASCIILiteral functionInterfaceName, ASCIILiteral functionName, ASCIILiteral expectedValues)
-{
-    return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeArgumentTypeErrorMessage(argumentIndex, argumentName, functionInterfaceName, functionName, "one of: "_s, expectedValues));
-}
-
 JSC::EncodedJSValue throwArgumentMustBeFunctionError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, unsigned argumentIndex, ASCIILiteral argumentName, ASCIILiteral interfaceName, ASCIILiteral functionName)
 {
     return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeArgumentTypeErrorMessage(argumentIndex, argumentName, interfaceName, functionName, "a function"_s));

@@ -872,7 +872,6 @@ function internalMatch(string, regexp, message, fn) {
     const generatedMessage = !message;
     const inspect = lazyInspect();
 
-    // 'The input was expected to not match the regular expression ' +
     message ||=
       typeof string !== "string"
         ? 'The "string" argument must be of type string. Received type ' + `${typeof string} (${inspect(string)})`
@@ -930,7 +929,6 @@ Object.defineProperty(assert, "CallTracker", {
   configurable: true,
   enumerable: true,
 });
-// assert.CallTracker = CallTracker
 
 /**
  * Expose a strict only variant of assert.

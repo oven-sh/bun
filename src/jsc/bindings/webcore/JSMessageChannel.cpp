@@ -147,8 +147,6 @@ JSMessageChannel::JSMessageChannel(Structure* structure, JSDOMGlobalObject& glob
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, MessageChannel>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSMessageChannel::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSMessageChannelPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());

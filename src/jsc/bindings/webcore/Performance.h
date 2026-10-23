@@ -33,12 +33,10 @@
 #pragma once
 
 #include "ContextDestructionObserver.h"
-// #include "DOMHighResTimeStamp.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 // #include "ReducedResolutionSeconds.h"
 #include "ScriptExecutionContext.h"
-// #include "Timer.h"
 #include <variant>
 
 #include <wtf/ListHashSet.h>
@@ -79,7 +77,6 @@ public:
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
 
-    // PerformanceNavigation* navigation();
     PerformanceTiming* timing();
 
     Vector<RefPtr<PerformanceEntry>> getEntries() const;
@@ -130,7 +127,6 @@ private:
     void queueEntry(PerformanceEntry&);
     void scheduleTaskIfNeeded();
 
-    // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;
 
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;

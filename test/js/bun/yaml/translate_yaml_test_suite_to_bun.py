@@ -8,6 +8,7 @@ import subprocess
 import sys
 import re
 import argparse
+import tempfile
 
 def escape_js_string(s):
     """Escape a string for use in JavaScript string literals."""
@@ -454,9 +455,9 @@ try {{
 console.log(JSON.stringify(message));
 '''
 
-    temp_js = '/tmp/parse_yaml_bun_temp.js'
-    with open(temp_js, 'w', encoding='utf-8') as f:
+    with tempfile.NamedTemporaryFile('w', suffix='.js', encoding='utf-8', delete=False) as f:
         f.write(js_code)
+        temp_js = f.name
 
     try:
         result = subprocess.run([bun_executable, temp_js], capture_output=True, text=True, timeout=60,
@@ -465,8 +466,7 @@ console.log(JSON.stringify(message));
             raise RuntimeError(f"{bun_executable} exited with {result.returncode}: {result.stderr}")
         return json.loads(result.stdout.strip().splitlines()[-1])
     finally:
-        if os.path.exists(temp_js):
-            os.remove(temp_js)
+        os.remove(temp_js)
 
 def generate_test(test_dir, test_name, check_ast=True, use_js_yaml=False, use_yaml_pkg=False):
     """Generate a single Bun test case from a yaml-test-suite directory.

@@ -229,11 +229,21 @@ describe.concurrent("--print of a promise once the event loop is done", () => {
   test.each([
     ["a shell command", "Bun.$`echo hi`.text()", "hi\n\n"],
     ["a ref'd timer", `new Promise(resolve => setTimeout(resolve, 1, "later"))`, "later\n"],
-    ["a stdin read", `Bun.stdin.text().then(text => text.trim())`, "from stdin\n"],
   ])("settled by %s: prints the value, then runs 'exit' listeners", async (_, script, printed) => {
-    const { stdout, stderr, exitCode } = await print(`${exitListener} ${script}`, { stdin: "from stdin\n" });
+    const { stdout, stderr, exitCode } = await print(`${exitListener} ${script}`);
     expect(stderr).toBe("");
     expect(stdout).toBe(`${printed}exit listener ran\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows the `.then()` of a stdin read has not run when the loop ends:
+  // https://github.com/oven-sh/bun/issues/41850
+  test.failingIf(isWindows)("settled by a stdin read: prints the value, then runs 'exit' listeners", async () => {
+    const { stdout, stderr, exitCode } = await print(`${exitListener} Bun.stdin.text().then(text => text.trim())`, {
+      stdin: "from stdin\n",
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from stdin\nexit listener ran\n");
     expect(exitCode).toBe(0);
   });
 

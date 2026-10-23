@@ -1104,6 +1104,17 @@ impl<'a> Repl<'a> {
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
     }
 
+    /// Run what is ready after an input. The prompt blocks on stdin, so a task that yielded gets its poll here.
+    fn tick(vm: &VirtualMachine) {
+        vm.as_mut().tick();
+        if vm.as_mut().event_loop_mut().has_yielded_tasks() {
+            vm.as_mut()
+                .event_loop_mut()
+                .promote_and_poll(bun_core::Timespec { sec: 0, nsec: 0 });
+            vm.as_mut().tick();
+        }
+    }
+
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
     fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
@@ -1708,7 +1719,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        Self::tick(vm);
                         return;
                     }
                 };
@@ -1738,7 +1749,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.as_mut().tick();
+        Self::tick(vm);
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1914,7 +1925,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.as_mut().tick();
+            Self::tick(vm);
         }
     }
 
@@ -1993,7 +2004,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        Self::tick(vm);
                         return;
                     }
                 };
@@ -2013,7 +2024,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.as_mut().tick();
+        Self::tick(vm);
     }
 
     /// Format a JS value as a string suitable for clipboard.

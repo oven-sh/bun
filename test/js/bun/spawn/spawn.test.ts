@@ -2265,35 +2265,33 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
   });
 
   it.concurrent.skipIf(!isLinux)("a stdin memfd that is moved off fd 1 keeps its close-on-exec state", async () => {
-    // bun closes its own descriptor of the memfd before the spawn call returns, so the call is held
-    // open for an observer. The child's stdout is a fifo. The child opens it before it execs, and
-    // that open waits for a reader. The observer becomes the reader when it has looked.
+    // bun closes its own descriptor of the memfd before the spawn call returns, so an observer looks
+    // while the call is held open. The child's stdout and stderr are fifos. The child opens them
+    // before it execs, and each open waits for a reader. When the observer has opened the first
+    // one, this process is inside the spawn call and stays there until the observer opens the second.
     // /proc/<pid>/fdinfo shows FD_CLOEXEC as O_CLOEXEC in "flags".
     const stdinMemfd = (closeFirst: boolean) => {
-      const fifo = join(tmpdirSync(), "stdout.fifo");
-      expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      const dir = tmpdirSync();
+      const [stdout, stderr] = [join(dir, "stdout.fifo"), join(dir, "stderr.fifo")];
+      expect(spawnSync({ cmd: ["mkfifo", stdout, stderr] }).exitCode).toBe(0);
       const observer = `
         const fs = require("node:fs");
-        const parent = "/proc/" + process.ppid;
-        let memfd;
+        fs.closeSync(fs.openSync(${JSON.stringify(stdout)}, "r"));
+        const memfds = [];
         try {
-          while (!memfd) {
-            for (const fd of fs.readdirSync(parent + "/fd")) {
-              let link = "";
-              try {
-                link = fs.readlinkSync(parent + "/fd/" + fd);
-              } catch {}
-              if (!link.startsWith("/memfd:spawn_stdio_stdin")) continue;
-              const flags = fs.readFileSync(parent + "/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
-              memfd = { aboveStdio: Number(fd) > 2, cloexec: (parseInt(flags, 8) & 0o2000000) !== 0 };
-            }
-            if (!memfd) Bun.sleepSync(1);
+          const parent = "/proc/" + process.ppid;
+          for (const fd of fs.readdirSync(parent + "/fd")) {
+            let link = "";
+            try {
+              link = fs.readlinkSync(parent + "/fd/" + fd);
+            } catch {}
+            if (!link.startsWith("/memfd:spawn_stdio_stdin")) continue;
+            const flags = fs.readFileSync(parent + "/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
+            memfds.push({ aboveStdio: Number(fd) > 2, cloexec: (parseInt(flags, 8) & 0o2000000) !== 0 });
           }
         } finally {
-          fs.writeSync(2, "REPORT " + JSON.stringify(memfd ?? "no memfd") + "\\n");
-          // Without a memfd the parent is gone: then nothing may be there to wait for.
-          const { O_RDONLY, O_NONBLOCK } = fs.constants;
-          fs.closeSync(fs.openSync(${JSON.stringify(fifo)}, memfd ? O_RDONLY : O_RDONLY | O_NONBLOCK));
+          fs.writeSync(2, "REPORT " + JSON.stringify(memfds) + "\\n");
+          fs.closeSync(fs.openSync(${JSON.stringify(stderr)}, "r"));
         }
       `;
       return run(`
@@ -2305,14 +2303,14 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
         const proc = Bun.spawn({
           cmd: ["true"],
           stdin: new Blob(["hi"]),
-          stdout: Bun.file(${JSON.stringify(fifo)}),
-          stderr: nul,
+          stdout: Bun.file(${JSON.stringify(stdout)}),
+          stderr: Bun.file(${JSON.stringify(stderr)}),
         });
         await Promise.all([proc.exited, observer.exited]);
       `);
     };
     const [moved, inPlace] = await Promise.all([stdinMemfd(true), stdinMemfd(false)]);
-    expect(inPlace).toEqual({ report: { aboveStdio: true, cloexec: true }, exitCode: 0 });
+    expect(inPlace).toEqual({ report: [{ aboveStdio: true, cloexec: true }], exitCode: 0 });
     expect(moved).toEqual(inPlace);
   });
 

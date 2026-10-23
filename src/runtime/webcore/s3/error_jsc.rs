@@ -169,7 +169,7 @@ pub(crate) fn s3_error_to_js_with_async_stack(
     promise: &JSPromise,
 ) -> JSValue {
     let value = s3_error_to_js(err, global_object, path);
-    value.attach_async_stack_from_promise(global_object, promise);
+    value.attach_async_stack_to_fresh_error(global_object, promise);
     value
 }
 

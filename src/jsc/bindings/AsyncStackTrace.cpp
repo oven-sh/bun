@@ -4,8 +4,10 @@
 
 #include "BunClientData.h"
 #include "ErrorStackFrame.h"
+#include "FormatStackTraceForJS.h"
 
 #include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/FunctionExecutable.h>
@@ -148,31 +150,63 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     }
 }
 
-extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+static bool capturedNoFrames(JSC::ErrorInstance* error)
+{
+    if (error->hasMaterializedErrorInfo())
+        return false;
+    // No frame list: the error captured nothing, or it holds its stack as a string (structuredClone(), a collection).
+    auto* frames = error->stackTrace();
+    return frames && frames->isEmpty();
+}
+
+namespace Bun {
+
+bool errorStackIsUndecided(JSC::VM& vm, JSC::ErrorInstance* error)
+{
+    // Formatting adds `stack`, `line` and `column`, which an error that is not extensible must not gain.
+    if (!capturedNoFrames(error) || !error->isStructureExtensible())
+        return false;
+    JSC::PropertyOffset offset = error->getDirectOffset(vm, vm.propertyNames->stack);
+    if (!JSC::isValidOffset(offset))
+        return true;
+    // The unread lazy `stack` of Error.captureStackTrace() is no decision: a tail call can leave it with no frames (https://github.com/oven-sh/bun/issues/32132).
+    auto* accessor = dynamicDowncast<JSC::CustomGetterSetter>(error->getDirect(offset));
+    return accessor && accessor->getter() == errorInstanceLazyStackCustomGetter;
+}
+
+} // namespace Bun
+
+static void attachAsyncStack(JSC::JSGlobalObject* globalObject, JSC::ErrorInstance* error, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
-    if (!instance || !promise)
-        return;
-
-    // Don't overwrite an existing stack trace. User-provided errors (e.g. via
-    // StreamError.JSValue or Body.ValueError.JSValue) may already have a
-    // meaningful synchronous stack from where they were created. Also skip if
-    // .stack was already accessed — setStackFrames after materialization
-    // would desync m_stackTrace from the cached property.
-    if (instance->hasMaterializedErrorInfo())
-        return;
-    if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
-        return;
-
     size_t limit = globalObject->stackTraceLimit().value_or(10);
     if (!limit)
         return;
 
     WTF::Vector<JSC::StackFrame> frames;
-    collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
+    collectAsyncStackFramesFromPromise(vm, error, promise, frames, limit);
     if (frames.isEmpty())
         return;
 
-    instance->setStackFrames(vm, WTF::move(frames));
+    error->setStackFrames(vm, WTF::move(frames));
+}
+
+extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+{
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
+    if (!instance || !promise)
+        return;
+    // Before the walk: the lookup of `stack` can allocate, and no collection may run between the walk and setStackFrames().
+    if (!Bun::errorStackIsUndecided(JSC::getVM(globalObject), instance))
+        return;
+    attachAsyncStack(globalObject, instance, promise);
+}
+
+extern "C" void Bun__attachAsyncStackToFreshError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+{
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
+    if (!instance || !promise || !capturedNoFrames(instance))
+        return;
+    ASSERT(Bun::errorStackIsUndecided(JSC::getVM(globalObject), instance));
+    attachAsyncStack(globalObject, instance, promise);
 }

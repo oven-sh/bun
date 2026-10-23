@@ -982,6 +982,10 @@ impl JSValue {
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         Bun__attachAsyncStackFromPromise(global, self, promise)
     }
+    /// [`Self::attach_async_stack_from_promise`] without the lookup of an own `stack`: only for an error that this native call just built.
+    pub fn attach_async_stack_to_fresh_error(self, global: &JSGlobalObject, promise: &JSPromise) {
+        Bun__attachAsyncStackToFreshError(global, self, promise)
+    }
     pub fn get_unix_timestamp(self) -> f64 {
         JSC__JSValue__getUnixTimestamp(self)
     }
@@ -2072,6 +2076,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(
+        global: &JSGlobalObject,
+        err: JSValue,
+        promise: &JSPromise,
+    );
+    safe fn Bun__attachAsyncStackToFreshError(
         global: &JSGlobalObject,
         err: JSValue,
         promise: &JSPromise,

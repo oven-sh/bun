@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "FormatStackTraceForJS.h"
+#include "AsyncStackTrace.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
@@ -748,8 +749,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    if (!destination->stackTrace()) {
-        destination->captureStackTrace(vm, globalObject, 1);
+    // The lookup of `stack` below can allocate, and a collection formats and drops the frames of a source whose function is dead.
+    JSC::DeferGC deferGC(vm);
+
+    // Nor does one with no frames of its own, unless its stack is still undecided.
+    auto* destinationFrames = destination->stackTrace();
+    if (!destinationFrames || (destinationFrames->isEmpty() && !Bun::errorStackIsUndecided(vm, destination))) {
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     if (source->stackTrace()) {

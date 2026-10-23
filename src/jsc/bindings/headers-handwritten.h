@@ -214,6 +214,13 @@ inline constexpr ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeWasm = 5;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
+// What kind of code a frame runs: decides how a stack line names its location.
+typedef uint8_t ZigStackFrameKind;
+inline constexpr ZigStackFrameKind ZigStackFrameKindScript = 0;
+inline constexpr ZigStackFrameKind ZigStackFrameKindHost = 1;
+inline constexpr ZigStackFrameKind ZigStackFrameKindBuiltin = 2;
+inline constexpr ZigStackFrameKind ZigStackFrameKindWasm = 3;
+
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
@@ -239,19 +246,25 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    ZigStackFrameKind kind;
     int32_t jsc_stack_frame_index;
 
     ZigStackFrame()
         : function_name {}
         , source_url {}
-        , position {}
+        , position { -1, -1, -1 }
         , code_type {}
         , is_async(false)
         , remapped(false)
+        , kind(ZigStackFrameKindScript)
         , jsc_stack_frame_index(-1)
     {
     }
+
+    bool hasPosition() const { return position.line_zero_based >= 0; }
 } ZigStackFrame;
+// Shared with Rust as `bun_jsc::ZigStackFrame`. `kind` took the padding byte after `remapped`.
+static_assert(sizeof(ZigStackFrame) == 2 * sizeof(BunString) + 24);
 
 typedef struct ZigStackTrace {
     BunString* source_lines_ptr;
@@ -532,6 +545,7 @@ public:
     }
 
     ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
+    const ZigStackFrame& operator[](size_t index) const { return m_frames[index]; }
 
     void remap(void* bunVM)
     {

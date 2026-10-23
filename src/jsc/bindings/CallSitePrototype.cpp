@@ -129,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globa
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(callSite->sourceURL());
+    return JSC::JSValue::encode(callSite->fileName(vm));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -160,7 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin, (JSGlobalObject * globa
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(callSite->sourceURL());
+    return JSC::JSValue::encode(callSite->fileName(vm));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -247,7 +247,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
 {
     ENTER_PROTO_FUNC();
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
-    Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->sourceURL());
+    Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->fileName(vm));
     Bun::putDirectNamed(vm, obj, "lineNumber"_s, jsNumber(callSite->lineNumber().oneBasedInt()));
     Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().oneBasedInt()));
     Bun::putDirectNamed(vm, obj, "functionName"_s, callSite->functionName());

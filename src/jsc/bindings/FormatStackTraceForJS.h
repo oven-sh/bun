@@ -46,8 +46,11 @@ class OrdinalNumber;
 
 namespace Zig {
 class GlobalObject;
-class JSCStackTrace;
 } // namespace Zig
+
+namespace Bun {
+class OwnedZigStackFrames;
+} // namespace Bun
 
 using JSC::EncodedJSValue;
 using JSC::PropertyName;
@@ -87,11 +90,12 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
 
 namespace Zig {
 
-// GlobalObject member function for creating CallSite objects
+// One CallSite per frame, a view over the frame and the record that describes it.
 void createCallSitesFromFrames(
     Zig::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
-    Zig::JSCStackTrace& stackTrace,
+    WTF::Vector<JSC::StackFrame>& stackTrace,
+    Bun::OwnedZigStackFrames& records,
     JSC::MarkedArgumentBuffer& callSites);
 
 } // namespace Zig

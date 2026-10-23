@@ -570,8 +570,7 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     return loaded;
 }
 
-// Importers already linked to the loaded record bind into its environment, so it cannot gain exports. The
-// replacement re-exports the old names (not copies) so a later mock.module() still writes those bindings.
+// Re-exports the old names rather than copying them: linked importers bind into the loaded record, and a later mock.module() must still write those bindings.
 static void replaceOutgrownESModule(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* loadedNamespace, const Vector<JSC::Identifier, 4>& newNames, const MarkedArgumentBuffer& newValues, const String& specifier)
 {
     auto& vm = JSC::getVM(globalObject);

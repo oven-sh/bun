@@ -362,6 +362,11 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
+        /// The open or the read failed, and the error does not say that the
+        /// directory is gone or that this process may not list it. The
+        /// cache holds nothing for this error, and the resolution that
+        /// needed the listing reports it.
+        pub failed: bool,
     }
 }
 
@@ -389,18 +394,46 @@ pub struct DirEntry {
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
-    pub(crate) generation: Generation,
+    /// One more than the generation that read this listing, or `NEVER_READ`.
+    generation: Generation,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
+    /// The place of a listing that no read has filled. Every generation
+    /// takes it for stale, so each reader reads the directory first.
+    const NEVER_READ: Generation = 0;
+
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
-            generation,
+            generation: generation.saturating_add(1),
             fd: Fd::INVALID,
         }
+    }
+
+    /// The place of a listing that no read has filled.
+    pub(crate) fn never_read(dir: &'static [u8]) -> DirEntry {
+        DirEntry {
+            dir,
+            data: dir_entry::EntryMap::default(),
+            generation: Self::NEVER_READ,
+            fd: Fd::INVALID,
+        }
+    }
+
+    /// Was this read by a generation before `generation`, or never? One
+    /// compare of 16 bits, as for the generation itself.
+    #[inline]
+    pub(crate) fn is_older_than(&self, generation: Generation) -> bool {
+        self.generation <= generation
+    }
+
+    /// Is this the place of a listing that no read has filled
+    /// ([`never_read`](Self::never_read))?
+    pub fn is_never_read(&self) -> bool {
+        self.generation == Self::NEVER_READ
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —

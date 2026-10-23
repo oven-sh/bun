@@ -666,42 +666,50 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // Load the project root for .env file discovery. If the cwd
-                // (or a parent) is unreadable, readDirInfo may return null;
-                // bail out of .env file loading in that case, but process
-                // env vars were already loaded above.
+                // Load the project root for .env file discovery. The listing
+                // of the directory says which default files it has. If the
+                // cwd (or a parent) is unreadable, or a read of it failed,
+                // there is no listing, and the file system says which of
+                // them are there. An `--env-file` is opened by its path.
+                // Process env vars were already loaded above.
                 let top_level_dir = self.fs().top_level_dir();
-                let dir_info = match self.resolver.read_dir_info(top_level_dir) {
-                    Ok(Some(d)) => d,
-                    _ => return Ok(()),
-                };
+                let dir_info = self.resolver.read_dir_info(top_level_dir).ok().flatten();
 
-                if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
+                if let Some(tsconfig) = dir_info.and_then(|d| self.resolver.tsconfig_json(&d)) {
                     merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
+
+                // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
+                // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
+                // `--env-file` list is bounded (CLI args), not hot-path.
+                let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
                 // Copy the listing's basenames out under `entries_mutex`,
                 // refreshing it at our generation in the same critical
                 // section: concurrent resolvers rewrite the `DirEntry` map in
                 // place under that lock, and `dot_env::Loader::load` does
                 // file I/O between probes.
-                let dir = {
+                let listed = dir_info.and_then(|dir_info| {
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
                         .entries_mutex
                         .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
-                        Some(entries) => dot_env::DirEntryKeys(
-                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
-                        ),
-                        None => return Ok(()),
+                    let entries = dir_info
+                        .get_entries_ref_locked(self.resolver.generation)
+                        .ok()
+                        .flatten()?;
+                    Some(dot_env::DirEntryKeys(
+                        entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
+                    ))
+                });
+                let dir = match listed {
+                    Some(listed) => listed,
+                    // `load` looks for the default files only then.
+                    None if env_files.is_empty() && !skip_default_env => {
+                        dot_env::DirEntryKeys::default_files_in_cwd()
                     }
+                    None => dot_env::DirEntryKeys(Vec::new()),
                 };
-
-                // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
-                // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
-                // `--env-file` list is bounded (CLI args), not hot-path.
-                let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
                 let suffix = if self.options.is_test() || env.is_test() {
                     dot_env::DotEnvFileSuffix::Test

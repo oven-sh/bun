@@ -3778,7 +3778,7 @@ impl RunCommand {
             for bin_path in bin_dirs_snapshot {
                 if let Some(bin_dir) = this_transpiler
                     .resolver
-                    .read_dir_info(bin_path)
+                    .read_dir_info_listed(bin_path)
                     .ok()
                     .flatten()
                 {
@@ -3840,7 +3840,7 @@ impl RunCommand {
         if FILTER == Filter::AllPlusBunJs || FILTER == Filter::BunJs {
             if let Some(dir_info) = this_transpiler
                 .resolver
-                .read_dir_info(top_level_dir)
+                .read_dir_info_listed(top_level_dir)
                 .ok()
                 .flatten()
             {

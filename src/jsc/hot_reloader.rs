@@ -765,7 +765,8 @@ where
         self.tombstones.get(key).copied()
     }
 
-    /// Returns `key`'s cached listing, or `None` if it isn't cached or the cached result is a read error.
+    /// Returns `key`'s cached listing, or `None` if it isn't cached, was never read, or the cached
+    /// result is a read error.
     /// Resolver threads rewrite the cache under `entries_mutex`. The `DirEntry` is never freed.
     #[cfg(not(windows))]
     fn cached_dir_entry(
@@ -774,7 +775,7 @@ where
     ) -> Option<*mut Fs::DirEntry> {
         let _entries_lock = rfs.entries_mutex.lock_guard();
         match rfs.entries.get(key) {
-            Some(Fs::EntriesOption::Entries(existing)) => {
+            Some(Fs::EntriesOption::Entries(existing)) if !existing.is_never_read() => {
                 Some(std::ptr::from_mut::<Fs::DirEntry>(*existing))
             }
             _ => None,

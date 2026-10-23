@@ -254,7 +254,6 @@ use bun_sys::Fd as FD;
 use bun_threading::Mutex;
 
 use crate::fs as Fs;
-use crate::fs::FilenameStoreAppender;
 use crate::node_fallbacks as NodeFallbackModules;
 use crate::package_json::{BrowserMap, ESModule, PackageJSON};
 use crate::tsconfig_json::TSConfigJSON;
@@ -491,6 +490,13 @@ pub struct Resolver<'a> {
     pub caches: CacheSet,
     pub generation: Generation,
 
+    /// A directory that the resolution in progress could not list, for a
+    /// reason that is not cached. `resolve_and_auto_install` clears it when
+    /// it starts and reports it before it returns. It owns nothing, and no
+    /// value left in it matters to the next resolution: the runtime copies
+    /// the `Resolver` bytewise to a pool thread while another thread uses it.
+    pub(crate) dir_read_failure: Option<Fs::DirReadFailure>,
+
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
     /// below `bun_install` in the dep graph. `None` until the auto-install
@@ -628,6 +634,7 @@ impl<'a> Resolver<'a> {
             watcher: from.watcher,
             caches: CacheSet::init(),
             generation: from.generation,
+            dir_read_failure: None,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
@@ -963,6 +970,7 @@ impl<'a> Resolver<'a> {
             elapsed: 0,
             watcher: None,
             generation: 0,
+            dir_read_failure: None,
             package_manager: None,
             on_wake_package_manager: Default::default(),
             env_loader: None,
@@ -1127,6 +1135,7 @@ impl<'a> Resolver<'a> {
 
         let original_order = self.extension_order;
         // NOTE: the restore happens explicitly at every return point below.
+        self.dir_read_failure = None;
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                 options::ExtOrder::Css
@@ -1208,10 +1217,12 @@ impl<'a> Resolver<'a> {
             && !self.matches_user_external_pattern(import_path)
         {
             let mut res = MatchResult::default();
-            if self
-                .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
-                .is_success()
-            {
+            let status = self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res);
+            if let Some(err) = self.report_dir_read_failure(import_path, kind) {
+                self.extension_order = original_order;
+                return ResultUnion::Failure(err);
+            }
+            if status.is_success() {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note(
                         b"Resolved via tsconfig.json \"paths\" before applying packages=external"
@@ -1420,6 +1431,9 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        if let Some(err) = self.report_dir_read_failure(import_path, kind) {
+            tmp = ResultUnion::Failure(err);
+        }
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -1439,12 +1453,15 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(&import_path[suffix..])
                     ));
                 }
-                let result2 = self.resolve_without_symlinks(
+                let mut result2 = self.resolve_without_symlinks(
                     source_dir_normalized,
                     &import_path[0..suffix],
                     kind,
                     global_cache,
                 );
+                if let Some(err) = self.report_dir_read_failure(&import_path[0..suffix], kind) {
+                    result2 = ResultUnion::Failure(err);
+                }
                 if matches!(result2, ResultUnion::NotFound) {
                     break 'try_without_suffix;
                 }
@@ -1459,7 +1476,10 @@ impl<'a> Resolver<'a> {
                 {
                     if let Err(err) = self.finalize_result(&mut result, kind) {
                         self.extension_order = original_order;
-                        return ResultUnion::Failure(err);
+                        return ResultUnion::Failure(
+                            self.report_dir_read_failure(import_path, kind)
+                                .unwrap_or(err),
+                        );
                     }
                 }
 
@@ -1509,6 +1529,45 @@ impl<'a> Resolver<'a> {
         // (tracing `elapsed` accumulation handled by `_elapsed_guard` above on all paths)
         self.extension_order = original_order;
         ret
+    }
+
+    /// Take the directory that this resolution could not list, if there is
+    /// one, log it for `import_path`, and return its error. An answer that
+    /// the resolution found after it did not see that directory, so the
+    /// error is the result.
+    #[inline]
+    fn report_dir_read_failure(
+        &mut self,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<crate::Error> {
+        self.dir_read_failure
+            .map(|failure| self.log_dir_read_failure(failure, import_path, kind))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn log_dir_read_failure(
+        &mut self,
+        failure: Fs::DirReadFailure,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::Error {
+        self.dir_read_failure = None;
+        self.log_mut().add_resolve_error(
+            None,
+            bun_ast::Range::NONE,
+            format_args!(
+                "Cannot read directory \"{}\": {} while resolving \"{}\"",
+                bstr::BStr::new(failure.dir),
+                bstr::BStr::new(failure.err.name()),
+                bstr::BStr::new(import_path)
+            ),
+            import_path,
+            kind,
+            bun_ast::Error::ModuleNotFound,
+        );
+        failure.err
     }
 
     pub fn resolve(
@@ -1583,7 +1642,11 @@ impl<'a> Resolver<'a> {
         while let Some(path) = iter.next() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
+            let Ok(Some(dir)) = self.dir_info_cached_maybe_log(false, name.dir) else {
+                // `resolve_and_auto_install` reports a directory that was not listed.
+                if let Some(failure) = &self.dir_read_failure {
+                    return Err(failure.err);
+                }
                 continue;
             };
 
@@ -1641,7 +1704,15 @@ impl<'a> Resolver<'a> {
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+            let found = match dir.get_entry(self.generation, name.filename) {
+                Ok(found) => found,
+                // `resolve_and_auto_install` reports a directory that was not listed.
+                Err(err) => {
+                    self.dir_read_failure = Some(Fs::DirReadFailure::of(&dir, err));
+                    return Err(err);
+                }
+            };
+            if let Some(query) = found {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
@@ -2378,7 +2449,9 @@ impl<'a> Resolver<'a> {
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
-                        None => match self.read_dir_info(result.path_pair.primary.name().dir) {
+                        None => match self
+                            .dir_info_cached_maybe_log(false, result.path_pair.primary.name().dir)
+                        {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
@@ -2858,6 +2931,15 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::Success;
                     }
                     self.extension_order = prev_extension_order;
+                    // A directory here was not listed, so the package can be
+                    // here. One from a directory above is not the answer.
+                    if let Some(failure) = &self.dir_read_failure {
+                        let err = failure.err;
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return MatchStatus::Failure(err);
+                    }
                 }
 
                 match dir_info.get_parent() {
@@ -2910,6 +2992,16 @@ impl<'a> Resolver<'a> {
 
         dir_info = source_dir_info;
 
+        // A directory on the way was not listed, so the package can be on
+        // disk. The registry is not asked for it.
+        if let Some(failure) = &self.dir_read_failure {
+            let err = failure.err;
+            if let Some(d) = self.debug_logs.as_mut() {
+                d.decrease_indent();
+            }
+            return MatchStatus::Failure(err);
+        }
+
         // this is the magic!
         if global_cache.can_use(any_node_modules_folder)
             && self.use_package_manager()
@@ -2917,6 +3009,16 @@ impl<'a> Resolver<'a> {
             && strings::is_npm_package_name(esm_ref.name)
         {
             let esm = esm_ref.with_auto_version();
+            // The installer takes the versions from the lockfile of the
+            // project, which it finds in the listing of a directory above. A
+            // directory that has no listing does not say that there is none.
+            if let Some(failure) = self.unlisted_from(source_dir_info) {
+                self.dir_read_failure = Some(failure);
+                if let Some(d) = self.debug_logs.as_mut() {
+                    d.decrease_indent();
+                }
+                return MatchStatus::Failure(failure.err);
+            }
             'load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
@@ -3440,109 +3542,80 @@ impl<'a> Resolver<'a> {
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
             core::ptr::null_mut();
         let mut needs_iter = true;
-        let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
+        let mut in_place: Option<Fs::StaleListing> = None;
         let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
             Ok(d) => d,
             Err(err) => {
-                // TODO: handle this error better
-                let _ = self.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
-                );
-                return Err(err.into());
+                let err: crate::Error = err.into();
+                match rfs!().unopened(None, dir_path, false, self.generation, err) {
+                    // `resolve_and_auto_install` reports it.
+                    Fs::Unlisted::Failed(failure) => self.dir_read_failure = Some(failure),
+                    Fs::Unlisted::Gone(_) | Fs::Unlisted::Denied(_) => {
+                        let _ = self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Unable to open directory: {}",
+                                bstr::BStr::new(err.name())
+                            ),
+                        );
+                    }
+                }
+                return Err(err);
             }
         };
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-            if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = Some(std::ptr::from_mut(*entries));
-                }
+            in_place = Fs::StaleListing::in_slot(cached_entry, self.generation);
+            if in_place.is_none() && cached_entry.as_entries().is_some() {
+                dir_entries_option = cached_entry;
+                needs_iter = false;
             }
         }
 
         if needs_iter {
-            // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to slots
-            // in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this fn and
-            // are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
-            let mut new_entry = Fs::file_system::DirEntry::init(
-                if let Some(existing) = in_place {
-                    // SAFETY: see block-wide note above.
-                    unsafe { &*existing }.dir
-                } else {
-                    Fs::file_system::DirnameStore::instance()
-                        .append_slice(dir_path)
-                        .expect("unreachable")
-                },
-                self.generation,
-            );
-
-            // Pre-size `data` so the per-entry inserts below skip the
+            // Pre-size the listing so the per-entry inserts skip the
             // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
             // covers a typical node_modules package dir; larger dirs still
             // rehash from there (cheap relative to starting at 0).
-            new_entry.data.reserve(64);
-
-            let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-            // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-            // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-            let mut filename_store = FilenameStoreAppender::new();
-            while let Ok(Some(_value)) = dir_iterator.next() {
-                new_entry
-                    .add_entry_with_store(
-                        // SAFETY: see block-wide note above.
-                        in_place.map(|existing| unsafe { &mut (*existing).data }),
-                        &_value,
-                        &mut filename_store,
-                        (),
-                    )
-                    .expect("unreachable");
-            }
-            if let Some(existing) = in_place {
-                // SAFETY: see block-wide note above.
-                // NOTE: `StringHashMap` (std::HashMap newtype)
-                // has no separate `clear_and_free`; `clear()` drops all entries.
-                unsafe { &mut *existing }.data.clear();
-            }
-
-            if self.store_fd {
-                new_entry.fd = open_dir;
-            }
-            // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
-            // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
-            let dir_entries_ptr = match in_place {
-                Some(p) => {
-                    // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                    unsafe { *p = new_entry };
-                    p
-                }
-                None => bun_core::heap::into_raw(Box::new(new_entry)),
-            };
-
-            bun_core::scoped_log!(
-                crate::fs_full::Fs,
-                "readdir({}, {}) = {}",
+            let listing = match rfs!().read_listing(
+                Fs::ListingRead {
+                    in_place,
+                    dir_path,
+                    dir_needs_sep: false,
+                    generation: self.generation,
+                    store_fd: self.store_fd,
+                    reserve: 64,
+                },
                 open_dir,
-                bstr::BStr::new(dir_path),
-                // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly
-                // boxed entry (see block-wide note above).
-                unsafe { (*dir_entries_ptr).data.count() },
-            );
-
-            dir_entries_option = rfs!()
-                .entries
-                .put(
-                    &mut cached_dir_entry_result,
-                    Fs::file_system::real_fs::EntriesOption::Entries(
-                        // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
-                        unsafe { &mut *dir_entries_ptr },
-                    ),
-                )
-                .expect("unreachable");
+                (),
+            ) {
+                Ok(listing) => listing,
+                Err(why) => {
+                    open_dir.close();
+                    return Err(match why {
+                        // `resolve_and_auto_install` reports it.
+                        Fs::Unlisted::Failed(failure) => {
+                            self.dir_read_failure = Some(failure);
+                            failure.err
+                        }
+                        Fs::Unlisted::Gone(err) | Fs::Unlisted::Denied(err) => {
+                            let _ = self.log_mut().add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "Cannot read directory \"{}\": {}",
+                                    bstr::BStr::new(dir_path),
+                                    bstr::BStr::new(err.name())
+                                ),
+                            );
+                            err
+                        }
+                    });
+                }
+            };
+            dir_entries_option =
+                rfs!().commit_listing(&mut cached_dir_entry_result, in_place, listing)?;
         }
 
         // We must initialize it as empty so that the result index is correct.
@@ -3561,21 +3634,20 @@ impl<'a> Resolver<'a> {
         // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
-        // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
-        // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
-        // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
-        // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
-        let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
+        // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) that holds
+        // `Entries`: the cached hit or the listing committed above. Its `DirEntry` lives as
+        // long as the process, and `entries_mutex` is held for every read through the `BackRef`.
+        let dir_entries = bun_ptr::BackRef::new(unsafe { &*dir_entries_option }.entries());
         self.dir_info_uncached(
             dir_info_ptr,
-            dir_entries_dir,
-            // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
-            dir_entries_option,
+            dir_entries.dir,
+            DirNames::Listed(dir_entries),
             dir_cache_info_result,
             cached_dir_entry_result.index,
             // Packages in the global disk cache are top-level, we shouldn't try
             // to check for a parent package.json
             None,
+            InParent::Unknown,
             allocators::NOT_FOUND,
             open_dir,
             Some(package_id),
@@ -3729,6 +3801,9 @@ impl<'a> Resolver<'a> {
                     let _entries_lock = rfs.entries_mutex.lock_guard();
                     resolved_dir_info
                         .get_entries_ref_locked(self.generation)
+                        .unwrap_or_else(|err| {
+                            refresh_failed(&mut self.dir_read_failure, &resolved_dir_info, err)
+                        })
                         .map(|entries| (entries.get(base), entries.fd))
                 };
                 let Some((entry_lookup, dirname_fd)) = looked_up else {
@@ -3791,8 +3866,15 @@ impl<'a> Resolver<'a> {
                                 }
                                 let file_name = &mut buf[0..index.len() + ext.len()];
                                 file_name[index.len()..].copy_from_slice(ext);
-                                let index_query =
-                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                let index_query = dir_info_ref
+                                    .get_entry(self.generation, &file_name[..])
+                                    .unwrap_or_else(|err| {
+                                        refresh_failed(
+                                            &mut self.dir_read_failure,
+                                            &dir_info_ref,
+                                            err,
+                                        )
+                                    });
                                 if let Some(iq) = index_query {
                                     // SAFETY: rfs points at the process-global RealFS; the
                                     // lazy-stat rewrite inside `kind()` is serialized on the
@@ -3912,8 +3994,11 @@ impl<'a> Resolver<'a> {
                 }
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
-                if let Some(ext_query) =
-                    resolved_dir_info.get_entry(self.generation, &file_name[..])
+                if let Some(ext_query) = resolved_dir_info
+                    .get_entry(self.generation, &file_name[..])
+                    .unwrap_or_else(|err| {
+                        refresh_failed(&mut self.dir_read_failure, &resolved_dir_info, err)
+                    })
                 {
                     // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                     // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -3952,8 +4037,11 @@ impl<'a> Resolver<'a> {
                 for &replacement in ts_exts.iter() {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
                     file_name[segment.len()..].copy_from_slice(replacement);
-                    if let Some(ts_query) =
-                        resolved_dir_info.get_entry(self.generation, &file_name[..])
+                    if let Some(ts_query) = resolved_dir_info
+                        .get_entry(self.generation, &file_name[..])
+                        .unwrap_or_else(|err| {
+                            refresh_failed(&mut self.dir_read_failure, &resolved_dir_info, err)
+                        })
                     {
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -4193,9 +4281,39 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path)
     }
 
-    /// Like `readDirInfo`, but returns `null` instead of throwing an error.
+    /// `read_dir_info` for a caller that goes through every name of the
+    /// directory with no check (`DirInfo::get_entries_const`). A directory
+    /// that a walk only passed through (`DirInfo::was_probed`) has no
+    /// listing, so it is read here, and `Err` is also a read that still fails.
+    pub fn read_dir_info_listed(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
+        let dir_info = self.dir_info_cached_maybe_log(false, path)?;
+        if let Some(dir_info) = dir_info
+            && dir_info.was_probed()
+        {
+            dir_info.list(self.generation)?;
+        }
+        Ok(dir_info)
+    }
+
+    /// `read_dir_info_listed`, with `None` for an error. Its callers go
+    /// through the names of a directory tree.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.dir_info_cached_maybe_log(false, path).ok().flatten()
+        self.read_dir_info_listed(path).ok().flatten()
+    }
+
+    /// The first directory from `dir_info` up that a walk only passed
+    /// through and that still cannot be read.
+    fn unlisted_from(&mut self, dir_info: DirInfoRef) -> Option<Fs::DirReadFailure> {
+        let mut above = Some(dir_info);
+        while let Some(dir) = above {
+            if dir.was_probed()
+                && let Err(err) = dir.list(self.generation)
+            {
+                return Some(Fs::DirReadFailure::of(&dir, err));
+            }
+            above = dir.get_parent();
+        }
+        None
     }
 
     // NOTE: `follow_symlinks` is `true` at every call
@@ -4472,6 +4590,9 @@ impl<'a> Resolver<'a> {
         // - fts_open is not the fastest way to read directories. fts actually just uses readdir!!
         // - remember
         let mut _safe_path: Option<&'static [u8]> = None;
+        // The directory before this one in the walk got its names from the
+        // file system, because its read failed a moment ago.
+        let mut parent_probed = false;
 
         // Start at the top.
         while queue_slice_len > 0 {
@@ -4486,8 +4607,12 @@ impl<'a> Resolver<'a> {
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
+            // Directories must always end in a trailing slash or else various bugs can occur.
+            let dir_needs_sep = queue_top_unsafe_path
+                .last()
+                .is_some_and(|&last| last != SEP);
 
-            let open_dir: FD = if queue_top.fd.is_valid() {
+            let mut open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
             } else {
                 'open_dir: {
@@ -4537,62 +4662,23 @@ impl<'a> Resolver<'a> {
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
                         Err(err) => {
-                            // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
-                            // as if there is nothing there at all instead of causing an error due to
-                            // the directory actually being a file. This is a workaround for situations
-                            // where people try to import from a path containing a file as a parent
-                            // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
-                            // list which contains such paths and treating them as missing means we just
-                            // ignore them during path resolution.
-                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                                || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                            {
-                                return Ok(None);
+                            let why = rfs!().unopened(
+                                None,
+                                queue_top_unsafe_path,
+                                dir_needs_sep,
+                                self.generation,
+                                err,
+                            );
+                            match self.unlisted_in_walk(
+                                why,
+                                queue_top_unsafe_path,
+                                queue_slice_len > 0,
+                                queue_top.result,
+                                enable_logging,
+                            ) {
+                                Some(result) => return result,
+                                None => break 'open_dir FD::INVALID,
                             }
-                            // A permission-denied ancestor (sandboxed drive roots, x-only
-                            // shared dirs) is treated as opaque and empty, like the
-                            // ENOTDIR tolerance; the requested directory itself stays fatal.
-                            if queue_slice_len > 0
-                                && matches!(
-                                    err,
-                                    crate::Error::Sys(bun_errno::SystemErrno::EPERM)
-                                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                )
-                            {
-                                debuglog!(
-                                    "treating permission-denied ancestor \"{}\" as empty: {}",
-                                    bstr::BStr::new(queue_top_unsafe_path),
-                                    bstr::BStr::new(err.name())
-                                );
-                                break 'open_dir FD::INVALID;
-                            }
-                            let cached_dir_entry_result = rfs!()
-                                .entries
-                                .get_or_put(queue_top_unsafe_path)
-                                .expect("unreachable");
-                            // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
-                            // which causes a perf trace that looks like this stupidity;
-                            //
-                            //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
-                            //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
-                            rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                                if enable_logging {
-                                    let pretty = queue_top_unsafe_path;
-                                    let _ = self.log_mut().add_error_fmt(
-                                        None,
-                                        bun_ast::Loc::default(),
-                                        format_args!(
-                                            "Cannot read directory \"{}\": {}",
-                                            bstr::BStr::new(pretty),
-                                            bstr::BStr::new(err.name())
-                                        ),
-                                    );
-                                }
-                            }
-
-                            return Ok(None);
                         }
                     }
                 }
@@ -4607,6 +4693,178 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
+            // The key only. The path itself is interned below, once the
+            // directory is listed: a walk that stops at a failed read leaves
+            // nothing in `DirnameStore`.
+            let mut cached_dir_entry_result = rfs!()
+                .entries
+                .get_or_put(if !queue_top_safe_path.is_empty() {
+                    queue_top_safe_path
+                } else {
+                    queue_top_unsafe_path
+                })
+                .expect("unreachable");
+
+            let mut in_place: Option<Fs::StaleListing> = None;
+            // The listing that the cache has for this generation.
+            let mut cached: Option<DirNames> = None;
+            // The handle of a directory that gets no listing. Nothing else
+            // holds it, so it is closed when the walk leaves the directory.
+            let mut unheld_dir = scopeguard::guard(FD::INVALID, |fd| {
+                if fd.is_valid() {
+                    fd.close();
+                }
+            });
+
+            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
+                in_place = Fs::StaleListing::in_slot(cached_entry, self.generation);
+                if in_place.is_none()
+                    && let Some(entries) = cached_entry.as_entries()
+                {
+                    cached = Some(DirNames::Listed(bun_ptr::BackRef::new(entries)));
+                }
+            }
+
+            let names = match cached {
+                Some(cached) => cached,
+                None => {
+                    // A permission-denied ancestor has no fd to enumerate; its
+                    // entry set stays empty.
+                    let mut listing = None;
+                    let mut probed = None;
+                    if open_dir.is_valid() {
+                        // Pre-size the listing so the per-entry inserts skip the
+                        // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
+                        // covers a typical node_modules package dir; larger dirs
+                        // still rehash from there (cheap relative to starting at 0).
+                        match rfs!().read_listing(
+                            Fs::ListingRead {
+                                in_place,
+                                dir_path: queue_top_unsafe_path,
+                                dir_needs_sep,
+                                generation: self.generation,
+                                store_fd: self.store_fd,
+                                reserve: 64,
+                            },
+                            open_dir,
+                            (),
+                        ) {
+                            Ok(read) => listing = Some(read),
+                            Err(why) => {
+                                let is_ancestor = queue_slice_len > 0;
+                                let stop = match why {
+                                    // The walk needs a few names of a directory
+                                    // that it passes through, and the file
+                                    // system says whether each is there. The
+                                    // directory gets no listing, so a lookup of
+                                    // any other name in it reads it again.
+                                    Fs::Unlisted::Failed(failure) if is_ancestor => {
+                                        match rfs!().probe_walk_names(queue_top_unsafe_path) {
+                                            Ok(names) => {
+                                                probed = Some(names);
+                                                None
+                                            }
+                                            Err(_) => {
+                                                self.dir_read_failure = Some(failure);
+                                                Some(Err(failure.err))
+                                            }
+                                        }
+                                    }
+                                    why => self.unlisted_in_walk(
+                                        why,
+                                        queue_top_unsafe_path,
+                                        is_ancestor,
+                                        queue_top.result,
+                                        enable_logging,
+                                    ),
+                                };
+                                // No listing holds the handle, also when `store_fd`.
+                                if !queue_top.fd.is_valid() {
+                                    open_dir_count.set(open_dir_count.get() - 1);
+                                    *unheld_dir = open_dir;
+                                }
+                                if probed.is_none() {
+                                    open_dir = FD::INVALID;
+                                }
+                                if let Some(result) = stop {
+                                    return result;
+                                }
+                            }
+                        }
+                    }
+                    match probed {
+                        Some(probed) => {
+                            // A listing of an earlier generation stays in its slot.
+                            if in_place.is_none() {
+                                let place = rfs!()
+                                    .never_read_listing(queue_top_unsafe_path, dir_needs_sep)?;
+                                rfs!().commit_listing(&mut cached_dir_entry_result, None, place)?;
+                            }
+                            DirNames::Probed(probed)
+                        }
+                        None => {
+                            let listing = match listing {
+                                Some(listing) => listing,
+                                None => rfs!().opaque_listing(
+                                    in_place,
+                                    queue_top_unsafe_path,
+                                    dir_needs_sep,
+                                    self.generation,
+                                )?,
+                            };
+                            let slot = rfs!().commit_listing(
+                                &mut cached_dir_entry_result,
+                                in_place,
+                                listing,
+                            )?;
+                            // SAFETY: `commit_listing` returns the slot that it filled
+                            // with `Entries`. The `DirEntry` lives as long as the
+                            // process, and `entries_mutex` is held for every read.
+                            DirNames::Listed(bun_ptr::BackRef::new(unsafe { &*slot }.entries()))
+                        }
+                    }
+                }
+            };
+
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+
+            // The listing of the parent says whether this directory is a
+            // symlink. The nearest cached ancestor can hold a listing from an
+            // earlier generation, so read it before this walk interns its
+            // path and before this directory gets a slot: a walk that stops
+            // here then leaves no `DirInfo` behind for this directory.
+            // `entries_mutex` is held and is not recursive, hence `_locked`.
+            let in_parent = match parent_dir_ptr {
+                Some(parent) if !self.opts.preserve_symlinks => {
+                    let listed = if parent_probed {
+                        Err(None)
+                    } else {
+                        parent.get_entries_ref_locked(self.generation).map_err(Some)
+                    };
+                    match listed {
+                        Ok(Some(parent_entries)) => InParent::Listed(parent_entries),
+                        Ok(None) => InParent::Unknown,
+                        // The parent has no listing now, and the file system
+                        // says what this directory is.
+                        Err(read_err) => match rfs!()
+                            .probe(parent.abs_path, bun_paths::basename(queue_top_unsafe_path))
+                        {
+                            Ok(Some(cache)) => InParent::Probed(cache),
+                            Ok(None) => InParent::Unknown,
+                            Err(probe_err) => {
+                                let err = read_err.unwrap_or(probe_err);
+                                self.dir_read_failure = Some(Fs::DirReadFailure::of(&parent, err));
+                                return Err(err);
+                            }
+                        },
+                    }
+                }
+                _ => InParent::Unknown,
+            };
+
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
                 // `&'static [u8]` (set from `entries.dir` above); widen the
@@ -4615,7 +4873,7 @@ impl<'a> Resolver<'a> {
             } else {
                 // ensure trailing slash
                 if _safe_path.is_none() {
-                    // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
+                    // Now that we've listed the topmost directory successfully, it's reasonable to store the slice.
                     // `path` spans `input_path_len + 1` for the NUL-splice above; the
                     // logical input is `path[..input_path_len]`.
                     let input = &path[..input_path_len];
@@ -4653,112 +4911,6 @@ impl<'a> Resolver<'a> {
                 &safe_path[dir_path_i..end]
             };
 
-            let mut cached_dir_entry_result =
-                rfs!().entries.get_or_put(dir_path).expect("unreachable");
-
-            let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
-                core::ptr::null_mut();
-            let mut needs_iter = true;
-            let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
-
-            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-                if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
-                        dir_entries_option = cached_entry;
-                        needs_iter = false;
-                    } else {
-                        in_place = Some(std::ptr::from_mut(*entries));
-                    }
-                }
-            }
-
-            if needs_iter {
-                // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
-                // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
-                // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
-                let mut new_entry = Fs::file_system::DirEntry::init(
-                    if let Some(existing) = in_place {
-                        // SAFETY: see block-wide note above.
-                        unsafe { &*existing }.dir
-                    } else {
-                        Fs::file_system::DirnameStore::instance()
-                            .append_slice(dir_path)
-                            .expect("unreachable")
-                    },
-                    self.generation,
-                );
-
-                // Pre-size `data` so the per-entry inserts below skip the
-                // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
-                // covers a typical node_modules package dir; larger dirs
-                // still rehash from there (cheap relative to starting at 0).
-                new_entry.data.reserve(64);
-
-                // A permission-denied ancestor has no fd to enumerate; its
-                // entry set stays empty.
-                if open_dir.is_valid() {
-                    let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                    // NOTE: `WrappedIterator::next` returns
-                    // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
-                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-                    let mut filename_store = FilenameStoreAppender::new();
-                    loop {
-                        let _value = match dir_iterator.next() {
-                            Ok(Some(v)) => v,
-                            Ok(None) => break,
-                            Err(_) => break,
-                        };
-                        new_entry
-                            .add_entry_with_store(
-                                // SAFETY: see block-wide note above.
-                                in_place.map(|existing| unsafe { &mut (*existing).data }),
-                                &_value,
-                                &mut filename_store,
-                                (),
-                            )
-                            .expect("unreachable");
-                    }
-                }
-                if let Some(existing) = in_place {
-                    // SAFETY: see block-wide note above.
-                    // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
-                    unsafe { &mut *existing }.data.clear();
-                }
-                new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
-                // NOTE: `DirEntry.data` is a `HashMap`
-                // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
-                // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
-                let dir_entries_ptr = match in_place {
-                    Some(p) => {
-                        // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                        unsafe { *p = new_entry };
-                        p
-                    }
-                    None => bun_core::heap::into_raw(Box::new(new_entry)),
-                };
-                // NOTE (Stacked Borrows): log BEFORE `entries.put` stores the
-                // `&'static mut DirEntry` — a later read through the parent raw
-                // pointer would pop that reference's Unique tag (the ordering
-                // is unobservable).
-                bun_core::scoped_log!(
-                    crate::fs_full::Fs,
-                    "readdir({}, {}) = {}",
-                    open_dir,
-                    bstr::BStr::new(dir_path),
-                    // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a
-                    // freshly boxed entry (see block-wide note above).
-                    unsafe { (*dir_entries_ptr).data.count() },
-                );
-                dir_entries_option = rfs!().entries.put(
-                    &mut cached_dir_entry_result,
-                    Fs::file_system::real_fs::EntriesOption::Entries(
-                        // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
-                        unsafe { &mut *dir_entries_ptr },
-                    ),
-                )?;
-            }
-
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
             // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
@@ -4771,25 +4923,22 @@ impl<'a> Resolver<'a> {
                     DirInfo::DirInfo::default(),
                 )
             }?;
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
                 dir_path,
-                // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
-                dir_entries_option,
+                names,
                 queue_top.result,
                 cached_dir_entry_result.index,
                 parent_dir_ptr,
+                in_parent,
                 top_parent.index,
                 open_dir,
                 None,
             )?;
 
             top_parent = queue_top.result;
+            parent_probed = matches!(names, DirNames::Probed(_));
 
             if queue_slice_len == 0 {
                 // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
@@ -4804,6 +4953,84 @@ impl<'a> Resolver<'a> {
         }
 
         unreachable!()
+    }
+
+    /// The walk could not list `dir`: a directory on the way to the one it
+    /// was asked for (`is_ancestor`), or that one. `None` when the walk goes
+    /// on and `dir` gets an empty listing, otherwise the result of the walk.
+    /// The open and the read of a directory both end here, so that one errno
+    /// means one thing. The one case that does not: a directory on the way
+    /// whose read gave `Unlisted::Failed` (`RealFS::probe_walk_names`).
+    fn unlisted_in_walk(
+        &mut self,
+        why: Fs::Unlisted,
+        dir: &[u8],
+        is_ancestor: bool,
+        result: allocators::Result,
+        enable_logging: bool,
+    ) -> Option<crate::CrateResult<Option<DirInfoRef>>> {
+        match why {
+            // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
+            // which causes a perf trace that looks like this stupidity;
+            //
+            //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
+            //   ...
+            Fs::Unlisted::Gone(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
+                self.mark_walk_not_found(dir, result);
+                Some(Ok(None))
+            }
+            // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
+            // as if there is nothing there at all instead of causing an error due to
+            // the directory actually being a file. This is a workaround for situations
+            // where people try to import from a path containing a file as a parent
+            // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
+            // list which contains such paths and treating them as missing means we just
+            // ignore them during path resolution.
+            Fs::Unlisted::Gone(crate::Error::Sys(
+                bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::EISDIR,
+            )) => Some(Ok(None)),
+            // A permission-denied ancestor (sandboxed drive roots, x-only
+            // shared dirs) is treated as opaque and empty, like the
+            // ENOTDIR tolerance; the requested directory itself stays fatal.
+            Fs::Unlisted::Denied(err) if is_ancestor => {
+                debuglog!(
+                    "treating permission-denied ancestor \"{}\" as empty: {}",
+                    bstr::BStr::new(dir),
+                    bstr::BStr::new(err.name())
+                );
+                None
+            }
+            Fs::Unlisted::Gone(err) | Fs::Unlisted::Denied(err) => {
+                self.mark_walk_not_found(dir, result);
+                if enable_logging {
+                    let _ = self.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::default(),
+                        format_args!(
+                            "Cannot read directory \"{}\": {}",
+                            bstr::BStr::new(dir),
+                            bstr::BStr::new(err.name())
+                        ),
+                    );
+                }
+                Some(Ok(None))
+            }
+            // The requested directory, or one that did not open. Nothing is
+            // cached for this directory or the ones below it, so the next
+            // lookup tries again. `resolve_and_auto_install` reports it.
+            Fs::Unlisted::Failed(failure) => {
+                self.dir_read_failure = Some(failure);
+                Some(Err(failure.err))
+            }
+        }
+    }
+
+    fn mark_walk_not_found(&mut self, dir: &[u8], result: allocators::Result) {
+        self.dir_cache_mut().mark_not_found(result);
+        // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
+        unsafe { &mut *self.rfs_ptr() }
+            .mark_dir_not_found(dir)
+            .expect("unreachable");
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
@@ -5423,6 +5650,7 @@ impl<'a> Resolver<'a> {
             let _entries_lock = realfs.entries_mutex.lock_guard();
             dir_info
                 .get_entries_ref_locked(self.generation)
+                .unwrap_or_else(|err| refresh_failed(&mut self.dir_read_failure, &dir_info, err))
                 .map(|entries| {
                     (
                         entries.get(&base[..]),
@@ -5675,16 +5903,7 @@ impl<'a> Resolver<'a> {
         // back to this same BSSMap slot — holding a `&mut` here would alias.
         let dir_info: DirInfoRef = match self.dir_info_cached(path) {
             Ok(Some(d)) => d,
-            Ok(None) => dec_ret!(MatchStatus::NotFound),
-            Err(_err) => {
-                #[cfg(debug_assertions)]
-                bun_core::pretty_errorln!(
-                    "err: {} reading {}",
-                    bstr::BStr::new(_err.name()),
-                    bstr::BStr::new(path)
-                );
-                dec_ret!(MatchStatus::NotFound);
-            }
+            Ok(None) | Err(_) => dec_ret!(MatchStatus::NotFound),
         };
         let mut package_json: Option<*const PackageJSON> = None;
 
@@ -5903,6 +6122,15 @@ impl<'a> Resolver<'a> {
             };
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
+            if err.failed {
+                // `resolve_and_auto_install` reports a directory that was not listed.
+                self.dir_read_failure = Some(Fs::DirReadFailure {
+                    // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
+                    dir: unsafe { &mut *rfs }.failed_dir(dir_path),
+                    err: err.original_err,
+                });
+                dec_ret!(None);
+            }
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
@@ -6157,10 +6385,13 @@ impl<'a> Resolver<'a> {
         &mut self,
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],
-        _entries: *mut Fs::file_system::real_fs::EntriesOption,
+        // Where the names of this directory come from.
+        names: DirNames,
         _result: allocators::Result,
         dir_entry_index: allocators::IndexType,
         parent: Option<DirInfoRef>,
+        // What `parent` says about this directory, at this generation.
+        in_parent: InParent,
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
@@ -6172,14 +6403,13 @@ impl<'a> Resolver<'a> {
         // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
         // under Stacked Borrows.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // SAFETY: `_entries` is a live slot (caller contract); the payload
-        // `DirEntry` is a separate process-lifetime allocation, so the shared
-        // `BackRef` survives entries-map traffic. All uses below are `&self`
-        // reads under `entries_mutex`.
-        let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
-        macro_rules! entries {
-            () => {
-                dir_entries.get()
+        let store_fd = self.store_fd;
+        // The kind of a name in this directory, or `None` when it has no such
+        // entry. The caller holds `entries_mutex`.
+        macro_rules! kind_of {
+            ($name:expr) => {
+                // SAFETY: `rfs_ptr` points at the process-global RealFS.
+                unsafe { names.kind($name, rfs_ptr, store_fd) }
             };
         }
 
@@ -6214,15 +6444,17 @@ impl<'a> Resolver<'a> {
 
         info.flags
             .set_present(DirInfo::Flag::IsNodeModules, base == b"node_modules");
+        info.flags
+            .set_present(DirInfo::Flag::Probed, matches!(names, DirNames::Probed(_)));
 
         // if (entries != null) {
+        let mut node_modules = None;
         if !info.is_node_modules() {
-            if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
+            node_modules = kind_of!(Fs::WalkName::NodeModules);
+            if let Some(kind) = node_modules {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::Dir,
+                    kind == Fs::file_system::EntryKind::Dir,
                 );
             }
         }
@@ -6230,7 +6462,7 @@ impl<'a> Resolver<'a> {
         if self.care_about_bin_folder {
             'append_bin_dir: {
                 if info.has_node_modules() {
-                    if entries!().has_comptime_query(b"node_modules") {
+                    if node_modules.is_some() {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
                         if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                             // SAFETY: callers hold RESOLVER_MUTEX; first init.
@@ -6271,11 +6503,8 @@ impl<'a> Resolver<'a> {
                 }
 
                 if info.is_node_modules() {
-                    if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::Dir
-                        {
+                    if let Some(kind) = kind_of!(Fs::WalkName::Bin) {
+                        if kind == Fs::file_system::EntryKind::Dir {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                 // SAFETY: callers hold RESOLVER_MUTEX; first init.
@@ -6346,73 +6575,72 @@ impl<'a> Resolver<'a> {
                 .or(parent_.package_json_for_dependencies);
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-            if !self.opts.preserve_symlinks {
-                // The only caller that reaches this with `parent` set
-                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
-                // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
-                    if let Some(lookup) = parent_entries.get(base) {
-                        let entries_fd = entries!().fd;
-                        if entries_fd.is_valid()
-                            && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
-                        {
-                            // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = lookup.entry().mutex.lock_guard();
-                            lookup.entry().set_cache_fd(entries_fd);
-                        }
-                        // SAFETY: EntryStore-owned slot — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-
-                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
-                        if !symlink.is_empty() {
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = self.fs_ref().abs_buf_checked(
-                                &[parent_.abs_real_path, base],
-                                bufs!(dir_info_uncached_filename),
-                            )
-                        {
-                            // this might leak a little i'm not sure
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable");
-
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
-                            }
-                            info.abs_real_path = symlink;
-                        }
+            let in_parent = match in_parent {
+                InParent::Listed(parent_entries) => parent_entries
+                    .get(base)
+                    .map(|lookup| (Some(lookup), b"".as_slice())),
+                InParent::Probed(cache) => Some((None, cache.symlink.as_bytes())),
+                InParent::Unknown => None,
+            };
+            if let Some((lookup, probed_symlink)) = in_parent {
+                let mut symlink = probed_symlink;
+                if let Some(lookup) = &lookup {
+                    let entries_fd = names.fd();
+                    if entries_fd.is_valid()
+                        && !lookup.entry().cache().fd.is_valid()
+                        && self.store_fd
+                    {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = lookup.entry().mutex.lock_guard();
+                        lookup.entry().set_cache_fd(entries_fd);
                     }
+                    // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+                    // rewrite inside `symlink()` is serialized on `Entry.mutex`.
+                    symlink = unsafe { lookup.entry().symlink(rfs_ptr, self.store_fd) };
+                }
+                if !symlink.is_empty() {
+                    if let Some(logs) = self.debug_logs.as_mut() {
+                        let mut buf = Vec::new();
+                        let _ = write!(
+                            &mut buf,
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path),
+                            bstr::BStr::new(symlink)
+                        );
+                        logs.add_note(buf);
+                    }
+                    info.abs_real_path = symlink;
+                } else if !parent_.abs_real_path.is_empty()
+                    && let Some(joined) = self.fs_ref().abs_buf_checked(
+                        &[parent_.abs_real_path, base],
+                        bufs!(dir_info_uncached_filename),
+                    )
+                {
+                    // this might leak a little i'm not sure
+                    symlink = self
+                        .fs_ref()
+                        .dirname_store
+                        .append_slice(joined)
+                        .expect("unreachable");
+
+                    if let Some(logs) = self.debug_logs.as_mut() {
+                        let mut buf = Vec::new();
+                        let _ = write!(
+                            &mut buf,
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path),
+                            bstr::BStr::new(symlink)
+                        );
+                        logs.add_note(buf);
+                    }
+                    if let Some(lookup) = &lookup {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = lookup.entry().mutex.lock_guard();
+                        lookup
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
+                    }
+                    info.abs_real_path = symlink;
                 }
             }
 
@@ -6424,13 +6652,8 @@ impl<'a> Resolver<'a> {
 
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
-            if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
-                {
+            if let Some(kind) = kind_of!(Fs::WalkName::PackageJson) {
+                if kind == Fs::file_system::EntryKind::File {
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6497,13 +6720,8 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
-            if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
-                {
+            if let Some(kind) = kind_of!(Fs::WalkName::TsconfigJson) {
+                if kind == Fs::file_system::EntryKind::File {
                     let parts = [path, b"tsconfig.json".as_slice()];
                     tsconfig_path = self
                         .fs_ref()
@@ -6511,14 +6729,8 @@ impl<'a> Resolver<'a> {
                 }
             }
             if tsconfig_path.is_none() {
-                if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                    // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                    // dies (NLL) before any later `&mut` to this slot.
-                    let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::File
-                    {
+                if let Some(kind) = kind_of!(Fs::WalkName::JsconfigJson) {
+                    if kind == Fs::file_system::EntryKind::File {
                         let parts = [path, b"jsconfig.json".as_slice()];
                         tsconfig_path = self
                             .fs_ref()
@@ -6887,6 +7099,74 @@ fn primary_side_effects(
     } else {
         SideEffects::NoSideEffectsPackageJsonArray
     }
+}
+
+/// Where `Resolver::dir_info_uncached` takes the names of a directory from.
+#[derive(Clone, Copy)]
+enum DirNames {
+    /// Its listing, which stays in place while `entries_mutex` is held.
+    Listed(bun_ptr::BackRef<Fs::file_system::DirEntry>),
+    /// The directory has no listing, and the file system was asked for each
+    /// name that the walk needs.
+    Probed(Fs::ProbedNames),
+}
+
+impl DirNames {
+    /// The kind of `name` in the directory, or `None` when it has no such
+    /// entry. Inlined so that the hash of each name is a constant, as for
+    /// a literal in `DirEntry::get_comptime_query`.
+    ///
+    /// # Safety
+    /// That of `Entry::kind`. The caller holds `entries_mutex`.
+    #[inline(always)]
+    unsafe fn kind(
+        self,
+        name: Fs::WalkName,
+        rfs: *mut Fs::file_system::RealFS,
+        store_fd: bool,
+    ) -> Option<Fs::file_system::EntryKind> {
+        match self {
+            DirNames::Listed(entries) => entries
+                .get_comptime_query(name.name())
+                // SAFETY: the contract of this function.
+                .map(|lookup| unsafe { lookup.entry().kind(rfs, store_fd) }),
+            DirNames::Probed(probed) => probed.kind(name),
+        }
+    }
+
+    /// The handle that the listing keeps.
+    fn fd(self) -> FD {
+        match self {
+            DirNames::Listed(entries) => entries.fd,
+            DirNames::Probed(_) => FD::INVALID,
+        }
+    }
+}
+
+/// What the parent of a directory says about that directory. The walk needs
+/// it to know a symlink.
+#[derive(Clone, Copy)]
+enum InParent {
+    /// There is no parent, or symlinks are preserved, or the parent has no
+    /// such entry.
+    Unknown,
+    /// The listing of the parent, at the generation of the walk.
+    Listed(&'static Fs::file_system::DirEntry),
+    /// The parent has no listing now, and the file system was asked.
+    Probed(crate::fs::EntryCache),
+}
+
+/// The listing of `dir` is from an earlier generation, and it could not be
+/// listed again: `err`. A lookup in that listing has no answer, so it finds
+/// nothing, and `resolve_and_auto_install` reports `failure`.
+#[cold]
+fn refresh_failed<T>(
+    failure: &mut Option<Fs::DirReadFailure>,
+    dir: &DirInfo::DirInfo,
+    err: crate::Error,
+) -> Option<T> {
+    *failure = Some(Fs::DirReadFailure::of(dir, err));
+    None
 }
 
 #[inline]

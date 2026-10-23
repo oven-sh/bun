@@ -2093,10 +2093,12 @@ it(Math.random() > 0 ? label : load);
 
     // Each of these is linted a fixed number of times, whatever its rules do.
     describe.each([
-      ["in the config", (rules: string) => [rules, ""]],
+      ["in the config", "--fix-dry-run"],
       // The first is the same as under ESLint 10.12.0 with @typescript-eslint/parser 8.72.0.
-      ["in a comment", (rules: string) => [`"no-var": "error"`, `/* eslint ${rules} */\n`]],
-    ] as const)("a rule that's turned on %s", (_, place) => {
+      ["in a comment", "--stdin"],
+      ["in a `files` block", "--fix-dry-run"],
+      ["on the command line", "--stdin"],
+    ] as const)("a rule that's turned on %s", (place, flag) => {
       const noTypes = "1 rule did not run because there is no type information for the files: ";
       const notKnown = "1 rule did not run because rules that run in JavaScript cannot read this from a type: ";
       test.concurrent.each([
@@ -2129,28 +2131,68 @@ it(Math.random() > 0 ? label : load);
       ])(
         "and %s",
         async (_, reads, rules, name, messages, refusal) => {
-          const [inConfig, comment] = place(rules);
-          const files = typed(reads, inConfig);
+          const files = typed(reads, `"no-var": "error"`);
           const config = files["eslint.config.mjs"]
             .replace(`files: ["**/*.ts"]`, `files: ["**/*.ts", "**/*.js"]`)
-            .replace(`"demo/title": "error", `, comment ? "" : `"demo/title": "error", `);
+            .replace(`"demo/title": "error", `, place === "in the config" ? `${rules}, ` : "")
+            .replace(/\}\];$/, place === "in a `files` block" ? `}, { files: ["a.*"], rules: { ${rules} } }];` : "}];");
           const espree = config.replace(`parser: { meta: { name: "typescript-eslint/parser" } }, `, "");
-          const { raw, stderr, exitCode } = await lint(
-            {
-              ...files,
-              "eslint.config.mjs": name === "a.js" ? espree : config,
-              "tsconfig.json": `{ "compilerOptions": { "allowJs": true, "types": [] } }`,
-              [name]: `${comment}globalThis.it = () => {};\nit("a");\n`,
-            },
-            ["-f", "json", name],
-          );
-          expect(messagesOf(raw)).toEqual(messages);
-          expect(stderr).toContain(refusal);
-          expect(exitCode).toBe(refusal ? 2 : 1);
+          const comment = place === "in a comment" ? `/* eslint ${rules} */\n` : "";
+          const text = `${comment}globalThis.it = () => {};\nit("a");\n`;
+          const all = {
+            ...files,
+            "eslint.config.mjs": name === "a.js" ? espree : config,
+            "tsconfig.json": `{ "compilerOptions": { "allowJs": true, "types": [] } }`,
+            [name]: text,
+          };
+          const onCommandLine = rules.split(", ").flatMap(it => ["--rule", it.replaceAll('"', "")]);
+          const args = ["-f", "json", ...(place === "on the command line" ? onCommandLine : [])];
+          const expectResult = ({ raw, stderr, exitCode }: { raw: string; stderr: string; exitCode: number }) => {
+            expect(messagesOf(raw)).toEqual(messages);
+            if (refusal) expect(stderr).toContain(refusal);
+            else expect(stderr).not.toContain(" did not run because");
+            expect(exitCode).toBe(refusal ? 2 : 1);
+          };
+          expectResult(await lint(all, [...args, name]));
+          if (flag === "--fix-dry-run") return expectResult(await lint(all, [...args, flag, name]));
+          using dir = tempDir("bun-lint-js-plugins", all);
+          await using proc = spawn({
+            cmd: [bunExe(), "lint", ...args, "--stdin", "--stdin-filename", name],
+            env,
+            cwd: String(dir),
+            stdin: Buffer.from(text),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [raw, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expectResult({ raw, stderr, exitCode });
         },
         timeout,
       );
     });
+
+    // ESLint 10.12.0 fails on such a block: typescript-eslint doesn't find `a.md/0_0.ts` in a project.
+    test.concurrent(
+      "a block that a processor finds has no types",
+      async () => {
+        const files = typed(facts);
+        const config = files["eslint.config.mjs"].replace(
+          /\}\];$/,
+          `}, { files: ["**/*.md"], plugins: { blocks: { processors: { all: {
+            preprocess: text => [{ text, filename: "0.ts" }],
+            postprocess: lists => lists.flat(),
+          } } } }, processor: "blocks/all" }];`,
+        );
+        const { raw, stderr, exitCode } = await lint(
+          { ...files, "eslint.config.mjs": config, "a.md": `declare function it(title: unknown): void;\nit("a");\n` },
+          ["-f", "json", "a.md"],
+        );
+        expect(messagesOf(raw)).toEqual([]);
+        expect(stderr).toContain("1 rule did not run because there is no type information for the files: demo/title");
+        expect(exitCode).toBe(2);
+      },
+      timeout,
+    );
 
     test.concurrent(
       "text from standard input has types too",

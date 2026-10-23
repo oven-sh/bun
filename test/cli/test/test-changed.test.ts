@@ -344,7 +344,9 @@ describe.concurrent("bun test --changed", () => {
     "src/comp.ts": `import { util } from "./util";\nexport const comp = util + 1;\n`,
     "src/dep.ts": `export const dep = 4;\n`,
     "src/snippet.ts": `import { dep } from "./dep";\nexport const snippet = dep;\n`,
-    "src/front.ts": `import { comp } from "./comp";\nimport { snippet } from "./snippet";\nimport { util } from "./util";\ndocument.title = String(comp + snippet + util);\n`,
+    "src/front.ts": `import { comp } from "./comp";\nimport "./other.html";\nimport { snippet } from "./snippet";\nimport { util } from "./util";\ndocument.title = String(comp + snippet + util);\n`,
+    "src/leaf.ts": `document.title = "leaf";\n`,
+    "src/other.html": `<!doctype html><script type="module" src="./leaf.ts"></script>\n`,
     "src/style.css": `body { margin: 0; }\n`,
     "src/page.html": `<!doctype html><link rel="stylesheet" href="./style.css" /><script type="module" src="./front.ts"></script>\n`,
     "src/server.ts": `import page from "./page.html";\nimport { util } from "./util";\nexport const routes = { "/": page };\nexport const one = util;\n`,
@@ -352,16 +354,22 @@ describe.concurrent("bun test --changed", () => {
     "util.test.ts": `import { test, expect } from "bun:test";\nimport { util } from "./src/util";\ntest("util", () => expect(util).toBe(1));\n`,
     "server.test.ts": `import { test, expect } from "bun:test";\nimport { routes, one } from "./src/server";\ntest("server", () => expect([typeof routes["/"], one]).toEqual(["object", 1]));\n`,
     "text.test.ts": `import { test, expect } from "bun:test";\nimport text from "./src/snippet.ts" with { type: "text" };\ntest("text", () => expect(text).toContain("snippet"));\n`,
+    "raw.test.ts": `import { test, expect } from "bun:test";\nimport raw from "./src/other.html" with { type: "text" };\ntest("raw", () => expect(raw).toContain("leaf.ts"));\n`,
     "none.test.ts": `import { test, expect } from "bun:test";\ntest("none", () => expect(1).toBe(1));\n`,
   };
-  const pageTests = ["comp.test.ts", "util.test.ts", "server.test.ts", "text.test.ts", "none.test.ts"];
+  const pageTests = ["comp.test.ts", "util.test.ts", "server.test.ts", "text.test.ts", "raw.test.ts", "none.test.ts"];
   const touch = (dir: string, file: string) =>
     appendFileSync(
       join(dir, ...file.split("/")),
       file.endsWith(".html") ? "<!-- touched -->\n" : file.endsWith(".css") ? "/* touched */\n" : "// touched\n",
     );
+  // d1.ts re-exports `name` from `from`, d2.ts re-exports it from d1.ts, and so on up to d8.ts.
+  const chain = (from: string, name: string, d = "d") =>
+    Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [`${d}${i + 1}.ts`, `export { ${name} } from "./${i ? d + i : from}";\n`]),
+    );
 
-  test.each([
+  const pageEdits: [string, string[]][] = [
     // A test and the script of the page both import these.
     ["src/comp.ts", ["comp.test.ts", "server.test.ts"]],
     ["src/util.ts", ["comp.test.ts", "server.test.ts", "util.test.ts"]],
@@ -369,22 +377,28 @@ describe.concurrent("bun test --changed", () => {
     ["src/front.ts", ["server.test.ts"]],
     ["src/style.css", ["server.test.ts"]],
     ["src/page.html", ["server.test.ts"]],
-    // Sources that share a path are one file. snippet.ts is text for text.test.ts and a module for
-    // the page, so a change to what the module imports also selects the test that reads the text.
-    ["src/dep.ts", ["server.test.ts", "text.test.ts"]],
+    // snippet.ts is text for text.test.ts and a module for the page. Only the module imports
+    // dep.ts, so text.test.ts does not reach it.
+    ["src/snippet.ts", ["server.test.ts", "text.test.ts"]],
+    ["src/dep.ts", ["server.test.ts"]],
+    // other.html is text for raw.test.ts and a page for front.ts. Only the page loads leaf.ts.
+    ["src/leaf.ts", ["server.test.ts"]],
     // The page does not reach these.
     ["src/other.ts", ["comp.test.ts"]],
     ["src/server.ts", ["server.test.ts"]],
     ["src/unused.ts", []],
-  ])("with an imported HTML page in the graph, a change to %s selects %j", async (touched, selected) => {
-    using dir = tempDir("test-changed-page", pageFixture);
-    initRepo(String(dir));
-    touch(String(dir), touched);
+  ];
+  describe.each(pageEdits)("with an imported HTML page in the graph, a change to %s", (touched, selected) => {
+    test(`selects ${JSON.stringify(selected)}`, async () => {
+      using dir = tempDir("test-changed-page", pageFixture);
+      initRepo(String(dir));
+      touch(String(dir), touched);
 
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, pageTests)).toEqual(selected);
-    if (selected.length === 0) expect(stderr).toContain("no test files are affected");
-    expect(exitCode).toBe(0);
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, pageTests)).toEqual(selected);
+      if (selected.length === 0) expect(stderr).toContain("no test files are affected");
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("a test that imports an HTML page does not hide the test of a file that the page also loads", async () => {
@@ -414,7 +428,14 @@ describe.concurrent("bun test --changed", () => {
     using dir = tempDir("test-changed-page-kinds", {
       "package.json": JSON.stringify({ name: "page-kinds", type: "module" }),
       "leaf.ts": `export const leaf = 1;\n`,
-      "front.ts": `import { leaf } from "./leaf";\ndocument.title = String(leaf);\n`,
+      "front.ts": `import { leaf } from "./leaf";\nimport "./nested.html";\ndocument.title = String(leaf);\n`,
+      "nested.ts": `import { leaf } from "./leaf";\ndocument.title = String(leaf);\n`,
+      "nested.html": `<!doctype html><script type="module" src="./nested.ts"></script>\n`,
+      // front.ts usually puts nested.html in the graph as a page before the chain to server.ts imports it.
+      "server.ts": `import page from "./nested.html";\nexport const v = page;\n`,
+      ...chain("server", "v"),
+      "chained.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./d8";\ntest("chained", () => expect(v).toBeDefined());\n`,
+      "again.test.ts": `import { test, expect } from "bun:test";\nimport page from "./static.html";\ntest("again", () => expect(page).toBeDefined());\n`,
       "static.html": page,
       "dynamic.html": page,
       "required.html": page,
@@ -431,10 +452,17 @@ describe.concurrent("bun test --changed", () => {
     touch(String(dir), "leaf.ts");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    const kinds = ["static", "dynamic", "required", "attribute", "both", "none"].map(kind => `${kind}.test.ts`);
-    expect(ranFiles(stderr, kinds)).toEqual([
+    const kinds = ["static", "again", "dynamic", "required", "attribute", "both", "chained", "none"];
+    expect(
+      ranFiles(
+        stderr,
+        kinds.map(kind => `${kind}.test.ts`),
+      ),
+    ).toEqual([
+      "again.test.ts",
       "attribute.test.ts",
       "both.test.ts",
+      "chained.test.ts",
       "dynamic.test.ts",
       "required.test.ts",
       "static.test.ts",
@@ -442,8 +470,86 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The text import resolves first and owns the path, so the scan does not read the file as a page.
-  test.failing("a change under an HTML page selects an importer that reads the page as text first", async () => {
+  test("a change under an HTML page does not select a test that only reads the page as text or as a file", async () => {
+    using dir = tempDir("test-changed-page-reader", {
+      "package.json": JSON.stringify({ name: "page-reader", type: "module" }),
+      "front.ts": `document.title = "front";\n`,
+      "page.html": `<!doctype html><script type="module" src="./front.ts"></script>\n`,
+      // The chains usually make these imports resolve after page.test.ts has the stand-in of
+      // page.html. The bundler then binds them to that stand-in.
+      "reader.ts": `import raw from "./page.html" with { type: "text" };\nexport { raw };\n`,
+      ...chain("reader", "raw"),
+      "copier.ts": `import url from "./page.html" with { type: "file" };\nexport { url };\n`,
+      ...chain("copier", "url", "e"),
+      "page.test.ts": `import { test, expect } from "bun:test";\nimport page from "./page.html";\ntest("page", () => expect(page).toBeDefined());\n`,
+      "reader.test.ts": `import { test, expect } from "bun:test";\nimport { raw } from "./d8";\ntest("reader", () => expect(raw).toContain("front.ts"));\n`,
+      "copier.test.ts": `import { test, expect } from "bun:test";\nimport { url } from "./e8";\ntest("copier", () => expect(url).toContain("page"));\n`,
+    });
+    initRepo(String(dir));
+    touch(String(dir), "front.ts");
+
+    // When one of the two resolves first, the scan does not read page.html as a page and
+    // nothing is selected. The two readers do not run in any order.
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["reader.test.ts", "copier.test.ts"])).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a change under an HTML page selects a test that reaches the page through a CommonJS file", async () => {
+    using dir = tempDir("test-changed-page-shim", {
+      "package.json": JSON.stringify({ name: "page-shim", type: "module" }),
+      "front.ts": `document.title = "front";\n`,
+      "page.html": `<!doctype html><script type="module" src="./front.ts"></script>\n`,
+      // The bundler can point an importer of this file at the stand-in of page.html. That record
+      // has the loader of shim.cjs. late.ts is behind a chain, so it is usually such an importer.
+      "shim.cjs": `module.exports = require("./page.html");\n`,
+      "eager.test.ts": `import { test, expect } from "bun:test";\nimport page from "./shim.cjs";\ntest("eager", () => expect(page).toBeDefined());\n`,
+      "late.ts": `import page from "./shim.cjs";\nexport const v = page;\n`,
+      ...chain("late", "v"),
+      "late.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./d8";\ntest("late", () => expect(v).toBeDefined());\n`,
+      "none.test.ts": `import { test, expect } from "bun:test";\ntest("none", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    touch(String(dir), "front.ts");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["eager.test.ts", "late.test.ts", "none.test.ts"])).toEqual([
+      "eager.test.ts",
+      "late.test.ts",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a test file that a page script also loads is selected through any of its sources", async () => {
+    using dir = tempDir("test-changed-page-loads-test", {
+      "package.json": JSON.stringify({ name: "page-loads-test", type: "module" }),
+      "dep.ts": `export const dep = 4;\n`,
+      "snippet.ts": `import { dep } from "./dep";\nexport const snippet = dep;\n`,
+      "front.ts": `import "./snippet.ts";\nimport "./loaded.test.ts";\nimport quoted from "./quoted.test.ts" with { type: "text" };\ndocument.title = quoted;\n`,
+      "runner.html": `<!doctype html><script type="module" src="./front.ts"></script>\n`,
+      "host.test.ts": `import { test, expect } from "bun:test";\nimport page from "./runner.html";\ntest("host", () => expect(page).toBeDefined());\n`,
+      // The scan gives this file the text source of snippet.ts for both imports. Only the copy
+      // that the page loads reaches dep.ts.
+      "loaded.test.ts": `import { test, expect } from "bun:test";\nimport text from "./snippet.ts" with { type: "text" };\nimport { snippet } from "./snippet.ts";\ntest("loaded", () => { expect(text).toContain("snippet"); expect(snippet).toBe(4); });\n`,
+      // The copy that the page reads as text has no imports. Only the test file itself reaches dep.ts.
+      "quoted.test.ts": `import { test, expect } from "bun:test";\nimport { dep } from "./dep";\ntest("quoted", () => expect(dep).toBe(4));\n`,
+      "none.test.ts": `import { test, expect } from "bun:test";\ntest("none", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    touch(String(dir), "dep.ts");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["host.test.ts", "loaded.test.ts", "quoted.test.ts", "none.test.ts"])).toEqual([
+      "host.test.ts",
+      "loaded.test.ts",
+      "quoted.test.ts",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Known gap, see #41834: the text import resolves first and owns the path, so the scan does not
+  // read the file as a page. When the scan reads it, this edit selects first.test.ts.
+  test("a page that its importer reads as text first is not scanned yet", async () => {
     using dir = tempDir("test-changed-page-text-first", {
       "package.json": JSON.stringify({ name: "page-text-first", type: "module" }),
       "front.ts": `document.title = "front";\n`,
@@ -454,7 +560,8 @@ describe.concurrent("bun test --changed", () => {
     touch(String(dir), "front.ts");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, ["first.test.ts"])).toEqual(["first.test.ts"]);
+    expect(ranFiles(stderr, ["first.test.ts"])).toEqual([]);
+    expect(stderr).toContain("no test files are affected");
     expect(exitCode).toBe(0);
   });
 
@@ -648,7 +755,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
 
     proc.kill();
     reader.releaseLock();
-  }, 60_000);
+  });
 
   // Regression for: with two uncommitted test files, editing one of them
   // during --changed --watch should only re-run that one, not both.

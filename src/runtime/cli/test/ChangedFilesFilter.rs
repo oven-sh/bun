@@ -7,7 +7,7 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
-//!    Sources that share a path are one file in this walk.
+//!    The graph can hold a file more than once. Every source of a changed file starts the walk.
 //!
 //! Only those test entry points are returned.
 
@@ -196,8 +196,12 @@ pub(crate) fn filter<'a>(
     // Absolute source path -> first source index of that path. The keys borrow from `sources`.
     let mut path_to_index: StringHashMap<u32> = StringHashMap::new();
     path_to_index.reserve(sources.len());
+    // (first, later) source of one path: the scan holds a file once per target.
+    let mut copies: Vec<(u32, u32)> = Vec::new();
 
-    // Reverse graph for the BFS: per source, its importers and the other sources of its path.
+    // Reverse graph: for each source index, the list of source indexes that
+    // import it. Built once, then used for a backward BFS from every changed
+    // file.
     let mut importers: Vec<Vec<u32>> = vec![Vec::new(); sources.len()];
 
     // Reserve once so the dupe+append below cannot leak a duped path if the
@@ -222,9 +226,7 @@ pub(crate) fn filter<'a>(
         // absolute file paths as well.
         let hash = path_to_index.hash_key(path_text);
         if let Some(&first) = path_to_index.get_hashed(hash, path_text) {
-            // Same file again: a browser-target copy, or the page behind an HTML import's stand-in.
-            importers[first as usize].push(index.get());
-            importers[idx].push(first);
+            copies.push((first, index.get()));
             continue;
         }
         bun_core::handle_oom(path_to_index.put_static_key_hashed(hash, path_text, index.get()));
@@ -244,6 +246,24 @@ pub(crate) fn filter<'a>(
                 continue;
             }
             importers[dep.get() as usize].push(importer);
+        }
+    }
+    for (stand_in, page) in bundle.graph.html_import_pages() {
+        // A `with { type: "text" }` or `"file"` import of the page binds to the same stand-in and reads only the file.
+        let imports_the_page = |record: &bun_ast::ImportRecord| {
+            record.source_index.get() == stand_in
+                && !matches!(
+                    record.loader,
+                    Some(bun_ast::Loader::Text | bun_ast::Loader::File)
+                )
+        };
+        // An HTML import's record points at a stand-in without import records: link its importer to the page.
+        for i in 0..importers[stand_in as usize].len() {
+            let importer = importers[stand_in as usize][i];
+            let records = import_records[importer as usize].as_slice();
+            if records.iter().any(imports_the_page) {
+                importers[page as usize].push(importer);
+            }
         }
     }
 
@@ -269,8 +289,14 @@ pub(crate) fn filter<'a>(
                 }
             }
         }
+        for &(first, later) in &copies {
+            if affected.is_set(first as usize) {
+                affected.set(later as usize);
+                queue.push(later);
+            }
+        }
     }
-    // The keys must not outlive the graph that owns the path bytes.
+    // Path text is only valid for the bundle pass: drop the borrowed keys before the teardown.
     drop(path_to_index);
 
     while let Some(idx) = queue.pop() {
@@ -280,6 +306,12 @@ pub(crate) fn filter<'a>(
             }
             affected.set(importer as usize);
             queue.push(importer);
+        }
+    }
+    for &(first, later) in &copies {
+        // A test file maps to the first source of its path, and any source of that path selects it.
+        if affected.is_set(later as usize) {
+            affected.set(first as usize);
         }
     }
 

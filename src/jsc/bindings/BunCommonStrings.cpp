@@ -7,6 +7,7 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <bun-uws/src/HttpMethod.h>
 
 namespace Bun {
 using namespace JSC;
@@ -124,12 +125,21 @@ enum class HTTPMethod : uint8_t {
     httpUNLOCK = 34,
     httpUNSUBSCRIBE = 35,
 };
+static_assert(static_cast<size_t>(HTTPMethod::httpUNSUBSCRIBE) + 1 == uWS::HTTP_METHOD_NAMES.size());
+
+// The enumerator of "M-SEARCH" has no hyphen.
+static constexpr bool isNameOfMethod(std::string_view enumerator, HTTPMethod method)
+{
+    std::string_view name = uWS::HTTP_METHOD_NAMES[static_cast<size_t>(method)];
+    return name == enumerator || (name == "M-SEARCH" && enumerator == "MSEARCH");
+}
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
 {
     auto& commonStrings = Bun::commonStrings(globalObject->vm());
-#define FOR_EACH_METHOD(method)    \
-    case HTTPMethod::http##method: \
+#define FOR_EACH_METHOD(method)                                           \
+    case HTTPMethod::http##method:                                        \
+        static_assert(isNameOfMethod(#method, HTTPMethod::http##method)); \
         return commonStrings.http##method##String();
 
     switch (method) {

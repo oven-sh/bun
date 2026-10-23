@@ -15,9 +15,9 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
 
-use crate::js_promise::Status as PromiseStatus;
+use crate::js_promise::{Status as PromiseStatus, Thenables};
 use crate::virtual_machine::VirtualMachine;
-use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use crate::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
@@ -1259,6 +1259,7 @@ impl EventLoop {
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
+    /// Returns what `await` waits on for the returned value: [`JSPromise::awaitable`] adopts it before the drain.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         context: crate::ContextId,
@@ -1266,11 +1267,15 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
+        thenables: Thenables,
     ) -> JsResult<JSValue> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let result = callback.call(global_object, this_value, arguments)?;
+        let mut result = callback.call(global_object, this_value, arguments)?;
+        if let Some(promise) = JSPromise::awaitable(global_object, result, thenables)? {
+            result = promise.to_js();
+        }
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)

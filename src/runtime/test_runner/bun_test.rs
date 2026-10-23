@@ -8,7 +8,7 @@ use bun_core::{Output, Timespec};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::js_promise::Status as PromiseStatus;
+use bun_jsc::js_promise::{Status as PromiseStatus, Thenables};
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
@@ -1130,11 +1130,18 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
+        // A `done` callback and a `describe` body do not call `then()` on a returned object that is not a promise.
+        let thenables = if cfg_done_parameter || matches!(cfg_data, RefDataValue::Collection { .. }) {
+            Thenables::Ignore
+        } else {
+            Thenables::Adopt
+        };
         let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
             args_slice,
+            thenables,
         ) {
             Ok(v) => v,
             Err(_) => {

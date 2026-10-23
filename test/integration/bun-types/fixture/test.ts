@@ -36,6 +36,15 @@ for (const hook of hooks) {
   });
 }
 
+// A returned thenable is awaited like a promise.
+declare const thenable: PromiseLike<void>;
+test("returns a thenable", () => thenable);
+test.each([1, 2])("returns a thenable", () => thenable);
+// This compiles, but with a `done` parameter the runner does not call then() on the returned thenable.
+test("returns a thenable and takes done", done => thenable);
+// @ts-expect-error an object that is not a thenable is not a valid return value
+test("returns an object", () => ({ a: 1 }));
+
 describe("bun:test", () => {
   describe("expect()", () => {
     test("toThrow()", () => {

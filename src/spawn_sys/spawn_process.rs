@@ -798,7 +798,13 @@ pub unsafe fn spawn_process_posix(
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Path(path) => {
-                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
+                // A second open of stdout's path would have its own file offset, and each stream would overwrite the other.
+                if i == 2 && matches!(stdio_options[1], PosixStdio::Path(stdout) if stdout == path)
+                {
+                    actions.dup2(Fd::stdout(), fileno)?;
+                } else {
+                    actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
+                }
             }
             PosixStdio::Buffer => {
                 #[cfg(any(target_os = "linux", target_os = "android"))]

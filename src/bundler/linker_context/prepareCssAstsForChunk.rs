@@ -17,7 +17,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssAnonymousLayers, CssImportOrderKind};
 
 // Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
@@ -424,9 +424,87 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     wrap_rules_with_conditions(ast, bump, &entry.conditions);
                     // TODO: Remove top-level duplicate rules across files
                 }
+                CssImportOrderKind::AnonymousLayer(_) => {
+                    unreachable!("findImportedFilesInCSSOrder returns a flat order")
+                }
             }
         }
+
+        if let Some(layers) = css_chunk.anonymous_layers.as_deref_mut() {
+            let entry_count = css_chunk.imports_in_chunk_in_order.len();
+            print_anonymous_layer_blocks(c, layers, entry_count, bump);
+        }
     }
+}
+
+/// Prints the start of the block of each `CssAnonymousLayer`, once. The entries in it
+/// were wrapped above with only the conditions they have inside the layer. Also counts
+/// the open blocks around each entry: `generate_compile_result_for_css_chunk` prints the
+/// entry at that depth, and `post_process_css_chunk` puts the blocks around the entries.
+fn print_anonymous_layer_blocks(
+    c: &LinkerContext,
+    layers: &mut CssAnonymousLayers,
+    entry_count: usize,
+    bump: &Bump,
+) {
+    // SAFETY: as for `to_css` above: the two symbol map types have one layout.
+    let symbols: &bun_ast::symbol::Map =
+        unsafe { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
+    // `deltas[i]` is the change in depth from entry `i - 1` to entry `i`.
+    let mut deltas = vec![0i64; entry_count + 1];
+    // The layers around the one that is printed, as (last entry, blocks).
+    let mut around: Vec<(u32, u32)> = Vec::new();
+    let mut depth: u32 = 0;
+    for layer in layers.layers.iter_mut() {
+        while let Some(&(last, blocks)) = around.last() {
+            if last >= layer.first {
+                break;
+            }
+            depth -= blocks;
+            around.pop();
+        }
+        let printer_options = PrinterOptions {
+            targets: Targets::for_bundler_target(c.options.target),
+            // The same as for the file entries, which printed these blocks before.
+            minify: c.options.minify_whitespace
+                || c.options.minify_syntax
+                || c.options.minify_identifiers,
+            depth,
+            ..Default::default()
+        };
+        let mut open: Vec<u8> = Vec::new();
+        match ImportConditions::print_open_blocks(
+            layer.conditions.slice_const(),
+            bump,
+            &mut open,
+            &printer_options,
+            symbols,
+        ) {
+            Ok(blocks) => {
+                layer.open = open.into_boxed_slice();
+                layer.blocks = blocks;
+            }
+            Err(e) => {
+                c.log_disjoint().add_error_fmt(
+                    None,
+                    Loc::EMPTY,
+                    format_args!("Error generating CSS for import: {}", e),
+                );
+            }
+        }
+        deltas[layer.first as usize] += i64::from(layer.blocks);
+        deltas[layer.last as usize + 1] -= i64::from(layer.blocks);
+        depth += layer.blocks;
+        around.push((layer.last, layer.blocks));
+    }
+    let mut open_blocks: i64 = 0;
+    layers.depths = deltas[..entry_count]
+        .iter()
+        .map(|delta| {
+            open_blocks += delta;
+            open_blocks as u32
+        })
+        .collect();
 }
 
 /// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.

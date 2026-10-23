@@ -17,20 +17,29 @@ pub struct MediaRule<R> {
 // the dispatch can call it without re-exporting `MinifyContext` here).
 impl<R> MediaRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if dest.minify && self.query.always_matches() {
-            self.rules.to_css(dest)?;
-            return Ok(());
-        }
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str("@media ")?;
-        self.query.to_css(dest)?;
-        dest.block(|d| {
-            d.newline()?;
-            self.rules.to_css(d)
-        })
+        if !open_block(&self.query, dest)? {
+            self.rules.to_css(dest)?;
+            return Ok(());
+        }
+        dest.newline()?;
+        self.rules.to_css(dest)?;
+        dest.block_end()
     }
+}
+
+/// Prints `@media <query> {`. When minifying a query that always matches, it
+/// prints nothing and returns false: the rules then print without a block.
+pub(crate) fn open_block(query: &MediaList, dest: &mut Printer) -> Result<bool, PrintErr> {
+    if dest.minify && query.always_matches() {
+        return Ok(false);
+    }
+    dest.write_str("@media ")?;
+    query.to_css(dest)?;
+    dest.block_start()?;
+    Ok(true)
 }
 
 impl<R> MediaRule<R> {

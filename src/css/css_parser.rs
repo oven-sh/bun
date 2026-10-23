@@ -2506,7 +2506,7 @@ mod stylesheet_impl {
                     printer.css_module = None;
                     return Err(e);
                 }
-                if let Err(e) = printer.newline() {
+                if let Err(e) = Self::end_last_line(printer) {
                     printer.css_module = None;
                     return Err(e);
                 }
@@ -2516,9 +2516,18 @@ mod stylesheet_impl {
                 return Ok(());
             } else {
                 self.rules.to_css(printer)?;
-                printer.newline()?;
+                Self::end_last_line(printer)?;
                 return Ok(());
             }
+        }
+
+        /// A newline with no indentation after it. With `PrinterOptions::depth`, the caller
+        /// indents what it prints next.
+        fn end_last_line(printer: &mut Printer<'_>) -> Result<(), PrintErr> {
+            if printer.minify {
+                return Ok(());
+            }
+            printer.write_char(b'\n')
         }
 
         pub fn to_css<'a>(

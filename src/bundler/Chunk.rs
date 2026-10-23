@@ -1355,6 +1355,39 @@ pub struct CssChunk {
     /// When we go through the `prepareCssAstsForChunk()` step, each import will
     /// create a shallow copy of the file's AST (just dereferencing the pointer).
     pub(crate) asts: Box<[bun_css::BundlerStyleSheet]>,
+    /// `None` unless a bare `layer` import in this chunk holds several entries.
+    pub(crate) anonymous_layers: Option<Box<CssAnonymousLayers>>,
+}
+
+/// The blocks that are printed around runs of entries of `imports_in_chunk_in_order`.
+pub struct CssAnonymousLayers {
+    /// In the order their blocks open: by `first`, and an outer one ahead of those inside it.
+    pub(crate) layers: Box<[CssAnonymousLayer]>,
+    /// For each entry, the number of blocks that are open around it.
+    /// `prepareCssAstsForChunk()` fills it in.
+    pub(crate) depths: Box<[u32]>,
+}
+
+/// One `@import "x.css" layer;` whose file has imports of its own. All of its entries are
+/// in one anonymous cascade layer. A second `@layer {}` block would be a second layer, so
+/// the block is printed once, around the entries `first..=last`.
+pub struct CssAnonymousLayer {
+    /// The conditions of the import, after those of the anonymous layer it is in. The
+    /// last one has the bare `layer`. The entries carry only the conditions after these.
+    pub(crate) conditions: Vec<bun_css::ImportConditions>,
+    pub(crate) first: u32,
+    pub(crate) last: u32,
+    /// The start of the block, up to the last `{`, and the number of `}` that close it.
+    /// `prepareCssAstsForChunk()` fills both in.
+    pub(crate) open: Box<[u8]>,
+    pub(crate) blocks: u32,
+}
+
+impl Drop for CssAnonymousLayer {
+    fn drop(&mut self) {
+        // An arena slab, as in `CssImportOrder`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
+    }
 }
 
 impl Drop for CssChunk {
@@ -1402,6 +1435,12 @@ pub enum CssImportOrderKind {
     ExternalPath(bun_fs::Path<'static>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
+    /// The entries under one `@import "x.css" layer;`, when there are several. Their
+    /// conditions are the ones after that import. `findImportedFilesInCSSOrder` uses this
+    /// while it builds the order and returns a flat order with a `CssAnonymousLayer` in
+    /// its place.
+    #[strum(serialize = "anonymous_layer")]
+    AnonymousLayer(Vec<CssImportOrder>),
 }
 
 // Copy-on-write list of layer names.
@@ -1438,13 +1477,6 @@ impl Layers {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
-    /// Drop owned (arena-backed, so no-op) and
-    /// install a fresh owned value.
-    #[inline]
-    pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
-        *self = Layers::Owned(new);
-    }
-
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
@@ -1467,6 +1499,7 @@ impl CssImportOrder {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
+            CssImportOrderKind::AnonymousLayer(_) => unreachable!("not in a flat order"),
         };
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
@@ -1490,6 +1523,7 @@ impl CssImportOrder {
             CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
             }
+            CssImportOrderKind::AnonymousLayer(_) => {}
         }
     }
 
@@ -1544,6 +1578,16 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
                     source_index.get(),
                     bstr::BStr::new(&source.path.text)
                 )?;
+            }
+            CssImportOrderKind::AnonymousLayer(entries) => {
+                write!(writer, "{{")?;
+                for (i, entry) in entries.iter().enumerate() {
+                    if i > 0 {
+                        write!(writer, ", ")?;
+                    }
+                    write!(writer, "{}", entry.fmt(self.ctx))?;
+                }
+                write!(writer, "}}")?;
             }
         }
         Ok(())

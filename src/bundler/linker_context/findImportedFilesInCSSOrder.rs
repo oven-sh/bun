@@ -9,7 +9,9 @@ use bun_core::{StackCheck, handle_oom};
 use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
-use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
+use crate::chunk::{
+    CssAnonymousLayer, CssAnonymousLayers, CssImportOrder, CssImportOrderKind, Layers,
+};
 use crate::linker_context_mod::debug;
 use crate::{Index, LinkerContext};
 use bun_ast::Index as AstIndex;
@@ -77,14 +79,16 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 ///
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
-pub(crate) fn find_imported_files_in_css_order<'a>(
-    this: &'a mut LinkerContext,
+pub(crate) fn find_imported_files_in_css_order<'a, 'ctx>(
+    this: &'a mut LinkerContext<'ctx>,
     temp_arena: &'a Arena,
     entry_points: &[Index],
-) -> Result<Vec<CssImportOrder>, CssImportChainTooDeep> {
+) -> Result<CssOrder, CssImportChainTooDeep> {
     let _ = temp_arena;
+    let this: &'a LinkerContext<'ctx> = this;
 
-    struct Visitor<'a> {
+    struct Visitor<'a, 'ctx> {
+        linker: &'a LinkerContext<'ctx>,
         arena: &'a Arena,
         // `BundledAst.css` SoA column.
         css_asts: &'a [crate::bundled_ast::CssCol],
@@ -99,6 +103,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         parse_graph: bun_ptr::BackRef<Graph<'a>>,
 
         has_external_import: bool,
+        /// An `@import` with a bare `layer` was followed.
+        has_anonymous_layer_import: bool,
+        /// `order` holds a `CssImportOrderKind::AnonymousLayer`, at any depth.
+        has_sealed_anonymous_layer: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
 
@@ -108,7 +116,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         too_deep: Option<CssImportChainTooDeep>,
     }
 
-    impl<'a> Visitor<'a> {
+    impl<'a, 'ctx> Visitor<'a, 'ctx> {
         #[inline]
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();
@@ -137,6 +145,68 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 wrapping_import_records,
             );
             self.too_deep.is_none()
+        }
+
+        /// Follows an `@import` that has a bare `layer`. `chain` ends with its conditions.
+        ///
+        /// All that the imported file brings in is in one anonymous layer, and a second
+        /// `@layer {}` block would be a second layer. So the entries are collected with
+        /// no conditions of their own and become one entry of the order around them.
+        /// Returns false if the traversal stopped because the chain is too deep.
+        fn visit_anonymous_layer_import(
+            &mut self,
+            importer: Index,
+            record: &ImportRecord,
+            chain: &Vec<ImportConditions>,
+            wrapping_import_records: &mut Vec<ImportRecord>,
+        ) -> bool {
+            self.has_anonymous_layer_import = true;
+            let start = self.order.len();
+            let mut inside: Vec<ImportConditions> = Vec::new();
+            if !self.visit_import(importer, record, &mut inside, wrapping_import_records) {
+                return false;
+            }
+            match self.order.len() - start {
+                0 => {}
+                // A file with no imports of its own. One entry is one block already.
+                1 => put_inside(self.order.mut_(start), chain, self.arena),
+                _ => self.seal_anonymous_layer(start, chain),
+            }
+            true
+        }
+
+        /// Turns the entries from `start` on, which are all under one bare `layer`
+        /// import with the conditions `chain`, into one entry.
+        fn seal_anonymous_layer(&mut self, start: usize, chain: &Vec<ImportConditions>) {
+            let members = self.order.split_off(start);
+            let wip_order = Vec::<CssImportOrder>::init_capacity(members.len());
+            // The layer is no other import's layer. So a copy of a file in it is redundant
+            // only when a later copy is in it too, and never because of a copy outside.
+            let members = optimize_css_order(self.linker, self.css_asts, true, members, wip_order);
+
+            // An `@import` rule cannot be in a block. The entry of an unbundled import
+            // leaves the layer and prints as an `@import` with a bare `layer` of its own.
+            let (external, mut members): (Vec<CssImportOrder>, Vec<CssImportOrder>) = members
+                .into_iter()
+                .partition(|entry| matches!(entry.kind, CssImportOrderKind::ExternalPath(_)));
+            for mut entry in external {
+                put_inside(&mut entry, chain, self.arena);
+                self.order.push(entry);
+            }
+
+            if members.len() > 1 {
+                self.has_sealed_anonymous_layer = true;
+                self.order.push(CssImportOrder {
+                    kind: CssImportOrderKind::AnonymousLayer(members),
+                    // SAFETY: an arena-backed `Vec` header that `CssImportOrder` never
+                    // drops (see the note at `bitwise_copy`).
+                    conditions: unsafe { bitwise_copy(chain) },
+                    condition_import_records: Vec::new(),
+                });
+            } else if let Some(mut entry) = members.pop() {
+                put_inside(&mut entry, chain, self.arena);
+                self.order.push(entry);
+            }
         }
 
         fn visit(
@@ -219,12 +289,21 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             nested_conditions.append_assume_capacity(unsafe {
                                 bitwise_copy(import_rule.conditions())
                             });
-                            let followed = self.visit_import(
-                                source_index,
-                                record,
-                                &mut nested_conditions,
-                                wrapping_import_records,
-                            );
+                            let followed = if import_rule.conditions().has_anonymous_layer() {
+                                self.visit_anonymous_layer_import(
+                                    source_index,
+                                    record,
+                                    &nested_conditions,
+                                    wrapping_import_records,
+                                )
+                            } else {
+                                self.visit_import(
+                                    source_index,
+                                    record,
+                                    &mut nested_conditions,
+                                    wrapping_import_records,
+                                )
+                            };
                             if !followed {
                                 return;
                             }
@@ -338,6 +417,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     let arena = this.graph.arena();
 
     let mut visitor = Visitor {
+        linker: this,
         arena,
         parse_graph: bun_ptr::BackRef::from(
             core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
@@ -346,6 +426,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         css_asts: css_asts_slice,
         all_import_records: all_import_records_slice,
         has_external_import: false,
+        has_anonymous_layer_import: false,
+        has_sealed_anonymous_layer: false,
         order: Vec::new(),
         stack_check: StackCheck::init(),
         too_deep: None,
@@ -369,6 +451,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     }
 
     let has_external_import = visitor.has_external_import;
+    let has_anonymous_layer_import = visitor.has_anonymous_layer_import;
+    let has_sealed_anonymous_layer = visitor.has_sealed_anonymous_layer;
     let mut order = visitor.order;
     let mut wip_order = Vec::<CssImportOrder>::init_capacity(order.len() as usize);
 
@@ -417,6 +501,39 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     }
     debug_css_order(this, &order, CssOrderDebugStep::AfterHoisting);
 
+    let order = optimize_css_order(
+        this,
+        css_asts,
+        has_anonymous_layer_import,
+        order,
+        wip_order,
+    );
+    if !has_sealed_anonymous_layer {
+        return Ok(CssOrder {
+            entries: order,
+            anonymous_layers: None,
+        });
+    }
+    Ok(flatten_anonymous_layers(order))
+}
+
+/// The entries of a CSS chunk in the order they print, and the blocks around runs of them.
+pub(crate) struct CssOrder {
+    pub(crate) entries: Vec<CssImportOrder>,
+    pub(crate) anonymous_layers: Option<Box<CssAnonymousLayers>>,
+}
+
+/// Removes the entries of `order` that later entries make redundant. A
+/// `CssImportOrderKind::AnonymousLayer` entry stays as it is: its own entries went
+/// through this function when it was sealed. `wip_order` is scratch space with the
+/// capacity of `order`.
+fn optimize_css_order(
+    this: &LinkerContext,
+    css_asts: &[crate::bundled_ast::CssCol],
+    has_anonymous_layer_import: bool,
+    mut order: Vec<CssImportOrder>,
+    mut wip_order: Vec<CssImportOrder>,
+) -> Vec<CssImportOrder> {
     // Next, optimize import order. If there are duplicate copies of an imported
     // file, replace all but the last copy with just the layers that are in that
     // file. This works because in CSS, the last instance of a declaration
@@ -485,7 +602,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     gop.value_ptr.push(i);
                 }
-                CssImportOrderKind::Layers(_) => {}
+                CssImportOrderKind::Layers(_) | CssImportOrderKind::AnonymousLayer(_) => {}
             }
         }
     }
@@ -518,33 +635,15 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             match &mut entry.kind {
                 // Simplify the conditions since we know they only wrap "@layer"
                 CssImportOrderKind::Layers(layers) => {
-                    // Truncate the conditions at the first anonymous layer
-                    for (i, conditions) in entry.conditions.slice().iter().enumerate() {
-                        // The layer is anonymous if it's a "layer" token without any
-                        // children instead of a "layer(...)" token with children:
-                        //
-                        //   /* entry.css */
-                        //   @import "foo.css" layer;
-                        //
-                        //   /* foo.css */
-                        //   @layer foo;
-                        //
-                        // We don't need to generate this (as far as I can tell):
-                        //
-                        //   @layer {
-                        //     @layer foo;
-                        //   }
-                        //
-                        if conditions.has_anonymous_layer() {
-                            // SAFETY: `i < entry.conditions.len() <= capacity`;
-                            // shrinking exposes no uninitialized range. The
-                            // truncated tail is arena-owned (`fork_conditions`)
-                            // and bulk-freed with the arena, so skipping `Drop` is sound.
-                            unsafe { entry.conditions.set_len((i as u32) as usize) };
-                            layers.replace(Vec::new());
-                            break;
-                        }
-                    }
+                    // A copy of a file under a bare `layer` is never redundant (see
+                    // `is_conditional_import_redundant`), so it never becomes this kind.
+                    debug_assert!(
+                        !entry
+                            .conditions
+                            .slice()
+                            .iter()
+                            .any(ImportConditions::has_anonymous_layer)
+                    );
 
                     // If there are no layer names for this file, trim all conditions
                     // without layers because we know they have no effect.
@@ -596,6 +695,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 _ => {}
             }
 
+            // An anonymous layer is no other entry's layer. So an entry in one makes
+            // no later entry redundant, and no earlier entry makes it redundant.
+            if has_anonymous_layer_import
+                && entry
+                    .conditions
+                    .slice()
+                    .iter()
+                    .any(ImportConditions::has_anonymous_layer)
+            {
+                // SAFETY: as for the other pushes of `entry` in this loop.
+                wip_order.push(unsafe { bitwise_copy(entry) });
+                continue;
+            }
+
             // Omit redundant "@layer" rules with the same set of layer names. Note
             // that this tests all import order entries (not just layer ones) because
             // sometimes non-layer ones can make following layer ones redundant.
@@ -612,7 +725,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     ) as *const [LayerName]
                 }
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
-                CssImportOrderKind::ExternalPath(_) => &[][..],
+                CssImportOrderKind::ExternalPath(_) | CssImportOrderKind::AnonymousLayer(_) => {
+                    &[][..]
+                }
             };
             // SAFETY: every match arm yields a pointer to a live slice (`css_asts`
             // arena, `entry.kind`'s `Layers`, or a static empty); the source-index
@@ -775,7 +890,75 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         CssOrderDebugStep::AfterMergingAdjacentLayerRules,
     );
 
-    Ok(order)
+    order
+}
+
+/// Puts the entries of every `CssImportOrderKind::AnonymousLayer` in its place, and
+/// records the run that they take as a `CssAnonymousLayer`.
+fn flatten_anonymous_layers(order: Vec<CssImportOrder>) -> CssOrder {
+    const ROOT: usize = usize::MAX;
+    let mut entries: Vec<CssImportOrder> = Vec::init_capacity(order.len());
+    let mut layers: Vec<CssAnonymousLayer> = Vec::new();
+    // An explicit stack: a chain of bare `layer` imports can be as deep as the import graph.
+    let mut stack: Vec<(std::vec::IntoIter<CssImportOrder>, usize)> = vec![(order.into_iter(), ROOT)];
+    while let Some((rest, layer)) = stack.last_mut() {
+        let Some(mut entry) = rest.next() else {
+            if *layer != ROOT {
+                layers.mut_(*layer).last = (entries.len() - 1) as u32;
+            }
+            stack.pop();
+            continue;
+        };
+        if !matches!(entry.kind, CssImportOrderKind::AnonymousLayer(_)) {
+            entries.push(entry);
+            continue;
+        }
+        let kind = core::mem::replace(
+            &mut entry.kind,
+            CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+        );
+        let CssImportOrderKind::AnonymousLayer(members) = kind else {
+            unreachable!()
+        };
+        layers.push(CssAnonymousLayer {
+            conditions: core::mem::take(&mut entry.conditions),
+            first: entries.len() as u32,
+            last: 0,
+            open: Box::default(),
+            blocks: 0,
+        });
+        stack.push((members.into_iter(), layers.len() - 1));
+    }
+    CssOrder {
+        entries,
+        anonymous_layers: Some(Box::new(CssAnonymousLayers {
+            layers: layers.into_boxed_slice(),
+            depths: Box::default(),
+        })),
+    }
+}
+
+/// Puts `chain` ahead of the conditions of `entry`: the entry is under an import with
+/// the conditions `chain`.
+fn put_inside(entry: &mut CssImportOrder, chain: &Vec<ImportConditions>, arena: &Arena) {
+    let conditions = if entry.conditions.is_empty() {
+        // SAFETY: an arena-backed `Vec` header that `CssImportOrder` never drops (see
+        // the note at `bitwise_copy`).
+        unsafe { bitwise_copy(chain) }
+    } else {
+        let len = chain.len() + entry.conditions.len();
+        let slab = arena.alloc_uninit_slice::<ImportConditions>(len);
+        let both = chain.slice_const().iter().chain(entry.conditions.slice_const());
+        for (dst, src) in slab.iter_mut().zip(both) {
+            // SAFETY: never dropped (see the note at `bitwise_copy`).
+            dst.write(unsafe { bitwise_copy(src) });
+        }
+        // SAFETY: all `len` elements of the slab are initialized. The `Vec` is never
+        // dropped and never grows, as for `fork_conditions`.
+        unsafe { Vec::from_raw_parts(slab.as_mut_ptr().cast::<ImportConditions>(), len, len) }
+    };
+    // The old header can point at an arena slab, so it must not be dropped.
+    let _ = core::mem::ManuallyDrop::new(core::mem::replace(&mut entry.conditions, conditions));
 }
 
 /// Error for an `@import` (or cross-file `composes`) chain that's too deep for
@@ -947,6 +1130,15 @@ fn is_conditional_import_redundant(
             }
         }
 
+        return false;
+    }
+
+    // The earlier copy is in an anonymous layer that the later copy is not in. Each
+    // anonymous layer is a layer of its own, so the later copy cannot stand for it.
+    if earlier.slice()[later.len()..]
+        .iter()
+        .any(ImportConditions::has_anonymous_layer)
+    {
         return false;
     }
 

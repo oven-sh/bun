@@ -23,9 +23,10 @@ impl Layer {
         }
     }
 
+    /// Whether both are the same cascade layer.
     pub fn eql(&self, other: &Self) -> bool {
         match (&self.v, &other.v) {
-            (None, None) => true,
+            // Each anonymous layer is a layer of its own, so no two of them are the same layer.
             (None, _) | (_, None) => false,
             (Some(a), Some(b)) => a.eql(b),
         }
@@ -79,6 +80,64 @@ impl ImportConditions {
             self.media.to_css(dest)?;
         }
         Ok(())
+    }
+
+    /// Prints the start of the blocks that a chain of `@import` conditions puts around the
+    /// rules of the imported style sheet, up to the last `{`. The first element is the
+    /// outermost import. Each one opens `@media`, then `@supports`, then `@layer`. Returns
+    /// the number of blocks: the caller prints one `}` for each after the rules.
+    pub fn print_open_blocks<'a>(
+        chain: &'a [Self],
+        arena: &'a Arena,
+        dest: &'a mut dyn bun_io::Write,
+        options: &css::PrinterOptions<'a>,
+        symbols: &'a bun_ast::symbol::Map,
+    ) -> css::css_parser::PrintResult<u32> {
+        let mut printer = Printer::new(
+            arena,
+            bun_alloc::ArenaVec::new_in(arena),
+            dest,
+            options,
+            None,
+            None,
+            symbols,
+        );
+        match Self::open_blocks(chain, &mut printer) {
+            Ok(blocks) => Ok(blocks),
+            Err(_) => {
+                debug_assert!(printer.error_kind.is_some());
+                Err(printer.error_kind.unwrap())
+            }
+        }
+    }
+
+    fn open_blocks(chain: &[Self], dest: &mut Printer) -> Result<u32, PrintErr> {
+        let mut blocks: u32 = 0;
+        for conditions in chain {
+            if !conditions.media.media_queries.is_empty() {
+                if blocks > 0 {
+                    dest.newline()?;
+                }
+                if super::media::open_block(&conditions.media, dest)? {
+                    blocks += 1;
+                }
+            }
+            if let Some(supports) = &conditions.supports {
+                if blocks > 0 {
+                    dest.newline()?;
+                }
+                super::supports::open_block(supports, dest)?;
+                blocks += 1;
+            }
+            if let Some(layer) = &conditions.layer {
+                if blocks > 0 {
+                    dest.newline()?;
+                }
+                super::layer::open_block(layer.v.as_ref(), dest)?;
+                blocks += 1;
+            }
+        }
+        Ok(blocks)
     }
 
     pub fn layers_eql(lhs: &Self, rhs: &Self) -> bool {

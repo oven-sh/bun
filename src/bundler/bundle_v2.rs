@@ -6234,6 +6234,10 @@ pub mod bv2_impl {
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
             }
             for (entry_point, order) in css_orders {
+                let crate::linker_context::find_imported_files_in_css_order::CssOrder {
+                    entries: order,
+                    anonymous_layers,
+                } = order;
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::non_entry_point(
@@ -6246,6 +6250,7 @@ pub mod bv2_impl {
                             .map(|_| bun_css::BundlerStyleSheet::empty())
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
+                        anonymous_layers,
                     }),
                     output_source_map: SourceMap::SourceMapPieces::init(),
                     ..Chunk::default()

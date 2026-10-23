@@ -3,7 +3,7 @@ use bun_collections::MultiArrayList;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
-use crate::chunk::IntermediateOutput;
+use crate::chunk::{Content, CssAnonymousLayer, IntermediateOutput};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
@@ -53,17 +53,55 @@ pub(crate) fn post_process_css_chunk(
         MultiArrayList::default();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
+    // The blocks of bare `layer` imports. Each goes around several results: it opens
+    // ahead of its first entry and closes after its last one.
+    let layers: &[CssAnonymousLayer] = match &chunk.content {
+        Content::Css(css) => css.anonymous_layers.as_deref().map(|l| &*l.layers),
+        _ => None,
+    }
+    .unwrap_or_default();
+    let mut next_layer: usize = 0;
+    let mut open_layers: Vec<usize> = Vec::new();
+    let mut depth: u32 = 0;
+    let comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
+    // The entries print their lines at the depth of the blocks around them when their
+    // printer does not minify. The blocks then take lines of their own.
+    let indent_lines = !layers.is_empty()
+        && !(c.options.minify_whitespace
+            || c.options.minify_syntax
+            || c.options.minify_identifiers);
+
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
-    for compile_result in compile_results.iter() {
+    for (i, compile_result) in compile_results.iter().enumerate() {
         let source_index = compile_result.source_index();
 
-        if c.options.mode == LinkerOptionsMode::Bundle
-            && !c.options.minify_whitespace
-            && Index::init(source_index).is_valid()
-        {
+        while let Some(layer) = layers.get(next_layer).filter(|l| l.first as usize == i) {
+            if comments && newline_before_comment {
+                j.push_static(b"\n");
+                line_offset.advance(b"\n");
+                newline_before_comment = false;
+            }
+            if indent_lines {
+                push_indent(&mut j, &mut line_offset, depth);
+            }
+            j.push_static(&layer.open);
+            line_offset.advance(&layer.open);
+            if indent_lines {
+                j.push_static(b"\n");
+                line_offset.advance(b"\n");
+            }
+            depth += layer.blocks;
+            open_layers.push(next_layer);
+            next_layer += 1;
+        }
+
+        if comments && Index::init(source_index).is_valid() {
             if newline_before_comment {
                 j.push_static(b"\n");
                 line_offset.advance(b"\n");
+            }
+            if indent_lines {
+                push_indent(&mut j, &mut line_offset, depth);
             }
 
             let pretty: &[u8] = sources[source_index as usize].path.pretty;
@@ -94,6 +132,9 @@ pub(crate) fn post_process_css_chunk(
 
         if !compile_result.code().is_empty() {
             newline_before_comment = true;
+            if indent_lines {
+                push_indent(&mut j, &mut line_offset, depth);
+            }
         }
 
         // Save the offset to the start of the stored JavaScript
@@ -124,6 +165,26 @@ pub(crate) fn post_process_css_chunk(
         } else {
             line_offset.advance(compile_result.code());
         }
+
+        while let Some(layer) = open_layers
+            .last()
+            .map(|&open| &layers[open])
+            .filter(|l| l.last as usize == i)
+        {
+            for _ in 0..layer.blocks {
+                depth -= 1;
+                if indent_lines {
+                    push_indent(&mut j, &mut line_offset, depth);
+                    j.push_static(b"}\n");
+                    line_offset.advance(b"}\n");
+                } else {
+                    j.push_static(b"}");
+                    line_offset.advance(b"}");
+                }
+            }
+            open_layers.pop();
+            newline_before_comment = true;
+        }
     }
 
     // Make sure the file ends with a newline
@@ -132,7 +193,8 @@ pub(crate) fn post_process_css_chunk(
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
-    // (filled in place before post-processing, never reassigned afterwards), graph
+    // (filled in place before post-processing, never reassigned afterwards), the
+    // `anonymous_layers` of `chunk.content` (the same), graph
     // source paths (`Path<'static>`), or `'static` literals; `watcher.input` is
     // `chunk.unique_key` (`&'static`). All of these outlive the joiner stored in
     // `chunk.intermediate_output`, which is only read while the chunk and the linker
@@ -162,4 +224,16 @@ pub(crate) fn post_process_css_chunk(
     }
 
     Ok(())
+}
+
+/// Two spaces for each open block, as the CSS printer indents.
+fn push_indent(j: &mut StringJoiner<'_>, line_offset: &mut LineColumnOffsetOptional, depth: u32) {
+    const SPACES: &[u8] = &[b' '; 64];
+    let mut left = depth as usize * 2;
+    while left > 0 {
+        let indent = &SPACES[..left.min(SPACES.len())];
+        j.push_static(indent);
+        line_offset.advance(indent);
+        left -= indent.len();
+    }
 }

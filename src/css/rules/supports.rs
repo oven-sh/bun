@@ -419,13 +419,21 @@ impl<R> SupportsRule<R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str(b"@supports ")?;
-        self.condition.to_css(dest)?;
-        dest.block(|d| {
-            d.newline()?;
-            self.rules.to_css(d)
-        })
+        open_block(&self.condition, dest)?;
+        dest.newline()?;
+        self.rules.to_css(dest)?;
+        dest.block_end()
     }
+}
+
+/// Prints `@supports <condition> {`.
+pub(crate) fn open_block(
+    condition: &SupportsCondition,
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    dest.write_str(b"@supports ")?;
+    condition.to_css(dest)?;
+    dest.block_start()
 }
 
 impl<R> SupportsRule<R> {

@@ -82,6 +82,11 @@ fn generate_compile_result_for_css_chunk_impl(
         .imports_in_chunk_in_order
         .at(imports_in_chunk_index as usize);
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
+    // The blocks of bare `layer` imports that `post_process_css_chunk` prints around this entry.
+    let depth = css_content
+        .anonymous_layers
+        .as_ref()
+        .map_or(0, |layers| layers.depths[imports_in_chunk_index as usize]);
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
     // SAFETY: `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
     // `c.graph.symbols` is `bun_ast::symbol::Map`. Both are
@@ -109,6 +114,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
                 targets: Targets::for_bundler_target(c.options.target),
+                depth,
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -189,6 +195,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 minify: c.options.minify_whitespace
                     || c.options.minify_syntax
                     || c.options.minify_identifiers,
+                depth,
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -228,6 +235,9 @@ fn generate_compile_result_for_css_chunk_impl(
                 source_index: idx.get(),
                 source_map: None,
             }
+        }
+        CssImportOrderKind::AnonymousLayer(_) => {
+            unreachable!("findImportedFilesInCSSOrder returns a flat order")
         }
     }
 }

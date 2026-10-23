@@ -33,6 +33,9 @@ pub struct PrinterOptions<'a> {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
+    /// The number of open blocks that the caller prints around the style sheet.
+    /// The rules are indented by it, and they are nested rules for `composes`.
+    pub depth: u32,
 }
 
 impl<'a> PrinterOptions<'a> {
@@ -50,6 +53,7 @@ impl<'a> PrinterOptions<'a> {
             },
             analyze_dependencies: None,
             pseudo_classes: None,
+            depth: 0,
         }
     }
 }
@@ -301,7 +305,7 @@ impl<'a> Printer<'a> {
                 column: 1,
             },
             symbols,
-            indent_amt: 0,
+            indent_amt: options.depth.saturating_mul(2),
             line: 0,
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
@@ -742,10 +746,21 @@ impl<'a> Printer<'a> {
         &mut self,
         f: impl FnOnce(&mut Self) -> PrintResult<()>,
     ) -> PrintResult<()> {
+        self.block_start()?;
+        f(self)?;
+        self.block_end()
+    }
+
+    /// The first half of [`block`](Self::block): optional whitespace, `{`, indent.
+    pub(crate) fn block_start(&mut self) -> PrintResult<()> {
         self.whitespace()?;
         self.write_char(b'{')?;
         self.indent();
-        f(self)?;
+        Ok(())
+    }
+
+    /// The second half of [`block`](Self::block): dedent, newline, `}`.
+    pub(crate) fn block_end(&mut self) -> PrintResult<()> {
         self.dedent();
         self.newline()?;
         self.write_char(b'}')

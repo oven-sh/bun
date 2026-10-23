@@ -134,17 +134,21 @@ impl<R> LayerBlockRule<R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str("@layer")?;
-        if let Some(name) = &self.name {
-            dest.write_char(b' ')?;
-            name.to_css(dest)?;
-        }
-
-        dest.block(|d| {
-            d.newline()?;
-            self.rules.to_css(d)
-        })
+        open_block(self.name.as_ref(), dest)?;
+        dest.newline()?;
+        self.rules.to_css(dest)?;
+        dest.block_end()
     }
+}
+
+/// Prints `@layer <name> {`, or `@layer {` for an anonymous layer.
+pub(crate) fn open_block(name: Option<&LayerName>, dest: &mut Printer) -> Result<(), PrintErr> {
+    dest.write_str("@layer")?;
+    if let Some(name) = name {
+        dest.write_char(b' ')?;
+        name.to_css(dest)?;
+    }
+    dest.block_start()
 }
 
 /// A [@layer statement](https://drafts.csswg.org/css-cascade-5/#layer-empty) rule.

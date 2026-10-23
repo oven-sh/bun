@@ -17,7 +17,7 @@ use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_order;
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::{
-    CssImportChainTooDeep, find_imported_files_in_css_order,
+    CssImportChainTooDeep, CssOrder, find_imported_files_in_css_order,
 };
 use super::merge_small_chunks::merge_small_chunks;
 
@@ -38,14 +38,17 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 fn css_order_or_log(
     this_ptr: *mut LinkerContext,
     parse_graph: &crate::Graph::Graph,
-    order: Result<Vec<chunk::CssImportOrder>, CssImportChainTooDeep>,
-) -> Vec<chunk::CssImportOrder> {
+    order: Result<CssOrder, CssImportChainTooDeep>,
+) -> CssOrder {
     order.unwrap_or_else(|too_deep| {
         // SAFETY: see the `this_ptr` note in `compute_chunks`. The log is
         // allocation-disjoint from the linker (`LinkerContext::log_disjoint`).
         let log = unsafe { &*this_ptr }.log_disjoint();
         too_deep.add_to_log(parse_graph.input_files.items_source(), log);
-        Vec::new()
+        CssOrder {
+            entries: Vec::new(),
+            anonymous_layers: None,
+        }
     })
 }
 
@@ -159,7 +162,10 @@ pub(crate) fn compute_chunks(
         if css_asts[source_index as usize].is_some() {
             // SAFETY: see `this_ptr` note above — the helper only reads from
             // `this.graph` columns disjoint from the slices we hold here.
-            let order = css_order_or_log(
+            let CssOrder {
+                entries: order,
+                anonymous_layers,
+            } = css_order_or_log(
                 this_ptr,
                 parse_graph,
                 find_imported_files_in_css_order(
@@ -193,6 +199,7 @@ pub(crate) fn compute_chunks(
                             .map(|_| bun_css::BundlerStyleSheet::empty())
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
+                        anonymous_layers,
                     }),
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
@@ -237,7 +244,10 @@ pub(crate) fn compute_chunks(
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
                 // SAFETY: see `this_ptr` note above.
-                let order = css_order_or_log(
+                let CssOrder {
+                    entries: order,
+                    anonymous_layers,
+                } = css_order_or_log(
                     this_ptr,
                     parse_graph,
                     find_imported_files_in_css_order(
@@ -289,6 +299,7 @@ pub(crate) fn compute_chunks(
                                 .map(|_| bun_css::BundlerStyleSheet::empty())
                                 .collect::<Vec<_>>()
                                 .into_boxed_slice(),
+                            anonymous_layers,
                         }),
                         files_with_parts_in_chunk: css_files_with_parts_in_chunk,
                         output_source_map: SourceMapPieces::init(),

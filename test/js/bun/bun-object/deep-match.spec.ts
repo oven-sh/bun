@@ -16,6 +16,13 @@ if (typeof Bun === "undefined")
       },
     }),
   ];
+
+function setCookies(...values: string[]) {
+  const headers = new Headers({ "content-type": "text/plain" });
+  for (const value of values) headers.append("set-cookie", value);
+  return headers;
+}
+
 describe("Bun.deepMatch", () => {
   it.each<TestCase>([
     // force line break
@@ -77,6 +84,16 @@ describe("Bun.deepMatch", () => {
       new Set(["a", "b", "c"]),
       new Set(["a", "b", "c"]),
     ],
+
+    // Headers and URLSearchParams are compared by their entries
+    [new Headers({ a: "1", b: "2" }), new Headers({ B: "2", A: "1" })],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ a: "1" }), status: 200 }],
+    [new URLSearchParams("a=1&b=2"), new URLSearchParams("a=1&b=2")],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("a=1"), path: "/" }],
+    [new URLSearchParams("tag=a&tag=b"), new URLSearchParams("tag=a&tag=b")],
+    [{ query: new URLSearchParams("tag=a&tag=b") }, { query: new URLSearchParams("tag=a&tag=b"), path: "/" }],
+    [setCookies("a=1", "b=2"), setCookies("a=1", "b=2")],
+    [{ headers: setCookies("a=1", "b=2") }, { headers: setCookies("a=1", "b=2"), status: 200 }],
   ])("Bun.deepMatch(%p, %p) === true", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(true);
   });
@@ -133,6 +150,20 @@ describe("Bun.deepMatch", () => {
     //   new Set(["a", "b", "c"]),
     //   new Set(["a", "b", "d"]),
     // ],
+
+    // Headers and URLSearchParams: each entry must match, and a part of the entries does not match
+    [new Headers({ a: "1" }), new Headers({ a: "2" })],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ b: "1" }), status: 200 }],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ a: "1", b: "2" }) }],
+    [new URLSearchParams("a=1"), new URLSearchParams("a=2")],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("b=1"), path: "/" }],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("a=1&b=2") }],
+    [new URLSearchParams("tag=a&tag=b"), new URLSearchParams("tag=a&tag=c")],
+    [new URLSearchParams("tag=a&tag=b"), new URLSearchParams("tag=b&tag=a")],
+    [new URLSearchParams("a=1&a=1&b=2"), new URLSearchParams("a=1&b=2&b=2")],
+    [setCookies("a=1", "b=2"), setCookies("a=1", "b=3")],
+    [setCookies("a=1", "b=2"), setCookies("b=2", "a=1")],
+    [setCookies("a=1", "a=1", "b=2"), setCookies("a=1", "b=2", "b=2")],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
   });

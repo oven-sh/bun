@@ -3717,6 +3717,159 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
     }
+
+    // Headers and URLSearchParams have no own properties. A pattern of one of these
+    // types is compared by all of its entries, as toEqual compares it.
+    test("Headers in the pattern are compared by their entries", () => {
+      expect({ h: new Headers({ a: "1" }) }).toMatchObject({ h: new Headers({ a: "1" }) });
+      expect({ h: new Headers({ a: "1", b: "2" }) }).toMatchObject({ h: new Headers({ B: "2", A: "1" }) });
+      expect({ h: new Headers({ a: "1" }) }).toMatchObject({ h: expect.any(Headers) });
+      expect({ h: new Headers({ a: "1" }), other: 1 }).toMatchObject({ h: new Headers({ a: "1" }) });
+
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ a: "2" }) });
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ b: "1" }) });
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ a: "1", b: "2" }) });
+      expect({ h: new Headers({ a: "1", b: "2" }) }).not.toMatchObject({ h: new Headers({ a: "1" }) });
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers() });
+      expect({ h: new Headers() }).not.toMatchObject({ h: new Headers({ a: "1" }) });
+
+      expect({ res: { headers: new Headers({ a: "1" }) } }).toMatchObject({
+        res: { headers: new Headers({ a: "1" }) },
+      });
+      expect({ res: { headers: new Headers({ a: "1" }) } }).not.toMatchObject({
+        res: { headers: new Headers({ a: "2" }) },
+      });
+
+      expect([new Headers({ a: "1" })]).toMatchObject([new Headers({ a: "1" })]);
+      expect([new Headers({ a: "1" })]).not.toMatchObject([new Headers({ a: "2" })]);
+
+      expect(new Headers({ a: "1" })).toMatchObject(new Headers({ a: "1" }));
+      expect(new Headers({ a: "1" })).not.toMatchObject(new Headers({ a: "2" }));
+    });
+
+    test("Headers with several set-cookie values match the same values", () => {
+      /** @param {...string} values */
+      const cookies = (...values) => {
+        const headers = new Headers({ "content-type": "text/plain" });
+        for (const value of values) headers.append("set-cookie", value);
+        return headers;
+      };
+
+      expect(cookies("a=1", "b=2")).toMatchObject(cookies("a=1", "b=2"));
+      expect({ status: 200, headers: cookies("a=1", "b=2") }).toMatchObject({ headers: cookies("a=1", "b=2") });
+
+      const fn = jest.fn();
+      fn({ status: 200, headers: cookies("a=1", "b=2") });
+      expect(fn.mock.calls).toMatchObject([[{ headers: cookies("a=1", "b=2") }]]);
+
+      expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("a=1", "b=3"));
+      expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("b=2", "a=1"));
+      expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("a=1"));
+      expect(cookies("a=1", "b=2")).not.toMatchObject(cookies("a=1, b=2"));
+      expect(cookies("a=1", "a=1", "b=2")).not.toMatchObject(cookies("a=1", "b=2", "b=2"));
+      expect(fn.mock.calls).not.toMatchObject([[{ headers: cookies("a=1", "b=3") }]]);
+    });
+
+    test("URLSearchParams in the pattern are compared by their entries", () => {
+      expect({ p: new URLSearchParams("a=1") }).toMatchObject({ p: new URLSearchParams("a=1") });
+      expect({ p: new URLSearchParams("a=1&b=2") }).toMatchObject({ p: new URLSearchParams("a=1&b=2") });
+      expect({ p: new URLSearchParams("a=1") }).toMatchObject({ p: expect.any(URLSearchParams) });
+      expect({ p: new URLSearchParams("a=1"), other: 1 }).toMatchObject({ p: new URLSearchParams("a=1") });
+
+      expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=2") });
+      expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("b=1") });
+      expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&b=2") });
+      expect({ p: new URLSearchParams("a=1&b=2") }).not.toMatchObject({ p: new URLSearchParams("a=1") });
+
+      expect({ req: { query: new URLSearchParams("a=1") } }).toMatchObject({
+        req: { query: new URLSearchParams("a=1") },
+      });
+      expect({ req: { query: new URLSearchParams("a=1") } }).not.toMatchObject({
+        req: { query: new URLSearchParams("a=2") },
+      });
+
+      expect([new URLSearchParams("a=1")]).toMatchObject([new URLSearchParams("a=1")]);
+      expect([new URLSearchParams("a=1")]).not.toMatchObject([new URLSearchParams("a=2")]);
+
+      expect(new URLSearchParams("a=1")).toMatchObject(new URLSearchParams("a=1"));
+      expect(new URLSearchParams("a=1")).not.toMatchObject(new URLSearchParams("a=2"));
+    });
+
+    test("URLSearchParams with a repeated name match the same entries", () => {
+      expect(new URLSearchParams("tag=a&tag=b")).toMatchObject(new URLSearchParams("tag=a&tag=b"));
+      expect({ path: "/", query: new URLSearchParams("tag=a&tag=b") }).toMatchObject({
+        query: new URLSearchParams("tag=a&tag=b"),
+      });
+      expect(new URL("https://example.com/?tag=a&tag=b").searchParams).toMatchObject(
+        new URLSearchParams("tag=a&tag=b"),
+      );
+
+      expect(new URLSearchParams("tag=a&tag=b")).not.toMatchObject(new URLSearchParams("tag=a&tag=c"));
+      expect(new URLSearchParams("tag=a&tag=b")).not.toMatchObject(new URLSearchParams("tag=b&tag=a"));
+      expect(new URLSearchParams("a=1&a=1&b=2")).not.toMatchObject(new URLSearchParams("a=1&b=2&b=2"));
+      expect(new URLSearchParams("a=1&b=2&b=2")).not.toMatchObject(new URLSearchParams("a=1&a=1&b=2"));
+    });
+
+    test("the sample of expect.objectContaining stays a subset of properties", () => {
+      expect(new Headers({ a: "1" })).toEqual(expect.objectContaining(new Headers({ a: "2" })));
+      expect(new URLSearchParams("a=1")).toEqual(expect.objectContaining(new URLSearchParams("a=2")));
+    });
+
+    if (isBun) {
+      // Jest compares the entries by position. Bun compares the values of each name.
+      test("URLSearchParams with distinct names in another order match", () => {
+        expect(new URLSearchParams("a=1&b=2")).toMatchObject(new URLSearchParams("b=2&a=1"));
+        expect({ query: new URLSearchParams("a=1&b=2&a=3") }).toMatchObject({
+          query: new URLSearchParams("b=2&a=1&a=3"),
+        });
+        expect(new URLSearchParams("a=1&b=2&a=3")).not.toMatchObject(new URLSearchParams("b=2&a=3&a=1"));
+      });
+
+      test("Bun.deepMatch compares Headers and URLSearchParams by their entries", () => {
+        expect(Bun.deepMatch({ h: new Headers({ a: "1" }) }, { h: new Headers({ a: "1" }) })).toBe(true);
+        expect(Bun.deepMatch({ h: new Headers({ a: "1" }) }, { h: new Headers({ a: "2" }) })).toBe(false);
+        expect(Bun.deepMatch({ h: new Headers({ a: "1" }) }, { h: new Headers({ a: "1", b: "2" }) })).toBe(false);
+        expect(Bun.deepMatch(new Headers({ a: "1" }), new Headers({ a: "1" }))).toBe(true);
+        expect(Bun.deepMatch(new Headers({ a: "1" }), new Headers({ a: "2" }))).toBe(false);
+
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1") }, { p: new URLSearchParams("a=1") })).toBe(true);
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1") }, { p: new URLSearchParams("a=2") })).toBe(false);
+        // The two have the same size, and each entry of one side is found on the other side.
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1&b=1") }, { p: new URLSearchParams("a=1&a=1") })).toBe(false);
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1&a=1") }, { p: new URLSearchParams("a=1&b=1") })).toBe(false);
+        expect(Bun.deepMatch(new URLSearchParams("a=1"), new URLSearchParams("a=1"))).toBe(true);
+        expect(Bun.deepMatch(new URLSearchParams("a=1"), new URLSearchParams("a=2"))).toBe(false);
+      });
+
+      test("a Response or a URL in the pattern is compared by the entries it holds", () => {
+        const response = (/** @type {string} */ cookie) => {
+          const headers = new Headers({ "content-type": "text/plain" });
+          headers.append("set-cookie", "a=1");
+          headers.append("set-cookie", cookie);
+          return new Response(null, { status: 201, headers });
+        };
+        expect(response("b=2")).toMatchObject(response("b=2"));
+        expect(response("b=2")).not.toMatchObject(response("b=3"));
+
+        expect(new URL("https://example.com/?tag=a&tag=b")).toMatchObject(new URL("https://example.com/?tag=a&tag=b"));
+        expect(new URL("https://example.com/?tag=a&tag=b")).not.toMatchObject(
+          new URL("https://example.com/?tag=a&tag=c"),
+        );
+      });
+
+      test("snapshot property matchers compare Headers and URLSearchParams by their entries", () => {
+        expect(() =>
+          expect({ h: new Headers({ a: "1" }) }).toMatchInlineSnapshot({ h: new Headers({ a: "2" }) }, `unreachable`),
+        ).toThrow("to match properties from received object");
+        expect(() =>
+          expect({ p: new URLSearchParams("a=1") }).toMatchInlineSnapshot(
+            { p: new URLSearchParams("a=2") },
+            `unreachable`,
+          ),
+        ).toThrow("to match properties from received object");
+      });
+    }
+
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

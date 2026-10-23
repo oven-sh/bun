@@ -2212,6 +2212,14 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
+    // The property walk below cannot see the entries of Headers and URLSearchParams.
+    // The sample of expect.objectContaining stays a subset of properties, as in Jest.
+    uint8_t subsetType = subsetObj->type();
+    if ((subsetType == JSAsJSONType || subsetType == JSDOMWrapperType) && obj->type() == subsetType && !isMatchingObjectContaining) {
+        if (wrapperEntriesDiffer(subsetObj, obj))
+            return false;
+    }
+
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);

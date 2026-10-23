@@ -56,11 +56,10 @@ pub(crate) use add_error_or_warning_pretty;
 // A single trait with associated consts gating the
 // optional hooks (default-unreachable bodies), plus associated-const tags for
 // the `Ctx` identity checks. The trait branches on three `Ctx` identities
-// (`PackageInstaller`, `Store.Installer`, neither), but there are six impls
-// across four `Ctx` shapes: `PackageInstaller` (`HoistedRunTasksCallbacks`),
-// `Store::Installer` (`StoreRunTasksCallbacks`), unit
-// (`VoidRunTasksCallbacks`, `ManifestsOnlyCallbacks`, `InstallWaitCallbacks`),
-// and `Queue` (`QueueRunTasksCallbacks` in `src/jsc/AsyncModule.rs`).
+// (`PackageInstaller`, `Store.Installer`, neither), but there are five impls
+// across three `Ctx` shapes: `PackageInstaller` (`HoistedRunTasksCallbacks`),
+// `Store::Installer` (`StoreRunTasksCallbacks`), and unit
+// (`VoidRunTasksCallbacks`, `ManifestsOnlyCallbacks`, `InstallWaitCallbacks`).
 pub trait RunTasksCallbacks {
     /// Mirrors `Ctx` (the `extract_ctx` value type).
     type Ctx;

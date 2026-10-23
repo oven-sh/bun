@@ -542,6 +542,10 @@ impl FileResponseStream {
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();
+        // Nobody is left to read for. `close()` cancels the uv read in flight, or waits for it, and then calls `on_reader_done`.
+        // POSIX needs no call: `finish()` dropped the read ref and `Drop` releases the poll.
+        #[cfg(windows)]
+        self.reader_mut().close();
     }
 
     fn fail_with(&self, err: sys::Error) {
@@ -574,7 +578,7 @@ impl FileResponseStream {
             self.state.get().contains(State::FINISHED)
         );
         // If the request aborts before the reader gets its first byte, no reader callback will release this ref.
-        // On Windows, a pending uv read needs the stream alive and releases the ref itself.
+        // On Windows, a pending uv read needs the stream alive: `on_aborted` closes the reader, and `on_reader_done` releases the ref after that read.
         #[cfg(unix)]
         drop(self.take_read_ref());
         if self.state.get().contains(State::FINISHED) {

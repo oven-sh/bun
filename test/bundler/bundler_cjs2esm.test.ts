@@ -2620,4 +2620,778 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+
+  // A counter that changes after it is read shows where a read happens. An
+  // export that nothing reads has a name that `dce: true` rejects.
+  const counterPackage = (name: string) => ({
+    [`/node_modules/${name}/index.js`]: /* js */ `
+      exports.count = 0;
+      exports.inc = function () { exports.count++; };
+      exports.removeThisExport = "REMOVE_${name}";
+    `,
+  });
+  // A top-level `const { a } = ns` over the namespace of a lifted CommonJS
+  // module reads each key once, where the declaration runs. The bundle takes
+  // one copy per key (`var count = $count`) and has no namespace object, so
+  // the exports that nothing reads are dropped.
+  itBundled("cjs2esm/NamespaceDestructuringTakesOneCopyPerKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "react-is";
+        import Default from "scheduler";
+        import { fromTypeScript, read } from "./typescript.ts";
+        const Required = require("react");
+
+        Star.inc();
+        const { count, inc } = Star;
+        inc();
+
+        Default.inc();
+        let { count: renamed, inc: incDefault } = Default;
+        incDefault();
+
+        Required.inc();
+        var { count: fromRequire } = Required;
+        Required.inc();
+
+        console.log(count, Star.count, renamed, Default.count, fromRequire, Required.count);
+        console.log(fromTypeScript, read());
+      `,
+      "/typescript.ts": /* ts */ `
+        import Equals = require("react-dom");
+        Equals.inc();
+        export const { count: fromTypeScript } = Equals;
+        Equals.inc();
+        export const read = () => Equals.count;
+      `,
+      ...counterPackage("react-is"),
+      ...counterPackage("scheduler"),
+      ...counterPackage("react"),
+      ...counterPackage("react-dom"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("exports_");
+      expect(code).toContain("var count = $count");
+    },
+    run: {
+      stdout: "1 2 1 2 1 2\n1 2",
+    },
+  });
+  // The same declaration over the `require()` call itself, which the parser
+  // made an import. Each declaration takes its copies where it runs.
+  itBundled("cjs2esm/NamespaceDestructuringOfARequireCall", {
+    files: {
+      "/entry.js": /* js */ `
+        const { count, inc } = require("react");
+        inc();
+        const { count: later } = require("react");
+        console.log(count, later);
+      `,
+      ...counterPackage("react"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_react");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // The call form as `let`, `var` and `export const`, in a file that keeps
+  // its CommonJS wrapper, and in a file of react, where every `require()` is
+  // an import.
+  itBundled("cjs2esm/NamespaceDestructuringOfARequireCallInOtherPlaces", {
+    files: {
+      "/entry.js": /* js */ `
+        import host from "./host.cjs";
+        import { exported } from "./exported.js";
+        console.log(JSON.stringify(host), exported);
+      `,
+      "/host.cjs": /* js */ `
+        let { count, inc } = require("react");
+        inc();
+        var { count: later, seen } = require("react");
+        module.exports = { count, later, seen };
+      `,
+      "/exported.js": `export const { count: exported } = require("scheduler");`,
+      "/node_modules/react/index.js": /* js */ `
+        const { countFlat, incFlat } = require("./lib/flat.js");
+        incFlat();
+        let { countFlat: second } = require("./lib/flat.js");
+        exports.seen = countFlat + "/" + second;
+        exports.count = 1;
+        exports.inc = function () { return ++exports.count; };
+        exports.removeThisExport = "REMOVE_react";
+      `,
+      "/node_modules/react/lib/flat.js": /* js */ `
+        exports.countFlat = 1;
+        exports.incFlat = function () { return ++exports.countFlat; };
+        exports.removeThisExport = "REMOVE_flat";
+      `,
+      ...counterPackage("scheduler"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("__commonJS(");
+      expect(code).not.toContain("exports_");
+    },
+    run: {
+      stdout: `{"count":1,"later":2,"seen":"1/2"} 0`,
+    },
+  });
+  // Another use of `require` in the file does not change that.
+  itBundled("cjs2esm/NamespaceDestructuringOfARequireCallNextToAnotherUseOfRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const { count, inc } = require("react");
+        inc();
+        console.log(count, typeof require);
+      `,
+      ...counterPackage("react"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_react");
+    },
+    run: {
+      stdout: "0 function",
+    },
+  });
+  // A CommonJS file is lifted also when it is not one of the packages with a
+  // `require()` that becomes an import.
+  itBundled("cjs2esm/NamespaceDestructuringOfALiftedFileOutsideThePackages", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "./unlisted.cjs";
+        const { count, inc } = Star;
+        inc();
+        console.log(count, Star.count);
+      `,
+      "/unlisted.cjs": counterPackage("unlisted")["/node_modules/unlisted/index.js"],
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // The same declaration in a module that other code imports, and exported.
+  itBundled("cjs2esm/NamespaceDestructuringExportedCopies", {
+    files: {
+      "/entry.js": /* js */ `
+        import { count, inc } from "./snapshot.js";
+        inc();
+        console.log(count);
+      `,
+      "/snapshot.js": /* js */ `
+        import * as Star from "react-is";
+        export const { count, inc } = Star;
+      `,
+      ...counterPackage("react-is"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("exports_");
+    },
+    run: {
+      stdout: "0",
+    },
+  });
+  // An importer that is wrapped in `__esm` declares the locals outside the
+  // wrapper and takes the copies when the wrapper runs.
+  itBundled("cjs2esm/NamespaceDestructuringInWrappedImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        const early = require("react-is");
+        early.inc();
+        const lib = require("./snapshot.mjs");
+        early.inc();
+        console.log(lib.count, lib.read());
+      `,
+      "/snapshot.mjs": /* js */ `
+        import * as Star from "react-is";
+        export const { count } = Star;
+        export function read() { return Star.count; }
+      `,
+      ...counterPackage("react-is"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("exports_react_is");
+      expect(code).toContain("__esm(");
+    },
+    run: {
+      stdout: "1 2",
+    },
+  });
+  // A package next to the declaration that reads the same namespace by
+  // property, as react-dom reads react, does not hold the namespace object.
+  itBundled("cjs2esm/NamespaceDestructuringNextToPropertyReads", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as React from "react";
+        import { render } from "react-dom";
+        const { count, inc } = React;
+        inc();
+        console.log(count, render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var React = require("react");
+        exports.render = function () { return React.count; };
+      `,
+      ...counterPackage("react"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("exports_");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // Only the keys that are static exports of the module can be copies. A
+  // declaration with any other key reads the namespace object, as before:
+  // an inherited key, a missing key, and a pattern that is not a list of
+  // plain keys. `default` and `__esModule` also read the object: the
+  // CommonJS interop rules decide those two. So does `__proto__`, which is
+  // no own key of the object. Each declaration has a module of its own here,
+  // so that no other one holds its namespace.
+  itBundled("cjs2esm/NamespaceDestructuringReadsTheObjectForOtherKeys", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Inherited from "./inherited.cjs";
+        import * as OwnDefault from "./own-default.cjs";
+        import * as Flagged from "./flagged.cjs";
+        import * as Missing from "./missing.cjs";
+        import * as Rest from "./rest.cjs";
+        import * as WithDefault from "./with-default.cjs";
+        import * as Computed from "./computed.cjs";
+        import * as Nested from "./nested.cjs";
+        import Proto from "./proto.cjs";
+        const { hasOwnProperty, count } = Inherited;
+        const { default: ownDefault, count: second } = OwnDefault;
+        const { __esModule, count: third } = Flagged;
+        const { missing } = Missing;
+        const { count: fourth, ...rest } = Rest;
+        const { missing: withDefault = "fallback" } = WithDefault;
+        const { ["count"]: computed } = Computed;
+        const { inc: { name } } = Nested;
+        const { __proto__: proto, count: fifth } = Proto;
+        console.log(typeof hasOwnProperty, count, ownDefault, second, __esModule, third);
+        console.log(missing, fourth, Object.keys(rest).join(), withDefault, computed, name);
+        console.log(proto === Object.prototype, fifth);
+      `,
+      ...Object.fromEntries(
+        ["inherited", "missing", "rest", "with-default", "computed", "nested"].map(name => [
+          `/${name}.cjs`,
+          `exports.count = 0; exports.inc = function inc() {};`,
+        ]),
+      ),
+      "/own-default.cjs": `exports.count = 0; exports.default = "own default";`,
+      "/flagged.cjs": `exports.__esModule = true; exports.count = 0;`,
+      "/proto.cjs": `exports.count = 0; exports.__proto__ = "text";`,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      for (const declaration of [
+        "{ hasOwnProperty, count } = exports_inherited;",
+        "{ default: ownDefault, count: second } = exports_own_default;",
+        "{ __esModule, count: third } = exports_flagged;",
+        "{ missing } = exports_missing;",
+        "{ count: fourth, ...rest } = exports_rest;",
+        '{ missing: withDefault = "fallback" } = exports_with_default;',
+        '{ ["count"]: computed } = exports_computed;',
+        "{ inc: { name } } = exports_nested;",
+        "{ __proto__: proto, count: fifth } = exports_proto;",
+      ]) {
+        expect(code).toContain(declaration);
+      }
+    },
+    run: {
+      stdout: "function 0 own default 0 true 0\nundefined 0 inc fallback 0 inc\ntrue 0",
+    },
+  });
+  // Code that holds the namespace object can change the object and not the
+  // export: `Object.defineProperty` here. The declaration in that file reads
+  // the object, as it does in Node.
+  itBundled("cjs2esm/NamespaceDestructuringReadsAnObjectThatOtherCodeHolds", {
+    files: {
+      "/entry.js": /* js */ `
+        const Held = require("react-is");
+        Object.defineProperty(Held, "count", { value: 42 });
+        const { count } = Held;
+        console.log(count, Held.removeThisExport);
+      `,
+      ...counterPackage("react-is"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("{ count } = exports_react_is");
+    },
+    run: {
+      stdout: "42 REMOVE_react-is",
+    },
+  });
+  // The rule looks at the file of the declaration only. With the same
+  // `Object.defineProperty` in another file, the declaration reads the
+  // export, as `Held.count` does on main. Node prints 42 for both. CommonJS
+  // output lifts nothing, and prints 42.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`cjs2esm/NamespaceDestructuringReadsTheExportWhenAnotherFileHoldsTheObject_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          require("./holder.js");
+          const Held = require("react-is");
+          const { count } = Held;
+          console.log(count, Held.count);
+        `,
+        "/holder.js": /* js */ `
+          const Other = require("react-is");
+          Object.defineProperty(Other, "count", { value: 42 });
+        `,
+        ...counterPackage("react-is"),
+      },
+      format,
+      run: {
+        stdout: format === "esm" ? "0 0" : "42 42",
+      },
+    });
+  }
+  // The holder can have another name than the local of the declaration: a
+  // second local of the package, a `require()` call in an expression, or
+  // `.default` of a lifted module, which is the object itself.
+  itBundled("cjs2esm/NamespaceDestructuringReadsAnObjectThatAnotherNameHolds", {
+    files: {
+      "/entry.js": /* js */ `
+        import Lib from "scheduler";
+        import * as Star from "scheduler";
+        import Same from "react-dom";
+        const Held = require("react-is");
+        const Other = require("react-is");
+        Object.defineProperty(Other, "count", { value: 42 });
+        const { count } = Held;
+        Object.defineProperty(require("react"), "count", { value: 43 });
+        const { count: second } = require("react");
+        Object.defineProperty(Star.default, "count", { value: 44 });
+        const { count: third } = Lib;
+        Object.defineProperty(Same.default, "count", { value: 45 });
+        const { count: fourth } = Same;
+        console.log(count, second, third, fourth);
+      `,
+      ...counterPackage("react-is"),
+      ...counterPackage("react"),
+      ...counterPackage("scheduler"),
+      ...counterPackage("react-dom"),
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ count } = exports_react_is;");
+      expect(code).toMatch(/\{ count: second \} = \(?exports_react\)?;/);
+      expect(code).toContain("{ count: third } = exports_scheduler;");
+      expect(code).toContain("{ count: fourth } = exports_react_dom;");
+    },
+    run: {
+      stdout: "42 43 44 45",
+    },
+  });
+  // `import()` of the package gives the object as `default`. With code
+  // splitting the package stays lifted, and the declaration reads the object.
+  itBundled("cjs2esm/NamespaceDestructuringReadsAnObjectThatAnImportCallHolds", {
+    files: {
+      "/entry.js": /* js */ `
+        import Legacy from "react-is";
+        Object.defineProperty((await import("react-is")).default, "count", { value: 42 });
+        const { count } = Legacy;
+        console.log(count);
+      `,
+      ...counterPackage("react-is"),
+    },
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("{ count } = exports_react_is;");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
+    },
+  });
+  // A property of the default import that is not a static export, and a call
+  // that needs the object as `this`, print as reads of the object.
+  itBundled("cjs2esm/NamespaceDestructuringNextToAPropertyThatReadsTheObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import Unbound from "scheduler";
+        import Method from "react-is";
+        const { count } = Unbound;
+        const { count: second } = Method;
+        console.log(count, Unbound.notExported, second, Method.withThis());
+      `,
+      ...counterPackage("scheduler"),
+      "/node_modules/react-is/index.js": /* js */ `
+        exports.count = 0;
+        exports.withThis = function () { return typeof this; };
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ count } = exports_scheduler;");
+      expect(code).toContain("{ count: second } = exports_react_is;");
+    },
+    run: {
+      stdout: "0 undefined 0 object",
+    },
+  });
+  // The rule looks at the file as written. A holder counts also when tree
+  // shaking removes the code that has it.
+  itBundled("cjs2esm/NamespaceDestructuringCountsAHolderInDeadCode", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "react-is";
+        function neverCalled() { return Object.keys(Star); }
+        const { count, inc } = Star;
+        inc();
+        console.log(count);
+      `,
+      ...counterPackage("react-is"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ count, inc } = exports_react_is;");
+    },
+    run: {
+      stdout: "0",
+    },
+  });
+  // A write through the default import of a lifted module assigns the lifted
+  // binding, and it holds the namespace object. The declaration reads the
+  // object.
+  itBundled("cjs2esm/NamespaceDestructuringAfterAWriteThroughTheNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import Written from "react-is";
+        Written.count = "PATCHED";
+        const { count } = Written;
+        console.log(count);
+      `,
+      ...counterPackage("react-is"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ count } = exports_react_is;");
+    },
+    run: {
+      stdout: "PATCHED",
+    },
+  });
+  // A module that keeps its CommonJS wrapper has no static exports to copy.
+  itBundled("cjs2esm/NamespaceDestructuringOfWrappedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Wrapped from "react-is";
+        const { count } = Wrapped;
+        console.log(count);
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        module.exports = { count: 7 };
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react-is/index.js"] },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/\{ count \} = \w+;/);
+    },
+    run: {
+      stdout: "7",
+    },
+  });
+  // A declaration below the top level of the module still reads the namespace
+  // object: the linker sees only top-level statements. A `var` namespace can
+  // be bound again by another declaration, so it is not trusted.
+  itBundled("cjs2esm/NamespaceDestructuringBelowModuleScopeOrOfAVar", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "react-is";
+        var Hoisted = require("scheduler");
+        function read() {
+          const { count, inc } = Star;
+          inc();
+          return count;
+        }
+        const { count: hoisted } = Hoisted;
+        Hoisted.inc();
+        console.log(read(), Star.count, hoisted, Hoisted.count);
+      `,
+      ...counterPackage("react-is"),
+      ...counterPackage("scheduler"),
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ count, inc } = exports_react_is;");
+      expect(code).toContain("{ count: hoisted } = exports_scheduler;");
+    },
+    run: {
+      stdout: "0 1 0 1",
+    },
+  });
+  // A local that is assigned again does not hold the namespace any more. The
+  // declaration reads what the local holds, also through an export of it:
+  // from another file, and from the file itself.
+  itBundled("cjs2esm/NamespaceDestructuringOfAReassignedLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Exported } from "./reassigned.js";
+        import { fromSelf } from "./self.js";
+        let Reassigned = require("react-is");
+        Reassigned = { count: 42 };
+        const { count } = Reassigned;
+        const { count: fromExport } = Exported;
+        console.log(count, fromExport, fromSelf);
+      `,
+      "/reassigned.js": /* js */ `
+        let Exported = require("scheduler");
+        Exported = { count: 43 };
+        export { Exported };
+      `,
+      "/self.js": /* js */ `
+        let Own = require("react");
+        export { Own };
+        import { Own as Again } from "./self.js";
+        Own = { count: 44 };
+        export const { count: fromSelf } = Again;
+      `,
+      ...counterPackage("react-is"),
+      ...counterPackage("scheduler"),
+      ...counterPackage("react"),
+    },
+    run: {
+      stdout: "42 43 44",
+    },
+  });
+  // A `require()` of an ES module, or of a package that is not on the list,
+  // gives an object and not a namespace of the bundle. CommonJS output does
+  // not lift a package at all. These declarations print as written.
+  itBundled("cjs2esm/NamespaceDestructuringOfOtherRequires", {
+    files: {
+      "/entry.js": /* js */ `
+        const Esm = require("./esm.js");
+        const Unlisted = require("unlisted");
+        const { count } = Esm;
+        const { count: second } = Unlisted;
+        Esm.inc();
+        Unlisted.inc();
+        console.log(count, Esm.count, second, Unlisted.count);
+      `,
+      "/esm.js": /* js */ `
+        export let count = 0;
+        export function inc() { count++; }
+      `,
+      ...counterPackage("unlisted"),
+    },
+    cjs2esm: { unhandled: ["/entry.js", "/node_modules/unlisted/index.js"] },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ count } = Esm;");
+      expect(code).toContain("{ count: second } = Unlisted;");
+    },
+    run: {
+      stdout: "0 1 0 1",
+    },
+  });
+  itBundled("cjs2esm/NamespaceDestructuringInCommonJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as React from "react";
+        const { count, inc } = React;
+        inc();
+        console.log(count, React.count);
+      `,
+      ...counterPackage("react"),
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("__commonJS(");
+      expect(code).toMatch(/\{ count(: \w+)?, inc \} = React;/);
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // A lifted file that reads `module.exports` as a value prints its namespace
+  // object there. Nothing records that use, so a declaration over the
+  // namespace keeps the object.
+  itBundled("cjs2esm/NamespaceDestructuringOfAModuleThatReadsModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "react-is";
+        const { parse, version } = Star;
+        console.log(parse("x"), version);
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        exports.parse = function (s) { return "parsed:" + s; };
+        exports.version = "1.0.0";
+        module.exports.default = module.exports;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ parse, version } = exports_react_is;");
+    },
+    run: {
+      stdout: "parsed:x 1.0.0",
+    },
+  });
+  // `module.exports.name = value` does not read the object, but the parser
+  // marks it like a read. The declaration stays as written for it too.
+  itBundled("cjs2esm/NamespaceDestructuringOfAModuleThatAssignsThroughModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "react-is";
+        const { count, inc } = Star;
+        inc();
+        console.log(count, Star.count);
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        module.exports.count = 0;
+        module.exports.inc = function () { module.exports.count++; };
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ count, inc } = exports_react_is;");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // index.js keeps its wrapper, and its `module.exports = Impl` makes the
+  // namespace object of impl.js the exports of index.js. A `require()` of
+  // index.js in the same file gives that object.
+  itBundled("cjs2esm/NamespaceDestructuringInAFileThatAssignsTheObjectToModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import Scheduler from "scheduler";
+        console.log(globalThis.seen, Object.keys(Scheduler).join());
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        const Impl = require("./impl.js");
+        module.exports = Impl;
+        let Self;
+        try { Self = require("./index.js"); } catch {}
+        Object.defineProperty(Self, "count", { value: 42 });
+        const { count } = Impl;
+        globalThis.seen = count;
+      `,
+      "/node_modules/scheduler/impl.js": `exports.count = 0;`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ count } = exports_impl;");
+    },
+    run: {
+      stdout: "42 count",
+    },
+  });
+  // A file that reads `module.exports` as a value, behind a barrel with no
+  // side effects. Only the `export *` statement of the barrel holds the
+  // object of impl.cjs, and only the namespace object of the barrel keeps
+  // that statement.
+  itBundled("cjs2esm/NamespaceDestructuringOfABarrelOverAModuleThatReadsModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as UI from "ui";
+        const { parse, version } = UI;
+        console.log(parse("x"), version);
+      `,
+      "/node_modules/ui/package.json": `{ "name": "ui", "sideEffects": false, "main": "./wrapper.mjs" }`,
+      "/node_modules/ui/wrapper.mjs": `export * from "./impl.cjs";`,
+      "/node_modules/ui/impl.cjs": /* js */ `
+        exports.parse = function (s) { return "parsed:" + s; };
+        exports.version = "1.0.0";
+        exports.default = module.exports;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ parse, version } = exports_wrapper;");
+    },
+    run: {
+      stdout: "parsed:x 1.0.0",
+    },
+  });
+  // The layout of the real packages: an index.js that picks a file by
+  // NODE_ENV. With the branch folded, the keys resolve through it.
+  itBundled("cjs2esm/NamespaceDestructuringThroughTheNodeEnvIndex", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        React.inc();
+        const { count } = React;
+        React.inc();
+        console.log(count, React.count);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        'use strict';
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./cjs/react.production.js');
+        } else {
+          module.exports = require('./cjs/react.development.js');
+        }
+      `,
+      "/node_modules/react/cjs/react.production.js": /* js */ `
+        exports.count = 0;
+        exports.inc = function () { exports.count++; };
+        exports.removeThisExport = "REMOVE_react";
+      `,
+      "/node_modules/react/cjs/react.development.js": /* js */ `
+        exports.count = 100;
+        exports.inc = function () { exports.count++; };
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    minifySyntax: true,
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_react");
+    },
+    run: {
+      stdout: "1 2",
+    },
+  });
+  // A CommonJS file keeps its wrapper, and its `require()` of a lifted
+  // package is an import of the bundle. The declaration takes its copy where
+  // it runs, inside the wrapper. The package runs before the wrapper, as it
+  // does without the declaration (Node runs it at the `require()`).
+  itBundled("cjs2esm/NamespaceDestructuringInACommonJSImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import read from "./consumer.cjs";
+        console.log("entry runs");
+        console.log(read());
+      `,
+      "/consumer.cjs": /* js */ `
+        console.log("consumer runs");
+        const Required = require("react");
+        Required.inc();
+        const { count } = Required;
+        Required.inc();
+        module.exports = () => count + " " + Required.count;
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        console.log("react runs");
+        exports.count = 0;
+        exports.inc = function () { exports.count++; };
+        exports.removeThisExport = "REMOVE_react";
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("__commonJS(");
+      expect(code).not.toContain("exports_react");
+    },
+    run: {
+      stdout: "react runs\nconsumer runs\nentry runs\n1 2",
+    },
+  });
 });

@@ -401,9 +401,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         import { heapStats } from "bun:jsc";
         const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
         addon.create_wrap({}, true, true);
-        test("counts live globals", () => {
-          Bun.gc(true);
-          console.log("live GlobalObjects:", heapStats().objectTypeCounts.GlobalObject);
+        test("counts live globals", async () => {
+          // One collection can leave the previous file's unrooted global for a later sweep.
+          let count = Infinity;
+          for (let attempt = 0; attempt < 25 && count > 2; attempt++) {
+            Bun.gc(true);
+            await Bun.sleep(1);
+            count = heapStats().objectTypeCounts.GlobalObject;
+          }
+          console.log("live GlobalObjects:", count);
         });
       `;
       const files: Record<string, string> = {};
@@ -421,8 +427,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const counts = [...stdout.matchAll(/live GlobalObjects: (\d+)/g)].map(m => Number(m[1]));
       expect(counts).toHaveLength(fileCount);
-      // The current file's global and at most the one before it, which may not be swept yet.
-      expect(Math.max(...counts)).toBeLessThanOrEqual(3);
+      // The current file's global and at most the one before it.
+      expect(Math.max(...counts)).toBeLessThanOrEqual(2);
       expect(stderr).toContain(` ${fileCount} pass`);
       expect(exitCode).toBe(0);
     });

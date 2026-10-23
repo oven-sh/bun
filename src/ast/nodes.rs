@@ -859,6 +859,14 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
+
+    /// The dev server prints a module of this kind as an ESM entry with a
+    /// dependency list, which the HMR runtime loads into `hmr.imports`. Any
+    /// other kind prints as a CommonJS function, which has no such list and
+    /// has to load its imports itself.
+    pub fn has_dev_server_dependency_list(self) -> bool {
+        self == Self::Esm
+    }
 }
 
 #[derive(Copy, Clone)]

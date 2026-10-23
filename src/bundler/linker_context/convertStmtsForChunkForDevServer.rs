@@ -12,17 +12,16 @@ use bun_collections::VecExt;
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
-/// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
 /// The conversion logic is completely different for format .internal_bake_dev
 ///
-/// For ESM, this function populates all three lists:
-/// 1. outside_wrapper_prefix: all import statements, unmodified.
-/// 2. inside_wrapper_prefix: a var decl line and a call to `module.retrieve`
+/// This function populates all three lists:
+/// 1. outside_wrapper_prefix: all import statements, unmodified. ESM only.
+/// 2. inside_wrapper_prefix: the import variables and `hmr.updateImport`
 /// 3. inside_wrapper_suffix: all non-import statements
 ///
-/// The imports are rewritten at print time to fit the packed array format
-/// that the HMR runtime can decode. This encoding is low on JS objects and
-/// indentation.
+/// For ESM, the imports are rewritten at print time to fit the packed array
+/// format that the HMR runtime can decode. This encoding is low on JS objects
+/// and indentation.
 ///
 /// 1 ┃ "module/esm": [ [
 ///   ┃   'module_1', 1, "add",
@@ -30,18 +29,32 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   'module_3', 0, // bare or import star
 ///     ], [ "default" ], [], (hmr) => {
 /// 2 ┃   var [module_1, module_2, module_3] = hmr.imports;
-///   ┃   hmr.onUpdate = [
+///   ┃   hmr.updateImport = [
 ///   ┃     (module) => (module_1 = module),
 ///   ┃     (module) => (module_2 = module),
 ///   ┃     (module) => (module_3 = module),
 ///   ┃   ];
 ///
 /// 3 ┃   console.log("my module", module_1.add(1, module_2.mul(2, 3));
-///   ┃   module.exports = {
+///   ┃   hmr.exports = {
 ///   ┃     default: module_3.something(module_2.div),
 ///   ┃   };
 ///     }, false ],
 ///        ----- "is the module async?"
+///
+/// A CommonJS module is printed as a function with no dependency list, so the
+/// runtime does not fill `hmr.imports` for it. Its imports are loaded from
+/// inside the function, the way `bun build` binds them inside `__commonJS`:
+///
+///     "module/cjs"(hmr, module, exports) {
+/// 2 ┃   var [module_1, module_2] = hmr.importsSync(["module_1", "module_2"]);
+///   ┃   hmr.updateImport = [
+///   ┃     (module) => (module_1 = module),
+///   ┃     (module) => (module_2 = module),
+///   ┃   ];
+///
+/// 3 ┃   module.exports = module_1.add(1, module_2.mul(2, 3));
+///     },
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,
@@ -51,8 +64,11 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
+    let has_dependency_list = ast.exports_kind.has_dev_server_dependency_list();
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
+    // The argument of `hmr.importsSync`, in the order of `esm_decls`.
+    let mut sync_import_ids: Vec<Expr> = Vec::new();
 
     let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
@@ -175,6 +191,17 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     }
                 } else {
                     let loc = st.star_name_loc.to_nullable().unwrap_or(stmt.loc);
+                    if has_dependency_list {
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, *stmt);
+                    } else {
+                        sync_import_ids.push(Expr::init(
+                            E::String {
+                                data: record.path.pretty.into(),
+                                ..Default::default()
+                            },
+                            record.range.loc,
+                        ));
+                    }
                     if is_bare_import {
                         esm_decls.push(ArrayBinding {
                             binding: Binding {
@@ -233,8 +260,6 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             Loc::EMPTY,
                         ));
                     }
-
-                    stmts.append(StmtListWhich::OutsideWrapperPrefix, *stmt);
                 }
             }
             _ => stmts.append(StmtListWhich::InsideWrapperSuffix, *stmt),
@@ -242,6 +267,42 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     }
 
     if esm_decls.len() > 0 {
+        let namespaces = if has_dependency_list {
+            Expr::init(
+                E::Dot {
+                    target: hmr_api_id,
+                    name: b"imports".into(),
+                    name_loc: Loc::EMPTY,
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            )
+        } else {
+            debug_assert_eq!(sync_import_ids.len(), esm_decls.len());
+            Expr::init(
+                E::Call {
+                    target: Expr::init(
+                        E::Dot {
+                            target: hmr_api_id,
+                            name: b"importsSync".into(),
+                            name_loc: Loc::EMPTY,
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    ),
+                    args: ExprNodeList::from_slice(&[Expr::init(
+                        E::Array {
+                            items: ExprNodeList::move_from_list(sync_import_ids),
+                            is_single_line: true,
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    )]),
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            )
+        };
         // var ...;
         stmts
             .inside_wrapper_prefix
@@ -260,21 +321,13 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             },
                             Loc::EMPTY,
                         ),
-                        value: Some(Expr::init(
-                            E::Dot {
-                                target: hmr_api_id,
-                                name: b"imports".into(),
-                                name_loc: Loc::EMPTY,
-                                ..Default::default()
-                            },
-                            Loc::EMPTY,
-                        )),
+                        value: Some(namespaces),
                     }]),
                     ..Default::default()
                 },
                 Loc::EMPTY,
             ))?;
-        // hmr.onUpdate = [ ... ];
+        // hmr.updateImport = [ ... ];
         // Capture len before moving `esm_callbacks` (borrowck).
         let callbacks_len = esm_callbacks.len();
         stmts

@@ -446,7 +446,8 @@ describe.concurrent("bun test --changed", () => {
       "package.json": JSON.stringify({ name: "conditional-import", type: "module" }),
       "by-constant.ts": `export const v = 1;\n`,
       "by-env.ts": `export const v = 1;\n`,
-      "constant.test.ts": `import { test } from "bun:test";\nconst enabled = false;\nif (enabled) await import("./by-constant");\ntest("constant", () => {});\n`,
+      // A minifier replaces a constant that starts its scope.
+      "constant.test.ts": `import { test } from "bun:test";\n{\n  const enabled = false;\n  if (enabled) await import("./by-constant");\n}\ntest("constant", () => {});\n`,
       "env.test.ts": `import { test } from "bun:test";\nif (process.env.SCAN_PROBE !== "off") await import("./by-env");\ntest("env", () => {});\n`,
       "unrelated.test.ts": `import { test } from "bun:test";\ntest("unrelated", () => {});\n`,
     });

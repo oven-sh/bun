@@ -16,6 +16,7 @@
 #include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypeInfo.h>
@@ -569,7 +570,38 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     return loaded;
 }
 
-static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const LoadedModule& loaded, JSC::JSObject* exports)
+// Modules that already linked against the loaded record hold bindings into its environment, so an export
+// the record lacks cannot be added to it. The registry entry is replaced by a synthetic record that holds
+// the new exports and re-exports every export of the loaded record from it, the way `export { a } from`
+// does. A later importer links against the full set, an import() that is in flight gets this record, and
+// a later mock.module() patches its namespace, which writes the loaded record's bindings for the names
+// it re-exports: importers from before and after the replacement keep one value per export.
+static void replaceOutgrownESModule(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* loadedNamespace, const Vector<JSC::Identifier, 4>& newNames, const MarkedArgumentBuffer& newValues, const String& specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* loader = globalObject->moduleLoader();
+    auto specifierIdent = JSC::Identifier::fromString(vm, specifier);
+    auto* record = JSC::SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, loader, specifierIdent, newNames, JSC::ArgList(newValues), nullptr);
+    RETURN_IF_EXCEPTION(scope, );
+
+    JSC::PropertyNameArrayBuilder loadedNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    loadedNamespace->methodTable()->getOwnPropertyNames(loadedNamespace, globalObject, loadedNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (auto& name : loadedNames)
+        record->addExportEntry(JSC::AbstractModuleRecord::ExportEntry::createIndirect(name, name, specifierIdent, JSC::ScriptFetchParameters::Type::JavaScript));
+    record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { specifierIdent, nullptr }, loadedNamespace->moduleRecord());
+    RETURN_IF_EXCEPTION(scope, );
+
+    loader->removeEntry(specifierIdent); // takes the loader's cellLock itself
+    auto* entry = loader->ensureRegistered(globalObject, specifierIdent, JSC::ScriptFetchParameters::Type::JavaScript);
+    RETURN_IF_EXCEPTION(scope, );
+    entry->provideModule(vm, record);
+    entry->markLoaded(); // a synthetic record requests nothing
+}
+
+static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const LoadedModule& loaded, JSC::JSObject* exports, const String& specifier)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -593,8 +625,23 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
+        Vector<JSC::Identifier, 4> newNames;
+        MarkedArgumentBuffer newValues;
         for (size_t i = 0; i < names.size(); ++i) {
-            moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+            bool overridden = moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+            RETURN_IF_EXCEPTION(scope, );
+            // A source-text module never exports `__esModule`: its namespace serves it from the prototype.
+            if (!overridden && names[i] != vm.propertyNames->__esModule) {
+                newNames.append(names[i]);
+                newValues.append(values.at(i));
+            }
+        }
+        if (newValues.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        if (!newNames.isEmpty()) {
+            replaceOutgrownESModule(globalObject, moduleNamespaceObject, newNames, newValues, specifier);
             RETURN_IF_EXCEPTION(scope, );
         }
     }
@@ -736,7 +783,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                 throwFactoryMustReturnObject(globalObject, scope);
                 return {};
             }
-            overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+            overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject(), specifier);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -1026,7 +1073,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve, (JSC::JSGlobalObjec
     } else {
         Zig::LoadedModule loaded = Zig::findLoadedModule(globalObject, mock->specifier.get());
         if (!scope.exception()) [[likely]]
-            Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+            Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject(), specifier);
     }
     if (scope.exception()) [[unlikely]] {
         Zig::unregisterModuleMock(globalObject, mock, specifier);

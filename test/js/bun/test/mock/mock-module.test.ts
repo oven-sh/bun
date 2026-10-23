@@ -128,7 +128,7 @@ test("mocking a local file", async () => {
   expect(iCallFn()).toBe(3);
 });
 
-test.todo("adding a default on a module with no default", async () => {
+test("adding a default on a module with no default", async () => {
   mock.module("./re-export-fixture.ts", () => {
     return {
       default: 42,
@@ -333,6 +333,182 @@ test("a pending factory whose exports throw while being read rejects the returne
   // A fresh load is not served by the failed mock.
   delete require.cache[path];
   expect((await import(path)).a()).toBe("real-a");
+});
+
+test("a second mock.module() of a mocked module adds an export that a later importer links against", async () => {
+  using dir = tempDir("mock-module-remock-adds-export", {
+    "lib.ts": `export const a = "real a";`,
+    "uses-b.ts": `import { b } from "./lib";\nexport const readB = () => b;`,
+  });
+  const path = join(String(dir), "lib.ts");
+
+  mock.module(path, () => ({ a: "mock a" }));
+  const first = await import(path);
+  expect(first.a).toBe("mock a");
+
+  mock.module(path, () => ({ a: "mock a2", b: "mock b2" }));
+  expect(first.a).toBe("mock a2");
+
+  const second = await import(path);
+  expect({ a: second.a, b: second.b }).toEqual({ a: "mock a2", b: "mock b2" });
+
+  const { readB } = await import(join(String(dir), "uses-b.ts"));
+  expect(readB()).toBe("mock b2");
+});
+
+test("mock.module() of an already imported module adds an export to the next import()", async () => {
+  using dir = tempDir("mock-module-loaded-adds-export", {
+    "other.ts": `export const x = "real x";`,
+  });
+  const path = join(String(dir), "other.ts");
+  const real = await import(path);
+  expect(real.x).toBe("real x");
+
+  mock.module(path, () => ({ x: "mock x", y: "mock y" }));
+  expect(real.x).toBe("mock x");
+
+  const mocked = await import(path);
+  expect({ x: mocked.x, y: mocked.y }).toEqual({ x: "mock x", y: "mock y" });
+  expect(require(path).y).toBe("mock y");
+});
+
+test("mock.module() that adds a default export to a module without one serves it to the next import()", async () => {
+  using dir = tempDir("mock-module-adds-default", {
+    "named.ts": `export const n = 1;`,
+  });
+  const path = join(String(dir), "named.ts");
+  await import(path);
+
+  mock.module(path, () => ({ n: 2, default: "mock default" }));
+  const mocked = await import(path);
+  expect({ n: mocked.n, default: mocked.default }).toEqual({ n: 2, default: "mock default" });
+});
+
+test("a pending factory that adds an export serves it to the next import() once it settles", async () => {
+  using dir = tempDir("mock-module-pending-adds-export", {
+    "a.ts": `export const a = "real a";`,
+  });
+  const path = join(String(dir), "a.ts");
+  const ns = await import(path);
+
+  const factory = Promise.withResolvers<object>();
+  const patched = mock.module(path, () => factory.promise);
+  factory.resolve({ a: "mock a", b: "mock b" });
+  await patched;
+  expect(ns.a).toBe("mock a");
+
+  const mocked = await import(path);
+  expect({ a: mocked.a, b: mocked.b }).toEqual({ a: "mock a", b: "mock b" });
+});
+
+test("mock.module() that adds an export keeps the other exports of the loaded module for later importers", async () => {
+  using dir = tempDir("mock-module-adds-export-keeps-rest", {
+    "lib.ts": `export const a = "real a";\nexport const b = "real b";`,
+    "uses-b.ts": `import { b } from "./lib";\nexport const readB = () => b;`,
+  });
+  const path = join(String(dir), "lib.ts");
+  const ns = await import(path);
+
+  mock.module(path, () => ({ a: "mock a", c: "mock c" }));
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: "mock a", b: "real b" });
+
+  const mocked = await import(path);
+  expect({ a: mocked.a, b: mocked.b, c: mocked.c }).toEqual({ a: "mock a", b: "real b", c: "mock c" });
+  const { readB } = await import(join(String(dir), "uses-b.ts"));
+  expect(readB()).toBe("real b");
+});
+
+test("mock.module() calls after one that added an export patch importers from before and after it", async () => {
+  using dir = tempDir("mock-module-remock-after-add", {
+    "lib.ts": `export const a = "real a";`,
+  });
+  const path = join(String(dir), "lib.ts");
+  const before = await import(path);
+
+  mock.module(path, () => ({ a: "mock a", b: "mock b" }));
+  const added = await import(path);
+  expect({ a: added.a, b: added.b }).toEqual({ a: "mock a", b: "mock b" });
+
+  mock.module(path, () => ({ a: "mock a2", c: "mock c" }));
+  const addedAgain = await import(path);
+  expect({ a: addedAgain.a, b: addedAgain.b, c: addedAgain.c }).toEqual({ a: "mock a2", b: "mock b", c: "mock c" });
+
+  mock.module(path, () => ({ a: "mock a3" }));
+  expect(await import(path)).toBe(addedAgain);
+  expect([before.a, added.a, addedAgain.a]).toEqual(["mock a3", "mock a3", "mock a3"]);
+  expect([added.b, addedAgain.b, addedAgain.c]).toEqual(["mock b", "mock b", "mock c"]);
+  expect(require(path).a).toBe("mock a3");
+});
+
+test.concurrent("a static import follows every mock.module() in beforeEach when a factory adds an export", async () => {
+  using dir = tempDir("mock-module-static-import-remock", {
+    "lib.ts": `export const a = "real a";`,
+    "remock.test.ts": `
+      import { beforeEach, expect, mock, test } from "bun:test";
+      import { a } from "./lib";
+
+      let n = 0;
+      beforeEach(() => {
+        n++;
+        mock.module("./lib", () => ({ a: "mock a" + n, default: {} }));
+      });
+
+      test("one", () => expect(a).toBe("mock a1"));
+      test("two", () => expect(a).toBe("mock a2"));
+      test("three", () => expect(a).toBe("mock a3"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./remock.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 3 pass");
+  expect(exitCode).toBe(0);
+});
+
+test("an import() in flight when mock.module() adds an export gets the mock and does not evaluate the module again", async () => {
+  using dir = tempDir("mock-module-add-export-in-flight", {
+    "lib.ts": `globalThis.__libEvaluations = (globalThis.__libEvaluations ?? 0) + 1;\nexport const a = "real a";`,
+  });
+  const path = join(String(dir), "lib.ts");
+  await import(path);
+
+  const inFlight = import(path);
+  mock.module(path, () => ({ a: "mock a", b: "mock b" }));
+  const fromInFlight = await inFlight;
+  expect({ a: fromInFlight.a, b: fromInFlight.b }).toEqual({ a: "mock a", b: "mock b" });
+  expect(await import(path)).toBe(fromInFlight);
+  expect((globalThis as any).__libEvaluations).toBe(1);
+});
+
+test("a factory with __esModule keeps patching the loaded module in place", async () => {
+  using dir = tempDir("mock-module-esmodule-flag", {
+    "dep.ts": `export default () => "real";`,
+  });
+  const path = join(String(dir), "dep.ts");
+  const ns = await import(path);
+
+  for (const version of ["v1", "v2", "v3"]) {
+    mock.module(path, () => ({ __esModule: true, default: () => version }));
+    expect(ns.default()).toBe(version);
+    expect(await import(path)).toBe(ns);
+  }
+});
+
+test("mock.module() whose factory only overrides existing exports keeps the module namespace", async () => {
+  using dir = tempDir("mock-module-same-exports", {
+    "a.ts": `export const a = "real a";\nexport const b = "real b";`,
+  });
+  const path = join(String(dir), "a.ts");
+  const ns = await import(path);
+
+  mock.module(path, () => ({ a: "mock a" }));
+  expect(await import(path)).toBe(ns);
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: "mock a", b: "real b" });
 });
 
 test("a factory promise that resolves to a non-object is rejected like the synchronous case", async () => {

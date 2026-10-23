@@ -371,10 +371,10 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int code, co
 #undef MACRO
     }
     if (!codeStr.isEmpty())
-        object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+        object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::ReadOnly | 0);
 
-    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
-    object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::ReadOnly | 0);
 
     return object;
 }

@@ -970,40 +970,26 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
-/// `Bun__Process__exit` on the main thread: a failed run with exit code 0 gets exit code 1 and its report.
-pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
-    let Some(runner) = jest::Jest::runner_ptr() else {
-        return;
-    };
-    // SAFETY: `RUNNER` is only accessed on this thread, and no borrow of the runner is held across a call.
-    let request = unsafe { (*runner.as_ptr()).exit_request.take() };
-    let overruled = match vm.exit_handler.exit_code {
-        // SAFETY: see above.
-        0 => unsafe { (*runner.as_ptr()).has_observed_failure() },
-        // The 1 that `process.exit()` stored in place of a 0 after `note_process_exit`.
-        1 => request.is_some(),
-        _ => false,
-    };
-    if !overruled {
-        return;
-    }
-    vm.exit_handler.exit_code = 1;
-    let error = match &request {
-        Some(error) => error.get(),
-        // `process.reallyExit(0)`, or an 'exit' listener that stored 0 after a `process.exit()` with another code.
-        None => vm.global().create_error_instance(format_args!(
-            "The process was told to exit with code 0{}, but this test run has failed. The exit code is 1.",
-            // SAFETY: see above.
-            unsafe { (*runner.as_ptr()).exit_caller() }
-        )),
-    };
+/// `Bun__Process__exit` on the main thread of `bun test`. It returns unless the exit ends a run that has failed: that run ends through `end_early`, as `--bail` does.
+#[cold]
+pub(crate) fn on_process_exit(
+    runner: core::ptr::NonNull<jest::TestRunner<'static>>,
+    vm: &mut VirtualMachine,
+) {
     // SAFETY: `exec` publishes `RUNNER` as `&raw mut reporter.jest`, so the pointer is valid for the whole reporter.
+    // `RUNNER` is only accessed on this thread, and no borrow of the reporter is live here.
     unsafe {
-        CommandLineReporter::report_exit(
-            bun_core::from_field_ptr!(CommandLineReporter, jest, runner.as_ptr()),
-            vm,
-            error,
-        );
+        let reporter = bun_core::from_field_ptr!(CommandLineReporter, jest, runner.as_ptr());
+        if (*reporter).jest.ended_early {
+            // `--bail` ended the run, and one of its 'exit' listeners calls `process.exit()`.
+            if vm.exit_handler.exit_code == 0 {
+                vm.exit_handler.exit_code = 1;
+            }
+            return;
+        }
+        if (*reporter).jest.reports_process_exit && (*reporter).jest.has_observed_failure() {
+            CommandLineReporter::end_by_process_exit(reporter, vm);
+        }
     }
 }
 
@@ -1414,12 +1400,6 @@ impl CommandLineReporter {
             }
         }
 
-        // Before the `--bail` exit below, which prints the counts.
-        this.summary().expectations = this
-            .summary()
-            .expectations
-            .saturating_add(sequence.expect_call_count);
-
         use bun_test::Execution::Result as R;
         match sequence.result {
             R::Pending => {}
@@ -1444,10 +1424,14 @@ impl CommandLineReporter {
                 }
             }
         }
+        this.summary().expectations = this
+            .summary()
+            .expectations
+            .saturating_add(sequence.expect_call_count);
     }
 
-    /// The count lines before `print_summary()`. `snapshots_written` is false for a run that ends early: it does not write the open `.snap` file.
-    pub(crate) fn print_counts(&self, snapshots_written: bool) {
+    /// The count lines before `print_summary()`.
+    pub(crate) fn print_counts(&self) {
         let summary = self.jest.summary;
         struct DotIndenter {
             indent: bool,
@@ -1515,11 +1499,8 @@ impl CommandLineReporter {
         }
 
         let mut print_expect_calls = summary.expectations > 0;
-        let unwritten = if snapshots_written {
-            0
-        } else {
-            self.jest.snapshots.added_unwritten
-        };
+        // Not 0 for a run that ends early: it does not write the open `.snap` file.
+        let unwritten = self.jest.snapshots.added_unwritten;
         let added = self.jest.snapshots.added - unwritten;
         let total = self.jest.snapshots.total.saturating_sub(unwritten);
         if total > 0 {
@@ -1569,58 +1550,47 @@ impl CommandLineReporter {
         }
     }
 
-    /// Prints `error` and the early-end report, once per process. `this` is the live reporter.
-    unsafe fn report_exit(
-        this: *mut CommandLineReporter,
-        vm: &mut VirtualMachine,
-        error: jsc::JSValue,
-    ) {
+    /// A `process.exit()` ends a run that has failed. Prints the call site and the counts, then ends the run with a non-zero exit code.
+    ///
+    /// # Safety
+    /// `this` is the live reporter. The runner frames below this call hold borrows of it, and none of them runs again.
+    unsafe fn end_by_process_exit(this: *mut CommandLineReporter, vm: &mut VirtualMachine) -> ! {
+        let code = vm.exit_handler.exit_code;
         // SAFETY: no borrow of `*this` is held across `end_failed_sequences_in_flight`, which reaches the reporter too.
         unsafe {
-            if core::mem::replace(&mut (*this).jest.report_written, true) {
-                return;
-            }
+            (*this).jest.ended_early = true;
+            // Before the sequences below end: they are what `exit_caller` reads.
+            let error = vm.global().create_error_instance(format_args!(
+                "process.exit() was called{} with exit code {code} before the end of the test run.{}",
+                (*this).jest.exit_caller(),
+                if code == 0 {
+                    " The test run has failed, so the exit code is 1."
+                } else {
+                    ""
+                },
+            ));
             let active_file = (*this).jest.bun_test_root.clone_active_file();
+            if let Some(file) = &active_file {
+                // The exit ends the run, so `handle_test_completed` does not apply `--bail`.
+                (*this).jest.bail = 0;
+                bun_test::Execution::Execution::end_failed_sequences_in_flight(
+                    core::ptr::NonNull::new_unchecked(file.as_ptr()),
+                );
+            }
             (*this).jest.bun_test_root.on_before_print();
             if active_file.is_some() && Output::is_github_action() {
                 pretty_errorln!("<r>\n::endgroup::\n");
             }
+            drop(active_file);
             vm.run_error_handler(error, None);
-            // `--bail` is applied here: `handle_test_completed` would exit before `Bun__Process__exit` runs `vm.on_exit()`.
-            let bail = core::mem::take(&mut (*this).jest.bail);
-            if let Some(file) = &active_file {
-                let until_bail = if bail == 0 {
-                    u32::MAX
-                } else {
-                    bail.saturating_sub((*this).jest.summary.fail)
-                };
-                bun_test::Execution::Execution::end_failed_sequences_in_flight(
-                    core::ptr::NonNull::new_unchecked(file.as_ptr()),
-                    until_bail,
-                );
-            }
-            (*this).jest.bail = bail;
-            (*this).write_early_end_report(bail != 0 && (*this).jest.summary.fail >= bail);
-        }
-    }
-
-    /// The counts, the summary line and the report files of a run that ends before the tail of `exec`.
-    fn write_early_end_report(&mut self, bailed: bool) {
-        pretty_error!("\n");
-        self.print_counts(false);
-        self.print_summary();
-        if bailed {
             pretty_error!(
-                "\nBailed out after {} failure{}<r>\n",
-                self.jest.bail,
-                if self.jest.bail == 1 { "" } else { "s" }
+                "<r><blue>note<r><d>:<r> To test code that calls process.exit(), mock it: spyOn(process, \"exit\").mockImplementation(fn)\n\n"
             );
-        } else {
+            (*this).print_counts();
+            (*this).print_summary();
             pretty_error!("\n");
+            (*this).end_early(vm, code.max(1))
         }
-        Output::flush();
-        self.write_junit_report_if_needed();
-        self.write_timings_if_needed();
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -1639,26 +1609,37 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
-    /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
+    /// Prints that `--bail` hit its failure count, then exits with code 1.
     pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
+        self.jest.ended_early = true;
         self.print_summary();
         pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
             self.jest.bail,
             if self.jest.bail == 1 { "" } else { "s" }
         );
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
+        self.end_early(vm, 1)
+    }
+
+    /// Ends a run that has failed before the tail of `exec`, after the caller printed the summary. Writes the report files, then tears down the VM the same way `exec` does.
+    fn end_early(&mut self, vm: &mut VirtualMachine, exit_code: u8) -> ! {
+        debug_assert!(exit_code != 0);
         Output::flush();
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
-        vm.exit_handler.exit_code = 1;
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
+        vm.exit_handler.exit_code = exit_code;
         vm.exit_handler.requested = true;
         let vm_ptr: *mut VirtualMachine = vm;
         // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
         // `run_with_api_lock` takes `&self` only, so the closure holds the
         // unique mutable access on this single-threaded path.
         vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        // An 'exit' listener can store exit code 0 with `process.exitCode`.
+        if vm.exit_handler.exit_code == 0 {
+            vm.exit_handler.exit_code = exit_code;
+        }
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -2117,9 +2098,8 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
-                exit_request: None,
-                report_written: false,
-                run_failed: false,
+                reports_process_exit: false,
+                ended_early: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2794,7 +2774,7 @@ impl TestCommand {
                 && reporter.jest.unhandled_errors_between_tests == 0;
 
             if !did_label_filter_out_all_tests {
-                reporter.print_counts(true);
+                reporter.print_counts();
                 reporter.print_summary();
             } else {
                 pretty_error!(
@@ -2820,7 +2800,6 @@ impl TestCommand {
         if !test_files.is_empty() || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
         }
-        reporter.jest.report_written = true;
 
         if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -2843,7 +2822,6 @@ impl TestCommand {
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;
-            reporter.jest.run_failed = true;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();
@@ -2854,10 +2832,6 @@ impl TestCommand {
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        }
-        // An 'exit' listener can store exit code 0 with `process.exitCode`. The verdict of the run stands.
-        if reporter.jest.run_failed && vm.exit_handler.exit_code == 0 {
-            vm.exit_handler.exit_code = 1;
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
@@ -2970,6 +2944,8 @@ impl TestCommand {
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
+        // Under `BUN_TEST_DRAIN_EVENT_LOOP`, the file decides the exit code, as it does under node.
+        reporter_.jest.reports_process_exit = !should_drain_event_loop();
         let mut ctx = Context {
             reporter: reporter_,
             vm: vm_,
@@ -2978,6 +2954,7 @@ impl TestCommand {
         // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
         // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        ctx.reporter.jest.reports_process_exit = false;
     }
 
     pub(crate) fn run(

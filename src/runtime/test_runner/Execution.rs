@@ -192,6 +192,11 @@ impl ExecutionSequence {
         }
     }
 
+    /// False for a failed attempt that a retry can still replace.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.result.is_fail() && self.remaining_retry_count == 0
+    }
+
     fn entry_mode(&self) -> ScopeMode {
         if let Some(entry) = self.test_entry {
             // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
@@ -628,9 +633,9 @@ impl Execution {
         }
     }
 
-    /// Ends up to `limit` failed sequences that still run their hooks, so `advance_sequence` reports them before the process exits.
+    /// Ends the failed sequences that still run their hooks, so `advance_sequence` reports them before the process exits.
     #[cold]
-    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>, mut limit: u32) {
+    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
         let (group, range) = {
             // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
             let bun_test = unsafe { &mut *buntest.as_ptr() };
@@ -649,13 +654,9 @@ impl Execution {
             let Some(mut last) = sequence.active_entry else {
                 continue;
             };
-            if !sequence.result.is_fail() {
+            if !sequence.has_failed() {
                 continue;
             }
-            if limit == 0 {
-                return;
-            }
-            limit -= 1;
             // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
             while let Some(next) = nn(unsafe { last.as_ref() }.next) {
                 last = next;
@@ -664,12 +665,6 @@ impl Execution {
             sequence.active_entry = Some(last);
             sequence.maybe_skip = false;
             sequence.executing = true;
-            // No retry starts. `print_test_line` takes the attempt number from the difference of these two counts.
-            if let Some(test_entry) = sequence.test_entry {
-                // SAFETY: arena-owned entry, alive for the lifetime of the `BunTest`. No borrow of it is live here.
-                unsafe { (*test_entry.as_ptr()).retry_count -= sequence.remaining_retry_count };
-            }
-            sequence.remaining_retry_count = 0;
             Execution::advance_sequence(buntest, NonNull::from(sequence), group);
         }
     }

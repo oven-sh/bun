@@ -254,9 +254,28 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
 
-A call to `process.exit()` in a test file ends the run with the code it is given. There is one exception. If the run has already failed and the code is `0`, `bun test` prints the summary, writes the JUnit report and the timings file if they are enabled, and exits with code `1`. An `'exit'` listener cannot set the exit code of a failed run to `0` either. A non-zero code stays as it is. A run with no failure also keeps its code. In each of these cases, the tests and files that did not run yet are not reported.
+A call to `process.exit()` in a test file ends the run. The tests and files that did not run yet do not run, and `bun test` does not report them.
 
-A failure counts from the moment `bun test` records it. An unmet `expect.assertions()` count and a `test.failing` test that passes are recorded when the test ends, after its `afterEach` hooks. A `node:test` test records the failures of its subtests and hooks when the top-level test ends.
+- If no test has failed yet, `bun test` exits with the code of the call and prints no summary.
+- If the run has already failed, `bun test` prints the call site and the summary, and writes the JUnit report and the timings file if they are enabled. A non-zero code stays as it is. Code `0` becomes `1`.
+
+A failure counts from the moment `bun test` records it. A test that fails and has a retry left has not failed yet. An unmet `expect.assertions()` count and a `test.failing` test that passes are recorded when the test ends, after its `afterEach` hooks. A `node:test` test records the failures of its subtests and hooks when the top-level test ends.
+
+To test code that calls `process.exit()`, mock it:
+
+```ts title="cli.test.ts" icon="/icons/typescript.svg"
+import { test, expect, spyOn } from "bun:test";
+import { main } from "./cli";
+
+test("--help prints the usage", () => {
+  const exit = spyOn(process, "exit").mockImplementation(() => {
+    throw new Error("process.exit");
+  });
+  expect(() => main(["--help"])).toThrow("process.exit");
+  expect(exit).toHaveBeenCalledWith(0);
+  exit.mockRestore();
+});
+```
 
 Node.js differs here: `node --test --test-isolation=none` exits with code `0` after a failed test when a later test calls `process.exit(0)`.
 

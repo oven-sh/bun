@@ -55,13 +55,7 @@ public:
 
     ~Process();
 
-    // `process.exitCode` reads undefined while `Unset`. `SetByTestRunner`: the 1 of a failed `bun test` run, until script stores a code.
-    enum class ExitCodeState : uint8_t {
-        Unset,
-        Set,
-        SetByTestRunner,
-    };
-    ExitCodeState m_exitCodeState = ExitCodeState::Unset;
+    bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
     // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
     bool m_emitEnvNonstringWarning = true;

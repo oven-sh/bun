@@ -183,8 +183,6 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" void Bun__setExitCode(void*, uint8_t);
-extern "C" bool Bun__TestRunner__noteProcessExit(JSC::JSGlobalObject*, bool argless);
-extern "C" void Bun__TestRunner__cancelProcessExit();
 extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
@@ -871,8 +869,8 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     }
 
     auto* process = globalObject->processObject();
-    if (exitCode > 0 && process->m_exitCodeState == Process::ExitCodeState::Unset)
-        process->m_exitCodeState = Process::ExitCodeState::Set;
+    if (exitCode > 0)
+        process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
@@ -894,24 +892,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
 
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    // A `bun test` run that has failed exits 1 where node exits 0, and the 'exit' listeners are told so.
-    auto stateBeforeNote = process->m_exitCodeState;
-    bool noted = isBunTest && !Bun__getExitCode(bunVM(zigGlobal)) && Bun__TestRunner__noteProcessExit(zigGlobal, code.isUndefinedOrNull());
-    if (noted) {
-        Bun__setExitCode(bunVM(zigGlobal), 1);
-        process->m_exitCodeState = Process::ExitCodeState::SetByTestRunner;
-    }
-    auto undoNote = WTF::makeScopeExit([&] {
-        if (!noted)
-            return;
-        Bun__TestRunner__cancelProcessExit();
-        // `process.exit()` returns to JS with its 0, or with the exit code that script stored after the note.
-        if (process->m_exitCodeState == Process::ExitCodeState::SetByTestRunner) {
-            process->m_exitCodeState = stateBeforeNote;
-            Bun__setExitCode(bunVM(zigGlobal), 0);
-        }
-    });
 
     Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -2375,7 +2355,7 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
     if (!process) {
         return JSValue::encode(jsUndefined());
     }
-    if (process->m_exitCodeState == Process::ExitCodeState::Unset) {
+    if (!process->m_isExitCodeObservable) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -2402,7 +2382,7 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
         Bun::V::validateInteger(throwScope, lexicalGlobalObject, code, "code"_s, jsUndefined(), jsUndefined(), &exitCodeInt);
         RETURN_IF_EXCEPTION(throwScope, false);
 
-        process->m_exitCodeState = Process::ExitCodeState::Set;
+        process->m_isExitCodeObservable = true;
         void* ptr = process->globalObject()->bunVM();
         Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt % 256));
     }

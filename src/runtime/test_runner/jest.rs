@@ -149,12 +149,10 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
-    /// The `Error` of a `process.exit()` that `note_process_exit` overruled. Its stack is the call site.
-    pub(crate) exit_request: Option<jsc::Strong>,
-    /// The counts, the JUnit file and the timings file are written: at the end of the run, or before a `process.exit()`.
-    pub(crate) report_written: bool,
-    /// The end of the run stored exit code 1. It holds the reasons that `summary` does not: coverage, snapshots, no tests.
-    pub(crate) run_failed: bool,
+    /// Set while `TestCommand::run_all_tests` runs the test files in this process, unless the run drains the event loop as node does. A `process.exit()` then ends the run before the tail of `exec`.
+    pub(crate) reports_process_exit: bool,
+    /// The run ends before the tail of `exec`: `--bail` reached its count, or a `process.exit()` ended a run that has failed.
+    pub(crate) ended_early: bool,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
@@ -181,13 +179,9 @@ impl core::fmt::Display for ExitCaller<'_> {
 }
 
 impl<'a> TestRunner<'a> {
-    /// Whether the run in this process has failed. Counts a failed sequence that still runs its hooks.
+    /// Whether the run has failed so far. Counts a test that failed and still runs its hooks.
     pub(crate) fn has_observed_failure(&self) -> bool {
-        // The coordinator reports the exit of a `--parallel` worker.
-        if self.test_options.test_worker {
-            return false;
-        }
-        if self.summary.fail > 0 || self.unhandled_errors_between_tests > 0 || self.run_failed {
+        if self.summary.fail > 0 || self.unhandled_errors_between_tests > 0 {
             return true;
         }
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
@@ -198,7 +192,7 @@ impl<'a> TestRunner<'a> {
                 group
                     .sequences_const(&active_file.execution)
                     .iter()
-                    .any(|sequence| sequence.result.is_fail())
+                    .any(bun_test::Execution::ExecutionSequence::has_failed)
             })
     }
 
@@ -392,43 +386,6 @@ pub(crate) mod Jest {
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
         unsafe { RUNNER.read() }
-    }
-
-    /// Before `process.exit()` emits 'exit' with code 0: whether the run has failed, so that the caller stores code 1. The call site is kept.
-    #[unsafe(export_name = "Bun__TestRunner__noteProcessExit")]
-    extern "C" fn note_process_exit(global: &JSGlobalObject, argless: bool) -> bool {
-        // The field: the method is also true on the debugger thread, and `RUNNER` belongs to the main thread.
-        if !global.bun_vm().is_main_thread {
-            return false;
-        }
-        let Some(runner) = runner_ptr() else {
-            return false;
-        };
-        // SAFETY: `RUNNER` is only accessed on this thread. No borrow of the runner is live when `exit_request` is written.
-        unsafe {
-            if !(*runner.as_ptr()).has_observed_failure() {
-                return false;
-            }
-            // An 'exit' listener that exits again keeps the first call site.
-            if (*runner.as_ptr()).exit_request.is_none() {
-                let call = if argless { "process.exit()" } else { "process.exit(0)" };
-                let error = global.create_error_instance(format_args!(
-                    "{call} was called{}, but this test run has failed. The exit code is 1.",
-                    (*runner.as_ptr()).exit_caller()
-                ));
-                (*runner.as_ptr()).exit_request = Some(jsc::Strong::create(error, global));
-            }
-        }
-        true
-    }
-
-    /// `process.exit()` returned to JS after `note_process_exit`, so no exit reports that call.
-    #[unsafe(export_name = "Bun__TestRunner__cancelProcessExit")]
-    extern "C" fn cancel_process_exit() {
-        if let Some(runner) = runner_ptr() {
-            // SAFETY: as in `note_process_exit`.
-            unsafe { (*runner.as_ptr()).exit_request = None };
-        }
     }
 
     #[unsafe(no_mangle)]

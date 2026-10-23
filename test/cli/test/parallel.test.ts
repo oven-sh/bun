@@ -144,7 +144,7 @@ test("--parallel: the coordinator, not the worker, reports a worker that fails a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout + stderr).not.toContain("this test run has failed");
+  expect(stdout + stderr).not.toContain("process.exit() was called");
   expect(stderr).toContain("(fail) fails");
   expect(stderr).toContain("(worker crashed: exit code 0)");
   expect(exitCode).toBe(1);

@@ -1927,142 +1927,264 @@ describe("bun test", () => {
     });
   });
 
-  // A run that has failed keeps exit code 1 when test code ends the process with exit code 0, and it still reports.
-  // Any other exit keeps its code: a non-zero code, and a run with no failure.
+  // A `process.exit()` in a test file ends the run. If the run has failed by then, it ends the way `--bail` ends it:
+  // with the summary, the JUnit file and the timings file, and never with exit code 0. Every other exit is as before.
   describe.concurrent("process.exit() in a run that has failed", () => {
-    async function runFiles(files: Record<string, string>, ...args: string[]) {
-      using dir = tempDir("bun-test-process-exit", files);
+    async function runIn(dir: string, args: string[], env: Record<string, string> = {}) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", ...args],
-        env: bunEnv,
-        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        cwd: dir,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
 
-    const failingFile = `
-      import { test, expect } from "bun:test";
-      test("fails", () => { expect(1).toBe(2); });
-    `;
-    const exitingFile = `
-      import { test } from "bun:test";
-      test("exits", () => { process.exit(0); });
-    `;
-    const butFailed = "but this test run has failed. The exit code is 1.";
-    const byTheTest = `by the test "exits", ${butFailed}`;
+    async function runFiles(files: Record<string, string>, args: string[], env?: Record<string, string>) {
+      using dir = tempDir("bun-test-process-exit", files);
+      return await runIn(String(dir), args, env);
+    }
+
+    const imports = `import { test, expect, describe, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";`;
+    const fails = `test("fails", () => { expect(1).toBe(2); });`;
+    const failingFile = `${imports}\n${fails}`;
+    const exits = `test("exits", () => { process.exit(0); });`;
+    const exitingFile = `${imports}\n${exits}`;
+    const called = (caller: string, code = 0) =>
+      `error: process.exit() was called${caller} with exit code ${code} before the end of the test run.` +
+      (code === 0 ? " The test run has failed, so the exit code is 1.\n" : "\n");
+    const oneFailed = " 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.";
 
     test.each([
-      ["process.exit(0)", `error: process.exit(0) was called ${byTheTest}`],
-      ["process.exit()", `error: process.exit() was called ${byTheTest}`],
-      ["process.reallyExit(0)", `error: The process was told to exit with code 0 ${byTheTest}`],
-    ])("%s prints the call site and the summary, and exits 1", async (call, message) => {
+      ["process.exit(0)", 0, 1],
+      ["process.exit()", 0, 1],
+      ["process.reallyExit(0)", 0, 1],
+      ["process.exit(3)", 3, 3],
+    ])("%s prints the call site and the summary", async (call, code, expected) => {
       const { stderr, exitCode } = await runFiles(
-        {
-          "exits.test.ts": `import { test, expect } from "bun:test";
-test("fails", () => { expect(1).toBe(2); });
-test("exits", () => { ${call}; });
-test("never runs", () => {});
-`,
-        },
-        "./exits.test.ts",
+        { "exits.test.ts": `${failingFile}\ntest("exits", () => { ${call}; });\ntest("never runs", () => {});\n` },
+        ["./exits.test.ts"],
       );
       expect(stderr).toContain("(fail) fails");
-      expect(stderr).toContain(message);
+      expect(stderr).toContain(called(` by the test "exits"`, code));
       // The call is on line 3 of the file.
-      expect(stderr).toMatch(/exits\.test\.ts:3:\d+\)/);
-      expect(stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.");
+      expect(stderr).toMatch(/exits\.test\.ts:3:\d+\)\nnote: To test code that calls process\.exit\(\), mock it: /);
+      expect(stderr).toContain(oneFailed);
+      // The summary ends the output.
+      expect(stderr).toMatch(/Ran 1 test across 1 file\. \[[^\]]+\]\n+$/);
+      expect(exitCode).toBe(expected);
+    });
+
+    // Every file fails a test. Then the named place calls process.exit(0).
+    test.each([
+      ["the tail call of a test", `${fails}\ntest("exits", () => process.exit(0));`, ` by the test "exits"`],
+      [
+        "a test, after an awaited microtask",
+        `${fails}\ntest("exits", async () => { await Promise.resolve(); process.exit(0); });`,
+        ` by the test "exits"`,
+      ],
+      [
+        "a test, after an awaited timer",
+        `${fails}\ntest("exits", async () => { await new Promise(r => setTimeout(r, 1)); process.exit(0); });`,
+        "",
+      ],
+      [
+        "expect().toThrow()",
+        `${fails}\ntest("exits", () => { expect(() => process.exit(0)).toThrow(); });`,
+        ` by the test "exits"`,
+      ],
+      [
+        "beforeAll",
+        `${fails}\ndescribe("later", () => { beforeAll(() => { process.exit(0); }); test("never runs", () => {}); });`,
+        " by a hook",
+      ],
+      [
+        "beforeEach",
+        `${fails}\ndescribe("later", () => { beforeEach(() => { process.exit(0); }); test("second", () => {}); });`,
+        ` by a hook of the test "second"`,
+      ],
+      // The test has failed and still runs its hook: the run reports it first.
+      [
+        "afterEach of the test that failed",
+        `afterEach(() => { process.exit(0); });\n${fails}`,
+        ` by a hook of the test "fails"`,
+      ],
+      ["afterAll", `afterAll(() => process.exit(0));\n${fails}`, " by a hook"],
+      [
+        "a timer that fires in a later test",
+        `${fails}\ntest("waits", async () => { setTimeout(() => { process.exit(0); }, 1); await new Promise(() => {}); });`,
+        "",
+      ],
+      [
+        "an 'exit' listener that exits again",
+        `process.on("exit", () => { process.exit(0); });\n${fails}\ntest("exits", () => { process.exit(0); });`,
+        ` by the test "exits"`,
+      ],
+      [
+        "a process.reallyExit wrapper that exits later",
+        `const reallyExit = process.reallyExit;
+process.reallyExit = code => { setTimeout(() => reallyExit.call(process, code), 1); };
+${fails}\ntest("exits", async () => { process.exit(0); await new Promise(() => {}); });`,
+        "",
+      ],
+    ])("process.exit(0) in %s", async (_, body, caller) => {
+      const { stderr, exitCode } = await runFiles({ "site.test.ts": `${imports}\n${body}\n` }, ["./site.test.ts"]);
+      expect(stderr).toMatch(/\(fail\) fails \[[^\]]+\]\n[^]*error: process\.exit\(\) was called/);
+      expect(stderr).toContain(called(caller));
+      expect(stderr).toContain(oneFailed);
       expect(exitCode).toBe(1);
     });
 
-    test("a failure in an earlier file counts, for a test and for the top level of a later file", async () => {
-      const [inTest, atTopLevel] = await Promise.all([
-        runFiles({ "a.test.ts": failingFile, "b.test.ts": exitingFile }, "./a.test.ts", "./b.test.ts"),
-        runFiles({ "a.test.ts": failingFile, "b.test.ts": `process.exit(0);` }, "./a.test.ts", "./b.test.ts"),
+    test("a failure in an earlier file counts", async () => {
+      const run = (later: string) =>
+        runFiles({ "a.test.ts": failingFile, "b.test.ts": later }, ["./a.test.ts", "./b.test.ts"]);
+      const [inTest, inDescribe, atTopLevel] = await Promise.all([
+        run(exitingFile),
+        run(`${imports}\ndescribe("later", () => { process.exit(0); });`),
+        run(`process.exit(0);`),
       ]);
-      for (const { stderr } of [inTest, atTopLevel]) {
-        expect(stderr).toContain(" 1 fail\n 1 expect() calls\nRan 1 test across 2 files.");
+      expect(inTest.stderr).toContain(called(` by the test "exits"`));
+      expect(inDescribe.stderr).toContain(called(""));
+      expect(atTopLevel.stderr).toContain(called("") + "      at ");
+      expect(atTopLevel.stderr).toMatch(/b\.test\.ts:1:\d+\n/);
+      for (const { stderr, exitCode } of [inTest, inDescribe, atTopLevel]) {
+        expect(stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 2 files.");
+        expect(exitCode).toBe(1);
       }
-      expect(inTest.stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
-      expect(atTopLevel.stderr).toContain(`error: process.exit(0) was called, ${butFailed}`);
-      expect(atTopLevel.stderr).toMatch(/at .*b\.test\.ts:1:\d+/);
-      expect({ inTest: inTest.exitCode, atTopLevel: atTopLevel.exitCode }).toEqual({ inTest: 1, atTopLevel: 1 });
-    });
-
-    test("a test that failed and still runs its afterEach hook is reported as failed, and no retry runs", async () => {
-      const { stderr, exitCode } = await runFiles(
-        {
-          "hook.test.ts": `
-            import { test, expect, afterEach } from "bun:test";
-            afterEach(() => { process.exit(0); });
-            test("fails", () => { expect(1).toBe(2); }, { retry: 3 });
-          `,
-        },
-        "./hook.test.ts",
-      );
-      expect(stderr).toContain(`error: process.exit(0) was called by a hook of the test "fails", ${butFailed}`);
-      // The first attempt is the only one, so the line has no attempt number.
-      expect(stderr).toMatch(/\(fail\) fails \[/);
-      expect(stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.");
-      expect(exitCode).toBe(1);
-    });
-
-    // A call in tail position has no stack frame of its caller, so the message names the caller.
-    test("names the caller when process.exit(0) is the whole body of an arrow function", async () => {
-      const [inTest, inHook] = await Promise.all([
-        runFiles(
-          {
-            "tail.test.ts": `
-              import { test, expect } from "bun:test";
-              test("fails", () => { expect(1).toBe(2); });
-              test("exits", () => process.exit(0));
-            `,
-          },
-          "./tail.test.ts",
-        ),
-        runFiles(
-          {
-            "tail.test.ts": `
-              import { test, expect, afterAll } from "bun:test";
-              afterAll(() => process.exit(0));
-              test("fails", () => { expect(1).toBe(2); });
-            `,
-          },
-          "./tail.test.ts",
-        ),
-      ]);
-      expect(inTest.stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
-      expect(inHook.stderr).toContain(`error: process.exit(0) was called by a hook, ${butFailed}`);
-      expect({ inTest: inTest.exitCode, inHook: inHook.exitCode }).toEqual({ inTest: 1, inHook: 1 });
     });
 
     test("an error thrown between tests counts", async () => {
       const { stderr, exitCode } = await runFiles(
         {
-          "a.test.ts": `
-            import { test } from "bun:test";
-            test("not run", () => {});
-            queueMicrotask(() => { throw new Error("thrown outside a test"); });
-          `,
+          "a.test.ts": `${imports}\ntest("passes", () => {});\nqueueMicrotask(() => { throw new Error("thrown outside a test"); });`,
           "b.test.ts": exitingFile,
         },
-        "./a.test.ts",
-        "./b.test.ts",
+        ["./a.test.ts", "./b.test.ts"],
       );
       expect(stderr).toContain("thrown outside a test");
-      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
-      expect(stderr).toContain(" 1 error\n");
+      expect(stderr).toContain(called(` by the test "exits"`));
+      expect(stderr).toContain(" 0 pass\n 0 fail\n 1 error\nRan 0 tests across 2 files.");
       expect(exitCode).toBe(1);
     });
 
-    // --isolate closes the sockets of a file after its tests, with no test file active.
-    test("an exit between files under --isolate counts", async () => {
+    // "a" and "b" have failed and still run their hooks when the hook of "b" exits. The exit ends the run, so --bail does not.
+    test("reports every test that has failed, also past --bail, and keeps a non-zero code", async () => {
+      const file = (code: number) => `${imports}
+        let hooks = 0;
+        test("first", () => { expect(1).toBe(2); });
+        describe("in flight", () => {
+          afterEach(async () => {
+            if (++hooks === 1) await new Promise(() => {});
+            process.exit(${code});
+          });
+          test.concurrent("a", () => { expect(1).toBe(2); });
+          test.concurrent("b", () => { expect(1).toBe(2); });
+        });
+      `;
+      const [zero, three] = await Promise.all([
+        runFiles({ "bail.test.ts": file(0) }, ["--bail=2", "./bail.test.ts"]),
+        runFiles({ "bail.test.ts": file(3) }, ["--bail=2", "./bail.test.ts"]),
+      ]);
+      expect(zero.stderr).toContain(called(` by a hook of the test "b"`));
+      expect(three.stderr).toContain(called(` by a hook of the test "b"`, 3));
+      for (const { stderr } of [zero, three]) {
+        expect(stderr).toMatch(
+          /\(fail\) first \[[^]*\(fail\) in flight > a \[[^]*\(fail\) in flight > b \[[^]*error: process\.exit\(\)/,
+        );
+        expect(stderr).toContain(" 0 pass\n 3 fail\n 3 expect() calls\nRan 3 tests across 1 file.");
+        expect(stderr).not.toContain("Bailed out");
+      }
+      expect({ zero: zero.exitCode, three: three.exitCode }).toEqual({ zero: 1, three: 3 });
+    });
+
+    test("a test fails for good when it has no retry left", async () => {
+      const file = (exitAtAttempt: number) => `${imports}
+        let attempt = 0;
+        afterEach(() => { if (++attempt === ${exitAtAttempt}) process.exit(0); });
+        test("fails", () => { expect(1).toBe(2); }, { retry: 2 });
+      `;
+      const [retryLeft, noRetryLeft] = await Promise.all([
+        runFiles({ "retry.test.ts": file(1) }, ["./retry.test.ts"]),
+        runFiles({ "retry.test.ts": file(3) }, ["./retry.test.ts"]),
+      ]);
+      // A retry could still pass, so the run has not failed. This exit is as it was before.
+      expect(retryLeft.stderr).not.toContain("process.exit() was called");
+      expect(retryLeft.stderr).not.toContain("Ran ");
+      expect(noRetryLeft.stderr).toContain("(fail) fails (attempt 3)");
+      expect(noRetryLeft.stderr).toContain(called(` by a hook of the test "fails"`));
+      expect(noRetryLeft.stderr).toContain(oneFailed);
+      expect({ retryLeft: retryLeft.exitCode, noRetryLeft: noRetryLeft.exitCode }).toEqual({
+        retryLeft: 0,
+        noRetryLeft: 1,
+      });
+    });
+
+    test("writes the JUnit file and the timings file once", async () => {
+      using dir = tempDir("bun-test-process-exit-reports", { "a.test.ts": failingFile, "b.test.ts": exitingFile });
+      const { stderr, exitCode } = await runIn(String(dir), [
+        "--reporter=junit",
+        "--reporter-outfile=junit.xml",
+        "--timings=timings.json",
+        "--update-timings",
+        "./a.test.ts",
+        "./b.test.ts",
+      ]);
+      expect(stderr).toContain(called(` by the test "exits"`));
+      const xml = await Bun.file(join(String(dir), "junit.xml")).text();
+      expect(xml).toContain(`<testcase name="fails"`);
+      expect(xml.match(/<\/testsuites>/g)).toHaveLength(1);
+      const timings = await Bun.file(join(String(dir), "timings.json")).json();
+      expect(Object.keys(timings.files)).toEqual(["a.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("closes the file group of GitHub Actions before the error", async () => {
       const { stderr, exitCode } = await runFiles(
+        { "a.test.ts": failingFile, "b.test.ts": exitingFile },
+        ["./a.test.ts", "./b.test.ts"],
+        { GITHUB_ACTIONS: "true" },
+      );
+      expect(stderr).toMatch(/::group::b\.test\.ts:\n+::endgroup::\n+[^]*error: process\.exit\(\) was called/);
+      expect(exitCode).toBe(1);
+    });
+
+    // The .snap file of a.test.ts is written when b.test.ts opens its own. The run ends before it writes the one of b.test.ts.
+    test("counts the snapshots that are in a .snap file, and -u keeps the entries of tests that did not run", async () => {
+      const files = {
+        "a.test.ts": `${imports}\ntest("adds two", () => { expect(1).toMatchSnapshot(); expect(2).toMatchSnapshot(); });`,
+        "b.test.ts": `${imports}
+          test("adds one and fails", () => { expect(3).toMatchSnapshot(); expect(1).toBe(2); });
+          test("exits", () => { process.exit(0); });
+          test("never runs", () => { expect(4).toMatchSnapshot(); });
+        `,
+      };
+      const kept =
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`adds one and fails 1`] = `0`;\n\nexports[`never runs 1`] = `4`;\n";
+      using added = tempDir("bun-test-process-exit-snapshots", files);
+      using updated = tempDir("bun-test-process-exit-snapshots", { ...files, "__snapshots__/b.test.ts.snap": kept });
+      const args = ["./a.test.ts", "./b.test.ts"];
+      const [add, update] = await Promise.all([
+        runIn(String(added), args, { CI: "false" }),
+        runIn(String(updated), ["-u", ...args], { CI: "false" }),
+      ]);
+      for (const { stderr, exitCode } of [add, update]) {
+        expect(stderr).toContain(called(` by the test "exits"`));
+        expect(stderr).toContain(" 1 pass\n 1 fail\nsnapshots: +2 added\n");
+        expect(exitCode).toBe(1);
+      }
+      expect(await Bun.file(join(String(added), "__snapshots__", "a.test.ts.snap")).text()).toContain(
+        "exports[`adds two 2`]",
+      );
+      expect(await Bun.file(join(String(updated), "__snapshots__", "b.test.ts.snap")).text()).toBe(kept);
+    });
+
+    test.each([
+      [
+        "between two files, while --isolate closes what the first file left open",
+        ["--isolate", "./a.test.ts", "./b.test.ts"],
         {
-          "a.test.ts": `
-            import { test, expect } from "bun:test";
-            test("fails", () => { expect(1).toBe(2); });
+          "a.test.ts": `${failingFile}
             test("leaves a connection open", async () => {
               const { promise: accepted, resolve } = Promise.withResolvers();
               const server = Bun.listen({
@@ -2074,352 +2196,225 @@ test("never runs", () => {});
               await accepted;
             });
           `,
-          "b.test.ts": `
-            import { test } from "bun:test";
-            test("never runs", () => {});
+          "b.test.ts": `${imports}\ntest("never runs", () => {});`,
+        },
+        "",
+        " 1 pass\n 1 fail\n 1 expect() calls\nRan 2 tests across 1 file.",
+      ],
+      [
+        "in a later --rerun-each repetition",
+        ["--rerun-each=2", "./a.test.ts"],
+        {
+          "a.test.ts": `${imports}
+            globalThis.runs = (globalThis.runs ?? 0) + 1;
+            test("fails in the first run", () => { if (globalThis.runs === 1) expect(1).toBe(2); });
+            test("exits", () => { if (globalThis.runs === 2) process.exit(0); });
           `,
         },
-        "--isolate",
-        "./a.test.ts",
-        "./b.test.ts",
-      );
-      expect(stderr).toContain(`error: process.exit(0) was called, ${butFailed}`);
-      expect(stderr).toContain(" 1 pass\n 1 fail\n");
+        ` by the test "exits"`,
+        " 2 pass\n 1 fail\n 1 expect() calls\nRan 3 tests across 1 file.",
+      ],
+      [
+        "with --parallel=1, which runs the files in the main process",
+        ["--parallel=1", "./a.test.ts", "./b.test.ts"],
+        { "a.test.ts": failingFile, "b.test.ts": exitingFile },
+        ` by the test "exits"`,
+        " 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 2 files.",
+      ],
+      [
+        "with --dots",
+        ["--dots", "./a.test.ts", "./b.test.ts"],
+        { "a.test.ts": failingFile, "b.test.ts": exitingFile },
+        ` by the test "exits"`,
+        "\n0 pass\n1 fail\n1 expect() calls\nRan 1 test across 2 files.",
+      ],
+    ])("process.exit(0) %s", async (_, args, files, caller, summary) => {
+      const { stderr, exitCode } = await runFiles(files, args);
+      expect(stderr).toContain(called(caller));
+      expect(stderr).toContain(summary);
       expect(exitCode).toBe(1);
     });
 
-    test("'exit' listeners and process.exitCode have the final code", async () => {
-      const { stdout, exitCode } = await runFiles(
-        {
-          "listener.test.ts": `
-            import { test, expect } from "bun:test";
-            process.on("exit", code => console.log("exit listener ran with", code, process.exitCode));
-            test("fails", () => { expect(1).toBe(2); });
-            test("exits", () => { process.exit(0); });
-          `,
-        },
-        "./listener.test.ts",
-      );
-      expect(stdout).toContain("exit listener ran with 1 1");
-      expect(exitCode).toBe(1);
+    test.skipIf(isWindows)("a SIGTERM listener that exits 0", async () => {
+      const file = (failFirst: boolean) => `${imports}
+        process.on("SIGTERM", () => { process.exit(0); });
+        test("first", () => { expect(1).toBe(${failFirst ? 2 : 1}); });
+        test("waits", async () => { console.log("ready"); await new Promise(() => {}); });
+      `;
+      async function terminated(failFirst: boolean) {
+        using dir = tempDir("bun-test-process-exit-sigterm", { "a.test.ts": file(failFirst) });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./a.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const stderr = proc.stderr.text();
+        let stdout = "";
+        for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+          stdout += chunk;
+          if (stdout.includes("ready")) proc.kill("SIGTERM");
+        }
+        return { stderr: await stderr, exitCode: await proc.exited };
+      }
+      const [failed, passed] = await Promise.all([terminated(true), terminated(false)]);
+      expect(failed.stderr).toContain(called(""));
+      expect(failed.stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.");
+      expect(passed.stderr).not.toContain("process.exit() was called");
+      expect(passed.stderr).not.toContain("Ran ");
+      expect({ failed: failed.exitCode, passed: passed.exitCode }).toEqual({ failed: 1, passed: 0 });
     });
 
-    test("the code frame is the process.exit() call when process.reallyExit is wrapped", async () => {
-      const { stderr, exitCode } = await runFiles(
-        {
-          "wrapped.test.ts": `import { test, expect } from "bun:test";
-const reallyExit = process.reallyExit;
-process.reallyExit = function wrapped(code) { return reallyExit.call(process, code); };
-test("fails", () => { expect(1).toBe(2); });
-test("exits", () => { process.exit(0); });
-`,
-        },
-        "./wrapped.test.ts",
-      );
-      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}\n      at <anonymous> (`);
-      expect(stderr).toMatch(/has failed\. The exit code is 1\.\n\s+at <anonymous> \(.*wrapped\.test\.ts:5:\d+\)/);
-      expect(exitCode).toBe(1);
-    });
-
+    // The rows below are as they were before. Each exit keeps its code, and prints no error and no summary.
     test.each([
-      ["sets process.exitCode = 0", "process.exitCode = 0;"],
-      ["calls process.exit(0)", "process.exit(0);"],
-    ])("an 'exit' listener at the end of a failed run %s", async (_, statement) => {
-      const { stdout, stderr, exitCode } = await runFiles(
+      [
+        "in a test, when no test has failed",
+        { "a.test.ts": `${imports}\ntest("passes", () => {});\n${exits}` },
+        [],
+        {},
+      ],
+      [
+        "in afterAll, when no test has failed",
+        { "a.test.ts": `${imports}\nafterAll(() => { process.exit(0); });\ntest("passes", () => {});` },
+        [],
+        {},
+      ],
+      ["at the top level, when no test has failed", { "a.test.ts": `process.exit(0);` }, [], {}],
+      // The run has not failed when the exit ends it. The tests and files after the exit do not run.
+      [
+        "before the tests that fail",
         {
-          "node.test.ts": `
-            import { test } from "node:test";
-            import assert from "node:assert";
-            process.on("exit", code => { console.log("exit listener ran with", code); ${statement} });
-            test("fails", () => { assert.strictEqual(1, 2); });
-          `,
+          "a.test.ts": `${imports}\ntest("passes", () => {});`,
+          "b.test.ts": `${exitingFile}\n${fails}`,
+          "c.test.ts": failingFile,
         },
-        "./node.test.ts",
-      );
-      expect(stdout).toContain("exit listener ran with 1");
-      // The run printed its summary before the listener. It is not printed again.
-      expect(stderr.match(/Ran 1 test across 1 file\./g)).toHaveLength(1);
-      expect(exitCode).toBe(1);
-    });
+        [],
+        {},
+      ],
+      [
+        "in a preload script",
+        { "preload.ts": `process.exit(0);`, "a.test.ts": failingFile },
+        ["--preload=./preload.ts"],
+        {},
+      ],
+      // The file decides the exit code, as it does under node.
+      [
+        "after a failure, under BUN_TEST_DRAIN_EVENT_LOOP=1",
+        { "a.test.ts": `${failingFile}\n${exits}` },
+        [],
+        { BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+      ],
+      // The macro runs in the VM of the bundler thread, which does not own the run.
+      [
+        "after a failure, in a macro of a Bun.build()",
+        {
+          "macro.ts": `export function leave() { process.exit(0); }`,
+          "entry.ts": `import { leave } from "./macro.ts" with { type: "macro" }; leave();`,
+          "a.test.ts": `${failingFile}\ntest("builds", async () => { await Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"] }); });`,
+        },
+        [],
+        {},
+      ],
+    ] as [string, Record<string, string>, string[], Record<string, string>][])(
+      "process.exit(0) %s",
+      async (_, files, args, env) => {
+        const tests = Object.keys(files).filter(name => name.endsWith(".test.ts"));
+        const { stderr, exitCode } = await runFiles(files, [...args, ...tests.map(name => `./${name}`)], env);
+        expect(stderr).not.toContain("process.exit() was called");
+        expect(stderr).not.toContain("Ran ");
+        expect(exitCode).toBe(0);
+      },
+    );
 
-    test("writes the JUnit file and the timings file once", async () => {
-      using dir = tempDir("bun-test-process-exit-reports", { "a.test.ts": failingFile, "b.test.ts": exitingFile });
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "test",
-          "--reporter=junit",
-          "--reporter-outfile=junit.xml",
-          "--timings=timings.json",
-          "--update-timings",
-          "./a.test.ts",
-          "./b.test.ts",
-        ],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
-      const xml = await Bun.file(join(String(dir), "junit.xml")).text();
-      expect(xml).toContain(`<testcase name="fails"`);
-      expect(xml.match(/<\/testsuites>/g)).toHaveLength(1);
-      const timings = await Bun.file(join(String(dir), "timings.json")).json();
-      expect(Object.keys(timings.files)).toEqual(["a.test.ts"]);
-      expect(exitCode).toBe(1);
-    });
-
-    test("--bail prints the counts, also when the exit commits the failure that reaches --bail", async () => {
-      const [bail, bailAtExit] = await Promise.all([
-        runFiles(
-          {
-            "bail.test.ts": `
-              import { test, expect } from "bun:test";
-              test("passes", () => {});
-              test("fails", () => { expect(1).toBe(2); });
-              test("never runs", () => {});
-            `,
-          },
-          "--bail",
-          "./bail.test.ts",
-        ),
-        runFiles(
-          {
-            "bail.test.ts": `
-              import { test, expect, afterEach } from "bun:test";
-              afterEach(() => { process.exit(0); });
-              test("fails", () => { expect(1).toBe(2); });
-            `,
-          },
-          "--bail",
-          "./bail.test.ts",
-        ),
-      ]);
-      expect(bail.stderr).toContain(" 1 pass\n 1 fail\n 1 expect() calls\nRan 2 tests across 1 file.");
-      expect(bail.stderr).toContain("Bailed out after 1 failure");
-      expect(bailAtExit.stderr).toContain(
-        `error: process.exit(0) was called by a hook of the test "fails", ${butFailed}`,
-      );
-      expect(bailAtExit.stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.");
-      expect(bailAtExit.stderr).toContain("Bailed out after 1 failure");
-      expect({ bail: bail.exitCode, bailAtExit: bailAtExit.exitCode }).toEqual({ bail: 1, bailAtExit: 1 });
-    });
-
-    // "a" and "b" have failed and still run their hooks when the hook of "b" exits. Only the exit steps of the process flush the FileSink.
-    test("an exit that reaches --bail reports the failures up to the count, and the process runs its exit steps", async () => {
-      const files = {
-        "bail.test.ts": `
-          import { test, expect, afterEach, describe } from "bun:test";
-          const sink = Bun.file("sink.log").writer();
-          let hooks = 0;
-          test("first", () => { expect(1).toBe(2); });
-          describe("in flight", () => {
-            afterEach(async () => {
-              if (++hooks === 1) await new Promise(() => {});
-              sink.write("written before the exit\\n");
-              process.exit(0);
-            });
-            test.concurrent("a", () => { expect(1).toBe(2); });
-            test.concurrent("b", () => { expect(1).toBe(2); });
+    // The rows below are as they were before too. Nothing ends the run before its normal end, which prints the summary once.
+    test.each([
+      [
+        "process.exit(0) in a Worker",
+        `${failingFile}
+          test("a Worker exits", async () => {
+            const worker = new Worker(URL.createObjectURL(new Blob(["process.exit(0);"], { type: "text/javascript" })));
+            const { promise, resolve } = Promise.withResolvers();
+            worker.addEventListener("close", resolve, { once: true });
+            await promise;
           });
         `,
-      };
-      using dir = tempDir("bun-test-process-exit-bail", files);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--bail=2", "./bail.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [[, stderr, exitCode], notReached] = await Promise.all([
-        Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-        runFiles(files, "--bail=5", "./bail.test.ts"),
-      ]);
-      for (const output of [stderr, notReached.stderr]) {
-        expect(output).toContain(`error: process.exit(0) was called by a hook of the test "b", ${butFailed}`);
-        expect(output).toContain("(fail) first");
-        expect(output).toContain("(fail) in flight > a");
-      }
-      expect(stderr).not.toContain("(fail) in flight > b");
-      expect(stderr).toContain(" 0 pass\n 2 fail\n");
-      expect(stderr).toContain("Ran 2 tests across 1 file.");
-      expect(stderr).toContain("Bailed out after 2 failures");
-      expect(notReached.stderr).toContain("(fail) in flight > b");
-      expect(notReached.stderr).toContain(" 0 pass\n 3 fail\n");
-      expect(notReached.stderr).toContain("Ran 3 tests across 1 file.");
-      expect(notReached.stderr).not.toContain("Bailed out");
-      // On Windows a FileSink writes on the thread pool, and no exit waits for it.
-      if (!isWindows) {
-        expect(await Bun.file(join(String(dir), "sink.log")).text()).toBe("written before the exit\n");
-      }
-      expect({ reached: exitCode, notReached: notReached.exitCode }).toEqual({ reached: 1, notReached: 1 });
-    });
-
-    test("closes the file group of GitHub Actions before the report", async () => {
-      using dir = tempDir("bun-test-process-exit-gha", { "a.test.ts": failingFile, "b.test.ts": exitingFile });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
-        env: { ...bunEnv, GITHUB_ACTIONS: "true" },
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toMatch(/::group::b\.test\.ts:\n+::endgroup::\n+[^]*error: process\.exit\(0\) was called/);
-      expect(exitCode).toBe(1);
-    });
-
-    // The .snap file of a.test.ts is written when b.test.ts opens its own. The early end does not write the one of b.test.ts.
-    test("the counts leave out only the new snapshots that no .snap file has", async () => {
-      using dir = tempDir("bun-test-process-exit-snapshots", {
-        "a.test.ts": `
-          import { test, expect } from "bun:test";
-          test("adds two", () => { expect(1).toMatchSnapshot(); expect(2).toMatchSnapshot(); });
-        `,
-        "b.test.ts": `
-          import { test, expect } from "bun:test";
-          test("adds one and fails", () => { expect(3).toMatchSnapshot(); expect(1).toBe(2); });
-          test("exits", () => { process.exit(0); });
-        `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
-        env: { ...bunEnv, CI: "false" },
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
-      expect(stderr).toContain(" 1 pass\n 1 fail\nsnapshots: +2 added\n");
-      const written = await Bun.file(join(String(dir), "__snapshots__", "a.test.ts.snap")).text();
-      expect(written).toContain("exports[`adds two 2`]");
-      const unwritten = Bun.file(join(String(dir), "__snapshots__", "b.test.ts.snap"));
-      expect((await unwritten.exists()) ? await unwritten.text() : "").not.toContain("adds one and fails");
-      expect(exitCode).toBe(1);
-    });
-
-    // The 'exit' listeners are told 1. The runner takes back only its own code when process.exit() returns to JS.
-    test.each([
-      ["stores 1", `process.on("exit", () => { process.exitCode = 1; });`],
-      ["stores the code it is given", `process.on("exit", code => { process.exitCode = code; });`],
-    ])("the exit code of an 'exit' listener that %s stays when process.exit() returns to JS", async (_, listener) => {
-      const { stdout, stderr, exitCode } = await runFiles(
-        {
-          "listener.test.ts": `
-            import { test, expect, afterEach } from "bun:test";
-            let attempt = 0;
-            process.reallyExit = () => {};
-            ${listener}
-            afterEach(() => {
-              if (attempt !== 1) return;
-              process.exit(0);
-              console.log("exitCode after process.exit(0):", process.exitCode);
-            });
-            test("passes on the second attempt", () => { attempt++; expect(attempt).toBe(2); }, { retry: 1 });
-          `,
-        },
-        "./listener.test.ts",
-      );
-      expect(stdout).toContain("exitCode after process.exit(0): 1\n");
-      expect(stderr).not.toContain("this test run has failed");
-      expect(stderr).toContain(" 1 pass\n 0 fail\n");
-      expect(exitCode).toBe(1);
-    });
-
-    // The rows below keep the behavior they have without the rule above.
-
-    test("a process.exit() that returns to JS leaves no trace", async () => {
-      const [stubbed, retried] = await Promise.all([
-        runFiles(
-          {
-            "stub.test.ts": `
-              import { test, expect } from "bun:test";
-              test("fails", () => { expect(1).toBe(2); });
-              test("process.exit() returns", () => {
-                process.reallyExit = () => {};
-                process.exit();
-                console.log("exitCode after process.exit():", process.exitCode);
-                process.exit(0);
-                console.log("exitCode after process.exit(0):", process.exitCode);
-              });
-              test("runs after", () => {});
-            `,
-          },
-          "./stub.test.ts",
-        ),
-        runFiles(
-          {
-            "retry.test.ts": `
-              import { test, expect, afterEach } from "bun:test";
-              let attempt = 0;
-              process.reallyExit = () => {};
-              afterEach(() => { if (attempt === 1) process.exit(0); });
-              test("passes on the second attempt", () => { attempt++; expect(attempt).toBe(2); }, { retry: 1 });
-            `,
-          },
-          "./retry.test.ts",
-        ),
-      ]);
-      expect(stubbed.stdout).toContain("exitCode after process.exit(): undefined\n");
-      expect(stubbed.stdout).toContain("exitCode after process.exit(0): 0\n");
-      expect(stubbed.stderr).not.toContain("this test run has failed");
-      expect(stubbed.stderr).toContain(" 2 pass\n 1 fail\n");
-      expect(stubbed.stderr.match(/Ran 3 tests across 1 file\./g)).toHaveLength(1);
-      expect(retried.stderr).not.toContain("this test run has failed");
-      expect(retried.stderr).toContain(" 1 pass\n 0 fail\n");
-      expect({ stubbed: stubbed.exitCode, retried: retried.exitCode }).toEqual({ stubbed: 1, retried: 0 });
-    });
-
-    test("a non-zero code stands after a failure", async () => {
-      const { stderr, exitCode } = await runFiles(
-        {
-          "exits.test.ts": `
-            import { test, expect } from "bun:test";
-            test("fails", () => { expect(1).toBe(2); });
-            test("exits", () => { process.exit(3); });
-          `,
-        },
-        "./exits.test.ts",
-      );
-      expect(stderr).toContain("(fail) fails");
-      expect(stderr).not.toContain("this test run has failed");
-      expect(exitCode).toBe(3);
-    });
-
-    test("process.exit(0) in a Worker does not end a failed run", async () => {
-      const { stderr, exitCode } = await runFiles(
-        {
-          "worker.test.ts": `
-            import { test, expect } from "bun:test";
-            test("fails", () => { expect(1).toBe(2); });
-            test("a Worker exits", async () => {
-              const worker = new Worker(URL.createObjectURL(new Blob(["process.exit(0);"], { type: "text/javascript" })));
-              const { promise, resolve } = Promise.withResolvers();
-              worker.addEventListener("close", resolve, { once: true });
-              await promise;
-            });
-          `,
-        },
-        "./worker.test.ts",
-      );
-      expect(stderr).not.toContain("this test run has failed");
-      expect(stderr).toContain(" 1 pass\n 1 fail\n");
-      expect(exitCode).toBe(1);
-    });
-
-    test.each([
-      [
-        "in a test",
-        `import { test } from "bun:test"; test("passes", () => {}); test("exits", () => { process.exit(0); });`,
+        "",
+        " 1 pass\n 1 fail\n",
+        1,
       ],
       [
-        "in afterAll",
-        `import { test, afterAll } from "bun:test"; afterAll(() => { process.exit(0); }); test("passes", () => {});`,
+        "a mocked process.exit",
+        `import { spyOn } from "bun:test";
+          ${failingFile}
+          test("mocked", () => {
+            const exit = spyOn(process, "exit").mockImplementation(() => {});
+            process.exit(0);
+            expect(exit).toHaveBeenCalledWith(0);
+            exit.mockRestore();
+          });
+        `,
+        "",
+        " 1 pass\n 1 fail\n",
+        1,
       ],
-      ["at the top level", `process.exit(0);`],
-    ])("process.exit(0) %s exits 0 when nothing failed", async (_, contents) => {
-      const { stderr, exitCode } = await runFiles({ "green.test.ts": contents }, "./green.test.ts");
-      expect(stderr).not.toContain("this test run has failed");
-      expect(stderr).not.toContain("Ran ");
+      [
+        "a process.reallyExit that returns",
+        `${failingFile}
+          test("process.exit() returns", () => {
+            const codes = [];
+            process.reallyExit = code => { codes.push(code); };
+            process.exit();
+            process.exit(0);
+            console.log("reallyExit was called with", codes, "and process.exitCode is", process.exitCode);
+          });
+        `,
+        "reallyExit was called with [ 0, 0 ] and process.exitCode is 0\n",
+        " 1 pass\n 1 fail\n",
+        1,
+      ],
+    ])("%s does not end a run that has failed", async (_, contents, printed, counts, expected) => {
+      const { stdout, stderr, exitCode } = await runFiles({ "a.test.ts": contents }, ["./a.test.ts"]);
+      expect(stdout).toContain(printed);
+      expect(stderr).not.toContain("process.exit() was called");
+      expect(stderr).toContain(counts);
+      expect(stderr.match(/Ran \d tests? across 1 file\./g)).toHaveLength(1);
+      expect(exitCode).toBe(expected);
+    });
+
+    // The tests below are serial: a node:test file takes over a second to load in a debug build.
+    const nodeTestFile = (listener: string) => `
+      import { test } from "node:test";
+      import assert from "node:assert";
+      process.on("exit", code => { console.log("exit listener ran with", code); ${listener}; });
+      test("fails", () => { assert.strictEqual(1, 2); });
+    `;
+
+    // --bail runs the 'exit' listeners of a node:test file. The run has failed, so they cannot make it exit 0.
+    test.serial.each([
+      ["process.exitCode = 0", 1],
+      ["process.exit(0)", 1],
+      ["process.exitCode = 3", 3],
+    ])("an 'exit' listener of a run that --bail ends: %s", async (listener, expected) => {
+      const { stdout, stderr, exitCode } = await runFiles({ "node.test.ts": nodeTestFile(listener) }, [
+        "--bail",
+        "./node.test.ts",
+      ]);
+      expect(stdout).toContain("exit listener ran with 1");
+      expect(stderr.match(/Ran 1 test across 1 file\./g)).toHaveLength(1);
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(stderr).not.toContain("process.exit() was called");
+      expect(exitCode).toBe(expected);
+    });
+
+    // As it was before, and as under node: the listener of a file that failed reads 1, and its exit code stands.
+    test.serial("an 'exit' listener that calls process.exit(0) at the normal end of a failed run", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({ "node.test.ts": nodeTestFile("process.exit(0)") }, [
+        "./node.test.ts",
+      ]);
+      expect(stdout).toContain("exit listener ran with 1");
+      expect(stderr).not.toContain("process.exit() was called");
+      expect(stderr.match(/Ran 1 test across 1 file\./g)).toHaveLength(1);
       expect(exitCode).toBe(0);
     });
   });

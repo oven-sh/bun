@@ -272,10 +272,8 @@ static WTF::String syntaxErrorParseFrame(JSC::VM& vm, Zig::GlobalObject* globalO
     return sb.toString();
 }
 
-// Describes every frame, source-maps them in one batch, and gives the error its own position: that of the
-// first frame that has one (error.line, error.column, error.sourceURL), or of a parser SyntaxError's parse
-// site. error.originalLine and error.originalColumn keep the first frame's position before the source map,
-// so the error printer maps it once.
+// Describes every frame, source-maps them in one batch, and gives the error the position of the first frame
+// that has one (or of a parser SyntaxError's parse site), plus the position before the map as originalLine.
 static void describeStackFrames(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, DescribedStackFrames& described)
 {
     OwnedZigStackFrames& records = described.records;

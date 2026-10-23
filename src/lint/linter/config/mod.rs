@@ -1478,7 +1478,9 @@ impl Config {
             true => Ok(schema::with_js_defaults(rule, &options)),
             false => schema::validate_js(rule, &options),
         };
+        let is_checked = !(self.prefers_typescript_rules && options.is_empty());
         if severity != Severity::Off
+            && is_checked
             && config.error.is_none()
             && let Err(lines) = &validated
         {

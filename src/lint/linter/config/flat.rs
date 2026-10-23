@@ -476,8 +476,10 @@ impl Reader<'_> {
                     ]));
                 };
                 // oxlint checks every entry's options before it lints, even if the entry is off or in an override that
-                // matches no file. ESLint only checks them for the files where the rule is on.
+                // matches no file. ESLint only checks them for the files where the rule is on. oxlint doesn't check an
+                // entry without options, even if the schema asks for some.
                 if self.prefers_typescript_rules
+                    && !setting.options.is_empty()
                     && let Err(lines) = crate::linter::schema::validate_js(rule, &setting.options)
                 {
                     let message = super::oxlint_js_options_error(rule, &setting.options, &lines);

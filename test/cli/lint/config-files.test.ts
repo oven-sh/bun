@@ -3372,6 +3372,38 @@ describe.concurrent("an .oxlintrc.json", () => {
     ]);
   });
 
+  // What oxlint 1.87 reports. ESLint 10.12 refuses the first two: "Value [] should NOT have fewer than 1 items."
+  // `perfectionist/sort-constructor-parameters` has such a schema.
+  test("an entry without options for a JS plugin's rule isn't validated in an .oxlintrc.json", async () => {
+    const plugin = `const create = context => ({
+        Program: node => context.report({ node, message: context.id + " " + JSON.stringify(context.options) }),
+      });
+      const object = { type: "object", properties: { a: { type: "number", default: 1 } }, additionalProperties: false };
+      export default {
+        meta: { name: "pl" },
+        rules: {
+          one: { meta: { schema: { type: "array", minItems: 1 } }, create },
+          list: { meta: { schema: { type: "array", minItems: 1 } }, create },
+          schema: { meta: { schema: [object] }, create },
+          both: { meta: { schema: [object], defaultOptions: [{}] }, create },
+        },
+      };\n`;
+    const config = {
+      categories: { correctness: "off" },
+      jsPlugins: ["./plugin.js"],
+      rules: { "pl/one": "error", "pl/list": ["error"], "pl/schema": "error", "pl/both": "error" },
+    };
+    const files = { ".oxlintrc.json": JSON.stringify(config), "plugin.js": plugin, "a.js": "a;\n" };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+    expect(stdout.split("\n").flatMap(line => line.match(/pl\/\w+ \[.*?\](?= \[)/) ?? [])).toEqual([
+      "pl/one []",
+      "pl/list []",
+      "pl/schema []",
+      'pl/both [{"a":1}]',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   // oxlint 1.87 prints this for each of the first five, before it lints anything.
   test("options for a JS plugin's rule that doesn't accept any are rejected, even if the rule is off", async () => {
     const plugin = `const create = () => ({});

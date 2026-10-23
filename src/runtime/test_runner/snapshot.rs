@@ -818,8 +818,15 @@ impl Snapshots {
                 continue;
             }
             if result_text.len() < file_text.len() {
-                if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
-                    panic!("Failed to update inline snapshot: File was left in an invalid state");
+                if let Err(e) = bun_sys::ftruncate(file.file.handle, result_text.len() as i64) {
+                    log.add_error_fmt(
+                        &source,
+                        bun_ast::Loc { start: 0 },
+                        format_args!(
+                            "Failed to update inline snapshot: Truncate file error: {}. The file was left in an invalid state",
+                            bstr::BStr::new(e.name()),
+                        ),
+                    );
                 }
             }
         }

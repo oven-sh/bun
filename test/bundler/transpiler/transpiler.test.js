@@ -5413,6 +5413,22 @@ console.log("boop");
       export var q = r;
     `);
   });
+
+  it("using top level keeps classes in the module scope", () => {
+    // A class that runs code when it is defined stays in source order as a
+    // `var`. Any other class leaves the try block like a function does.
+    expectPrintedSnapshot(`
+      using a = b();
+      export class C { static a = a; }
+      class D extends C { static self() { return D; } }
+      export { D };
+      class E {}
+      export function f() {
+        class G {}
+        return [new E(), new G()];
+      }
+    `);
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

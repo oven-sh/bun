@@ -23,7 +23,7 @@ pub(crate) struct Scanner<'a> {
     pub(crate) filter_names: &'a [&'a [u8]],
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    pub(crate) path_ignore_patterns: &'a [bun_glob::Prepared<&'a [u8]>],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -107,13 +107,12 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
+        bun_core::top_level_dir()
     }
 
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`.
+        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
         unsafe { (*self.fs).filename_store }
     }
 
@@ -322,15 +321,15 @@ impl<'a> Scanner<'a> {
         };
 
         for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
+            if pattern.r#match(rel_path).matches() {
                 return true;
             }
             // Only try trailing separator for ** patterns (e.g. "vendor/**").
             // Single-star patterns like "vendor/*" must not prune entire
             // directories because * doesn't cross directory boundaries.
             if let Some(p) = rel_with_slash {
-                if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
+                if strings::index_of(pattern.pattern(), b"**").is_some() {
+                    if pattern.r#match(p).matches() {
                         return true;
                     }
                 }
@@ -397,8 +396,9 @@ impl<'a> Scanner<'a> {
             }
             fs::EntryKind::File => {
                 // An earlier argument listed it. It still counts as a match for this one.
-                if !entry.abs_path.is_empty() {
-                    self.push_test_file(entry.abs_path).unwrap_or_oom();
+                let listed = entry.abs_path();
+                if !listed.is_empty() {
+                    self.push_test_file(listed).unwrap_or_oom();
                     return;
                 }
 
@@ -434,9 +434,10 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = Interned::from_static(stored);
-                self.push_test_file(entry.abs_path).unwrap_or_oom();
+                let abs_path = entry.abs_path_or_fill(|| Interned::from_static(stored));
+                self.push_test_file(abs_path).unwrap_or_oom();
             }
+            fs::EntryKind::Dangling => {}
         }
     }
 }

@@ -141,7 +141,7 @@ describe("X509Certificate.prototype property descriptors", () => {
       expect({ ...desc, get: typeof desc.get }).toEqual({
         get: "function",
         set: undefined,
-        enumerable: true,
+        enumerable: false,
         configurable: true,
       });
     }
@@ -158,6 +158,130 @@ describe("X509Certificate.prototype property descriptors", () => {
     expect(getFrom.call(cert)).toBeInstanceOf(Date);
     expect(getFrom.call(cert)).toEqual(cert.validFromDate);
     expect(getTo.call(cert)).toEqual(cert.validToDate);
+  });
+
+  const accessors = [
+    "ca",
+    "fingerprint",
+    "fingerprint256",
+    "fingerprint512",
+    "infoAccess",
+    "issuer",
+    "issuerCertificate",
+    "keyUsage",
+    "publicKey",
+    "raw",
+    "serialNumber",
+    "signatureAlgorithm",
+    "signatureAlgorithmOid",
+    "subject",
+    "subjectAltName",
+    "validFrom",
+    "validFromDate",
+    "validTo",
+    "validToDate",
+  ];
+  const methods = [
+    "checkEmail",
+    "checkHost",
+    "checkIP",
+    "checkIssued",
+    "checkPrivateKey",
+    "toJSON",
+    "toLegacyObject",
+    "toString",
+    "verify",
+  ];
+  const keysIn = (value: object) => {
+    const keys: string[] = [];
+    for (const key in value) keys.push(key);
+    return keys;
+  };
+
+  // Node defines all 28 members in the class body (lib/internal/crypto/x509.js), so none is enumerable.
+  test("every accessor and method has the descriptor of a class member", () => {
+    const shapeOf = (name: string) => {
+      const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+      if (!desc) return "missing";
+      const { get, set, value, ...flags } = desc;
+      return { ...flags, get: typeof get, set: typeof set, value: typeof value };
+    };
+    const accessor = {
+      get: "function",
+      set: "undefined",
+      value: "undefined",
+      enumerable: false,
+      configurable: true,
+    } as const;
+    const method = {
+      get: "undefined",
+      set: "undefined",
+      value: "function",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    } as const;
+    expect(Object.fromEntries([...accessors, ...methods].map(name => [name, shapeOf(name)]))).toEqual({
+      ...Object.fromEntries(accessors.map(name => [name, accessor])),
+      ...Object.fromEntries(methods.map(name => [name, method])),
+    });
+  });
+
+  test("for..in and Object.keys list no member", () => {
+    class Subclass extends X509Certificate {}
+    const cert = new X509Certificate(wildcardSanCertPem);
+    expect({
+      ownKeys: Object.keys(X509Certificate.prototype),
+      prototype: keysIn(X509Certificate.prototype),
+      instance: keysIn(cert),
+      subclassInstance: keysIn(new Subclass(wildcardSanCertPem)),
+      structuredClone: keysIn(structuredClone(cert)),
+    }).toEqual({ ownKeys: [], prototype: [], instance: [], subclassInstance: [], structuredClone: [] });
+  });
+
+  // Each of these reads every enumerable property with the prototype as `this`, and the getters throw for it.
+  test("Object.entries, Object.assign and spread of the prototype read no getter", () => {
+    const proto = X509Certificate.prototype;
+    expect(() => proto.ca).toThrow(TypeError);
+    expect({
+      entries: Object.entries(proto),
+      assign: Object.keys(Object.assign({}, proto)),
+      spread: Object.keys({ ...proto }),
+    }).toEqual({ entries: [], assign: [], spread: [] });
+  });
+
+  // The Worker never loads node:crypto, so the structured clone deserializer creates the class there.
+  test("a certificate posted to a Worker has no enumerable member there", async () => {
+    const url = URL.createObjectURL(
+      new Blob([
+        `self.onmessage = ({ data }) => {
+          const keys = [];
+          for (const key in data) keys.push(key);
+          postMessage({ keys, subject: data.subject });
+        };`,
+      ]),
+    );
+    const worker = new Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ keys: string[]; subject: string }>();
+      worker.onerror = e => reject(e.error ?? e.message ?? e);
+      worker.onmessageerror = reject;
+      worker.onmessage = e => resolve(e.data);
+      const cert = new X509Certificate(wildcardSanCertPem);
+      worker.postMessage(cert);
+      expect(await promise).toEqual({ keys: [], subject: cert.subject });
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  // console.log prints the prototype members of a class instance, enumerable or not.
+  test("Bun.inspect of a certificate still prints every member", () => {
+    const printed = Bun.inspect(new X509Certificate(wildcardSanCertPem));
+    const names = Array.from(printed.matchAll(/^  (\w+): /gm), match => match[1]);
+    expect(names.sort()).toEqual([...accessors, ...methods].sort());
+    expect(printed).toContain("\n  ca: false,\n");
   });
 });
 

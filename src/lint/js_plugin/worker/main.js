@@ -500,7 +500,7 @@ const SourceCode = native.sourceCode(native.TokenStore, [
 let sourceCode = new SourceCode();
 
 // `new sourceCode.constructor(text, ast)`: ESLint's `SourceCode` for code that a rule has parsed by itself, as eslint-plugin-sonarjs does
-// with the text of a comment. It knows the text, the lines, and the tokens and comments of `ast`.
+// with the text of a comment. It knows the text, the lines, and the nodes, tokens and comments of `ast`, but no scopes.
 function parsedSourceCode(textOrConfig, astIfNoConfig) {
   const config = typeof textOrConfig === "string" ? { text: textOrConfig, ast: astIfNoConfig } : textOrConfig;
   const { ast } = config;
@@ -546,6 +546,34 @@ function parsedSourceCode(textOrConfig, astIfNoConfig) {
   const lines = SourceCode.splitLines(text);
   const lineStartIndices = [0];
   for (const match of text.matchAll(/\r\n|[\r\n\u2028\u2029]/gu)) lineStartIndices.push(match.index + match[0].length);
+  const visitorKeys = config.visitorKeys || sourceCode.visitorKeys;
+  const isNode = value => value !== null && typeof value === "object" && typeof value.type === "string";
+  const isOwnKey = key => key !== "parent" && key !== "leadingComments" && key !== "trailingComments" && key[0] !== "_";
+  function nodeAt(node, index) {
+    if (index < node.range[0] || index >= node.range[1]) return null;
+    for (const key of visitorKeys[node.type] || Object.keys(node).filter(isOwnKey)) {
+      for (const child of [node[key]].flat()) {
+        const found = isNode(child) ? nodeAt(child, index) : null;
+        if (found) return found;
+      }
+    }
+    return node;
+  }
+  function isSpaceBetween(first, second, looksIntoJSXText) {
+    if (first.range[0] > second.range[0]) [first, second] = [second, first];
+    if (first.range[1] >= second.range[0]) return false;
+    const end = one(second.range[0], second.range[1], undefined, false) || second;
+    for (let token = one(first.range[0], first.range[1], undefined, true) || first; token !== end;) {
+      const next = one(token.range[1], -1, { includeComments: true }, false);
+      if (token.range[1] !== next.range[0]) return true;
+      if (looksIntoJSXText && next !== end && next.type === "JSXText" && /\s/u.test(next.value)) return true;
+      token = next;
+    }
+    return false;
+  }
+  const withoutScopes = name => () => {
+    throw new Error(`sourceCode.${name}() needs scopes, which bun lint does not have for code that a rule has parsed`);
+  };
   return Object.freeze({
     isESTree: ast.type === "Program",
     hasBOM,
@@ -553,7 +581,7 @@ function parsedSourceCode(textOrConfig, astIfNoConfig) {
     ast,
     parserServices: config.parserServices || {},
     scopeManager: config.scopeManager || null,
-    visitorKeys: config.visitorKeys || sourceCode.visitorKeys,
+    visitorKeys,
     tokensAndComments: all,
     lines: Object.freeze(lines),
     lineStartIndices,
@@ -563,6 +591,50 @@ function parsedSourceCode(textOrConfig, astIfNoConfig) {
     getAllComments: () => comments,
     getLoc: node => node.loc,
     getRange: node => node.range,
+    getAncestors(node) {
+      const ancestors = [];
+      for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) ancestors.unshift(ancestor);
+      return ancestors;
+    },
+    getNodeByRangeIndex: index => nodeAt(ast, index),
+    isSpaceBetween: (first, second) => isSpaceBetween(first, second, false),
+    isSpaceBetweenTokens: (first, second) => isSpaceBetween(first, second, true),
+    getLocFromIndex(index) {
+      if (typeof index !== "number") throw new TypeError("Expected `index` to be a number.");
+      if (index < 0 || index > text.length) {
+        throw new RangeError(
+          `Index out of range (requested index ${index}, but source text has length ${text.length}).`,
+        );
+      }
+      const line = index === text.length ? lines.length : lineStartIndices.findLastIndex(start => start <= index) + 1;
+      return { line, column: index - lineStartIndices[line - 1] };
+    },
+    getIndexFromLoc(loc) {
+      if (loc === null || typeof loc !== "object" || typeof loc.line !== "number" || typeof loc.column !== "number") {
+        throw new TypeError("Expected `loc` to be an object with numeric `line` and `column` properties.");
+      }
+      const { line, column } = loc;
+      const count = lineStartIndices.length;
+      if (line <= 0) {
+        throw new RangeError(`Line number out of range (line ${line} requested). Line numbers should be 1-based.`);
+      }
+      if (line > count) {
+        throw new RangeError(`Line number out of range (line ${line} requested, but only ${count} lines present).`);
+      }
+      if (column < 0) throw new RangeError(`Invalid column number (column ${column} requested).`);
+      const [start, end] = [lineStartIndices[line - 1], line === count ? text.length + 1 : lineStartIndices[line]];
+      if (start + column >= end) {
+        const length = Math.min(end, text.length) - start;
+        throw new RangeError(
+          `Column number out of range (column ${column} requested, but the length of line ${line} is ${length}).`,
+        );
+      }
+      return start + column;
+    },
+    getScope: withoutScopes("getScope"),
+    getDeclaredVariables: withoutScopes("getDeclaredVariables"),
+    isGlobalReference: withoutScopes("isGlobalReference"),
+    markVariableAsUsed: withoutScopes("markVariableAsUsed"),
     getTokenByRangeStart(offset, options) {
       const token = within(options?.includeComments ? all : tokens, offset, -1)[0];
       return token?.range[0] === offset ? token : null;

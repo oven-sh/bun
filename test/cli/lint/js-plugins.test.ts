@@ -252,8 +252,10 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
   );
 
   // eslint-plugin-sonarjs parses the text of a comment and asks for its tokens that way. The answers are those of ESLint 9.39.5.
-  test("new sourceCode.constructor(text, ast) is about the code that the rule has parsed", async () => {
-    const plugin = `
+  test(
+    "new sourceCode.constructor(text, ast) is about the code that the rule has parsed",
+    async () => {
+      const plugin = `
       const token = (type, value, start) => ({ type, value, range: [start, start + value.length], loc: {} });
       export default {
         meta: { name: "api" },
@@ -278,12 +280,13 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
                   const parsed = new SourceCode(text, ast);
                   const values = found => found.map(it => it.value);
                   const isSemicolon = it => it.value === ";";
-                  let error;
-                  try {
-                    new SourceCode(text, { type: "Program" });
-                  } catch (thrown) {
-                    error = thrown.message;
-                  }
+                  const errorOf = run => {
+                    try {
+                      run();
+                    } catch (thrown) {
+                      return thrown.message;
+                    }
+                  };
                   context.report({
                     node,
                     message: JSON.stringify({
@@ -302,7 +305,17 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
                       before: values(parsed.getCommentsBefore(second)),
                       between: parsed.commentsExistBetween(first, second),
                       all: values(parsed.tokensAndComments),
-                      error,
+                      nodes: [0, 4, 5, 11].map(index => parsed.getNodeByRangeIndex(index)?.range ?? null),
+                      locations: [0, 10, 11, 12].map(index => parsed.getLocFromIndex(index)),
+                      indices: [parsed.getIndexFromLoc({ line: 1, column: 4 }), parsed.getIndexFromLoc({ line: 2, column: 1 })],
+                      spaces: [parsed.isSpaceBetween(tokens[0], tokens[1]), parsed.isSpaceBetween(second, first)],
+                      ancestors: parsed.getAncestors({ parent: { type: "A", parent: { type: "B" } } }).map(it => it.type),
+                      errors: [
+                        errorOf(() => new SourceCode(text, { type: "Program" })),
+                        errorOf(() => parsed.getLocFromIndex(13)),
+                        errorOf(() => parsed.getIndexFromLoc({ line: 1, column: 11 })),
+                        errorOf(() => parsed.getScope(first)),
+                      ],
                     }),
                   });
                 },
@@ -311,34 +324,56 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
           },
         },
       };`;
-    const { raw } = await lint(
-      {
-        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "api/dump": "error" } }),
-        "plugin.mjs": plugin,
-        "a.js": "linted(1, 2, 3)\n",
-      },
-      ["-f", "json"],
-    );
-    const [{ message }] = JSON.parse(raw).diagnostics;
-    expect(JSON.parse(message)).toEqual({
-      name: "SourceCode",
-      isInstance: true,
-      split: ["a", "b"],
-      own: "linted(1, 2, 3)\n",
-      text: "a(b); // c\nd",
-      lines: ["a(b); // c", "d"],
-      isSameAst: true,
-      semicolons: [";", null],
-      firstText: "a(b);",
-      tokens: ["a", "(", "b", ")", ";"],
-      lastTwo: [")", ";"],
-      after: ["d", " c"],
-      before: [" c"],
-      between: true,
-      all: ["a", "(", "b", ")", ";", " c", "d"],
-      error: "AST is missing the tokens array.",
-    });
-  });
+      const { raw } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "api/dump": "error" } }),
+          "plugin.mjs": plugin,
+          "a.js": "linted(1, 2, 3)\n",
+        },
+        ["-f", "json"],
+      );
+      const [{ message }] = JSON.parse(raw).diagnostics;
+      expect(JSON.parse(message)).toEqual({
+        name: "SourceCode",
+        isInstance: true,
+        split: ["a", "b"],
+        own: "linted(1, 2, 3)\n",
+        text: "a(b); // c\nd",
+        lines: ["a(b); // c", "d"],
+        isSameAst: true,
+        semicolons: [";", null],
+        firstText: "a(b);",
+        tokens: ["a", "(", "b", ")", ";"],
+        lastTwo: [")", ";"],
+        after: ["d", " c"],
+        before: [" c"],
+        between: true,
+        all: ["a", "(", "b", ")", ";", " c", "d"],
+        nodes: [
+          [0, 5],
+          [0, 5],
+          [0, 12],
+          [11, 12],
+        ],
+        locations: [
+          { line: 1, column: 0 },
+          { line: 1, column: 10 },
+          { line: 2, column: 0 },
+          { line: 2, column: 1 },
+        ],
+        indices: [4, 12],
+        spaces: [false, true],
+        ancestors: ["B", "A"],
+        errors: [
+          "AST is missing the tokens array.",
+          "Index out of range (requested index 13, but source text has length 12).",
+          "Column number out of range (column 11 requested, but the length of line 1 is 11).",
+          "sourceCode.getScope() needs scopes, which bun lint does not have for code that a rule has parsed",
+        ],
+      });
+    },
+    timeout,
+  );
 
   test(
     "provides tokens, comments, scopes and locations",

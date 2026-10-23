@@ -727,4 +727,24 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('\\\"files\\\":[');
     },
   });
+
+  // An HTML import is one entry point for each file. A query on the specifier does not make a second one.
+  itBundled("html-import/with-query-suffix", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import versioned from "./client.html?v=1";
+import plain from "./client.html";
+console.log(JSON.stringify([versioned.index, versioned === plain]));
+`,
+      "/client.html": `<!DOCTYPE html><html><head><script src="./client.js"></script></head><body></body></html>`,
+      "/client.js": `console.log("client");`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    run: { stdout: '["./client.html",true]' },
+    onAfterBundle(api) {
+      expect(readManifests(api, "out/server.js")).toHaveLength(1);
+    },
+  });
 });

@@ -1954,8 +1954,7 @@ pub mod cache {
         }
     }
 
-    /// Reads files for the resolver, the transpiler and the bundler. No read
-    /// fills the two buffers.
+    /// Reads files for the resolver, the transpiler and the bundler. No read fills the two buffers.
     pub struct Fs {
         pub(crate) shared_buffer: MutableString,
         pub(crate) macro_shared_buffer: MutableString,
@@ -1996,8 +1995,8 @@ pub mod cache {
     /// Replaces the prior `&'static [u8]` + `Box::leak`/`heap::take` pair
     /// (forbidden per docs/PORTING.md §Forbidden patterns). The enum makes
     /// provenance explicit so `deinit` matches on the variant instead of
-    /// guessing — the old scheme would `heap::take` a pointer it did not own
-    /// (UB).
+    /// guessing — the old scheme would `heap::take` a `MutableString`-owned
+    /// pointer (UB).
     #[derive(Default)]
     pub enum Contents {
         /// Empty / static literal. No-op on `deinit`.
@@ -2019,9 +2018,7 @@ pub mod cache {
             ptr: core::ptr::NonNull<u8>,
             len: usize,
         },
-        /// Borrows storage that the caller keeps alive (the bundler's
-        /// in-memory sources). Caller guarantees the pointee outlives all
-        /// reads through this `Entry`. NOT freed on `deinit`.
+        /// Borrows storage the caller keeps alive past this `Entry` (the bundler's in-memory sources). NOT freed on `deinit`.
         SharedBuffer { ptr: *const u8, len: usize },
         /// Externally-owned bytes the producer keeps alive past this `Entry`
         /// (native-plugin buffers are freed by the bundler's
@@ -2036,9 +2033,7 @@ pub mod cache {
                 Contents::Empty => b"",
                 Contents::Owned(v) => v.as_slice(),
                 // SAFETY: FFI/ARENA — single encapsulation point for foreign-
-                // owned bytes. `SharedBuffer` points into storage the caller
-                // keeps alive past the `Entry` (the bundler's in-memory
-                // sources); `External` is producer-owned memory the producer
+                // owned bytes. `SharedBuffer` is caller-owned storage that outlives the `Entry`; `External` is producer-owned memory the producer
                 // keeps alive past the `Entry` (native-plugin buffers are
                 // freed later by the bundler's `BundleV2.finalizers`, via
                 // `ParseTask.external_free_function`). In both cases
@@ -2059,10 +2054,7 @@ pub mod cache {
             }
         }
 
-        /// Strips a UTF-8 byte order mark, or transcodes UTF-16LE to UTF-8,
-        /// in a file that `read_file_with_allocator` read: `Arena` when the
-        /// read was given an arena, `Owned` when not. The bytes on disk stay
-        /// in the arena as they are.
+        /// The text of a file that `read_file_with_allocator` read: no UTF-8 mark, UTF-16LE transcoded. Arena bytes stay as read.
         #[inline]
         pub fn convert_bom(self, arena: Option<&bun_alloc::Arena>) -> Contents {
             match fs_mod::BOM::detect(self.as_slice()) {
@@ -2214,8 +2206,7 @@ pub mod cache {
             }
         }
 
-        /// `bom_handling`: `Convert` returns the file as text, `Keep` returns
-        /// the bytes on disk.
+        /// `bom_handling`: `Convert` returns the file as text, `Keep` the bytes on disk.
         ///
         /// `arena`: when `Some`, the file body is read
         /// directly into `arena` (`Contents::Arena`), so the bytes are

@@ -1384,12 +1384,9 @@ impl<'a> Transpiler<'a> {
                 *file_fd_ptr = entry.fd;
             }
             // `Source.contents: &'static [u8]` (the AST crate's `Str`
-            // convention). The bytes live in `this_parse.arena`
-            // (`Contents::Arena`, no-op drop — bulk-freed by `mi_heap_destroy`
-            // when the per-call arena is recycled). `USE_SHARED_BUFFER`, which
-            // no caller sets, reads them onto the heap (`Contents::Owned`).
-            // Thread the provenance-tagged backing alongside the `ParseResult`
-            // so it drops when the result is recycled — no `mem::forget`
+            // convention). The bytes live in `this_parse.arena`, or on the heap for `USE_SHARED_BUFFER`. Thread the
+            // provenance-tagged backing alongside the `ParseResult` so it
+            // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns).
             source_backing = core::mem::take(&mut entry.contents);
             // SAFETY: `source_backing` outlives every read through

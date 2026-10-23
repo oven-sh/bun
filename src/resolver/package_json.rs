@@ -454,8 +454,8 @@ impl PackageJSON {
         };
         // Reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        // Immediately convert to owned `Box<[u8]>`: the read above has no arena,
-        // which guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
+        // Immediately convert to owned `Box<[u8]>`: `arena = None`
+        // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
         // in practice (the catch-all copy is unreachable but defensive).
         let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
             crate::cache::Contents::Owned(v) => v.into_boxed_slice(),

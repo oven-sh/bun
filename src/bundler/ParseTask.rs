@@ -1726,8 +1726,7 @@ pub mod parse_worker {
         // the duration of `run`. Returned to the caller when the plugin keeps
         // the original source, dropped otherwise.
         original_contents: Option<crate::cache::Contents>,
-        // What `fetch_source_code` showed the plugin for a file from disk: the
-        // bytes of `original_contents` as a text read returns them.
+        // The text of `original_contents` that `fetch_source_code` gave the plugin, for a file from disk.
         original_text: Option<crate::cache::Contents>,
     }
 
@@ -2018,8 +2017,7 @@ pub mod parse_worker {
             // replaces the source.
             let fd = entry.fd;
             let on_disk = core::mem::take(&mut entry.contents);
-            // A plugin reads text, whatever the loader. Only a file from disk
-            // (`Arena`) is decoded: in-memory contents never are.
+            // A plugin reads text, whatever the loader. Only a file from disk (`Arena`) is decoded.
             this.original_text = match on_disk {
                 crate::cache::Contents::Arena { ptr, len } => {
                     Some(crate::cache::Contents::Arena { ptr, len }.convert_bom(Some(this.bump)))
@@ -2253,8 +2251,7 @@ pub mod parse_worker {
                                 .original_contents
                                 .take()
                                 .expect("original_contents set alongside original_source");
-                            // `wrapper.loader` is the loader of the task, which
-                            // the parse step uses.
+                            // `wrapper.loader` is the loader of the task, which the parse step uses.
                             match self.original_text.take() {
                                 Some(text) if !wrapper.loader.should_copy_for_bundling() => text,
                                 _ => on_disk,

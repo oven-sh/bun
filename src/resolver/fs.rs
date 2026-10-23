@@ -20,8 +20,7 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
 
-/// What `cache::Fs::read_file_with_allocator` does with a byte order mark at
-/// the start of the file.
+/// What `cache::Fs::read_file_with_allocator` does with a byte order mark at the start of the file.
 #[derive(Clone, Copy)]
 pub enum BomHandling {
     /// Text: no UTF-8 mark, and UTF-16LE transcoded to UTF-8.
@@ -805,16 +804,12 @@ pub fn read_file_contents(file: &bun_sys::File) -> crate::CrateResult<Vec<u8>> {
 
     let mut initial_buf = [0u8; 16384];
 
-    // Optimization: don't call stat() unless the file is big enough
-    // that we need to dynamically allocate memory to read it.
+    // Optimization: no stat() call unless the file is too big for `initial_buf`.
     let initial_read: &[u8] = {
         let buf: &mut [u8] = &mut initial_buf;
         let read_count = file.read_all(buf)?;
         if read_count + 1 < buf.len() {
-            // The trailing NUL sentinel is not part of the contents.
-            // Allocate exact (no zero-fill): `extend_from_slice` + `push`
-            // initialize all `read_count + 1` bytes, then `truncate` drops
-            // the sentinel from the logical length.
+            // Exact allocation, no zero-fill. `truncate` drops the NUL sentinel from the logical length.
             let mut allocation: Vec<u8> = Vec::with_capacity(read_count + 1);
             allocation.extend_from_slice(&buf[..read_count]);
             allocation.push(0);
@@ -829,9 +824,7 @@ pub fn read_file_contents(file: &bun_sys::File) -> crate::CrateResult<Vec<u8>> {
     let size = file.get_end_pos()?;
     debug!("stat({}) = {}", file.handle(), size);
 
-    // Allocate UNINITIALIZED (no zero-fill):
-    // `extend_from_slice` writes the prefix, `read_all` writes
-    // the tail, then `set_len` exposes only the initialized `..total`.
+    // No zero-fill: `extend_from_slice` and `read_all` write `..total`, then `set_len` exposes it.
     let cap = size.max(initial_read.len());
     let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
     buf.extend_from_slice(initial_read);

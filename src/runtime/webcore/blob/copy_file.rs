@@ -782,14 +782,20 @@ impl CopyFile {
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
         if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
-            self.max_length = (SizeType::try_from(stat.st_size)
+            // `offset` and `max_length` are the window of the source: what is left of the file
+            // after `offset`, at most `max_length` of it.
+            self.max_length = SizeType::try_from(stat.st_size)
                 .expect("int cast")
-                .min(self.max_length))
-            .max(self.offset)
-                - self.offset;
+                .saturating_sub(self.offset)
+                .min(self.max_length);
             if self.max_length == 0 {
                 self.do_close();
                 return;
+            }
+
+            if self.offset > 0 {
+                // Like `read_file.rs`: a failure here is not fatal.
+                let _ = bun_sys::set_file_offset(self.source_fd, self.offset);
             }
 
             if PREALLOCATE_SUPPORTED
@@ -862,10 +868,13 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            // (fcopyfile also copies from the start of the source, so not a source with an offset.)
+            if self.offset == 0
+                && matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
+                )
+            {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {

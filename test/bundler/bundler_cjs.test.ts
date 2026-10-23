@@ -1564,7 +1564,8 @@ describe("bundler", () => {
   // property of a host object: `process.stdout`, also through the
   // non-enumerable `console._stdout`, makes a pipe on fd 1 non-blocking.
   // CommonJS output for Bun (the default of `--bytecode`) converts the module
-  // of a builtin for an import.
+  // of a builtin for an import. The test runs the bundle with a blocking pipe
+  // on fd 1, so the first value is false.
   const lazyHostPropertyFiles = {
     "/entry.mjs": /* js */ `
       import "./before.cjs";
@@ -1579,7 +1580,9 @@ describe("bundler", () => {
         typeof console1.log,
         typeof console2.log,
         typeof barrel.log,
-        before === after ? "fd 1 unchanged" : "fd 1 is now non-blocking",
+        "fd 1 is non-blocking:",
+        before,
+        after,
       );
     `,
     "/barrel.mjs": /* js */ `export * from "node:console";`,
@@ -1611,7 +1614,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain('__toESM(require("console"), 1)');
     },
     run: {
-      stdout: "number function function function fd 1 unchanged",
+      stdout: "number function function function fd 1 is non-blocking: false false",
     },
   });
 
@@ -1623,7 +1626,7 @@ describe("bundler", () => {
     outputPaths: ["/out/entry.js"],
     run: {
       file: "/out/entry.js",
-      stdout: "number function function function fd 1 unchanged",
+      stdout: "number function function function fd 1 is non-blocking: false false",
     },
   });
 });

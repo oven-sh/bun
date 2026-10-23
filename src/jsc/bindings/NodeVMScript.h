@@ -13,6 +13,7 @@ public:
     WTF::Vector<uint8_t> cachedData;
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
+    bool cachedDataProvided = false;
 
     using BaseVMOptions::BaseVMOptions;
 
@@ -29,7 +30,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
     }
 
 private:
@@ -51,23 +52,17 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NodeVMScript, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMScript.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMScript = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNodeVMScript.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMScript = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NodeVMScript, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeVMScript, m_subspaceForNodeVMScript));
     }
 
     static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
 
-    JSC::ProgramExecutable* createExecutable();
     void cacheBytecode();
     JSC::JSUint8Array* getBytecodeBuffer();
 
@@ -80,7 +75,6 @@ public:
     const JSC::SourceCode& source() const { return m_source; }
     const ScriptOptions& options() const { return m_options; }
     WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
-    JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
     void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
     TriState cachedDataRejected() const { return m_cachedDataRejected; }
@@ -92,7 +86,6 @@ private:
     JSC::SourceCode m_source;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
-    JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
     // The compile every run links. Only recompiled (and replaced) when a global object with a different
     // CodeGenerationMode, i.e. a debugger attached, runs the Script.
     JSC::WriteBarrier<JSC::UnlinkedProgramCodeBlock> m_unlinkedCodeBlock;

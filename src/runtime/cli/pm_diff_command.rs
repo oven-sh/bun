@@ -11,22 +11,21 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings::{self, StringOrTinyString};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
-use bun_install::dependency;
+use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
+use bun_install::lockfile::tree;
 use bun_install::npm::{self, PackageManifest};
+use bun_install::package_manager::options::Do;
+use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
-use bun_paths::PathBuffer;
-use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
-
-use bun_core::fmt::buf_print_infallible as buf_print;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DiffFlags {
@@ -58,6 +57,9 @@ struct Tree {
     files: BTreeMap<Vec<u8>, Vec<u8>>,
     /// Permission bits per path (0o755…), when the source records them.
     modes: BTreeMap<Vec<u8>, u32>,
+    /// The registry manifest's entry for this version, as JSON. `None` unless this side came from a
+    /// registry.
+    registry_entry: Option<Vec<u8>>,
 }
 
 /// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
@@ -102,40 +104,29 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
+    // Two folders are compared as written, because the patch between them has to apply to the files
+    // on disk.
+    let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
     if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec)?;
-            *name = package_name_in(&local).unwrap_or_else(|| {
-                Status::clear();
-                Output::err_generic(
-                    "{} has no package.json \"name\" to look up in the registry",
-                    (BStr::new(&local.label),),
-                );
-                Global::exit(1);
-            });
+            let local = materialize(pm, &left_spec, as_published)?;
+            *name = package_name_in(&local);
             left_early = Some(local);
         }
     }
-    let mut right = materialize(pm, &right_spec)?;
+    let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
-            *name = package_name_in(&right).unwrap_or_else(|| {
-                Status::clear();
-                Output::err_generic(
-                    "{} has no package.json \"name\" to look up in the registry",
-                    (BStr::new(&right.label),),
-                );
-                Global::exit(1);
-            });
+            *name = package_name_in(&right);
         }
     }
     let mut left = match left_early {
         Some(tree) => tree,
-        None => materialize(pm, &left_spec)?,
+        None => materialize(pm, &left_spec, as_published)?,
     };
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
@@ -149,11 +140,12 @@ pub(crate) fn exec(
     }
     if !filters.is_empty() {
         let (before_l, before_r) = (left.files.len(), right.files.len());
+        let prepared: Vec<Filter<'_>> = filters.iter().map(|it| Filter::new(it)).collect();
         for tree in [&mut left, &mut right] {
             tree.files
-                .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
+                .retain(|path, _| prepared.iter().any(|f| f.matches(path)));
             tree.modes
-                .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
+                .retain(|path, _| prepared.iter().any(|f| f.matches(path)));
         }
         if left.files.is_empty() && right.files.is_empty() && before_l + before_r > 0 {
             Status::clear();
@@ -183,23 +175,37 @@ fn split_filter(arg: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 /// A filter names a file exactly, a directory (prefix), a bare file name anywhere in the package, or a glob.
-fn filter_matches(filter: &[u8], path: &[u8]) -> bool {
-    let filter = filter.strip_prefix(b"./").unwrap_or(filter);
-    let filter = filter.strip_suffix(b"/").unwrap_or(filter);
-    if path == filter
-        || (path.len() > filter.len() && path.starts_with(filter) && path[filter.len()] == b'/')
-    {
-        return true;
-    }
-    if strings::index_of_any(filter, b"*?[{").is_some() {
-        return bun_glob::r#match(filter, path).matches()
-            || (!strings::contains_char(filter, b'/')
-                && bun_glob::r#match(filter, bun_paths::basename(path)).matches());
-    }
-    !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
+struct Filter<'a> {
+    glob: bun_glob::Prepared<&'a [u8]>,
+    is_glob: bool,
 }
 
-// ─── spec resolution ────────────────────────────────────────────────────────
+impl<'a> Filter<'a> {
+    fn new(filter: &'a [u8]) -> Filter<'a> {
+        let filter = filter.strip_prefix(b"./").unwrap_or(filter);
+        let filter = filter.strip_suffix(b"/").unwrap_or(filter);
+        Filter {
+            glob: bun_glob::Prepared::new(filter),
+            is_glob: strings::index_of_any(filter, b"*?[{").is_some()
+                || bun_glob::has_extglob_prefix(filter),
+        }
+    }
+
+    fn matches(&self, path: &[u8]) -> bool {
+        let filter = self.glob.pattern();
+        if path == filter
+            || (path.len() > filter.len() && path.starts_with(filter) && path[filter.len()] == b'/')
+        {
+            return true;
+        }
+        if self.is_glob {
+            return self.glob.r#match(path).matches()
+                || (!strings::contains_char(filter, b'/')
+                    && self.glob.r#match(bun_paths::basename(path)).matches());
+        }
+        !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
+    }
+}
 
 fn looks_like_path(spec: &[u8]) -> bool {
     spec.starts_with(b".")
@@ -255,11 +261,14 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
                     );
                 }
                 // `name` / `name@b`: the version this project has installed → b (default: latest).
-                let installed = installed_version(pm, &name).unwrap_or_else(|| {
+                let Some((name, installed)) = installed_version(pm, &name) else {
                     Status::clear();
-                    Output::err_generic("{} is not in this project's lockfile; give two versions to compare, e.g. `bun pm diff {}@1.0.0 {}@2.0.0`", (BStr::new(&name), BStr::new(&name), BStr::new(&name)));
+                    Output::err_generic(
+                        "{} is not in this project's lockfile; give two versions to compare, e.g. `bun pm diff {}@1.0.0 {}@2.0.0`",
+                        (BStr::new(&name), BStr::new(&name), BStr::new(&name)),
+                    );
                     Global::exit(1);
-                });
+                };
                 let target = if version.is_empty() {
                     b"latest".to_vec()
                 } else {
@@ -280,8 +289,18 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
             local => (registry(b"", b"latest"), local),
         },
         [a, b] => {
-            let left = classify(a);
-            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && Semver::Version::parse(Semver::SlicedString::init(name, name)).valid);
+            let mut left = classify(a);
+            // `name 2`: as with a single argument, a bare name on the left means the installed
+            // version of that package, if there is one.
+            if let Spec::Registry { name, version } = &mut left
+                && version.is_empty()
+                && let Some(installed) = installed_version(pm, name)
+            {
+                (*name, *version) = installed;
+            }
+            // Matches `2`, `^2`, `>=2 <4` and `latest`: what package.json would read as a version
+            // or range. Other dist-tags do not match, because a word like `next` is also a package.
+            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && (dependency::Tag::infer(name) == dependency::Tag::Npm || name == b"latest"));
             let right = match (classify(b), &left) {
                 // `name@1 2` — a bare second version reuses the first name.
                 (r, Spec::Registry { name, .. }) if is_bare_version(&r) => {
@@ -311,8 +330,21 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
     }
 }
 
-fn package_name_in(tree: &Tree) -> Option<Vec<u8>> {
-    let bytes = tree.files.get(b"package.json".as_slice())?;
+fn package_name_in(tree: &Tree) -> Vec<u8> {
+    let package_json = tree.files.get(b"package.json".as_slice());
+    package_json
+        .and_then(|bytes| package_json_name(bytes))
+        .unwrap_or_else(|| {
+            Status::clear();
+            Output::err_generic(
+                "{} has no package.json \"name\" to look up in the registry",
+                (BStr::new(&tree.label),),
+            );
+            Global::exit(1);
+        })
+}
+
+fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
     let bump = Bump::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
     let json = bun_parsers::json::parse_utf8(
@@ -355,20 +387,10 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
     let mut path = original_cwd.to_vec();
     path.extend_from_slice(b"/package.json");
     // The folder we are in, before the workspace root the manager walked up to.
-    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path) {
-        let bump = Bump::new();
-        let src: &[u8] = bump.alloc_slice_copy(&bytes);
-        if let Ok(json) = bun_parsers::json::parse_utf8(
-            &bun_ast::Source::init_path_string(b"package.json", src),
-            &mut bun_ast::Log::init(),
-            &bump,
-        ) {
-            if let Some(name) = json.get_string_cloned(&bump, b"name").ok().flatten() {
-                if is_npm_name(name) {
-                    return name.to_vec();
-                }
-            }
-        }
+    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
+        && let Some(name) = package_json_name(&bytes)
+    {
+        return name;
     }
     let name = &pm.root_package_json_name_at_time_of_init;
     if !is_npm_name(name) {
@@ -382,8 +404,9 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
     name.to_vec()
 }
 
-/// The npm version of `name` this project's lockfile resolved, if any.
-fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
+/// Returns the npm package that `name` refers to in the folder the command was run in, and the
+/// version the lockfile resolved for it. `name` may be an alias of that package.
+fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
     let mut lockfile = core::mem::take(&mut pm.lockfile);
     let mut log = bun_ast::Log::init();
@@ -394,8 +417,8 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors(
-                &broken, log_level,
+            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
+                &broken, log_level, "",
             );
             false
         }
@@ -404,25 +427,42 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
     if !loaded {
         return None;
     }
+    let member = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
     let lockfile = &*pm.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
-    let mut best: Option<Vec<u8>> = None;
-    for (i, pkg_name) in names.iter().enumerate() {
-        if pkg_name.slice(string_buf) != name || resolutions[i].tag != resolution::Tag::Npm {
-            continue;
-        }
-        let mut v = Vec::new();
-        let _ = write!(&mut v, "{}", resolutions[i].npm().version.fmt(string_buf));
-        // Several copies may be installed; the first listed is the hoisted/root one.
-        best.get_or_insert(v);
-        break;
-    }
-    best
+    // Several copies may be installed, so search in the order `require(name)` would: first the
+    // dependencies of the package the command was run in, then the root node_modules.
+    let own = lockfile.packages.items_dependencies().get(member as usize);
+    let mut folders = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+    let hoisted = folders
+        .next(None)
+        .map(|root| root.dependencies)
+        .unwrap_or_default();
+    let by_installed_name = own
+        .map_or(0..0, |own| own.begin()..own.end())
+        .chain(hoisted.iter().copied())
+        .filter(|&dep| {
+            lockfile.buffers.dependencies[dep as usize]
+                .name
+                .slice(string_buf)
+                == name
+        })
+        .map(|dep| lockfile.buffers.resolutions[dep as usize] as usize);
+    // Fall back to a copy that is nested deeper, or that is only installed under an alias.
+    let by_own_name = (0..names.len()).filter(|&id| names[id].slice(string_buf) == name);
+    let found = by_installed_name.chain(by_own_name).find(|&id| {
+        resolutions
+            .get(id)
+            .is_some_and(|resolved| resolved.tag == resolution::Tag::Npm)
+    })?;
+    let version = resolutions[found].npm().version;
+    Some((
+        names[found].slice(string_buf).to_vec(),
+        version.fmt(string_buf).to_string().into_bytes(),
+    ))
 }
-
-// ─── materializing a side ───────────────────────────────────────────────────
 
 /// A one-line status on stderr while a side is fetched or read, erased before anything else prints — so a large
 /// package or a slow registry never looks like a hang. Only when stderr is an interactive terminal.
@@ -455,7 +495,11 @@ impl Drop for Status {
     }
 }
 
-fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
+fn materialize(
+    pm: &mut PackageManager,
+    spec: &Spec,
+    as_published: bool,
+) -> Result<Tree, crate::Error> {
     let _status = match spec {
         Spec::Registry { name, version } => {
             Status::show("fetching", &[&name[..], b"@", &version[..]].concat())
@@ -477,11 +521,12 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
                 label: path.clone(),
                 files: BTreeMap::new(),
                 modes: BTreeMap::new(),
+                registry_entry: None,
             };
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
         }
-        Spec::Dir(path) => read_dir_tree(path),
+        Spec::Dir(path) => read_dir_tree(path, as_published.then_some(pm)),
     }
 }
 
@@ -542,11 +587,16 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     Ok(())
 }
 
-fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
+/// With `as_published_by`, `workspace:` and `catalog:` versions read as `bun pm pack` publishes them.
+fn read_dir_tree(
+    root: &[u8],
+    as_published_by: Option<&mut PackageManager>,
+) -> Result<Tree, crate::Error> {
     let mut tree = Tree {
         label: root.to_vec(),
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
+        registry_entry: None,
     };
     let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
         Ok(fd) => fd,
@@ -570,6 +620,8 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+            // This has to come before the parse below, because it parses other package.json files.
+            let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
@@ -577,6 +629,7 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 &mut bun_ast::Log::init(),
                 &bump,
             ) {
+                crate::cli::pack_command::drop_shadowed_properties(json);
                 // pack crashes on a malformed `files`; here that just means "not a package we understand": full walk.
                 let files_ok = json.get(b"files").is_none_or(|f| {
                     f.as_array().is_some_and(|mut a| {
@@ -595,15 +648,15 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
                     &dir,
+                    root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
                 let _ = dir.into_raw();
-                for (path, optional) in queue.into_paths() {
+                for path in queue.into_paths() {
                     let rel = path.as_bytes();
                     match bun_sys::File::read_from(root_fd, rel) {
-                        Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
                         Ok(bytes) => {
                             #[cfg(not(windows))]
                             if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
@@ -614,6 +667,10 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                         Err(err) => fail(err, rel),
                     }
                 }
+                let pkg = match &manifests {
+                    Some(manifests) => with_published_versions(&pkg, json, manifests, root),
+                    None => pkg,
+                };
                 tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);
@@ -695,6 +752,76 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     Ok(tree)
 }
 
+/// Returns the manifests that `bun pm pack` in `dir` would use to resolve the `workspace:` and
+/// `catalog:` specifiers in `manifest`.
+fn manifests_for(
+    pm: &mut PackageManager,
+    dir: &[u8],
+    manifest: &[u8],
+) -> Option<WorkspaceManifests> {
+    if !strings::contains(manifest, b"workspace:") && !strings::contains(manifest, b"catalog:") {
+        return None;
+    }
+    // The manager is in the project's root. Run outside of a project, there is no package.json to load.
+    if !bun_sys::exists_z(bun_core::zstr!("package.json")) {
+        return None;
+    }
+    WorkspaceManifests::try_load(pm)
+        .ok()
+        .filter(|manifests| manifests.contains_package_dir(dir))
+}
+
+/// `manifest` (`dir`'s package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as published.
+fn with_published_versions(
+    manifest: &[u8],
+    json: bun_ast::Expr,
+    manifests: &WorkspaceManifests,
+    dir: &[u8],
+) -> Vec<u8> {
+    use crate::cli::pack_command::{Substitution, for_each_dependency};
+    // The string token of each version to replace (its start and end in `manifest`), and what replaces it.
+    let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+    for_each_dependency(json, |_, dependency| {
+        let (Some(name), Some(version)) = (&dependency.key, &dependency.value) else {
+            return;
+        };
+        let (Some(name), Some(spec)) = (
+            name.as_utf8_string_literal(),
+            version.as_utf8_string_literal(),
+        ) else {
+            return;
+        };
+        // A version that doesn't resolve is left as written. pack would refuse to publish it.
+        let Some(Ok(published)) =
+            Substitution::for_spec(spec).map(|found| found.published(manifests, dir, name))
+        else {
+            return;
+        };
+        // So does one spelled with JSON escapes.
+        let Ok(at) = usize::try_from(version.loc.start) else {
+            return;
+        };
+        let end = at + spec.len() + 2;
+        if manifest.get(at + 1..end - 1) == Some(spec) {
+            edits.push((at, end, published));
+        }
+    });
+    bun_collections::index_sort::sort_vec_unstable_by(&mut edits, |a, b| a.0.cmp(&b.0));
+    let mut out: Vec<u8> = Vec::with_capacity(manifest.len());
+    let mut copied = 0usize;
+    for (at, end, published) in &edits {
+        out.extend_from_slice(&manifest[copied..*at]);
+        let _ = write!(
+            out,
+            "{}",
+            bun_fmt::format_json_string_utf8(published, Default::default())
+        );
+        copied = *end;
+    }
+    out.extend_from_slice(&manifest[copied..]);
+    out
+}
+
 /// Fetches `name`'s manifest, resolves `version` (exact, range, or dist-tag), downloads that tarball and unpacks it in memory.
 fn fetch_registry_tree(
     pm: &mut PackageManager,
@@ -704,26 +831,18 @@ fn fetch_registry_tree(
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
 
-    let mut url_buf = PathBuffer::uninit();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = PathBuffer::uninit();
-    let manifest_url = buf_print(
-        path_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name)
-        ),
+    let manifest_url = format!(
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
     );
     let body = registry_get(
         pm,
         scope,
-        URL::parse(manifest_url),
+        URL::parse(manifest_url.as_bytes()),
+        true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
-        b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        Some(b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*"),
         Some((name, version)),
     )?;
 
@@ -764,14 +883,10 @@ fn fetch_registry_tree(
         version
     };
     let found = 'found: {
-        if let Some(r) = manifest.find_by_dist_tag(version) {
-            break 'found r;
-        }
-        let sliced = Semver::SlicedString::init(version, version);
-        if let Ok(query) = Semver::query::parse(version, sliced) {
-            if let Some(r) = manifest.find_best_version(&query, version) {
-                break 'found r;
-            }
+        match manifest.find_by_spec(version) {
+            Ok(r) => break 'found r,
+            Err(bun_install::Error::DistTagNotFound | bun_install::Error::NoMatchingVersion) => {}
+            Err(err) => return Err(err.into()),
         }
         Status::clear();
         Output::err_generic(
@@ -807,6 +922,27 @@ fn fetch_registry_tree(
         found.version.fmt(&manifest.string_buf)
     );
 
+    // The version keys are parsed the way `PackageManifest::parse` parses them, so this finds the
+    // same entry that `found` was built from.
+    let registry_entry = bun_parsers::json::parse_utf8(
+        &bun_ast::Source::init_path_string(b"", body.list.as_slice()),
+        &mut bun_ast::Log::init(),
+        &bump,
+    )
+    .ok()
+    .and_then(|document| document.get_object(b"versions"))
+    .and_then(|versions| {
+        let versions = versions.data.e_object()?;
+        versions.properties.slice().iter().find_map(|entry| {
+            let key = entry.key.as_ref()?.as_string(&bump)?;
+            let parsed = bun_semver::Version::parse(bun_semver::SlicedString::init(key, key));
+            if !parsed.valid || !parsed.version.min().eql(found.version) {
+                return None;
+            }
+            Some(json_text(entry.value.as_ref()?, true))
+        })
+    });
+
     let mut tarball_url: Vec<u8> = found.tarball_url(&manifest);
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
@@ -821,18 +957,31 @@ fn fetch_registry_tree(
             },
         )?;
     }
-    let tarball = registry_get(
-        pm,
-        scope,
-        URL::parse(&tarball_url),
-        b"application/octet-stream",
-        None,
-    )?;
+    // The same serialisation `bun install` requests and keys `.npmrc` lines by.
+    let (tarball_url, normalized) = match npm::registry::normalize_tarball_url(&tarball_url) {
+        Some(normalized) => (normalized, true),
+        None => (tarball_url.into_boxed_slice(), false),
+    };
+    let tarball = registry_get(pm, scope, URL::parse(&tarball_url), normalized, None, None)?;
+    if pm.options.do_.contains(Do::VERIFY_INTEGRITY) {
+        let locked = pm.lockfile.npm_integrity(name, found.version);
+        for expected in [Some(found.integrity()), locked].into_iter().flatten() {
+            if expected.tag.is_supported() && !expected.verify(tarball.list.as_slice()) {
+                Status::clear();
+                Output::err_generic(
+                    "Integrity check failed for tarball: {}",
+                    (BStr::new(&defang(&label)),),
+                );
+                Global::exit(1);
+            }
+        }
+    }
 
     let mut tree = Tree {
         label,
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
+        registry_entry,
     };
     read_tarball_into(tarball.list.as_slice(), &mut tree)?;
     Ok(tree)
@@ -843,73 +992,60 @@ impl bun_core::strings::Appender for BumpAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         Ok(self.0.alloc_slice_copy(s))
     }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        let out = self.0.alloc_slice_copy(s);
-        out.make_ascii_lowercase();
-        Ok(out)
-    }
 }
 
 fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
     url: URL<'_>,
-    accept: &[u8],
+    normalized: bool,
+    // `None` sends the HTTP client's default `Accept` header, as `bun install` does for a tarball.
+    accept: Option<&[u8]>,
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
-    headers.count(b"Accept", accept);
-    // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
-    let same_origin = {
-        let registry = scope.url.url();
-        url.protocol == registry.protocol
-            && url.hostname == registry.hostname
-            && url.get_port_auto() == registry.get_port_auto()
-    };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
-    } else {
-        (b"", b"")
-    };
-    if !token.is_empty() {
+    if let Some(accept) = accept {
+        headers.count(b"Accept", accept);
+    }
+    // The same rule as `bun install` decides which credentials, if any, follow the URL.
+    let authorization = pm
+        .options
+        .tarball_credentials(scope, &url, normalized)
+        .and_then(|credentials| credentials.authorization_parts(&url));
+    if let Some((scheme, value)) = authorization {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + token.len();
-        headers.count(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + auth.len();
+        headers.content.cap += scheme.len() + value.len();
         headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
-    headers.append(b"Accept", accept);
+    if let Some(accept) = accept {
+        headers.append(b"Accept", accept);
+    }
     // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
-    if !token.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Bearer ", token);
-        headers.append(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Basic ", auth);
+    if let Some((scheme, value)) = authorization {
+        headers.append_bytes_value(b"Authorization", scheme, value);
         headers.append(b"npm-auth-type", b"legacy");
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let http_proxy = pm.http_proxy(&url);
     let display_url = url.href.to_vec();
-    let mut req = http::AsyncHTTP::init_sync(
+    let mut req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
-        http_proxy,
-        None,
-        http::FetchRedirect::Follow,
     );
-    req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
-    let res = match req.send_sync(&mut response_buf) {
+    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            Output::err(err, "GET {} failed", (BStr::new(&display_url),));
+            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            Output::err(
+                err,
+                "GET {} failed",
+                (bun_core::fmt::EscapeControlChars(url),),
+            );
             Global::exit(1);
         }
     };
@@ -919,8 +1055,6 @@ fn registry_get(
     }
     Ok(response_buf)
 }
-
-// ─── diffing & printing ─────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Semantic {
@@ -1000,8 +1134,8 @@ fn has_bidi_controls(bytes: &[u8]) -> bool {
     false
 }
 
-/// The terminal view never lets package bytes drive the terminal: C0/C1 controls (bar tab) and bidi overrides are
-/// drawn as visible stand-ins.
+/// Makes bytes that come from a package safe to print to a terminal. C0 and C1 control characters
+/// (except tab), bidi overrides and the two Unicode line separators become visible stand-ins.
 fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let suspicious = |b: &u8| (*b < 0x20 && *b != b'\t') || *b == 0x7f || *b == 0xc2 || *b == 0xe2;
     if !text.iter().any(suspicious) {
@@ -1022,7 +1156,7 @@ fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             continue;
         } else if b == 0xe2
             && i + 2 < text.len()
-            && ((text[i + 1] == 0x80 && (0xaa..=0xae).contains(&text[i + 2]))
+            && ((text[i + 1] == 0x80 && (0xa8..=0xae).contains(&text[i + 2]))
                 || (text[i + 1] == 0x81 && (0xa6..=0xa9).contains(&text[i + 2])))
         {
             let cp = 0x2000 + (u32::from(text[i + 1] & 0x3f) << 6) + u32::from(text[i + 2] & 0x3f);
@@ -1066,8 +1200,38 @@ fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-fn is_binary(bytes: &[u8]) -> bool {
+/// Like git, treats a file with a NUL byte near the start as binary. The exceptions are files that
+/// something reads as text, such as scripts and the file types that Bun loads as text.
+fn is_binary(path: &[u8], bytes: &[u8]) -> bool {
+    use bun_ast::Loader;
     strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
+        && !bytes.starts_with(b"#!")
+        && !path.ends_with(b".sh")
+        && match bun_bundler::options::DEFAULT_LOADERS.get(bun_paths::extension(path)) {
+            Some(loader) => matches!(loader, Loader::Wasm | Loader::Napi),
+            None => normalize::normalize(b"as.js", bytes, Default::default()).is_none(),
+        }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
+    let mut hasher = bun_sha_hmac::SHA256::init();
+    hasher.update(bytes);
+    hasher.r#final(&mut digest);
+    bun_fmt::bytes_to_hex_lower_string(&digest)
+}
+
+/// Summarizes a change whose contents are not shown, for example
+/// `15 → 74 bytes, sha256 1a2b3c4d5e6f → 0f9e8d7c6b5a`.
+fn binary_summary(c: &FileChange<'_>) -> String {
+    let hash = |side: Option<&[u8]>| side.map_or_else(|| "none".to_string(), sha256_hex);
+    format!(
+        "{} → {} bytes, sha256 {:.12} → {:.12}",
+        c.old.map_or(0, <[u8]>::len),
+        c.new.map_or(0, <[u8]>::len),
+        hash(c.old),
+        hash(c.new)
+    )
 }
 
 fn count_lines(bytes: &[u8]) -> usize {
@@ -1076,6 +1240,27 @@ fn count_lines(bytes: &[u8]) -> usize {
     } else {
         strings::count_char(bytes, b'\n') + usize::from(!bytes.ends_with(b"\n"))
     }
+}
+
+/// Returns `prefix` + `path` the way a patch header names a file. A name that `git apply` or GNU
+/// patch would otherwise misread is C-quoted, which both understand.
+fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
+    let needs_quotes = |b: &u8| matches!(*b, 0..=b' ' | 0x7f | b'"' | b'\\');
+    if !path.iter().any(needs_quotes) {
+        return [prefix, path].concat();
+    }
+    let mut out = [&b"\""[..], prefix].concat();
+    for &b in path {
+        match b {
+            b'"' | b'\\' => out.extend_from_slice(&[b'\\', b]),
+            0..=0x1f | 0x7f => {
+                let _ = write!(out, "\\{b:03o}");
+            }
+            _ => out.push(b),
+        }
+    }
+    out.push(b'"');
+    out
 }
 
 fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
@@ -1118,9 +1303,13 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             changes.push(change);
             continue;
         }
-        change.binary = old.is_some_and(is_binary) || new.is_some_and(is_binary);
+        change.binary = [old, new]
+            .iter()
+            .flatten()
+            .any(|side| is_binary(path, side));
+        // Because of the colon, this prefix can only start JSON, never a JavaScript program.
         change.sourcemap = strings::ends_with(path, b".map")
-            && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\""));
+            && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
         if change.binary || change.sourcemap {
             changes.push(change);
             continue;
@@ -1232,17 +1421,41 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     None => (no, nn),
                 };
                 let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
-                let keys = if js_family {
+                let faithful = [(o, &shown_o), (n, &shown_n)].iter().all(|(raw, shown)| {
+                    normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
+                });
+                let keys = if js_family && faithful {
                     normalize::normalize_key_pair(path, o, n)
                 } else {
                     None
                 };
                 match keys {
+                    // A re-print that does not parse as the same file is not shown in the file's
+                    // place. The raw text is diffed instead.
+                    _ if !faithful => {
+                        change.semantic = Semantic::Text;
+                        unified_hunks(o, n, flags.context, style, &mut change);
+                    }
                     Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
                         rebase_key_onto(&mut ko, &shown_o, disp_o);
                         rebase_key_onto(&mut kn, &shown_n, disp_n);
                         let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
-                        if projection
+                        let same_key = ko.text == kn.text;
+                        if !same_key && shown_o.text == shown_n.text {
+                            // The code differs but the re-prints are identical, so only the raw
+                            // text can show the change.
+                            change.semantic = Semantic::Text;
+                            unified_hunks(o, n, flags.context, style, &mut change);
+                        } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
+                            change.origin = Some([shown_o.origin, shown_n.origin]);
+                            unified_hunks(
+                                &shown_o.text,
+                                &shown_n.text,
+                                flags.context,
+                                style,
+                                &mut change,
+                            );
+                        } else if projection
                             .ops
                             .iter()
                             .any(|op| op.kind != Operation::Equal || op.affected)
@@ -1287,7 +1500,9 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                             .ops
                             .iter()
                             .any(|op| op.kind != Operation::Equal || op.affected);
-                        if shown {
+                        if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
+                            unified_hunks(o, n, flags.context, style, &mut change);
+                        } else if shown {
                             change.semantic = Semantic::Projected;
                             change.hidden = projection.hidden;
                             render_ops(
@@ -1328,10 +1543,13 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         {
             // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
             let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
-                match norm {
-                    Some(nz) if style.pretty && nz.was_minified => with_banner(raw, nz).text,
-                    _ => raw.to_vec(),
-                }
+                let reprint = match norm {
+                    Some(nz) if style.pretty && nz.was_minified => Some(with_banner(raw, nz).text),
+                    _ => None,
+                };
+                reprint
+                    .filter(|shown| normalize::stands_for(path, raw, shown, nopts, false))
+                    .unwrap_or_else(|| raw.to_vec())
             };
             let body_owned;
             let (op, body) = match (new, old) {
@@ -1368,7 +1586,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             } else {
                 (1, n, 0, 0)
             };
-            style.hunk_header(&mut change.hunks, range, true);
+            // An empty file has no lines, and a hunk header without lines corrupts the patch.
+            if n > 0 {
+                style.hunk_header(&mut change.hunks, range, true);
+            }
             let unterminated = !style.pretty && !body.is_empty() && !body.ends_with(b"\n");
             for (i, line) in Lines(body).enumerate() {
                 style.line(
@@ -1486,16 +1707,45 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             Output::print(format_args!("{}", BStr::new(&c.hunks)));
             continue;
         }
-        for part in [&b"diff --bun a/"[..], c.path, b" b/", c.path, b"\n"] {
-            Output::print_bytes(part);
+        // A file whose contents the patch omits gets neither a `diff --git` header nor a mode line,
+        // because GNU patch would apply the mode line to the previous file.
+        let in_patch = !c.binary && !c.sourcemap;
+        let header: &[u8] = if in_patch {
+            b"diff --git "
+        } else {
+            b"diff --bun "
+        };
+        let (mut a, mut b) = (patch_name(b"a/", c.path), patch_name(b"b/", c.path));
+        if style.escape {
+            (a, b) = (defang(&a).into_owned(), defang(&b).into_owned());
+        }
+        // Output that goes to a file is written as raw bytes, not through `Display`. A Latin-1
+        // context line has to come out unchanged for the patch to apply.
+        let put = |part: &[u8]| {
+            if style.escape {
+                Output::print(format_args!("{}", BStr::new(part)));
+            } else {
+                Output::print_bytes(part);
+            }
+        };
+        for part in [header, &a, b" ", &b, b"\n"] {
+            put(part);
         }
         match (c.old, c.new, c.mode_change) {
-            (None, Some(_), Some((_, n))) => {
-                Output::print(format_args!("new file mode 100{n:o}\n"))
+            (None, Some(_), _) if !in_patch => Output::print(format_args!("new file\n")),
+            (Some(_), None, _) if !in_patch => Output::print(format_args!("deleted file\n")),
+            (None, Some(_), mode) => Output::print(format_args!(
+                "new file mode 100{:o}\n",
+                mode.map_or(0o644, |(_, n)| n)
+            )),
+            (Some(_), None, _) => {
+                let mode = left.modes.get(c.path).copied().unwrap_or(0);
+                Output::print(format_args!(
+                    "deleted file mode 100{}\n",
+                    if mode & 0o111 != 0 { 755 } else { 644 }
+                ))
             }
-            (None, Some(_), None) => Output::print(format_args!("new file\n")),
-            (Some(_), None, _) => Output::print(format_args!("deleted file\n")),
-            (_, _, Some((o, n))) => {
+            (_, _, Some((o, n))) if in_patch => {
                 Output::print(format_args!("old mode 100{o:o}\nnew mode 100{n:o}\n"))
             }
             _ => {}
@@ -1503,32 +1753,38 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         if c.semantic == Semantic::ModeOnly {
             continue;
         }
-        if c.binary || c.sourcemap {
+        if c.sourcemap {
             Output::print(format_args!(
-                "{} files differ ({} → {} bytes)\n",
-                if c.sourcemap { "Source map" } else { "Binary" },
+                "Source map files differ ({} → {} bytes)\n",
                 c.old.map_or(0, <[u8]>::len),
                 c.new.map_or(0, <[u8]>::len)
             ));
             continue;
         }
-        // Bytes, not Display: a Latin-1 context line must round-trip for the patch to apply.
-        let side = |present: bool, prefix: &'static [u8]| -> Vec<u8> {
-            if present {
-                [prefix, c.path].concat()
-            } else {
-                b"/dev/null".to_vec()
-            }
-        };
-        for part in [
-            &b"--- "[..],
-            &side(c.old.is_some(), b"a/"),
-            b"\n+++ ",
-            &side(c.new.is_some(), b"b/"),
-            b"\n",
-            &c.hunks,
-        ] {
-            Output::print_bytes(part);
+        if c.binary {
+            Output::print(format_args!(
+                "Binary files differ ({})\n",
+                binary_summary(c)
+            ));
+            continue;
+        }
+        // An added or removed empty file is written the way git writes it: an `index` line with the
+        // null object ID and the empty blob's ID, and no hunk.
+        if c.hunks.is_empty() {
+            Output::print(format_args!(
+                "index {}\n",
+                if c.new.is_some() {
+                    "0000000..e69de29"
+                } else {
+                    "e69de29..0000000"
+                }
+            ));
+            continue;
+        }
+        let old_name: &[u8] = if c.old.is_some() { &a } else { b"/dev/null" };
+        let new_name: &[u8] = if c.new.is_some() { &b } else { b"/dev/null" };
+        for part in [&b"--- "[..], old_name, b"\n+++ ", new_name, b"\n", &c.hunks] {
+            put(part);
         }
     }
     print_summary(left, right, &changes, style);
@@ -1637,12 +1893,7 @@ fn collect_notes(
     colors: bool,
 ) -> Vec<String> {
     let mut notes: Vec<String> = Vec::new();
-    package_json_notes(
-        left.files.get(b"package.json".as_slice()),
-        right.files.get(b"package.json".as_slice()),
-        &mut notes,
-        colors,
-    );
+    package_json_notes(left, right, &mut notes, colors);
     ast_notes(changes, &mut notes, colors);
     for c in changes {
         match c.mode_change {
@@ -1683,6 +1934,15 @@ fn collect_notes(
                     (BStr::new(c.path)).to_string(),
                     (c.new.map_or(0, <[u8]>::len)).to_string(),
                 ],
+            ));
+        }
+        if c.new.is_some_and(|new| is_binary(c.path, new))
+            && c.old.is_some_and(|old| !is_binary(c.path, old))
+        {
+            notes.push(note!(
+                colors,
+                "<b>{}<r> was text and is now binary",
+                &[BStr::new(c.path).to_string()]
             ));
         }
         if c.old.is_none()
@@ -1748,6 +2008,13 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
         );
         if !flags.name_only && !flags.stat && !c.binary && !c.sourcemap {
             let _ = write!(out, ", \"patch\": {}", js(&c.hunks));
+        }
+        if c.binary {
+            for (key, side) in [("sha256Before", c.old), ("sha256After", c.new)] {
+                if let Some(bytes) = side {
+                    let _ = write!(out, ", \"{key}\": \"{}\"", sha256_hex(bytes));
+                }
+            }
         }
         out.extend_from_slice(b" }");
     }
@@ -1881,15 +2148,105 @@ fn split_label(label: &[u8]) -> Option<(&[u8], &[u8])> {
     (at > 0).then(|| (&label[..at], &label[at + 1..]))
 }
 
-fn package_json_notes(
-    old: Option<&Vec<u8>>,
-    new: Option<&Vec<u8>>,
-    notes: &mut Vec<String>,
-    colors: bool,
-) {
-    let (Some(old), Some(new)) = (old, new) else {
-        return;
+/// The fields that `bun install` reads from the registry manifest's entry for a version, not from
+/// the package.json inside the tarball.
+const INSTALL_FIELDS: [&[u8]; 8] = [
+    b"dependencies",
+    b"optionalDependencies",
+    b"peerDependencies",
+    b"bin",
+    b"directories",
+    b"os",
+    b"cpu",
+    b"libc",
+];
+
+/// One side's package.json, with each field read from wherever `bun install` would read it.
+struct Manifest {
+    file: bun_ast::Expr,
+    /// The registry manifest's entry for this version.
+    entry: Option<bun_ast::Expr>,
+    /// The fields of `entry` whose values differ from those in `file`.
+    overridden: Vec<&'static [u8]>,
+}
+
+impl Manifest {
+    fn get(&self, field: &[u8]) -> Option<bun_ast::Expr> {
+        match &self.entry {
+            Some(entry) if self.overridden.contains(&field) => entry.get(field),
+            _ => self.file.get(field),
+        }
+    }
+}
+
+/// Returns the properties of the object `e` whose values are strings.
+fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let Some(obj) = e.and_then(|e| e.data.e_object()) else {
+        return Vec::new();
     };
+    obj.properties
+        .slice()
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p.key.as_ref()?.as_string(bump)?.to_vec(),
+                p.value.as_ref()?.as_string(bump)?.to_vec(),
+            ))
+        })
+        .collect()
+}
+
+/// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
+/// the same thing compare equal. A registry rewrites some fields when a package is published.
+fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
+    use bun_paths::resolve_path::{join_abs_string_checked, platform};
+    let Some(value) = json.get(field) else {
+        return Vec::new();
+    };
+    let mut pairs = string_pairs(Some(&value), bump);
+    match field {
+        b"bin" => {
+            // `"bin": "./cli.js"` is short for `{ "<package name without its scope>": "cli.js" }`.
+            if let (Some(path), Some(name)) = (
+                value.as_string(bump),
+                json.get(b"name").and_then(|name| name.as_string(bump)),
+            ) {
+                pairs.push((name.to_vec(), path.to_vec()));
+            }
+            for (name, path) in &mut pairs {
+                *name = bun_paths::basename(name).to_vec();
+                if let Some(normal) =
+                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
+                {
+                    *path = normal.to_vec();
+                }
+            }
+        }
+        b"directories" => pairs.retain(|(name, _)| name == b"bin"),
+        b"os" | b"cpu" | b"libc" => {
+            if let Some(only) = value.as_string(bump) {
+                pairs.push((only.to_vec(), Vec::new()));
+            }
+            let mut list = value.as_array();
+            while let Some(item) = list.as_mut().and_then(|list| list.next()) {
+                if let Some(item) = item.as_string(bump) {
+                    pairs.push((item.to_vec(), Vec::new()));
+                }
+            }
+        }
+        // A package listed in both fields is optional, and some registry entries repeat the
+        // optional dependencies under `dependencies`.
+        b"dependencies" => {
+            let optional = install_view(json, b"optionalDependencies", bump);
+            pairs.retain(|(name, _)| !optional.iter().any(|(other, _)| other == name));
+        }
+        _ => {}
+    }
+    pairs.sort_unstable();
+    pairs
+}
+
+fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors: bool) {
     let bump = Bump::new();
     let parse = |bytes: &[u8]| {
         let src: &[u8] = bump.alloc_slice_copy(bytes);
@@ -1900,9 +2257,63 @@ fn package_json_notes(
         )
         .ok()
     };
-    let (Some(old), Some(new)) = (parse(old), parse(new)) else {
+    let mut side = |tree: &Tree| -> Option<Manifest> {
+        let file = parse(tree.files.get(b"package.json".as_slice())?)?;
+        let entry = tree.registry_entry.as_deref().and_then(parse);
+        let mut overridden = Vec::new();
+        for field in INSTALL_FIELDS {
+            let Some(entry) = &entry else { break };
+            // This command requests the abbreviated registry manifest, which omits `libc`.
+            if (field == b"libc" && entry.get(field).is_none())
+                || install_view(entry, field, &bump) == install_view(&file, field, &bump)
+            {
+                continue;
+            }
+            overridden.push(field);
+            let text = |json: &bun_ast::Expr| match json.get(field) {
+                Some(value) => expr_text(&value, &bump),
+                None => b"nothing".to_vec(),
+            };
+            let (theirs, ours) = (text(entry), text(&file));
+            let at = first_difference(&theirs, &ours);
+            notes.push(note!(
+                colors,
+                "registry and package.json of {} disagree on <b>{}<r>: {} <d>vs<r> {} <d>(bun install uses the registry's)<r>",
+                &[
+                    BStr::new(&tree.label).to_string(),
+                    BStr::new(field).to_string(),
+                    BStr::new(&clip(&theirs, at)).to_string(),
+                    BStr::new(&clip(&ours, at)).to_string(),
+                ],
+            ));
+        }
+        Some(Manifest {
+            file,
+            entry,
+            overridden,
+        })
+    };
+    let (Some(old), Some(new)) = (side(left), side(right)) else {
         return;
     };
+    // When a key appears twice, which value wins depends on the tool that reads the file.
+    if let Some(object) = new.file.data.e_object() {
+        let keys: Vec<&[u8]> = object
+            .properties
+            .slice()
+            .iter()
+            .filter_map(|p| p.key.as_ref()?.as_string(&bump))
+            .collect();
+        for (i, key) in keys.iter().enumerate() {
+            if keys[..i].contains(key) {
+                notes.push(note!(
+                    colors,
+                    "<b>{}<r> listed more than once in package.json",
+                    &[BStr::new(key).to_string()],
+                ));
+            }
+        }
+    }
 
     const SCRIPT_KEYS: &[&[u8]] = &[
         b"preinstall",
@@ -1913,8 +2324,8 @@ fn package_json_notes(
         b"preuninstall",
         b"postuninstall",
     ];
-    let old_scripts = old.get_object(b"scripts");
-    let new_scripts = new.get_object(b"scripts");
+    let old_scripts = old.file.get_object(b"scripts");
+    let new_scripts = new.file.get_object(b"scripts");
     for key in SCRIPT_KEYS {
         let o = old_scripts.and_then(|s| s.get_string_cloned(&bump, key).ok().flatten());
         let n = new_scripts.and_then(|s| s.get_string_cloned(&bump, key).ok().flatten());
@@ -1937,25 +2348,13 @@ fn package_json_notes(
         b"optionalDependencies",
         b"peerDependencies",
     ] {
-        let o = old.get_object(field);
-        let n = new.get_object(field);
-        let names = |e: Option<&bun_js_parser::Expr>| -> Vec<(Vec<u8>, Vec<u8>)> {
-            let Some(e) = e else { return Vec::new() };
-            let Some(obj) = e.data.e_object() else {
-                return Vec::new();
-            };
-            obj.properties
-                .slice()
-                .iter()
-                .filter_map(|p| {
-                    Some((
-                        p.key.as_ref()?.as_string(&bump)?.to_vec(),
-                        p.value.as_ref()?.as_string(&bump)?.to_vec(),
-                    ))
-                })
-                .collect()
+        let o = string_pairs(old.get(field).as_ref(), &bump);
+        let n = string_pairs(new.get(field).as_ref(), &bump);
+        // A version bump goes from one range to another, like `^1.0.0` → `^1.0.1`. A range that
+        // becomes a URL, a repository or an alias of another package is not a bump.
+        let is_range = |version: &[u8]| {
+            dependency::Tag::infer(version) == dependency::Tag::Npm && !version.starts_with(b"npm:")
         };
-        let (o, n) = (names(o.as_ref()), names(n.as_ref()));
         let mut bumps: Vec<String> = Vec::new();
         for (name, ver) in &n {
             match o.iter().find(|(on, _)| on == name) {
@@ -1968,16 +2367,23 @@ fn package_json_notes(
                         (BStr::new(ver)).to_string(),
                     ],
                 )),
-                Some((_, ov)) if ov != ver => bumps.push(note!(
-                    colors,
-                    "{} <b>{}<r>: {} → {}",
-                    &[
-                        (BStr::new(field)).to_string(),
-                        (BStr::new(name)).to_string(),
-                        (BStr::new(ov)).to_string(),
-                        (BStr::new(ver)).to_string(),
-                    ],
-                )),
+                Some((_, ov)) if ov != ver => {
+                    let list = if is_range(ov) && is_range(ver) {
+                        &mut bumps
+                    } else {
+                        &mut *notes
+                    };
+                    list.push(note!(
+                        colors,
+                        "{} <b>{}<r>: {} → {}",
+                        &[
+                            (BStr::new(field)).to_string(),
+                            (BStr::new(name)).to_string(),
+                            (BStr::new(ov)).to_string(),
+                            (BStr::new(ver)).to_string(),
+                        ],
+                    ))
+                }
                 _ => {}
             }
         }
@@ -2013,40 +2419,65 @@ fn package_json_notes(
         b"exports",
         b"engines",
         b"license",
+        b"type",
+        b"browser",
+        b"imports",
+        b"directories",
+        b"os",
+        b"cpu",
+        b"libc",
+        b"bundleDependencies",
+        b"bundledDependencies",
     ] {
-        let o = old.get(field).map(|e| expr_text(&e, &bump));
-        let n = new.get(field).map(|e| expr_text(&e, &bump));
-        if o != n {
-            match (o, n) {
-                (Some(o), Some(n)) => notes.push(note!(
+        // Compare the full values. Only the text shown in a note is truncated.
+        let differ = |(o, n): &(Option<bun_ast::Expr>, Option<bun_ast::Expr>)| {
+            o.map(|e| json_text(&e, true)) != n.map(|e| json_text(&e, true))
+        };
+        // Compare the values `bun install` uses first, then the package.json files, which other
+        // tools read.
+        let Some((o, n)) = [
+            (old.get(field), new.get(field)),
+            (old.file.get(field), new.file.get(field)),
+        ]
+        .into_iter()
+        .find(differ) else {
+            continue;
+        };
+        match (o, n) {
+            (Some(o), Some(n)) => {
+                let (o, n) = (expr_text(&o, &bump), expr_text(&n, &bump));
+                let at = first_difference(&o, &n);
+                notes.push(note!(
                     colors,
                     "<b>{}<r> changed: {} → {}",
                     &[
                         (BStr::new(field)).to_string(),
-                        (BStr::new(&o)).to_string(),
-                        (BStr::new(&n)).to_string(),
+                        (BStr::new(&clip(&o, at))).to_string(),
+                        (BStr::new(&clip(&n, at))).to_string(),
                     ],
-                )),
-                (None, Some(n)) => notes.push(note!(
-                    colors,
-                    "<b>{}<r> added: {}",
-                    &[(BStr::new(field)).to_string(), (BStr::new(&n)).to_string()],
-                )),
-                (Some(_), None) => notes.push(note!(
-                    colors,
-                    "<b>{}<r> removed",
-                    &[(BStr::new(field)).to_string()],
-                )),
-                (None, None) => {}
+                ))
             }
+            (None, Some(n)) => notes.push(note!(
+                colors,
+                "<b>{}<r> added: {}",
+                &[
+                    (BStr::new(field)).to_string(),
+                    (BStr::new(&clip(&expr_text(&n, &bump), 0))).to_string(),
+                ],
+            )),
+            (Some(_), None) => notes.push(note!(
+                colors,
+                "<b>{}<r> removed",
+                &[(BStr::new(field)).to_string()],
+            )),
+            (None, None) => {}
         }
     }
 }
 
-fn expr_text(e: &bun_js_parser::Expr, bump: &Bump) -> Vec<u8> {
-    if let Some(s) = e.as_string(bump) {
-        return s.to_vec();
-    }
+/// Prints `e` as JSON. With `minify_whitespace`, the text does not depend on how the file that `e`
+/// was read from is formatted.
+fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
     let source = bun_ast::Source::init_path_string(b"package.json", b"".as_slice());
     let _ = bun_js_printer::print_json(
@@ -2055,13 +2486,22 @@ fn expr_text(e: &bun_js_parser::Expr, bump: &Bump) -> Vec<u8> {
         &source,
         bun_js_printer::PrintJsonOptions {
             mangled_props: None,
+            minify_whitespace,
             ..Default::default()
         },
     );
-    // One line: collapse the printer's indentation.
+    printer.ctx.get_written().to_vec()
+}
+
+/// Prints `e` on a single line, for use in a note.
+fn expr_text(e: &bun_ast::Expr, bump: &Bump) -> Vec<u8> {
+    if let Some(s) = e.as_string(bump) {
+        return s.to_vec();
+    }
+    // Collapse the printer's indentation.
     let mut out: Vec<u8> = Vec::new();
     let mut last_space = false;
-    for &b in printer.ctx.get_written() {
+    for b in json_text(e, false) {
         let ws = b == b'\n' || b == b' ' || b == b'\t';
         if ws {
             if !last_space {
@@ -2072,17 +2512,29 @@ fn expr_text(e: &bun_js_parser::Expr, bump: &Bump) -> Vec<u8> {
         }
         last_space = ws;
     }
-    if out.len() > 120 {
-        out.truncate(117);
-        while out.last().is_some_and(|&b| b & 0xC0 == 0x80) {
-            out.pop();
-        }
-        if out.last().is_some_and(|&b| b >= 0xC0) {
-            out.pop();
-        }
-        out.extend_from_slice(b"...");
-    }
     out
+}
+
+fn first_difference(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b).take_while(|(a, b)| a == b).count()
+}
+
+/// Returns at most about 120 bytes of `text`, in a window that includes the byte at index `at`.
+fn clip(text: &[u8], at: usize) -> Vec<u8> {
+    if text.len() <= 120 {
+        return text.to_vec();
+    }
+    // Never cut in the middle of a UTF-8 sequence.
+    let boundary = |mut i: usize| {
+        while i > 0 && i < text.len() && text[i] & 0xC0 == 0x80 {
+            i -= 1;
+        }
+        i
+    };
+    let start = if at < 100 { 0 } else { boundary(at - 40) };
+    let end = boundary((start + 117).min(text.len()));
+    let dots = |cut: bool| -> &'static [u8] { if cut { b"..." } else { b"" } };
+    [dots(start > 0), &text[start..end], dots(end < text.len())].concat()
 }
 
 pub(crate) struct Lines<'a>(pub &'a [u8]);
@@ -2153,6 +2605,9 @@ static PALETTES: [Palette; 4] = [
 #[derive(Clone, Copy)]
 struct Style {
     pretty: bool,
+    /// True when the output goes to a terminal, either in color or (with `NO_COLOR`) as a plain
+    /// patch. Bytes from a package then go through `defang`.
+    escape: bool,
     width: usize,
     palette: &'static Palette,
 }
@@ -2185,6 +2640,7 @@ impl Style {
         };
         Style {
             pretty,
+            escape: pretty || (!flags.json && Output::is_stdout_tty()),
             width,
             palette,
         }
@@ -2228,7 +2684,11 @@ impl Style {
         };
         if !self.pretty {
             out.push(sign);
-            out.extend_from_slice(text);
+            if self.escape {
+                out.extend_from_slice(&defang(text));
+            } else {
+                out.extend_from_slice(text);
+            }
             out.push(b'\n');
             return;
         }
@@ -2380,11 +2840,7 @@ impl Style {
                 c.old.map_or(0, <[u8]>::len),
                 c.new.map_or(0, <[u8]>::len)
             ),
-            (_, _, true) => format!(
-                "\x1b[33mbinary\x1b[0m \x1b[2m{} → {} bytes\x1b[0m",
-                c.old.map_or(0, <[u8]>::len),
-                c.new.map_or(0, <[u8]>::len)
-            ),
+            (_, _, true) => format!("\x1b[33mbinary\x1b[0m \x1b[2m{}\x1b[0m", binary_summary(c)),
             (None, Some(_), _) => format!("{note}\x1b[32mnew\x1b[0m \x1b[32m+{}\x1b[0m", c.added),
             (Some(_), None, _) => {
                 format!("{note}\x1b[31mdeleted\x1b[0m \x1b[31m-{}\x1b[0m", c.removed)

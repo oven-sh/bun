@@ -47,20 +47,6 @@ pub struct Theme<'a> {
     pub image_base_dir: Option<&'a [u8]>,
 }
 
-impl<'a> Default for Theme<'a> {
-    fn default() -> Self {
-        Self {
-            light: false,
-            columns: 80,
-            colors: true,
-            hyperlinks: false,
-            kitty_graphics: false,
-            remote_image_paths: None,
-            image_base_dir: None,
-        }
-    }
-}
-
 /// Renderer that only collects image URLs — no output. Used by the CLI
 /// pre-scan pass to decide which remote images to download.
 #[derive(Default)]
@@ -138,6 +124,9 @@ struct AnsiRenderer<'a> {
     /// written on the current line so word wrapping works inside headings
     /// and paragraphs.
     col: u32,
+    /// The last space that paragraph flow wrote, if the line can still be
+    /// broken there.
+    soft_break: Option<SoftBreak>,
     /// True when we're collecting a code block body (fenced or indented).
     in_code_block: bool,
     /// Language extracted from the fenced code block info string.
@@ -168,6 +157,16 @@ struct AnsiRenderer<'a> {
     /// no content has been written since. Used to dedup back-to-back
     /// ensureBlankLine() calls (e.g. enter-quote followed by enter-para).
     blank_emitted: bool,
+}
+
+struct SoftBreak {
+    /// Index of the space in `out`.
+    at: usize,
+    /// `col` after the space.
+    col: u32,
+    /// The styles that were open at the space.
+    span_flags: u32,
+    in_link: bool,
 }
 
 struct OpenLink {
@@ -283,6 +282,7 @@ impl<'a> AnsiRenderer<'a> {
             image_src: None,
             image_title: None,
             col: 0,
+            soft_break: None,
             in_code_block: false,
             code_lang: b"",
             code_fenced: false,
@@ -837,7 +837,7 @@ impl<'a> AnsiRenderer<'a> {
                     && self.col as usize + word_width > max as usize
                     && self.col > indent
                 {
-                    self.wrap_break();
+                    self.break_before(word_width);
                 }
                 self.write_raw(word);
                 self.col += u32::try_from(word_width).expect("int cast");
@@ -871,6 +871,12 @@ impl<'a> AnsiRenderer<'a> {
                     self.col = 0;
                     self.write_indent();
                 } else {
+                    self.soft_break = Some(SoftBreak {
+                        at: self.out.list.len(),
+                        col: self.col + 1,
+                        span_flags: self.span_flags,
+                        in_link: self.link.is_some(),
+                    });
                     self.write_raw(b" ");
                     self.col += 1;
                 }
@@ -956,7 +962,7 @@ impl<'a> AnsiRenderer<'a> {
                 let max = u32::from(self.theme.columns);
                 let indent = self.current_indent();
                 if self.col > indent && self.col as usize + tw > max as usize {
-                    self.wrap_break();
+                    self.break_before(tw);
                 }
             }
         }
@@ -1036,6 +1042,40 @@ impl<'a> AnsiRenderer<'a> {
             rest = &rest[cut..];
             self.wrap_break();
         }
+    }
+
+    /// Soft-wrap before a word of `width` columns that does not fit on the
+    /// line. A word can arrive in pieces (`code` followed by `.`, `(`
+    /// followed by a link), so the break goes to the last space of the
+    /// line, and what was written after it moves down with the word.
+    fn break_before(&mut self, width: usize) {
+        let room = u32::from(self.theme.columns).saturating_sub(self.current_indent());
+        let found = self.soft_break.take().and_then(|it| {
+            let since = self.out.list.get(it.at..)?;
+            let moved_cols = self.col.checked_sub(it.col)?;
+            let fits = moved_cols == 0 || moved_cols as usize + width <= room as usize;
+            (since.first() == Some(&b' ') && !strings::contains_char(since, b'\n') && fits)
+                .then_some((it, since.len() - 1, moved_cols))
+        });
+        let Some((space, moved_bytes, moved_cols)) = found else {
+            self.wrap_break();
+            return;
+        };
+        self.out.list.remove(space.at);
+        // Write the break at the end, using the styles that were open at the
+        // space, then rotate it in front of the moved text.
+        let span_flags = core::mem::replace(&mut self.span_flags, space.span_flags);
+        let link = self.link.take();
+        self.link = space.in_link.then(|| OpenLink {
+            depth: 1,
+            href: Box::default(),
+        });
+        self.wrap_break();
+        self.span_flags = span_flags;
+        self.link = link;
+        self.out.list[space.at..].rotate_left(moved_bytes);
+        self.col += moved_cols;
+        self.last_was_newline = moved_cols == 0;
     }
 
     /// Soft-wrap inside a styled span: clear bg/fg so the line tail and
@@ -2711,12 +2751,8 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
-    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+    // Resolve against the markdown file's directory, or cwd when the caller gave no source path.
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let base: &[u8] = if let Some(d) = base_dir {
         d
     } else {
@@ -2725,16 +2761,18 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
-    let abs = Box::<[u8]>::from(joined);
+    // If the path is too long, the caller falls back to alt text.
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let abs_z = bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Auto>(
+        base,
+        &mut abs_buf[..],
+        &[&decoded],
+    )?;
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
     // for any entry, including directories — and emitKittyImageFile sets
     // q=2 so the terminal silently drops directory paths without falling
     // through to alt text.
-    let mut zbuf = bun_paths::PathBuffer::uninit();
-    let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
         Ok(s) => {
             if !bun_sys::S::ISREG(s.st_mode as _) {
@@ -2743,7 +2781,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
         }
         Err(_) => return None,
     }
-    Some(abs)
+    Some(Box::<[u8]>::from(abs_z.as_bytes()))
 }
 
 // ========================================

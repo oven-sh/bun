@@ -1,17 +1,6 @@
 use core::fmt;
 
-use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
-
-fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
-    let js_type = value.js_type();
-    if js_type.is_array() {
-        return ZigString::static_("array");
-    }
-    value
-        .js_type_string(global_object)
-        .get_zig_string(global_object)
-}
 
 #[cold]
 pub(crate) fn throw_err_invalid_arg_value(
@@ -43,7 +32,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
+    let actual_type = value.type_name(global_this);
     throw_err_invalid_arg_type_with_message(
         global_this,
         format_args!(
@@ -395,7 +384,7 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = get_type_name(global_this, value);
+        let actual_type = value.type_name(global_this);
         return Err(throw_err_invalid_arg_type_with_message(
             global_this,
             format_args!(
@@ -485,9 +474,7 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    // `bun_core::String` is `Copy` with no `Drop`;
-    // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
-    let str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+    let str = value.to_bun_string(global_this)?;
     if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }

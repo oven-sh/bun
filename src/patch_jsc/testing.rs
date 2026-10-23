@@ -1,10 +1,8 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
-use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
-};
-use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, SysErrorJsc};
+use bun_patch::{ApplyError, ParseErr, ParseErrAt, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
 pub(crate) struct TestingAPIs;
@@ -21,13 +19,12 @@ impl TestingAPIs {
         let Some(old_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
         };
-        // `to_bun_string` returns +1 ref; `OwnedString` derefs on drop.
-        let old_folder_bunstr = OwnedString::new(old_folder_jsval.to_bun_string(global)?);
+        let old_folder_bunstr = old_folder_jsval.to_bun_string(global)?;
 
         let Some(new_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
         };
-        let new_folder_bunstr = OwnedString::new(new_folder_jsval.to_bun_string(global)?);
+        let new_folder_bunstr = new_folder_jsval.to_bun_string(global)?;
 
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
@@ -41,20 +38,11 @@ impl TestingAPIs {
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),
         };
         match diff {
-            Ok(s) => {
-                // `from_bytes` borrows — no +1 WTF ref.
-                let result = BunString::from_bytes(s.as_slice()).to_js(global);
-                drop(s);
-                result
-            }
-            Err(e) => {
-                let result = Err(global.throw(format_args!(
-                    "failed to make diff: {}",
-                    bstr::BStr::new(e.as_slice())
-                )));
-                drop(e);
-                result
-            }
+            Ok(s) => bun_string_jsc::create_utf8_for_js(global, s.as_slice()),
+            Err(e) => Err(global.throw(format_args!(
+                "failed to make diff: {}",
+                bstr::BStr::new(e.as_slice())
+            ))),
         }
     }
 
@@ -64,8 +52,14 @@ impl TestingAPIs {
         let patchfile: PatchFile<'_> =
             parse_patch_file(&args.patchfile_txt).expect("validated in parse_apply_args");
 
-        if let Some(err) = patchfile.apply(args.dirfd) {
-            return Err(global.throw_value(SysErrorJsc::to_js(&err, global)));
+        match patchfile.apply(args.dirfd) {
+            Ok(()) => {}
+            Err(ApplyError::Sys(err)) => {
+                return Err(global.throw_value(SysErrorJsc::to_js(&err, global)));
+            }
+            Err(err @ ApplyError::HunkDoesNotApply { .. }) => {
+                return Err(global.throw(format_args!("{}", err)));
+            }
         }
 
         Ok(JSValue::TRUE)
@@ -82,12 +76,12 @@ impl TestingAPIs {
                 "TestingAPIs.parse: expected at least 1 argument, got 0"
             )));
         };
-        let patchfile_src_bunstr = OwnedString::new(patchfile_src_js.to_bun_string(global)?);
+        let patchfile_src_bunstr = patchfile_src_js.to_bun_string(global)?;
         let patchfile_src = patchfile_src_bunstr.to_utf8();
 
         let patchfile = match parse_patch_file(patchfile_src.slice()) {
             Ok(p) => p,
-            Err(e) => {
+            Err(ParseErrAt { err: e, .. }) => {
                 if e == ParseErr::hunk_header_integrity_check_failed {
                     return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
@@ -103,8 +97,7 @@ impl TestingAPIs {
             use std::io::Write as _;
             write!(&mut str, "{}", bun_patch::json_fmt(&patchfile)).expect("unreachable");
         }
-        let outstr = BunString::borrow_utf8(&str);
-        let js = outstr.to_js(global)?;
+        let js = bun_string_jsc::create_utf8_for_js(global, &str)?;
         drop(patchfile);
         Ok(js)
     }
@@ -122,8 +115,7 @@ impl TestingAPIs {
         };
 
         let dir_fd = if let Some(dir_js) = arguments.next_eat() {
-            // +1 ref from `to_bun_string`; release via `OwnedString` drop.
-            let bunstr = OwnedString::new(dir_js.to_bun_string(global)?);
+            let bunstr = dir_js.to_bun_string(global)?;
             let path = bunstr.to_owned_slice_z();
 
             match bun_sys::open(
@@ -150,10 +142,6 @@ impl TestingAPIs {
                 return Err(e);
             }
         };
-        // +1 ref from `to_bun_string`; release via `OwnedString` drop.
-        // `to_utf8()` takes its own ref, so
-        // `patchfile_src` outlives this guard.
-        let patchfile_bunstr = OwnedString::new(patchfile_bunstr);
         let patchfile_src = patchfile_bunstr.to_utf8();
 
         // Validate the patch parses; on failure, clean up `dir_fd` and throw.
@@ -161,7 +149,7 @@ impl TestingAPIs {
         // returned alongside its source without a self-referential struct
         // (forbidden by PORTING.md). We discard it here; `apply()` reparses
         // from the owned bytes below.
-        if let Err(e) = parse_patch_file(patchfile_src.slice()) {
+        if let Err(ParseErrAt { err: e, .. }) = parse_patch_file(patchfile_src.slice()) {
             // TODO: HAVE @zackradisic REVIEW THIS DIFF
             if Fd::cwd() != dir_fd {
                 dir_fd.close();

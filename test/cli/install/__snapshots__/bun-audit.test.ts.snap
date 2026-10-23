@@ -37,7 +37,7 @@ fresh@0.3.0
 
 mime@1.3.4
   express > send > mime
-  high: mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input (<1.4.1) - https://github.com/advisories/GHSA-wrvr-8mpx-r7pp
+  high: mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input (<1.3.5) - https://github.com/advisories/GHSA-wrvr-8mpx-r7pp
 
 minimist@0.0.8
   express > mkdirp > minimist
@@ -261,7 +261,7 @@ exports[`\`bun audit\` should print valid JSON and exit 1 when --json is passed 
       "severity": "high",
       "title": "mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input",
       "url": "https://github.com/advisories/GHSA-wrvr-8mpx-r7pp",
-      "vulnerable_versions": "<1.4.1",
+      "vulnerable_versions": "<1.3.5",
     },
   ],
   "minimist": [

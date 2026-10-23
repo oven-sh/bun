@@ -270,7 +270,7 @@ test.skipIf(process.platform === "win32")(
       // Start the recursive delete on the worker pool, then immediately
       // replace each subdirectory with a symlink pointing at the victim
       // directory while the walk is in flight.
-      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const running = ($`rm -rf ${target}`.nothrow().quiet() as any).run();
       for (let i = 0; i < ENTRIES; i++) {
         const entry = path.join(target, `d${i}`);
         try {
@@ -287,6 +287,99 @@ test.skipIf(process.platform === "win32")(
       expect(existsSync(victimFile)).toBeTrue();
       expect(existsSync(victimDir)).toBeTrue();
     }
+  },
+);
+
+// The recursive walk joined every entry onto its directory's path inside a
+// fixed-size path buffer on the worker thread, so a tree deeper than PATH_MAX
+// aborted the whole process instead of failing that entry. Files and
+// directories take different joins, so one tree of each. Runs in a child
+// process so the abort shows up as a failed assertion. Windows has a
+// different path limit, and its shell rm is bounded differently.
+test.skipIf(process.platform === "win32")(
+  "recursive rm reports an entry deeper than PATH_MAX instead of crashing",
+  async () => {
+    // Linux PATH_MAX is 4096, every other POSIX platform Bun runs on has 1024.
+    const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
+    using base = tempDir("rm-deep-walk", {});
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      $.nothrow();
+
+      const base = process.env.BASE!;
+      // Long enough that a 100 byte entry inside the directory is past
+      // PATH_MAX, short enough that the directory itself is still well inside.
+      const deepLength = Number(process.env.PATH_MAX) - 64;
+      const component = Buffer.alloc(100, "d").toString();
+      // <base>/<tag>/ddd.../ddd... with an absolute path of deepLength bytes.
+      function deepDir(tag: string): string {
+        let dir = join(base, tag);
+        while (Buffer.byteLength(dir) + 1 + component.length <= deepLength) dir = join(dir, component);
+        const rest = deepLength - Buffer.byteLength(dir) - 1;
+        if (rest > 0) dir = join(dir, Buffer.alloc(rest, "e").toString());
+        mkdirSync(dir, { recursive: true });
+        return dir;
+      }
+
+      // An entry whose full path is longer than PATH_MAX can only be created
+      // relative to its directory.
+      const fileDir = deepDir("file");
+      const fileName = Buffer.alloc(100, "f").toString();
+      process.chdir(fileDir);
+      writeFileSync(fileName, "");
+
+      const dirDir = deepDir("dir");
+      const dirName = Buffer.alloc(100, "s").toString();
+      process.chdir(dirDir);
+      mkdirSync(dirName);
+
+      process.chdir(base);
+      mkdirSync(join(base, "plain", "sub"), { recursive: true });
+
+      const run = async (operand: string) => {
+        const { exitCode, stderr } = await $\`rm -rf \${operand}\`.cwd(base).quiet();
+        return { exitCode, stderr: stderr.toString() };
+      };
+      console.log(
+        JSON.stringify({
+          file: { ...(await run(join(base, "file"))), entry: join(fileDir, fileName), dirKept: existsSync(fileDir) },
+          dir: { ...(await run(join(base, "dir"))), entry: join(dirDir, dirName), dirKept: existsSync(dirDir) },
+          plain: { ...(await run(join(base, "plain"))), removed: !existsSync(join(base, "plain")) },
+        }),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BASE: String(base), PATH_MAX: String(PATH_MAX) },
+      cwd: String(base),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const results = JSON.parse(stdout);
+    // The entries are what rm could not remove, and this is why: a path of
+    // PATH_MAX bytes has no room left for its NUL.
+    expect(Buffer.byteLength(results.file.entry)).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(Buffer.byteLength(results.dir.entry)).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(results).toEqual({
+      file: {
+        exitCode: 1,
+        stderr: `rm: ${results.file.entry}: File name too long\n`,
+        entry: expect.stringMatching(/\/f{100}$/),
+        dirKept: true,
+      },
+      dir: {
+        exitCode: 1,
+        stderr: `rm: ${results.dir.entry}: File name too long\n`,
+        entry: expect.stringMatching(/\/s{100}$/),
+        dirKept: true,
+      },
+      plain: { exitCode: 0, stderr: "", removed: true },
+    });
+    expect(exitCode).toBe(0);
   },
 );
 

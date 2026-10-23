@@ -54,6 +54,8 @@ The `"workspaces"` key in the root `package.json` lists the subdirectories to tr
 }
 ```
 
+A negative pattern removes what the globs match, wherever it is in the list. `!dir/**` removes `dir` and everything below it. A negative pattern does not remove a directory that is listed by its path. `bun run --filter` and `--workspaces` skip the excluded packages too.
+
 Each workspace has its own `package.json`. To reference another package in the monorepo, use a semver range or the workspace protocol (for example `workspace:*`) as the version in your `package.json`.
 
 ```json packages/pkg-a/package.json icon="file-json"
@@ -65,6 +67,12 @@ Each workspace has its own `package.json`. To reference another package in the m
   }
 }
 ```
+
+`workspace:*` on the name of the root package links the root package.
+
+A workspace needs a `"name"`. Bun skips a matched `package.json` that has no `"name"`, such as a test fixture containing only `{ "type": "module" }`. Bun does not link the skipped directory into `node_modules` and does not install its dependencies. If the skipped `package.json` declares dependencies, `bun install` prints a warning that names the directory.
+
+A workspace can be outside the directory of the root `package.json`, for example `"../shared"` or a symlink that points there. It works like any other workspace: other packages can depend on it, `bun.lock` lists it, and `bun install` installs its dependencies and runs its scripts. Another project may own that directory, so [`bun prune`](/pm/cli/prune) doesn't clean its `node_modules`, and switching linkers doesn't move it aside.
 
 `bun install` installs dependencies for all workspaces in the monorepo, de-duplicating packages if possible. To install dependencies for specific workspaces only, use the `--filter` flag.
 
@@ -90,11 +98,62 @@ A specific version takes precedence over the package's `package.json` version:
 "workspace:1.0.2" -> "1.0.2" // Even if current version is 1.0.1
 ```
 
+You can also reference a workspace package by the path of its directory. The path is relative to the `package.json` that declares the dependency. Bun publishes the version of the package in that directory. When the dependency name differs from the package name, Bun publishes an `npm:` alias:
+
+```
+"pkg-b": "workspace:../pkg-b" -> "pkg-b": "1.0.1"
+"b": "workspace:../pkg-b"     -> "b": "npm:pkg-b@1.0.1"
+```
+
+To install a workspace package under a different name, put the package name in front of the version: `workspace:<name>@<version>`. Bun publishes these as `npm:` aliases too:
+
+```
+"b": "workspace:pkg-b@*"     -> "b": "npm:pkg-b@1.0.1"
+"b": "workspace:pkg-b@^"     -> "b": "npm:pkg-b@^1.0.1"
+"b": "workspace:pkg-b@1.0.1" -> "b": "npm:pkg-b@1.0.1"
+```
+
 Workspaces have a few major benefits.
 
 - **Split code into logical parts.** If one package relies on another, add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` installs your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.
 - **Bun can de-duplicate dependencies.** If `a` and `b` share a common dependency, Bun _hoists_ it to the root `node_modules` directory. This saves disk space and minimizes the "dependency hell" of multiple versions of a package installed at once.
 - **Run scripts in multiple packages.** Use the [`--filter` flag](/pm/filter) to run `package.json` scripts in several packages at once, or `--workspaces` to run scripts across all workspaces.
+
+## Self-contained workspaces
+
+With the hoisted linker, dependencies shared by several workspaces are hoisted to the root
+`node_modules`. Some tools cannot follow that: Electron packagers and serverless bundlers walk,
+prune and repackage _one workspace's_ `node_modules` and expect every dependency to be physically
+present under it. Mark such a workspace as self-contained, either in its own `package.json`
+(the same key Yarn uses; only the `"workspaces"` value changes the layout):
+
+```json title="apps/desktop/package.json" icon="file-json"
+{
+  "name": "desktop",
+  "installConfig": { "hoistingLimits": "workspaces" }
+}
+```
+
+or from the root `package.json`, next to the workspace globs:
+
+```json title="package.json" icon="file-json"
+{
+  "workspaces": {
+    "packages": ["apps/*", "packages/*"],
+    "selfContained": ["apps/desktop"]
+  }
+}
+```
+
+(entries are workspace paths or package names)
+
+For that workspace `bun install` then behaves as a hoisting barrier — nothing it depends on,
+directly or transitively (including through other workspaces it depends on), is placed above
+`apps/desktop/node_modules`, so that directory is a complete tree — and materializes those
+packages as real copies instead of hardlinks / clones from the cache, so tools that rewrite them
+cannot affect the cache or other projects. All other workspaces keep hoisting to the root as usual. The lockfile does not record the setting. Bun reads it from `package.json` on every install, `--frozen-lockfile` included, so the lockfile is the same with and without it.
+This setting has no effect with the isolated linker, where every package already resolves only its
+own dependencies.
 
 ## Share versions with Catalogs
 

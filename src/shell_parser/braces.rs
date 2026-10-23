@@ -476,16 +476,6 @@ pub mod ast {
         pub(crate) atoms: GroupAtoms,
     }
 
-    impl Default for Group {
-        fn default() -> Self {
-            Self {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
-                atoms: GroupAtoms::Single(Atom::Text(SmolStr::empty())),
-            }
-        }
-    }
-
     pub struct Expansion {
         // bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
@@ -1138,9 +1128,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 }
             }
 
-            // if (char_stack.push(char) == char_stack.Error.StackFull) {
-            //     try self.app
-            // }
             self.append_char(char)?;
         }
 

@@ -1,22 +1,21 @@
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
 use bun_collections::index_sort;
-#[cfg(not(windows))]
-use bun_core::ZStr;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
-use bun_sys::{self, Fd};
+use bun_sys::{Dir, Fd};
 
 declare_scope!(jest, hidden);
 
-pub struct Scanner<'a> {
+pub(crate) struct Scanner<'a> {
     /// Memory is borrowed.
     pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
@@ -24,7 +23,7 @@ pub struct Scanner<'a> {
     pub(crate) filter_names: &'a [&'a [u8]],
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    pub(crate) path_ignore_patterns: &'a [bun_glob::Prepared<&'a [u8]>],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -33,21 +32,24 @@ pub struct Scanner<'a> {
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
+    /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
+    current_dir: Option<Rc<Dir>>,
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
-pub struct ScanEntry {
-    pub(crate) relative_dir: Fd,
+pub(crate) struct ScanEntry {
+    /// `None` for children of the root, which are opened by absolute path.
+    pub(crate) relative_dir: Option<Rc<Dir>>,
     // `'static` is sound here: borrows from FileSystem.dirname_store, a
     // process-lifetime arena that is never reset.
     pub(crate) dir_path: &'static [u8],
     pub name: StringOrTinyString,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScanError {
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum ScanError {
     /// The entrypoint does not exist or does not fit a `PathBuffer`; never returned for subdirectories.
     #[error("DoesNotExist")]
     DoesNotExist,
@@ -55,22 +57,17 @@ pub enum ScanError {
     OutOfMemory,
 }
 bun_core::oom_from_alloc!(ScanError);
-impl PartialEq<crate::Error> for ScanError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
-    }
-}
 
 /// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
 /// (whose `next` takes `&self`) while still allowing mutable calls.
 #[repr(transparent)]
 struct ScannerDirIter<'a>(*mut Scanner<'a>);
 impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next(&self, entry: &mut fs::Entry, fd: Fd) {
+    fn next(&self, entry: &mut fs::Entry, _fd: Fd) {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
         // while the resolver walks entries.
-        unsafe { (*self.0).next(entry, fd) }
+        unsafe { (*self.0).next(entry) }
     }
 }
 
@@ -88,9 +85,10 @@ impl<'a> Scanner<'a> {
             options: &transpiler.options,
             fs: transpiler.fs,
             test_files: results,
-            open_dir_buf: PathBuffer::uninit(),
+            open_dir_buf: PathBuffer::ZEROED,
             has_iterated: false,
             search_count: 0,
+            current_dir: None,
         })
     }
 
@@ -102,13 +100,12 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
+        bun_core::top_level_dir()
     }
 
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`.
+        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
         unsafe { (*self.fs).filename_store }
     }
 
@@ -128,7 +125,7 @@ impl<'a> Scanner<'a> {
     }
 
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
-        let mut scan_dir_buf = PathBuffer::uninit();
+        let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
         let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
         else {
@@ -166,8 +163,6 @@ impl<'a> Scanner<'a> {
         // you typed "." and we already scanned it
         if !self.has_iterated {
             if let EntriesOption::Entries(entries) = root {
-                let fd = entries.fd;
-                debug_assert!(fd != Fd::INVALID);
                 // Collect first so `self.next(…)` doesn't overlap the
                 // `entries.data` borrow.
                 // this branch is taken when the resolver already has
@@ -188,87 +183,55 @@ impl<'a> Scanner<'a> {
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr }, fd);
+                    self.next(unsafe { &mut *entry_ptr });
                 }
             }
         }
 
         while let Some(entry) = self.dirs_to_scan.pop_front() {
-            debug_assert!(entry.relative_dir.is_valid());
+            let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
+            let Some(path2) = self.fs().abs_buf_checked(&parts2, &mut scan_dir_buf) else {
+                continue;
+            };
+            let (parent, rel_path): (Fd, &[u8]) = match &entry.relative_dir {
+                Some(parent) => (parent.fd, entry.name.slice()),
+                None => (Fd::cwd(), path2),
+            };
             #[cfg(not(windows))]
-            {
-                let dir = entry.relative_dir;
-
-                let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let buf_len = self.open_dir_buf.len();
-                let Some(path2) = self
-                    .fs()
-                    .abs_buf_checked(&parts2, &mut self.open_dir_buf[..buf_len - 1])
-                else {
-                    continue;
-                };
-                let path2_len = path2.len();
-                self.open_dir_buf[path2_len] = 0;
-                let name_len = entry.name.slice().len();
-                // SAFETY: open_dir_buf[path2_len] == 0 written immediately above
-                let path_z = unsafe {
-                    ZStr::from_raw(
-                        self.open_dir_buf.as_ptr().add(path2_len - name_len),
-                        name_len,
-                    )
-                };
-                // bun.openDir → sys.openat(dir, pathZ, O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0).stdDir()
-                let Ok(child_fd) = bun_sys::open_dir_at(dir, path_z.as_bytes()) else {
-                    continue;
-                };
-                let child_dir = bun_sys::Dir::from_fd(child_fd);
-                let path2 = self
-                    .fs()
-                    .dirname_store
-                    .append_slice(&self.open_dir_buf[..path2_len])
-                    .map_err(|_| ScanError::OutOfMemory)?;
-                FileSystem::set_max_fd(child_dir.fd.native());
-                let _ = self
-                    .read_dir_with_name(path2, Some(child_dir))
-                    .map_err(|_| ScanError::OutOfMemory)?;
-            }
+            let opened = bun_sys::open_dir_at(parent, rel_path);
             #[cfg(windows)]
-            {
-                let fs = self.fs();
-                let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let Some(path2) = fs.abs_buf_checked(&parts2, &mut self.open_dir_buf) else {
-                    continue;
-                };
-                let Ok(child_fd) =
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, path2)
-                else {
-                    continue;
-                };
-                let child_dir = bun_sys::Dir::from_fd(child_fd);
-                let stored = fs
-                    .dirname_store
-                    .append_slice(path2)
-                    .map_err(|_| ScanError::OutOfMemory)?;
-                let _ = self
-                    .read_dir_with_name(stored, Some(child_dir))
-                    .map_err(|_| ScanError::OutOfMemory)?;
-            }
+            let opened = bun_sys::open_dir_no_renaming_or_deleting_windows(parent, rel_path);
+            // Dropping `entry` releases the parent fd once its last child is opened.
+            drop(entry);
+            let Ok(child_fd) = opened else {
+                continue;
+            };
+            let child_dir = Rc::new(Dir::from_fd(child_fd));
+            let path2 = self
+                .fs()
+                .dirname_store
+                .append_slice(path2)
+                .map_err(|_| ScanError::OutOfMemory)?;
+            self.current_dir = Some(Rc::clone(&child_dir));
+            let result = self.read_dir_with_name(path2, Some(child_dir.fd));
+            self.current_dir = None;
+            result.map_err(|_| ScanError::OutOfMemory)?;
         }
 
         Ok(())
     }
 
+    /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
     fn read_dir_with_name(
         &mut self,
         name: &[u8],
-        handle: Option<bun_sys::Dir>,
+        handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
-        let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, raw, 0, true, iter)
+            .read_directory_with_iterator(name, handle, 0, false, iter)
             .map_err(Into::into)
     }
 
@@ -341,15 +304,15 @@ impl<'a> Scanner<'a> {
         };
 
         for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
+            if pattern.r#match(rel_path).matches() {
                 return true;
             }
             // Only try trailing separator for ** patterns (e.g. "vendor/**").
             // Single-star patterns like "vendor/*" must not prune entire
             // directories because * doesn't cross directory boundaries.
             if let Some(p) = rel_with_slash {
-                if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
+                if strings::index_of(pattern.pattern(), b"**").is_some() {
+                    if pattern.r#match(p).matches() {
                         return true;
                     }
                 }
@@ -364,13 +327,13 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub(crate) fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
+    pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, true) } {
+        match unsafe { entry.kind(real_fs, false) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;
@@ -407,7 +370,7 @@ impl<'a> Scanner<'a> {
                 self.search_count += 1;
 
                 self.dirs_to_scan.push_back(ScanEntry {
-                    relative_dir: fd,
+                    relative_dir: self.current_dir.clone(),
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
                     // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
                     name: unsafe { core::ptr::read(&raw const entry.base_) },
@@ -416,7 +379,7 @@ impl<'a> Scanner<'a> {
             }
             fs::EntryKind::File => {
                 // already seen it!
-                if !entry.abs_path.is_empty() {
+                if !entry.abs_path().is_empty() {
                     return;
                 }
 
@@ -452,9 +415,10 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = Interned::from_static(stored);
-                self.test_files.push(entry.abs_path);
+                let abs_path = entry.abs_path_or_fill(|| Interned::from_static(stored));
+                self.test_files.push(abs_path);
             }
+            fs::EntryKind::Dangling => {}
         }
     }
 }

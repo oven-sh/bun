@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
   test("running a non-existent absolute file path is a 1 exit code", () => {
@@ -114,6 +114,34 @@ describe("bun test", () => {
     expect(stderr).toContain(path);
   });
 
+  test.each([
+    ["arrays and objects", "i % 2 ? [value] : { a: value }"],
+    ["instances of a class", "new (class A { a = value; })()"],
+    ["JSX children", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { children: value } }`],
+    ["JSX props", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { a: value } }`],
+    ["the data of events", `new MessageEvent("message", { data: value })`],
+    ["asymmetric matchers", "expect.objectContaining({ a: value })"],
+  ])("%s nested too deeply to print are a RangeError", (_, wrap) => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        function thrownFor(depth) {
+          let value = 1;
+          for (let i = 0; i < depth; i++) value = ${wrap};
+          try {
+            expect(value).toMatchInlineSnapshot('"x"');
+          } catch (error) {
+            return error.constructor.name;
+          }
+        }
+        test("deep", () => {
+          expect([thrownFor(10), thrownFor(100_000)]).toEqual(["Error", "RangeError"]);
+        });
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("1 pass");
+  });
   describe("when filters are provided", () => {
     let dir: string;
     beforeAll(() => {
@@ -355,6 +383,40 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
+    });
+
+    // The failure is reported from a promise reaction, so the exit starts inside a JS frame.
+    test.skipIf(!isASAN)("tears down the VM without leaks", async () => {
+      using dir = tempDir("bun-test-bail-leak-check", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          test("fails", async () => {
+            setTimeout(() => console.log("ran: timer"), 60_000);
+            await Bun.sleep(1);
+            console.log("ran: fails");
+            expect(1).toBe(2);
+          });
+          test("unreachable", () => {
+            console.log("ran: unreachable");
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--bail"],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: "allow_user_segv_handler=1:detect_leaks=1:abort_on_error=1",
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.split("\n").filter(line => line.startsWith("ran: "))).toEqual(["ran: fails"]);
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(exitCode, stderr).toBe(1);
     });
   });
   describe("--timeout", () => {
@@ -718,6 +780,104 @@ describe("bun test", () => {
         },
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+    });
+    test("should annotate an error thrown from a source whose URL is longer than a path buffer", () => {
+      // Longer than a path buffer on every platform (98302 bytes on Windows).
+      const padding = 100_000;
+      const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
+      const base64 = btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
+      const longPath = "/" + Buffer.alloc(padding, "y").toString();
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("data url", async () => {
+            const source = ${JSON.stringify(dataUrlModule)} + Buffer.alloc(${padding}, "x").toString();
+            const m = await import("data:text/javascript;base64," + btoa(source));
+            m.default();
+          });
+          test("long sourceURL", () => {
+            const sourceURL = "/" + Buffer.alloc(${padding}, "y").toString();
+            (0, eval)("(function fromLongPath() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL)();
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(2);
+      const [dataUrl, longSourceUrl] = annotations;
+      expect(dataUrl).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
+      expect(dataUrl).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+      expect(longSourceUrl).toStartWith(`::error file=${longPath},line=1,col=`);
+      expect(longSourceUrl).toContain(`%0A      at fromLongPath (${longPath}:1:`);
+    });
+    test("should make the annotation file relative to GITHUB_WORKSPACE only when it is a path", () => {
+      const cwd = createTest([
+        {
+          filename: "workspace.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            test("in the test file", () => {
+              throw new Error("boom");
+            });
+            test("in a sourceURL that is not a path", () => {
+              (0, eval)("(function fromSourceUrl() { throw new Error('boom'); })\\n//# sourceURL=webpack://app/./src/x.ts")();
+            });
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: dirname(cwd),
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(2);
+      const [testFile, sourceUrl] = annotations;
+      expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=4,col=`);
+      expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
+      expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
+    });
+    // The reporters reuse the buffer that stored the file's title while its tests ran.
+    test("should print the test file's name in the group for each --rerun-each run", () => {
+      const cwd = createTest([
+        {
+          filename: "helper.ts",
+          contents: `
+            import { expect } from "bun:test";
+            export function failing() {
+              expect(1).toBe(2);
+            }
+          `,
+        },
+        {
+          filename: "rerun.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            import { failing } from "./helper";
+            test("fails", failing);
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        args: ["--rerun-each", "3"],
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: undefined,
+        },
+        expectExitCode: 1,
+      });
+      expect(stderr.split("\n").filter(line => line.startsWith("::group::"))).toEqual([
+        "::group::rerun.test.ts: (run #1)",
+        "::group::rerun.test.ts: (run #2)",
+        "::group::rerun.test.ts: (run #3)",
+      ]);
     });
   });
   describe(".each", () => {
@@ -1301,7 +1461,7 @@ describe("bun test", () => {
       stderr
         .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
         .trim()
-        .replace(/\[.*\ms\]/, "[xx ms]"),
+        .replace(/\[[\d.]+m?s\]/, "[xx ms]"),
     ).toMatchInlineSnapshot(`
       "bun-test-*.test.ts:
 
@@ -1422,7 +1582,7 @@ describe("bun test", () => {
     expect(
       stderr
         .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
-        .replace(/ \[[\d.]+ms\]/g, "") // Remove all timings
+        .replace(/ \[[\d.]+m?s\]/g, "") // Remove all timings
         .replace(/Ran \d+ tests across \d+ files?\.\s*$/, "Ran 2 tests across 1 file.") // Normalize test counts
         .trim(),
     ).toMatchInlineSnapshot(`
@@ -1705,6 +1865,24 @@ describe("bun test", () => {
     test("can fail the run once node:test registered a test, like node's common.mustCall()", async () => {
       const { stderr, exitCode } = await runFile("node-exit-code.test.ts", nodeTestFile(1));
       expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    test("run when --bail stops a file that registered a node:test test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "node-bail.test.ts": `
+            import { test } from "node:test";
+            import assert from "node:assert";
+            process.on("exit", code => console.log("exit listener ran with", code));
+            test("fails", () => assert.strictEqual(1, 2));
+          `,
+        },
+        "--bail",
+        "node-bail.test.ts",
+      );
+      expect(stdout).toContain("exit listener ran with 1");
+      expect(stderr).toContain("Bailed out after 1 failure");
       expect(exitCode).toBe(1);
     });
 
@@ -1999,4 +2177,90 @@ describe.concurrent("test file discovery (scanner)", () => {
       },
     );
   }
+
+  // https://github.com/oven-sh/bun/issues/39852
+  test.skipIf(isWindows)("does not keep a directory fd open per scanned directory", async () => {
+    const N = 64;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < N; i++) {
+      files[`sub${i}/a/b/c/.gitkeep`] = "";
+    }
+    files["sub0/probe.test.ts"] = /* ts */ `
+      import { test } from "bun:test";
+      import { readdirSync } from "node:fs";
+      test("probe", () => {
+        console.log("OPEN_FDS=" + readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
+      });
+    `;
+    using dir = tempDir("scanner-dir-fds", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "probe"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 4N+1 directories are scanned; none of them may stay open.
+    expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("reports a bunfig [test] root longer than the path buffer like a missing directory", async () => {
+  const root = Buffer.alloc(100_000, "r").toString();
+  using dir = tempDir("bunfig-root-too-long", {
+    "bunfig.toml": `[test]\nroot = "${root}"\n`,
+    "top.test.ts": `import { test } from "bun:test"; test("top", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Failed to scan non-existent root directory for tests:");
+  expect(stderr).toContain(root);
+  expect(exitCode).toBe(1);
+});
+
+test("hooks throw in a Worker", async () => {
+  using dir = tempDir("bun-test-hooks-in-worker", {
+    "hooks.test.ts": `
+      import { afterAll, afterEach, onTestFinished, test } from "bun:test";
+      import { isMainThread, parentPort, Worker } from "node:worker_threads";
+      if (isMainThread) {
+        test("starts a Worker", async () => {
+          const worker = new Worker(import.meta.filename);
+          worker.on("message", console.log);
+          await new Promise(resolve => worker.once("exit", resolve));
+        });
+      } else {
+        for (const hook of [afterEach, afterAll, onTestFinished]) {
+          try {
+            hook(() => {});
+          } catch (e) {
+            parentPort.postMessage(e.message);
+          }
+        }
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "hooks.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain(
+    "Cannot use afterEach() in a Worker.\nCannot use afterAll() in a Worker.\nCannot use onTestFinished() in a Worker.\n",
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
 });

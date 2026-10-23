@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, compileFixture, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -802,6 +802,32 @@ describe("read edge cases", () => {
     expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
     expect(() => CFunction({ ptr: -1n, args: [], returns: "void" })).toThrow(/out of range/);
   });
+
+  // Runs in a subprocess because a truncated offset reads unmapped memory.
+  it("doesn't truncate a byteOffset outside the int32 range", async () => {
+    const src = `
+      import { ptr, read } from "bun:ffi";
+      const buf = new Uint8Array(32).map((_, i) => 0x80 + i);
+      const p = ptr(buf);
+      const large = [2 ** 31, 2 ** 32 + 1];
+      console.log(JSON.stringify([...large, ...large.map(off => -off - 1)].map(off => read.u8(p + 8 - off, off))));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "[136,136,136,136]\n", exitCode: 0 });
+  });
+
+  it("reads at the pointer for an undefined or null byteOffset and throws for other non-numbers", () => {
+    const buf = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc]);
+    const p = ptr(buf);
+    expect([read.u8(p), read.u8(p, undefined), read.u8(p, null)]).toEqual([buf[0], buf[0], buf[0]]);
+    for (const offset of ["1", 1n, {}]) {
+      expect(() => read.u8(p, offset)).toThrow("Expected number for byteOffset");
+    }
+    for (const offset of [Infinity, -Infinity, NaN]) {
+      expect(() => read.u8(p, offset)).toThrow("byteOffset must be a finite number");
+    }
+  });
 });
 
 describe("CString", () => {
@@ -926,6 +952,46 @@ it("JSCallback exceptions propagate out of the native call", async () => {
     stderr: "",
     exitCode: 0,
   });
+});
+
+// A `ptr` argument that is a cell but not a typed array view (here: a plain ArrayBuffer) must convert
+// correctly in FTL-compiled callers too. The optimizing tier used to read JSArrayBufferView::m_mode from
+// any cell before checking its type; when the ArrayBuffer was the last cell in its MarkedBlock and the
+// following page was not committed, that read faulted. Allocating many small ArrayBuffers per round makes
+// block-final cells common; the check itself is that every call returns the buffer's data pointer.
+it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-compiled call site", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { dlopen, read } from "bun:ffi";
+      const { symbols } = dlopen(process.env.FFI_FIXTURE_PATH, { identity_ptr: { args: ["ptr"], returns: "ptr" } });
+      function callIt(value) { return symbols.identity_ptr(value); }
+      const view = new Uint8Array(16);
+      for (let i = 0; i < 300_000; i++) callIt(view);
+      const rounds = ${isDebug ? 3 : 60};
+      const perRound = ${isDebug ? 100_000 : 200_000};
+      let mismatches = 0;
+      for (let round = 0; round < rounds; round++) {
+        const buffers = [];
+        for (let i = 0; i < perRound; i++) buffers.push(new ArrayBuffer(8));
+        for (let i = 0; i < buffers.length; i++) if (i % 10 !== 0) buffers[i] = null;
+        Bun.gc(true);
+        for (let i = 0; i < buffers.length; i += 10) {
+          const buffer = buffers[i];
+          new Uint8Array(buffer)[0] = i & 0xff;
+          const address = callIt(buffer);
+          if (read.u8(address, 0) !== (i & 0xff)) mismatches++;
+        }
+      }
+      console.log("mismatches", mismatches);`,
+    ],
+    env: { ...bunEnv, FFI_FIXTURE_PATH },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "mismatches 0\n", stderr: "", exitCode: 0 });
 });
 
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
@@ -1351,6 +1417,22 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
+  }
+});
+
+it("linkSymbols() supports a symbol whose name is an array index", () => {
+  const callback = new JSCallback(() => 7, { args: [], returns: "int32_t" });
+  try {
+    const fn = { ptr: callback.ptr, args: [], returns: "int32_t" };
+    const lib = linkSymbols({ "0": fn, named: fn });
+    try {
+      expect(Object.keys(lib.symbols)).toEqual(["0", "named"]);
+      expect(lib.symbols[0]()).toBe(7);
+    } finally {
+      lib.close();
+    }
+  } finally {
+    callback.close();
   }
 });
 

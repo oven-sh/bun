@@ -4,6 +4,8 @@
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/FrameTracers.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
@@ -24,11 +26,33 @@
 #include <optional>
 #include <unordered_set>
 #include <variant>
+#include <vector>
 
-extern "C" void napi_internal_register_cleanup_zig(napi_env env);
-extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
-extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
+extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
+extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
+extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
+
+namespace Zig {
+class NapiRef;
+}
+
+// What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
+// in napi.cpp, `ungated!` in napi_body.rs), and the V8 constructors that return a Local: callable with an exception
+// pending (stashed for the call; only then, since the restore is unconditional) and never where a worker.terminate()
+// / node:vm timeout is delivered (DeferTraps: the next JSC exception check after the call delivers it, as in Node).
+// No JS or addon code may run under it.
+struct NapiUngatedScope {
+    explicit NapiUngatedScope(JSC::VM& vm)
+        : deferTraps(vm)
+    {
+        if (vm.exceptionForInspection()) [[unlikely]]
+            suspended.emplace(vm);
+    }
+    std::optional<JSC::SuspendExceptionScope> suspended;
+    JSC::DeferTraps deferTraps;
+};
 
 namespace Napi {
 
@@ -116,7 +140,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope);
 }
 
 // Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only
@@ -133,15 +157,8 @@ struct napi_async_cleanup_hook_handle__ {
 
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
-        napi_internal_suppress_crash_on_abort_if_desired();    \
+        Bun__napi_suppress_crash_on_abort_if_desired();        \
         Bun__crashHandler(message "", sizeof(message "") - 1); \
-    } while (0)
-
-#define NAPI_PERISH(...)                                                      \
-    do {                                                                      \
-        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
-        WTFReportBacktrace();                                                 \
-        NAPI_ABORT("Aborted");                                                \
     } while (0)
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
@@ -164,7 +181,7 @@ public:
         , m_vm(JSC::getVM(globalObject))
         , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
     {
-        napi_internal_register_cleanup_zig(this);
+        Bun__napi_register_cleanup_zig(this);
     }
 
     static Ref<NapiEnv> create(Zig::GlobalObject* globalObject, const napi_module& napiModule)
@@ -222,6 +239,17 @@ public:
         m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
+        // An execute() that is still running can use what a finalizer frees. The VM's teardown waits for the thread
+        // pool, so the finalizers run after that wait. Node settles its thread pool requests before them too.
+        if (m_asyncWorkOnThreadPool.load()) {
+            Bun__napi_run_finalizers_after_teardown_wait(this);
+            return;
+        }
+        runFinalizers();
+    }
+
+    void runFinalizers()
+    {
         m_isFinishingFinalizers = true;
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
@@ -257,8 +285,15 @@ public:
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        // napi_get_instance_data is ungated: never hand out the finalized pointer.
+        instanceData = nullptr;
         clearExceptionsBetweenFinalizers();
     }
+
+    // JS thread, when async work goes to the thread pool.
+    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
+    // Pool thread, once execute() has returned or the work was cancelled.
+    void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -290,7 +325,7 @@ public:
             tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
         }
         for (void* tsfn : tsfns) {
-            napi_internal_threadsafe_function_env_teardown(tsfn);
+            Bun__napi_threadsafe_function_env_teardown(tsfn);
         }
     }
 
@@ -318,9 +353,18 @@ public:
         return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
-    bool hasFinalizers() const
+    // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
+    void enqueueRefFinalizer(Zig::NapiRef* ref)
     {
-        return !m_finalizers.isEmpty();
+        bool wasEmpty = m_pendingRefFinalizers.isEmpty();
+        m_pendingRefFinalizers.add(ref);
+        if (wasEmpty)
+            Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+    }
+
+    void dequeueRefFinalizer(Zig::NapiRef* ref)
+    {
+        m_pendingRefFinalizers.remove(ref);
     }
 
     /// Will abort the process if a duplicate entry would be added.
@@ -408,19 +452,15 @@ public:
         }
     }
 
-    bool isVMTerminating() const
-    {
-        return this->vm().hasTerminationRequest();
-    }
-
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
             return;
         }
 
-        if (mustDeferFinalizers() && inGC()) {
-            napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
+        // A collection's end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
+        if (inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread())) {
+            Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
             throwPendingException();
@@ -463,7 +503,7 @@ public:
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
     // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
     // loop *after* the swap. Finalizer.run opens a NapiHandleScope via
-    // env->globalObject(), which would write m_currentNapiHandleScopeImpl on
+    // env->globalObject(), which would write m_currentHandleScopeImpl on
     // the now-dead old global and trip a write barrier on an unmarked cell
     // (debug: `ASSERT(isMarked(cell))` in Heap::addToRememberedSet; release:
     // segfault when the marker later walks it). The isolation swap calls this
@@ -499,8 +539,36 @@ public:
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
-    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
-    inline const BoundFinalizer* currentFinalizer() const { return m_currentFinalizer; }
+
+    // Node's env->can_call_into_js(). False for the whole of cleanup(): on_exit() stops the handle first.
+    // And while a completion runs for a Bun.ModuleGraph context that has stopped (see below).
+    inline bool canCallIntoJS() const
+    {
+        return !m_isCompletingForStoppedContext && !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
+    }
+
+    // The status of a call that Node refuses because !can_call_into_js().
+    inline napi_status cannotCallIntoJSStatus() const
+    {
+        return m_napiModule.nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception;
+    }
+
+    // Node's NAPI_PREAMBLE entry check, in its order. The VM's slot is read raw: a JSC exception check would service
+    // the traps and deliver a worker.terminate() under addon frames, where V8 never does. A termination that is
+    // already pending answers as the closed gate does.
+    inline napi_status entryStatus(JSC::TopExceptionScope& scope) const
+    {
+        if (m_pendingException) [[unlikely]] {
+            return napi_pending_exception;
+        }
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            return m_vm.isTerminationException(exception) ? cannotCallIntoJSStatus() : napi_pending_exception;
+        }
+        if (!canCallIntoJS()) [[unlikely]] {
+            return cannotCallIntoJSStatus();
+        }
+        return napi_ok;
+    }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -585,8 +653,19 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    static void drainOneRefFinalizer(napi_env, void*, void*);
+    WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
+    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
+
+public:
+    // Set while a completion (async work's complete, a threadsafe function's call_js) runs for a
+    // Bun.ModuleGraph context that has stopped. The addon's callback has to run, since it owns
+    // memory only it can free; what it may not do is run that graph's script.
+    bool m_isCompletingForStoppedContext = false;
+
+private:
     JSC::VM& m_vm;
     const ::BunVmHandleRef* m_vmHandle;
     Napi::HookSet m_cleanupHooks;
@@ -596,6 +675,7 @@ private:
     WTF::Lock m_threadSafeFunctionsLock;
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
+    std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined
@@ -643,8 +723,8 @@ private:
     }
 };
 
-extern "C" void napi_internal_cleanup_env_cpp(napi_env);
-extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
+extern "C" void Bun__napi_cleanup_env_cpp(napi_env);
+extern "C" void Bun__napi_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
 namespace Napi {
 
@@ -673,8 +753,8 @@ public:
 };
 
 // If a module registered itself by calling napi_module_register in a static constructor, run this
-// to run the module's entrypoint.
-void executePendingNapiModule(Zig::GlobalObject* globalObject);
+// to run the module's entrypoint with moduleObject as `module`. Throws on failure.
+void executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* moduleObject);
 
 }
 
@@ -694,7 +774,7 @@ static inline Zig::GlobalObject* toJS(napi_env val)
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
     if (val.isCell()) {
-        if (auto* scope = globalObject->m_currentNapiHandleScopeImpl.get()) {
+        if (auto* scope = globalObject->m_currentHandleScopeImpl.get()) {
             scope->append(val);
         }
     }
@@ -789,8 +869,7 @@ public:
             strongRef.set(globalObject->vm(), value);
         }
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
+        // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
             weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
@@ -809,6 +888,7 @@ public:
         }
     }
 
+    // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
     void callFinalizer()
     {
         // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
@@ -818,9 +898,13 @@ public:
         saved_finalizer.call(env.ptr(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
+    // For a ref the addon owns: napi_delete_reference before the queued finalizer runs cancels it (Node's ~ReferenceWithFinalizer).
+    void callFinalizerFromGC();
+
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
+        env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;
@@ -865,12 +949,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNapiClass, m_subspaceForNapiClass));
     }
 
     DECLARE_EXPORT_INFO;
@@ -885,7 +964,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
     inline napi_callback constructor() const { return m_constructor; }
@@ -938,7 +1017,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
     NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)

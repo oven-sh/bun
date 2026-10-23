@@ -1,31 +1,25 @@
-//! `Bun.JSONC` — `parse()` host function.
+//! `Bun.JSONC` — `parse()`.
 
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bindgen::JsHeap;
+use bun_jsc::{JSValue, JsError, JsResult};
 use bun_parsers::json;
 
-pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
-        global,
-        frame,
-        b"input.jsonc",
-        super::BlobOrBufferInput::ToString,
-        super::NullishInput::Throw,
-        |_arena, log, source| {
-            // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
-            if source.contents.is_empty() {
-                return Err(
-                    global.throw_value(global.create_syntax_error_instance(format_args!(
-                        "JSONC Parse error: Unexpected end of input"
-                    ))),
-                );
-            }
-            let parsed = match json::ParsedJson::parse_jsonc(source, log) {
+pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
+    // defined and not set. What throws returns without reading `input` again.
+    let global = unsafe { heap.global() };
+    super::with_text_format_source(global, input, b"input.jsonc", |_, log, source| {
+        // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
+        if source.contents.is_empty() {
+            return Err(
+                global.throw_value(global.create_syntax_error_instance(format_args!(
+                    "JSONC Parse error: Unexpected end of input"
+                ))),
+            );
+        }
+        let parsed =
+            match json::ParsedJson::parse_jsonc(source, log) {
                 Ok(v) => v,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
@@ -54,10 +48,9 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
             };
 
-            parsed
-                .root
-                .to_js(global)
-                .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
-        },
-    )
+        parsed
+            .root
+            .to_js(global)
+            .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
+    })
 }

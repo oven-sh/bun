@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isMusl, isWindows } from "harness";
+import { blackholePortSource, bunEnv, bunExe, bunRun, expectRssDeltaBelow, isASAN, isMusl, isWindows } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -63,7 +63,9 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   const CRLF = "\\r\\n";
   // Answers HELLO, never replies to a command, and resolves `ready` once the
   // first INCR has arrived, so the commands it owes are in flight from then on.
-  const server = `
+  // With `endAtIncr` it ends the connection at that INCR instead, which leaves
+  // the client in its retry delay.
+  const server = (endAtIncr: boolean) => `
     const HELLO = "%1${CRLF}$5${CRLF}proto${CRLF}:3${CRLF}";
     const { promise: ready, resolve: onReady } = Promise.withResolvers();
     const server = Bun.listen({
@@ -77,7 +79,10 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
             s.data.hello = true;
             s.write(HELLO);
           }
-          if (s.data.buf.includes("INCR")) onReady();
+          if (s.data.buf.includes("INCR")) {
+            onReady();
+            if (${endAtIncr}) s.end();
+          }
         },
         close() {},
         error() {},
@@ -114,19 +119,23 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   `;
 
   // Terminates the worker once the server reports `ready`, with whatever the
-  // client still owes.
-  function terminateWorker(options: object, worker: string) {
+  // client still owes. With `closedDuringRetryDelay` the server ends the
+  // connection instead, and the worker is terminated once it has posted that
+  // it called close() during the retry delay.
+  function terminateWorker(options: object, worker: string, closedDuringRetryDelay = false) {
     return expectCleanExit(
       `
       const { Worker } = require("node:worker_threads");
-      ${server}
+      ${server(closedDuringRetryDelay)}
       const worker = new Worker(${JSON.stringify(workerSrc(worker))}, {
         eval: true,
         workerData: { url: "redis://127.0.0.1:" + server.port, options: ${JSON.stringify(options)} },
       });
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers();
+      worker.on("message", onClosed);
       worker.on("error", (err) => { console.error(err); process.exit(2); });
       worker.on("exit", (code) => { console.error("worker exited on its own with " + code); process.exit(3); });
-      await ready;
+      await ${closedDuringRetryDelay ? "closed" : "ready"};
       worker.removeAllListeners("exit");
       console.log("terminated", await worker.terminate());
       server.stop(true);
@@ -147,6 +156,29 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   );
   test.concurrent("worker.terminate(): retries exhausted", () => terminateWorker({ maxRetries: 0 }, inFlight), timeout);
 
+  // close() during the retry delay has no socket close event to run through:
+  // it disarms the retry timer and runs the close path by hand, so it must
+  // take no ref of its own for that path to release. After close() nothing
+  // else keeps the worker alive, and terminate() on a worker that has already
+  // exited reports that exit instead; the timer keeps it running until
+  // terminate() ends it like the other cases.
+  test.concurrent(
+    "worker.terminate(): after close() during the retry delay",
+    () =>
+      terminateWorker(
+        {},
+        `client.connect().then(async () => {
+          client.incr("k").catch(() => {});
+          while (client.connected) await Bun.sleep(1);
+          client.close();
+          setTimeout(() => {}, 1 << 30);
+          parentPort.postMessage("closed");
+        });`,
+        true,
+      ),
+    timeout,
+  );
+
   // WATCH is not auto-pipelined, so it waits in the offline queue while the
   // INCRs are in flight, and the INCRs sent after it queue up behind it. The
   // first in-flight rejection failing then leaves the whole queue behind.
@@ -164,36 +196,6 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
     timeout,
   );
 
-  // A listener nobody accepts from, with a backlog one filler connection
-  // fills, so the kernel drops every later SYN and a dial to `port` sits in
-  // EINPROGRESS for good. Needs listen(2) with the smallest backlog that
-  // admits exactly one connection (macOS treats 0 as unlimited), which Bun's
-  // own listeners do not expose, so the listener is a raw libc socket.
-  const blackhole = `
-    const net = require("node:net");
-    const { dlopen, ptr } = require("bun:ffi");
-    const darwin = process.platform === "darwin";
-    const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
-      socket:      { args: ["int", "int", "int"],  returns: "int" },
-      bind:        { args: ["int", "ptr", "int"],  returns: "int" },
-      listen:      { args: ["int", "int"],         returns: "int" },
-      getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
-    });
-    const AF_INET = 2, SOCK_STREAM = 1;
-    const addr = new Uint8Array(16);
-    if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
-    addr.set([127, 0, 0, 1], 4);
-    const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
-    const len = new Uint32Array([16]);
-    if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
-    const port = (addr[2] << 8) | addr[3];
-    // The error listener outlives the await, so a later error on the filler
-    // is swallowed rather than thrown.
-    const filler = net.connect(port, "127.0.0.1");
-    await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
-  `;
-
   // The dial never completes, so teardown delivers on_connect_error for it,
   // with the commands in the offline queue.
   test.concurrent.skipIf(isWindows || isMusl)(
@@ -202,7 +204,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
       expectCleanExit(
         `
         const { Worker } = require("node:worker_threads");
-        ${blackhole}
+        ${blackholePortSource}
         const { promise: dialing, resolve: onDialing } = Promise.withResolvers();
         const worker = new Worker(${JSON.stringify(
           workerSrc(`
@@ -228,18 +230,17 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   );
 
   // A dial to an IP literal gets a real us_socket_t back from uSockets before
-  // the TCP handshake completes (POLL_TYPE_SEMI_SOCKET), and uSockets delivers
-  // no close event when the application closes one of those, so
-  // ValkeyClient::close() releases connect()'s keep-alive ref and runs the
-  // close event by hand. One case per entry into that branch: close() while
-  // the dial is pending, and the connection timeout firing during it. The
-  // command in the offline queue tells the two apart: connect() itself is
-  // always rejected as connection-closed. The client is created from a
-  // macrotask for the same reason as the workers'.
+  // the TCP handshake completes (POLL_TYPE_SEMI_SOCKET); closing one delivers
+  // on_connect_error, which releases connect()'s keep-alive ref. One case per
+  // way the client closes it: close() while the dial is pending, and the
+  // connection timeout firing during it. The command in the offline queue
+  // tells the two apart: connect() itself is always rejected as
+  // connection-closed. The client is created from a macrotask for the same
+  // reason as the workers'.
   function closePendingDial(options: object, body: string, stdout: string) {
     return expectCleanExit(
       `
-      ${blackhole}
+      ${blackholePortSource}
       const { promise: done, resolve: onDone } = Promise.withResolvers();
       setImmediate(async () => {
         const client = new Bun.RedisClient("redis://127.0.0.1:" + port, ${JSON.stringify(options)});
@@ -461,6 +462,120 @@ test.concurrent("RedisClient survives GC after a command throws during argument 
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+test.concurrent(
+  "set and send write the original key bytes when a later argument's toString() detaches the key's buffer",
+  async () => {
+    const src = `
+    const net = require("node:net");
+
+    const tail = Buffer.from("$1\\r\\nv\\r\\n");
+    let wire = Buffer.alloc(0);
+    let want = 0;
+    let resolveFrame;
+    let saidHello = false;
+    function tails() {
+      let n = 0, i = -1;
+      while ((i = wire.indexOf(tail, i + 1)) !== -1) n++;
+      return n;
+    }
+    const server = net.createServer(socket => {
+      socket.on("data", data => {
+        if (!saidHello) {
+          if (data.includes("HELLO")) { saidHello = true; socket.write("+OK\\r\\n"); }
+          return;
+        }
+        wire = Buffer.concat([wire, data]);
+        if (resolveFrame && tails() >= want) {
+          socket.write("+OK\\r\\n");
+          const r = resolveFrame; resolveFrame = null; r();
+        }
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise((resolve, reject) => {
+      server.listen(0, "127.0.0.1", resolve);
+      server.on("error", reject);
+    });
+
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port, { autoReconnect: false });
+    await client.connect();
+
+    const keep = [];
+    function value(key) {
+      return Object.assign(new String("v"), {
+        toString() {
+          key.buffer.transfer(0);
+          for (let i = 0; i < 24; i++) keep.push(new Uint8Array(4096).fill(0x5a));
+          return "v";
+        },
+      });
+    }
+    function key(name) {
+      const key = Buffer.from(new ArrayBuffer(4096));
+      key.write(name);
+      return key;
+    }
+
+    for (const [name, run] of [
+      ["first-key", key => client.set(key, value(key))],
+      ["second-key", key => client.send("LPUSH", [key, value(key)])],
+    ]) {
+      want++;
+      const done = new Promise(r => (resolveFrame = r));
+      run(key(name)).catch(() => {});
+      await done;
+    }
+
+    client.close();
+    server.close();
+    console.log(JSON.stringify([wire.includes("first-key"), wire.includes("second-key")]));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("[true,true]");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each(["null", "undefined", "{}", "42"])(
+  "RedisClient ignores onconnect and onclose handlers set to %s",
+  async handler => {
+    const src = `
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data(socket) { socket.write("%0\\r\\n"); } },
+      });
+      const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, { autoReconnect: false });
+      client.onconnect = ${handler};
+      client.onclose = ${handler};
+      await client.connect();
+      client.close();
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Fuzzer found heap corruption (zapped cell during GC marking) when a custom
 // setter on a generated class was invoked with a receiver that is not an
@@ -872,4 +987,54 @@ test.concurrent("a client closed and collected from within its own reply does no
   expect(reached).not.toBeNull();
   // Keep the per-lane count in the CI log so a slide toward zero is visible.
   console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
+});
+
+test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {
+  const code = /* js */ `
+    const base = Buffer.alloc(200 * 1024, "a").toString();
+    function once(i) { try { new Bun.RedisClient("redis://user:" + base + i + "@127.0.0.1:1/0"); } catch {} }
+    for (let i = 0; i < 20; i++) once(i);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) once(i);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~148 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 70, debug: 90 });
+});
+
+test.concurrent("RESP map keys are not leaked", async () => {
+  const code = /* js */ `
+    const net = require("net");
+    const big = Buffer.alloc(400 * 1024, "k").toString();
+    let n = 0;
+    const server = net.createServer(sock => {
+      sock.on("data", d => {
+        const s = d.toString();
+        for (const _ of s.split("\\r\\n").filter(x => x.startsWith("*"))) {
+          if (s.includes("HELLO")) sock.write("%1\\r\\n+server\\r\\n+mock\\r\\n");
+          else {
+            const k1 = big + n++, k2 = big + n++;
+            sock.write("%2\\r\\n$" + k1.length + "\\r\\n" + k1 + "\\r\\n:1\\r\\n$" + k2.length + "\\r\\n" + k2 + "\\r\\n:2\\r\\n");
+          }
+        }
+      });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port);
+    await client.connect();
+    for (let i = 0; i < 10; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    client.close();
+    server.close();
+  `;
+
+  // Unfixed: ~270 MiB (two 400 KiB keys per reply). Fixed: ~30 MiB of JS string churn.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 130, debug: 160 });
 });

@@ -7,6 +7,7 @@
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
 #include "BunString.h"
+#include "GeneratedBlob.h"
 #include "../bindings/webcore/WebSocket.h"
 #include "../bindings/webcore/MessageEvent.h"
 #include <JavaScriptCore/ConsoleClient.h>
@@ -25,6 +26,7 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
 
+#include <cmath>
 #include <errno.h>
 #include <mutex>
 #include <stdio.h>
@@ -89,9 +91,9 @@ extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataD
 // Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
 extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
 #endif
+// Unpublishes and kills the spawned Chrome without reporting its exit back here.
+extern "C" void Bun__Chrome__retire();
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
@@ -289,19 +291,19 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
     // isNull), which the spawner passes as "" into --user-data-dir= and
     // Chrome falls back to the default profile → ProcessSingleton abort.
-    WTF::CString dir = userDataDir.utf8();
-    WTF::CString pathC = path.utf8();
+    WTF::UTF8CString dir = userDataDir.utf8();
+    WTF::UTF8CString pathC = path.utf8();
     // Two-level pack: CString owns the bytes, ptrVec holds data() pointers.
     // Both live until Bun__Chrome__ensure returns (spawn copies argv).
-    WTF::Vector<WTF::CString, 8> argvC;
+    WTF::Vector<WTF::UTF8CString, 8> argvC;
     WTF::Vector<const char*, 8> argvPtrs;
     for (auto& s : extraArgv) {
         argvC.append(s.utf8());
-        argvPtrs.append(argvC.last().data());
+        argvPtrs.append(argvC.last().legacyCStringPointer());
     }
     int32_t rc = Bun__Chrome__ensure(zig,
-        dir.length() ? dir.data() : nullptr,
-        pathC.length() ? pathC.data() : nullptr,
+        dir.length() ? dir.legacyCStringPointer() : nullptr,
+        pathC.length() ? pathC.legacyCStringPointer() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
         stdoutInherit, stderrInherit);
@@ -432,8 +434,12 @@ static void wsOnClose(void* ctx, unsigned short code)
             // terminator the pipe protocol needs.
             for (auto& cmd : pending) {
                 if (cmd.id && !t.m_pending.contains(cmd.id)) continue;
-                Bun::UTF8View view(cmd.body);
-                auto s = view.span();
+                auto view = Bun::UTF8View::tryCreate(cmd.body);
+                if (!view) [[unlikely]] {
+                    t.rejectAllAndMarkDead("Chrome command is too long to send"_s);
+                    return;
+                }
+                auto s = view->span();
                 t.writeRaw(s.data(), s.size());
                 t.writeRaw("\0", 1);
             }
@@ -534,6 +540,7 @@ void Transport::onWritable()
 
 void Transport::onData(const char* data, int length)
 {
+    if (m_dead) return; // late bytes from a connection rejectAllAndMarkDead gave up on
     m_rx.append(std::span<const uint8_t>(
         reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(length)));
 
@@ -600,6 +607,14 @@ static std::span<const char> sidSpan(const WTF::String& s)
     return { reinterpret_cast<const char*>(span.data()), span.size() };
 }
 
+// Session ids are ASCII, and sidSpan relies on that. Returns the empty string (never null) for an invalid id.
+static WTF::String decodeSessionId(std::span<const char> bytes)
+{
+    auto chars = byteCast<Latin1Character>(bytes);
+    if (chars.empty() || !charactersAreAllASCII(chars)) return WTF::emptyString();
+    return WTF::String(chars);
+}
+
 // Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
 // takes a string: "none", "left", "middle", "right".
 static constexpr ASCIILiteral cdpButton(uint8_t b)
@@ -652,6 +667,25 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+// Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
+// onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
+// for PageTitle: that is the post-load title fetch, and its failure (for
+// example a redirect destroying the context) is not a navigation failure.
+// The slot settles before the callback runs, so a retry with navigate()
+// from inside the callback sees an empty slot instead of ERR_INVALID_STATE.
+static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, Method method, JSValue errValue)
+{
+    bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
+    if (navigationFailed) view->m_loading = false;
+    settle(g, view, slot, false, errValue);
+    if (navigationFailed) {
+        if (JSObject* cb = view->m_onNavigationFailed.get()) {
+            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+        }
+    }
+}
+
 // Slots, not m_pending: a navigation that Chrome has already answered is
 // waiting for Page.loadEventFired and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
@@ -662,6 +696,17 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
     settleSlot(g, view, view->m_pendingScreenshot, false, err);
     settleSlot(g, view, view->m_pendingMisc, false, err);
     settleSlot(g, view, view->m_pendingCdp, false, err);
+}
+
+// close() variant of rejectViewSlots: see rejectSlotAsHandled (JSWebView.h).
+static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
+    rejectSlotAsHandled(g, view, view->m_pendingEval, err);
+    rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
+    rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
+    rejectSlotAsHandled(g, view, view->m_pendingCdp, err);
 }
 
 // Build an Error from CDP exceptionDetails. exception.description is V8's
@@ -677,7 +722,7 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
 {
     auto root = JSON::Value::parseJSON(
-        StringView::fromLatin1(std::span<const Latin1Character>(
+        StringView(std::span<const Latin1Character>(
             reinterpret_cast<const Latin1Character*>(excDetails.data()), excDetails.size())));
     auto d = root ? root->asObject() : nullptr;
     if (!d) return createError(g, "JavaScript exception"_s);
@@ -732,7 +777,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
-        settle(g, view, entry.slot, false,
+        settleFailure(g, view, entry.slot, entry.method,
             createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
         return;
     }
@@ -755,8 +800,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
     case Method::TargetAttachToTarget: {
         // {"sessionId":"<base64ish>"}
-        auto sid = jsonString(jsonField(result, { "sessionId", 9 }));
-        view->m_sessionId = WTF::String::fromUTF8(sid);
+        auto session = decodeSessionId(jsonString(jsonField(result, { "sessionId", 9 })));
+        if (session.isEmpty()) {
+            // Commands can't reach the page without a session id, so the load can't finish.
+            settleFailure(g, view, entry.slot, entry.method,
+                createError(g, "malformed attach response"_s));
+            return;
+        }
+        view->m_sessionId = WTF::move(session);
         // Route events to this view via its viewId — m_views holds the one
         // Weak per view. A view with a slot set is rooted via the owner
         // predicate reading m_pendingActivityCount.
@@ -766,7 +817,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan = byteCast<char>(ss.span());
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
@@ -776,7 +827,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Chain into Runtime.enable (for consoleAPICalled later) then
         // Page.navigate to the stashed url.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan = byteCast<char>(ss.span());
 
         // Runtime.enable — fire-and-forget, untracked. We don't need to
         // wait for its reply before navigating.
@@ -793,14 +844,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
-    case Method::RuntimeEnable:
-    case Method::TargetCloseTarget:
-        // Untracked fire-and-forget — close() sends TargetCloseTarget
-        // without adding to m_pending (the view is going away). Chrome's
-        // reply finds no entry, handleResponse's find()==end() drops it.
-        // This case arm is unreachable; present for switch completeness.
-        return;
-
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
         // errorText present → navigation failed synchronously (bad URL,
@@ -810,8 +853,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // sessionId — actually the event handler uses m_sessions, not
         // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
-        if (!err.empty())
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(err)));
+        if (!err.empty()) {
+            auto errStr = WTF::String::fromUTF8(err); // null if not valid UTF-8
+            settleFailure(g, view, entry.slot, entry.method,
+                createError(g, errStr.isEmpty() ? "navigation failed"_s : errStr));
+        }
         // Else: don't settle — Page.loadEventFired does.
         return;
     }
@@ -835,7 +881,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // navigateToHistoryEntry. WTF::JSON parses to a C++ tree — no
         // JSValue allocation for a structure we only read once.
         auto root = JSON::Value::parseJSON(
-            StringView::fromLatin1(std::span<const Latin1Character>(
+            StringView(std::span<const Latin1Character>(
                 reinterpret_cast<const Latin1Character*>(result.data()), result.size())));
         auto o = root ? root->asObject() : nullptr;
         if (!o) {
@@ -984,13 +1030,12 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         void* impl = Blob__fromBytesWithType(g, decoded->span().data(), decoded->size(),
             screenshotMimeType(view->m_screenshotFormat));
         settle(g, view, entry.slot, true,
-            JSValue::decode(Blob__create(defaultGlobalObject(g), impl)));
+            Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl));
         return;
     }
 
     case Method::InputDispatchMouseEvent:
     case Method::InputDispatchKeyEvent:
-    case Method::InputDispatchScrollEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
         // Input.* / Emulation.* reply with empty result on success. Sync-
@@ -1017,26 +1062,24 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
-        // result.result.value = [cx, cy]. jsonField gives us the array
-        // slice "[<cx>,<cy>]"; scan for the comma.
+        // result.result.value = [cx, cy] from kActionabilityIIFE.
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonField(inner, { "value", 5 });
-        // Skip leading '['
-        const char* p = value.data();
-        const char* end = p + value.size();
-        while (p < end && (*p == '[' || *p == ' '))
-            ++p;
-        // Parse cx (float until comma)
-        char* ep;
-        float cx = strtof(p, &ep);
-        p = ep;
-        while (p < end && (*p == ',' || *p == ' '))
-            ++p;
-        float cy = strtof(p, nullptr);
+        auto root = value.empty() ? nullptr : JSON::Value::parseJSON(StringView(byteCast<Latin1Character>(value)));
+        auto point = root ? root->asArray() : nullptr;
+        auto px = point && point->length() == 2 ? point->get(0)->asDouble() : std::nullopt;
+        auto py = px ? point->get(1)->asDouble() : std::nullopt;
+        // "1e999" parses to infinity, which can't be serialized back to JSON.
+        if (!py || !std::isfinite(*px) || !std::isfinite(*py)) {
+            settle(g, view, entry.slot, false, createError(g, "malformed click response"_s));
+            return;
+        }
+        double cx = *px;
+        double cy = *py;
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sid(ss.data(), ss.length());
+        std::span<const char> sid = byteCast<char>(ss.span());
 
         auto btn = cdpButton(view->m_selButton);
         int32_t mods = cdpModifiers(view->m_selModifiers);
@@ -1078,8 +1121,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     if (sessionId.empty()) {
         if (method.size() != 25 || memcmp(method.data(), "Target.detachedFromTarget", 25) != 0)
             return;
-        auto sid = jsonString(jsonField(params, { "sessionId", 9 }));
-        auto sidStr = WTF::String::fromUTF8(sid);
+        auto sidStr = decodeSessionId(jsonString(jsonField(params, { "sessionId", 9 })));
         auto it = m_sessions.find(sidStr);
         if (it == m_sessions.end()) return;
         uint32_t vid = it->value;
@@ -1094,7 +1136,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         updateKeepAlive();
         return;
     }
-    auto sidStr = WTF::String::fromUTF8(sessionId);
+    auto sidStr = decodeSessionId(sessionId);
     auto it = m_sessions.find(sidStr);
     if (it == m_sessions.end()) return;
     JSWebView* view = viewFor(it->value);
@@ -1321,7 +1363,7 @@ void Transport::updateKeepAlive()
     if (want == m_sockRefd || !m_global) return;
     m_sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(m_global->vm())->vmHandle, want ? 1 : -1);
+        WebCore::clientData(m_global->vm())->vmHandle, BunLoopKind::Regular, want ? 1 : -1);
 
     // WebSocket mode: close the connection when the last view is gone.
     // We're connected to the USER'S Chrome — keeping the WS open after
@@ -1349,6 +1391,14 @@ uint32_t Transport::registerView(JSWebView* v)
     uint32_t id = m_nextViewId++;
     m_views.add(id, JSC::Weak<JSWebView>(v, &webViewWeakOwner()));
     return id;
+}
+
+void Transport::retireGlobal(Zig::GlobalObject* global)
+{
+    if (m_global != global) return;
+    rejectAllAndMarkDead("WebView closed: its test file finished"_s);
+    Bun__Chrome__retire();
+    m_global = nullptr;
 }
 
 // --- CDP::Ops --------------------------------------------------------------
@@ -1715,7 +1765,7 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 void close(JSWebView* view)
 {
     auto& t = transport();
-    if (auto* g = t.m_global) rejectViewSlots(g, view, createError(g, "WebView closed"_s));
+    if (auto* g = t.m_global) rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
     // PageNavigate) holds Weak<view> per step and each step chains to the

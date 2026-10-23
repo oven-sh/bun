@@ -4,9 +4,9 @@ use bun_collections::VecExt;
 // This file contains the core Valkey client implementation with protocol handling
 
 use bun_collections::OffsetByteList;
+use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_ptr::ScopedRef;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -16,18 +16,10 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
-/// `generate-classes.ts` resolves the native backing struct to
-/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
-/// `RedisClient::method(…)` thunks against it. The actual host type is
-/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
-/// spelling here so the generated `pub use` and prototype thunks resolve.
-pub use super::js_valkey_body::JSValkeyClient as RedisClient;
-
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
-pub struct ConnectionFlags {
+pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
@@ -73,7 +65,7 @@ impl Default for ConnectionFlags {
 
 /// Valkey connection status
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Status {
+pub(crate) enum Status {
     /// No socket has been opened yet; the first `connect()`/`send()` opens one.
     /// Every later disconnect lands in `Disconnected` and goes through
     /// `reconnect()` instead.
@@ -86,7 +78,7 @@ pub enum Status {
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Protocol {
+pub(crate) enum Protocol {
     Standalone,
     StandaloneUnix,
     StandaloneTls,
@@ -94,7 +86,7 @@ pub enum Protocol {
 }
 
 bun_core::comptime_string_map! {
-    pub static PROTOCOL_MAP: Protocol = {
+    pub(crate) static PROTOCOL_MAP: Protocol = {
         b"valkey" => Protocol::Standalone,
         b"valkeys" => Protocol::StandaloneTls,
         b"valkey+tls" => Protocol::StandaloneTls,
@@ -119,7 +111,7 @@ impl Protocol {
 }
 
 #[derive(Default)]
-pub enum TLS {
+pub(crate) enum TLS {
     #[default]
     None,
     Enabled,
@@ -134,6 +126,16 @@ impl TLS {
             _ => false,
         }
     }
+
+    /// `tls.serverName`: replaces the URL host as SNI and as the name the certificate must match.
+    pub(crate) fn server_name(&self) -> Option<&[u8]> {
+        match self {
+            TLS::Custom(ssl_config) => ssl_config
+                .server_name_bytes()
+                .filter(|name| !name.is_empty()),
+            _ => None,
+        }
+    }
 }
 
 // Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
@@ -145,7 +147,7 @@ impl PartialEq for TLS {
 }
 
 /// Connection options for Valkey client
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) idle_timeout_ms: u32,
     pub(crate) connection_timeout_ms: u32,
     pub(crate) enable_auto_reconnect: bool,
@@ -170,7 +172,7 @@ impl Default for Options {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
@@ -236,7 +238,7 @@ impl Address {
 }
 
 /// Core Valkey client implementation
-pub struct ValkeyClient {
+pub(crate) struct ValkeyClient {
     pub(crate) socket: AnySocket,
     pub(crate) status: Status,
 
@@ -286,7 +288,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-struct DeferredFailure {
+pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -295,7 +297,7 @@ struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    fn run(self) -> JsResult<()> {
+    pub(crate) fn run(self) -> JsResult<()> {
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -309,17 +311,21 @@ impl DeferredFailure {
 
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
-            let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this)
-        }
-        let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
-            .enqueue_task(managed_task);
+            .enqueue_task(bun_event_loop::Task::from_boxed(self));
+    }
+}
+
+impl bun_event_loop::Taskable for DeferredFailure {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredFailure;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -386,7 +392,7 @@ impl ValkeyClient {
             return false;
         }
 
-        self.ref_();
+        let _guard = self.parent().ref_guard();
 
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
@@ -427,8 +433,6 @@ impl ValkeyClient {
 
         let have_more = !self.queue.is_empty();
         self.auto_flusher.registered.set(have_more);
-
-        self.deref();
 
         // Return true if we should schedule another flush
         have_more
@@ -530,6 +534,22 @@ impl ValkeyClient {
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
 
+    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
+    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
+    /// event loop scope, so the rejections are only observed once `on_close` has run.
+    pub(crate) fn on_tls_session_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let global_this = self.global_object();
+        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
+        let mut entries = command::entry::Queue::new();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
     /// Flush pending data to the socket
     pub(crate) fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();
@@ -539,7 +559,7 @@ impl ValkeyClient {
         let wrote = self.socket.write(chunk);
         if wrote > 0 {
             self.write_buffer
-                .consume(u32::try_from(wrote).expect("int cast"));
+                .consume(usize::try_from(wrote).expect("int cast"));
         }
         self.write_buffer.len() > 0
     }
@@ -594,9 +614,7 @@ impl ValkeyClient {
 
         // A failure the client detected itself (idle timeout, protocol or
         // handshake error) has always been a deliberate close; `on_close` reads
-        // `failed` and skips the retry policy. It is not `is_manually_closed`:
-        // that flag is copied into `duplicate()`, and a duplicate of a failed
-        // client should still reconnect.
+        // `failed` and skips the retry policy.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
     }
@@ -604,12 +622,16 @@ impl ValkeyClient {
     /// `fail()` passes `Failure`, the one code whose close callback has run by
     /// the time this returns (see `CloseCode`); everything after a failure
     /// relies on that, and an RST instead of a FIN costs nothing once the
-    /// connection's commands have been rejected. `disconnect()` and the
-    /// finalizer pass `FastShutdown`, the graceful close.
+    /// connection's commands have been rejected (on plain TCP it trades
+    /// TIME_WAIT for an abortive close the peer can see). `disconnect()` and
+    /// the finalizer pass `FastShutdown`, the graceful close, which this
+    /// finishes as a `Failure` if usockets deferred it: a TLS fast shutdown
+    /// parks behind ciphertext the kernel would not take, and a peer that has
+    /// stopped reading never lets it through. Either way the close callback
+    /// has run when this returns.
     ///
-    /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
-    /// runs by hand here, whatever that left.
-    pub fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
+    /// `Err` when the close event left a termination pending.
+    pub(crate) fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
         }
@@ -618,38 +640,24 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
-        // The close event is what releases the keep-alive ref `connect()`
-        // took, so detect a SEMI_SOCKET before closing and run the close
-        // event by hand afterwards.
-        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
-            && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
-        let thrown = if global.has_exception() {
+        // Still open means usockets parked the fast shutdown behind its
+        // ciphertext spill (`us_internal_ssl_close`, crypto/openssl.c), with
+        // no timer; that only happens for a close with no reason pointer,
+        // which is what `AnySocket::close` passes.
+        if code == uws::CloseCode::FastShutdown && !socket.is_closed() {
+            socket.close(uws::CloseCode::Failure);
+        }
+        if global.has_exception() {
             Err(bun_jsc::JsError::Thrown)
         } else {
             Ok(())
-        };
-        if !is_semi_socket {
-            return thrown;
         }
-        // SAFETY: adopts the keep-alive ref `connect()` forgot for this
-        // socket, as `SocketHandler::on_close` does for one uSockets closes.
-        // Every caller of `close()` holds a scoped ref of its own, so the
-        // client outlives this scope.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.parent_ptr()) };
-        self.status = Status::Disconnected;
-        let closed = self.on_close();
-        thrown.and(closed)
     }
 
     /// Handle connection closed event
-    pub fn on_close(&mut self) -> JsResult<()> {
+    pub(crate) fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as
@@ -657,8 +665,9 @@ impl ValkeyClient {
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
 
-        // A manual close or a failure the client detected itself: no retry.
-        if self.flags.is_manually_closed || self.flags.failed {
+        // A manual close, a failure the client detected itself, or the script that made the client
+        // is gone (a disposed `Bun.ModuleGraph`'s): no retry, and what was queued is released.
+        if self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped() {
             debug!("skip reconnecting since the connection is manually closed or failed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;
@@ -809,8 +818,7 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer
-                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
+                self.read_buffer.consume(bytes_consumed);
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
@@ -1150,7 +1158,7 @@ impl ValkeyClient {
             match value {
                 RESPValue::Error(err) => {
                     if self.parent().is_subscriber() {
-                        self.fail(err, RedisError::InvalidResponse)?;
+                        self.fail(err, RedisError::ServerError)?;
                         return Ok(());
                     }
                     // A raw subscription request from a client that is not (yet) a
@@ -1355,9 +1363,8 @@ impl ValkeyClient {
     }
 
     pub(crate) fn on_writable(&mut self) {
-        self.ref_();
+        let _guard = self.parent().ref_guard();
         self.send_next_command();
-        self.deref();
     }
 
     fn enqueue(
@@ -1436,65 +1443,63 @@ impl ValkeyClient {
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 
         let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
-        if self.flags.failed {
+        if let Some(message) = self.send_rejection() {
             let _ = promise.reject(
                 global_this,
-                Ok(global_this
-                    .err(
-                        bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
-                        format_args!("Connection has failed"),
-                    )
-                    .to_js()),
+                Ok(Self::send_rejection_error(global_this, message)),
             );
         } else {
-            // Handle disconnected state with offline queue
-            match self.status {
-                Status::Connected => {
-                    self.enqueue(&checked_command, promise)?;
+            self.enqueue(&checked_command, promise)?;
 
-                    // Schedule auto-flushing to process this command if pipelining is enabled
-                    if self.flags.enable_auto_pipelining
-                        && checked_command
-                            .meta
-                            .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-                        && self.status == Status::Connected
-                        && !self.queue.is_empty()
-                    {
-                        self.register_auto_flusher(self.vm);
-                    }
-                }
-                Status::NeverConnected | Status::Connecting | Status::Disconnected => {
-                    // Only queue if offline queue is enabled
-                    if self.flags.enable_offline_queue {
-                        self.enqueue(&checked_command, promise)?;
-                    } else {
-                        let _ = promise.reject(
-                            global_this,
-                            Ok(global_this
-                                .err(
-                                    bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
-                                    format_args!(
-                                        "Connection is closed and offline queue is disabled"
-                                    ),
-                                )
-                                .to_js()),
-                        );
-                    }
-                }
+            // Schedule auto-flushing to process this command if pipelining is enabled
+            if self.flags.enable_auto_pipelining
+                && checked_command
+                    .meta
+                    .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+                && self.status == Status::Connected
+                && !self.queue.is_empty()
+            {
+                self.register_auto_flusher(self.vm);
             }
         }
 
         Ok(js_promise)
     }
 
+    /// Why `send()` would reject a command outright instead of sending or
+    /// queueing it in the current state, or `None` when it would be accepted.
+    pub(crate) fn send_rejection(&self) -> Option<&'static str> {
+        if self.flags.failed {
+            return Some("Connection has failed");
+        }
+        if self.status != Status::Connected && !self.flags.enable_offline_queue {
+            return Some("Connection is closed and offline queue is disabled");
+        }
+        None
+    }
+
+    pub(crate) fn send_rejection_error(
+        global_this: &JSGlobalObject,
+        message: &'static str,
+    ) -> JSValue {
+        global_this
+            .err(
+                bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
+                format_args!("{message}"),
+            )
+            .to_js()
+    }
+
     /// Close the Valkey connection
     pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
-        if self.status == Status::Connected || self.status == Status::Connecting {
-            return self.close(uws::CloseCode::FastShutdown);
+        match self.status {
+            Status::Connected | Status::Connecting => self.close(uws::CloseCode::FastShutdown),
+            // Between retries: the manual flag makes the close terminal.
+            Status::Disconnected if self.flags.is_reconnecting => self.parent().cancel_reconnect(),
+            Status::NeverConnected | Status::Disconnected => Ok(()),
         }
-        Ok(())
     }
 
     /// Get a writer for the connected socket
@@ -1509,18 +1514,6 @@ impl ValkeyClient {
             .write(data)
             .map_err(|_| RedisError::OutOfMemory)?;
         Ok(data.len())
-    }
-
-    /// Increment reference count
-    pub fn ref_(&mut self) {
-        self.parent().ref_();
-    }
-
-    pub fn deref(&mut self) {
-        // SAFETY: only called in balanced `ref_()`/`deref()` pairs
-        // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
-        // outer `&mut self` protector is never invalidated by deallocation.
-        unsafe { JSValkeyClient::deref(self.parent_ptr()) };
     }
 
     #[inline]
@@ -1591,21 +1584,5 @@ impl bun_io::Write for WriteBufWriter<'_> {
         self.0
             .write(buf)
             .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
-    }
-}
-
-// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
-// No shared `UnwrapOrOom` trait exists yet (bun_alloc has none); delegate to
-// `bun_core::handle_oom` so every call site keeps its method-chain shape.
-trait UnwrapOrOom {
-    type Output;
-    fn unwrap_or_oom(self) -> Self::Output;
-}
-impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
-    type Output = T;
-    #[inline]
-    #[track_caller]
-    fn unwrap_or_oom(self) -> T {
-        bun_core::handle_oom(self)
     }
 }

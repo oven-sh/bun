@@ -18,6 +18,7 @@ class AbstractModuleRecord;
 }
 
 namespace Bun {
+class JSModuleGraph;
 
 using namespace JSC;
 
@@ -27,6 +28,8 @@ static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 
 void populateESMExports(
@@ -74,6 +77,10 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
+    // The Bun.ModuleGraph the module belongs to (what loaded it, or the module that
+    // required it, did): its require cache, its loader for require(esm), and the scope its
+    // wrapper closes over are the graph's. Null: the global object's.
+    JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
@@ -98,7 +105,7 @@ public:
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
         JSValue filename,
-        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
+        JSC::JSString* dirname, const JSC::SourceCode& sourceCode, JSModuleGraph* = nullptr);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -110,12 +117,9 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
-        const WTF::String& key,
-        ResolvedSource resolvedSource);
-
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
+    JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
+    void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         const JSC::Identifier& moduleKey,
@@ -141,12 +145,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSCommonJSModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCommonJSModule = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSCommonJSModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCommonJSModule = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSCommonJSModule, m_subspaceForJSCommonJSModule));
     }
 
     bool hasEvaluated = false;
@@ -163,24 +162,33 @@ public:
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
+// A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
+// together with one of the graph's modules (whose loader's ES modules it also lists).
+JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
+
+// `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
+// its require cache), or null for the global object's loader.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     ResolvedSource& source,
     bool isBuiltIn);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     Ref<JSC::SourceProvider>&& provider,
     bool ignoreESModuleAnnotation);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     ResolvedSource& source)
 {
-    return createCommonJSModule(globalObject, specifierValue, source, false);
+    return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {

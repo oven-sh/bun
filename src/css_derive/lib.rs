@@ -683,13 +683,11 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
         let vname = &v.ident;
         let kw = variant_keyword(vname, &v.attrs);
-        let kw_bytes = syn::LitByteStr::new(kw.as_bytes(), vname.span());
+        // Keys are matched against an ASCII-lowercased copy of the ident, so
+        // store them lowercased; `to_str` keeps the canonical spelling.
+        let kw_bytes = syn::LitByteStr::new(kw.to_ascii_lowercase().as_bytes(), vname.span());
         to_str_arms.push(quote! { #name::#vname => #kw, });
-        from_ident_arms.push(quote! {
-            if __ident.eq_ignore_ascii_case(#kw_bytes) {
-                return ::core::option::Option::Some(#name::#vname);
-            }
-        });
+        from_ident_arms.push(quote! { #kw_bytes => #name::#vname, });
     }
 
     Ok(quote! {
@@ -705,8 +703,12 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl ::bun_css::EnumProperty for #name {
             #[inline]
             fn from_ascii_case_insensitive(__ident: &[u8]) -> ::core::option::Option<Self> {
-                #(#from_ident_arms)*
-                ::core::option::Option::None
+                // One lowercase pass plus a `match len` of constant compares,
+                // instead of an `eq_ignore_ascii_case` loop per variant.
+                ::bun_core::comptime_string_map! {
+                    static __KEYWORDS: #name = { #(#from_ident_arms)* };
+                }
+                __KEYWORDS.get_ascii_case_insensitive(__ident).copied()
             }
         }
 
@@ -747,7 +749,6 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #name {
             /// CSS keyword for this variant.
             #[inline]
@@ -1013,7 +1014,6 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #impl_g #name #ty_g #where_g {
             #[inline]
             pub fn to_css(
@@ -1186,7 +1186,6 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #b_impl_g #name #ty_g #b_where_g {
             #[inline]
             pub fn parse(

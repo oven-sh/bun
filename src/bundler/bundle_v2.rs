@@ -3597,8 +3597,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// `SCAN` also finds the source of an entry point whose file is already in the graph.
-        /// Always inline, so that the loop of `bun build` has no call for each entry point.
+        /// Always inline: the entry loop of `bun build` must not pay a call for each entry point.
         #[inline(always)]
         fn enqueue_entry_point_normal<const SCAN: bool>(
             &mut self,
@@ -3649,8 +3648,7 @@ pub mod bv2_impl {
             };
             let source_index = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             if SCAN && source_index.is_none() {
-                // An earlier entry point is the same file. `enqueue_entry_item` returned
-                // before it wrote to `resolved`, so its path is still the key of the map.
+                // `enqueue_entry_item` found the file in the graph and left `resolved` as it was.
                 if let Some(path) = resolved.path_const() {
                     return Ok(ScannedEntryPoint {
                         source_index: self.path_to_source_index_map(target).get_path(path),
@@ -4636,11 +4634,7 @@ pub mod bv2_impl {
         /// not a bounded arena leak. The
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
-        ///
-        /// `scanned[i]` is set to where `entry_points[i]` is in the graph. The
-        /// graph names a file by its real path, which can differ from the entry
-        /// point, and `graph.entry_points` has no slot for an entry point that
-        /// did not resolve or that names a file again.
+        /// `scanned[i]` is set to where `entry_points[i]` is in the graph.
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,

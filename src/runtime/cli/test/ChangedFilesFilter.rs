@@ -9,10 +9,6 @@
 //!    reverse import edges to find every test entry point that can reach it.
 //!
 //! Only those test entry points are returned.
-//!
-//! The graph names each file by its real path, as git does. A test file found
-//! through a symbolic link has another path, so the scan reports the graph
-//! node of each test file by position.
 
 use bun_bundler::mal_prelude::*;
 
@@ -170,9 +166,7 @@ pub(crate) fn filter<'a>(
     // scope exit; the arena bulk-free skips Drop.
     let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
-    // The bundler source of each test_files slot. The scan fills it by
-    // position: a test file can have another path in the graph, and one that
-    // does not resolve has no source.
+    // Filled by position: a test file behind a symbolic link has another path in the graph.
     let mut slot_to_source = vec![ScannedEntryPoint::default(); test_files.len()];
 
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
@@ -285,8 +279,7 @@ pub(crate) fn filter<'a>(
     // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
-    // The run loads a file once, by its real path, unless it keeps the paths
-    // of links. Then the first test file that names the file stands for it.
+    // Without --preserve-symlinks the run loads a file once, whatever the number of paths to it.
     let one_module_per_file = !vm.transpiler.resolver.opts.preserve_symlinks;
     for i in 0..total {
         let tf = test_files[i];
@@ -318,8 +311,7 @@ pub(crate) fn filter<'a>(
     // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
     unsafe { bundle.transpiler.deinit() };
-    // The log is in the CLI arena too. It holds a message for each test file
-    // that did not resolve.
+    // The log is in the CLI arena too, with a message for each test file that did not resolve.
     bundle.transpiler.log_mut().clear_and_free();
 
     Ok(Result {

@@ -1378,6 +1378,13 @@ impl S3DownloadFeed {
         self.unpark();
     }
 
+    /// The download made its last callback. Its task frees itself next, and with it the loop
+    /// ref that a parked download had given back.
+    pub(crate) fn download_ended(&self) {
+        self.task.set(core::ptr::null_mut());
+        self.stream.unpark();
+    }
+
     /// Nothing reads the rest. Touches no JS cell (safe inside a GC sweep).
     pub(crate) fn cancel(&self) {
         // The download may still be in progress, but its callback will see no stream and skip

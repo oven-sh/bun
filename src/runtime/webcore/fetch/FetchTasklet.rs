@@ -259,8 +259,8 @@ impl HTTPRequestBody {
         if let Some(form_data) = jsc::DOMFormData::from_js(value) {
             return match Blob::from_dom_form_data(cx.global(), form_data) {
                 Ok(FormDataBody::Bytes(blob)) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
-                Ok(FormDataBody::Deferred(deferred)) => {
-                    *stream_content_type = deferred.content_type.clone();
+                Ok(FormDataBody::Deferred(deferred, content_type)) => {
+                    *stream_content_type = content_type;
                     Ok(HTTPRequestBody::ReadableStream(ReadableStreamStrong::init(
                         deferred.into_stream(cx)?,
                         cx.global(),

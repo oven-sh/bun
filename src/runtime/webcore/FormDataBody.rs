@@ -1,7 +1,7 @@
 //! A `multipart/form-data` body with parts that are S3 objects.
 //!
 //! `Blob::from_dom_form_data` cannot wait for a download, so it leaves the bytes of an S3 entry
-//! out and records where they go. The body is then a stream: each object is requested when the
+//! out and cuts the body there. The body is then a stream: each object is requested when the
 //! stream reaches its part, as Fetch's "extract a body" reads a Blob part when the body is read.
 
 use core::cell::Cell;
@@ -21,21 +21,21 @@ use crate::webcore::{ByteStream, DrainResult, ReadableStream, readable_stream};
 pub(crate) enum FormDataBody {
     /// The whole body: every entry was in memory, or a file that was read.
     Bytes(Blob),
-    /// The body without the bytes of its S3 entries.
-    Deferred(Deferred),
+    /// The body without the bytes of its S3 entries, and its `Content-Type`.
+    Deferred(Deferred, BlobContentType),
 }
 
 pub(crate) struct Deferred {
-    /// The part headers, the parts that were in memory, and the boundaries.
-    pub(crate) bytes: Vec<u8>,
     /// In body order. Never empty.
     pub(crate) parts: Vec<S3Part>,
-    pub(crate) content_type: BlobContentType,
+    /// The bytes of the body after the last S3 object.
+    pub(crate) tail: Vec<u8>,
 }
 
-/// An S3 object, or a window of one, whose bytes go at `bytes[at]`.
+/// An S3 object, or a window of one, and the bytes of the body that come before it: from the
+/// start of the body, or from the S3 object before.
 pub(crate) struct S3Part {
-    at: usize,
+    before: Box<[u8]>,
     store: RefPtr<Store>,
     offset: usize,
     /// `None` reads to the end of the object.
@@ -43,12 +43,12 @@ pub(crate) struct S3Part {
 }
 
 impl S3Part {
-    /// The bytes `blob` is a view of, to go at `at`. `store` is the S3 store of `blob`.
-    pub(crate) fn new(at: usize, blob: &Blob, store: RefPtr<Store>) -> Self {
+    /// The bytes `blob` is a view of. `store` is the S3 store of `blob`.
+    pub(crate) fn new(before: Box<[u8]>, blob: &Blob, store: RefPtr<Store>) -> Self {
         debug_assert!(matches!(store.data, blob::store::Data::S3(_)));
         let size = blob.size.get();
         Self {
-            at,
+            before,
             store,
             offset: blob.offset.get() as usize,
             size: (size != blob::MAX_SIZE).then_some(size as usize),
@@ -57,9 +57,9 @@ impl S3Part {
 }
 
 impl Deferred {
-    /// The stream the body is read through. It holds the bytes up to the first S3 part, and
+    /// The stream the body is read through. It holds the bytes before the first S3 object, and
     /// requests nothing until a reader takes them.
-    pub(crate) fn into_stream(self, cx: &bun_jsc::JsThread<'_>) -> JsResult<ReadableStream> {
+    pub(crate) fn into_stream(mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<ReadableStream> {
         let reader = Source::new_mut(readable_stream::NewSource {
             context: ByteStream::default(),
             global_this: Cell::new(Some(BackRef::new(cx.global()))),
@@ -67,9 +67,8 @@ impl Deferred {
         });
         // A `ByteStream` tells its producer when a reader empties its buffer, and says nothing
         // when a reader waits on an empty one. So the stream starts with the first part's headers.
-        let sent = self.parts[0].at;
         reader.context.apply_drain_result(DrainResult::Owned {
-            list: self.bytes[..sent].to_vec(),
+            list: core::mem::take(&mut self.parts[0].before).into_vec(),
             size_hint: 0,
         });
         let context: *mut ByteStream = &raw mut reader.context;
@@ -80,9 +79,8 @@ impl Deferred {
             feed: S3DownloadFeed::default(),
             global: GlobalRef::from(cx.global()),
             context: cx.context().id(),
-            bytes: self.bytes,
             parts: self.parts,
-            sent: Cell::new(sent),
+            tail: self.tail,
             part: Cell::new(0),
             downloading: Cell::new(false),
             entered: Cell::new(0),
@@ -110,13 +108,11 @@ pub struct Producer {
     global: GlobalRef,
     /// The script that made the body. Its downloads stop with it.
     context: bun_jsc::ContextId,
-    bytes: Vec<u8>,
     parts: Vec<S3Part>,
-    /// How much of `bytes` the stream has.
-    sent: Cell<usize>,
+    tail: Vec<u8>,
     /// The part that is downloading, or the one to request next.
     part: Cell<usize>,
-    /// A download has been requested and its last callback has not run.
+    /// A download was requested and its last callback has not run.
     downloading: Cell<bool>,
     /// Calls into this producer that are on the stack. The outermost one frees it.
     entered: Cell<u32>,
@@ -128,7 +124,7 @@ impl Producer {
     /// # Safety
     /// `this` is the live allocation of [`Deferred::into_stream`].
     unsafe fn enter(this: *mut Self, f: impl FnOnce(&Self)) {
-        // SAFETY: fn contract. An inner call does not free: `entered` is above 0 until the end.
+        // SAFETY: fn contract. A call from inside `f` does not free: `entered` is above 0 there.
         let last_use = unsafe {
             let producer = &*this;
             producer.entered.set(producer.entered.get() + 1);
@@ -150,9 +146,8 @@ impl Producer {
         // SAFETY: the stream holds its handle only while `this` is live.
         unsafe {
             Self::enter(this, |producer| {
-                if producer.downloading.get() {
-                    producer.feed.on_stream_drained();
-                } else {
+                producer.feed.on_stream_drained();
+                if !producer.downloading.get() {
                     producer.request_part(this);
                 }
             });
@@ -205,8 +200,7 @@ impl Producer {
                     producer.feed.deliver(chunk.list.as_slice());
                     return;
                 }
-                // The task frees itself when this returns.
-                producer.feed.task.set(core::ptr::null_mut());
+                producer.feed.download_ended();
                 producer.downloading.set(false);
                 match err {
                     Some(err) => producer.fail(&err),
@@ -229,30 +223,23 @@ impl Producer {
         )));
     }
 
-    /// The current part ended with `last_chunk`. What follows it in `bytes` goes out next: up to
-    /// the next S3 part, or the rest of the body.
+    /// The current object ended with `last_chunk`. The bytes that follow it go out next: up to
+    /// the next S3 object, or to the end of the body.
     fn finish_part(&self, last_chunk: &[u8], this: *mut Self) {
         let next = self.part.get() + 1;
-        let from = self.sent.get();
-        let to = self
-            .parts
-            .get(next)
-            .map_or(self.bytes.len(), |part| part.at);
-        // Before the deliveries: a reader inside one can ask for more.
+        // Before the deliveries: a reader inside one can ask for the next object.
         self.part.set(next);
-        self.sent.set(to);
-        let after = RawSlice::new(&self.bytes[from..to]);
 
-        if next == self.parts.len() {
+        let Some(following) = self.parts.get(next) else {
             let Some(bytes) = self.feed.stream.take() else {
                 return;
             };
             if !last_chunk.is_empty() {
                 bytes.on_data(StreamResult::Temporary(RawSlice::new(last_chunk)));
             }
-            bytes.on_data(StreamResult::TemporaryAndDone(after));
+            bytes.on_data(StreamResult::TemporaryAndDone(RawSlice::new(&self.tail)));
             return;
-        }
+        };
 
         let Some(bytes) = self.feed.stream.bytes() else {
             return;
@@ -264,11 +251,11 @@ impl Producer {
                 return;
             }
         }
-        bytes.on_data(StreamResult::Temporary(after));
+        bytes.on_data(StreamResult::Temporary(RawSlice::new(&following.before)));
         if !self.feed.stream.is_held() || self.downloading.get() {
             return;
         }
-        // A reader that keeps up gets the next part now. Any other asks for it when it drains.
+        // A reader that keeps up gets the next object now. Any other asks for it when it drains.
         if matches!(
             self.feed.stream.after_delivery(&bytes),
             AfterDelivery::Resume

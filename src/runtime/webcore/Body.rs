@@ -1045,8 +1045,7 @@ impl Value {
             // SAFETY: shim returns a live JSC heap cell.
             return match Blob::from_dom_form_data(global_this, unsafe { &mut *form_data }) {
                 Ok(FormDataBody::Bytes(blob)) => Ok(Value::Blob(blob)),
-                Ok(FormDataBody::Deferred(deferred)) => {
-                    let content_type = deferred.content_type.clone();
+                Ok(FormDataBody::Deferred(deferred, content_type)) => {
                     let readable =
                         deferred.into_stream(&global_this.js_thread_of_caller_no_frame())?;
                     Ok(Value::Locked(PendingValue {

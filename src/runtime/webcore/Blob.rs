@@ -902,11 +902,13 @@ impl BlobExt for Blob {
         let content_type = BlobContentType::Owned(std::sync::Arc::from(ct));
 
         if !context.s3_parts.is_empty() {
-            return Ok(FormDataBody::Deferred(form_data_body::Deferred {
-                bytes,
-                parts: context.s3_parts,
+            return Ok(FormDataBody::Deferred(
+                form_data_body::Deferred {
+                    parts: context.s3_parts,
+                    tail: bytes,
+                },
                 content_type,
-            }));
+            ));
         }
 
         let blob = Blob::init_with_store(Store::init(bytes), global_this);
@@ -3438,7 +3440,8 @@ struct FormDataContext<'a> {
     boundary: &'a [u8], // borrowed; outlives the joiner
     /// Set by the first file-backed entry that can't be read. Later entries are skipped.
     read_error: Option<bun_sys::Error>,
-    /// The S3 entries, whose bytes are not in `joiner`.
+    /// The S3 entries. Each has the bytes of the body that come before it, so `joiner` has the
+    /// bytes after the last one.
     s3_parts: Vec<form_data_body::S3Part>,
 }
 
@@ -3585,8 +3588,10 @@ impl FormDataContext<'_> {
                         store::Data::S3(_) => {
                             // The object is read when the body is. An empty window has nothing to read.
                             if blob.size.get() != 0 {
+                                let before =
+                                    joiner.done().unwrap_or_else(|_| bun_core::out_of_memory());
                                 self.s3_parts.push(form_data_body::S3Part::new(
-                                    joiner.len,
+                                    before,
                                     blob,
                                     store.clone(),
                                 ));

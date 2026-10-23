@@ -1,12 +1,4 @@
-//! Which imports of a checked file Bun loads as an HTML page.
-//!
-//! Bun decides that for each import: by the loader that the import's `type` attribute names, or else by the loader of
-//! the file's extension (`bun_ast::Loader::of_extension`). So `import text from "./page.html" with { type: "text" }` is
-//! a string, and `import page from "./page.tmpl" with { type: "html" }` is a page. A page stands for its scripts,
-//! which `Host::scripts_of_page` names.
-//!
-//! Only an import that is written as a path is followed. Where any other specifier leads is for Bun's resolver to
-//! say. A bundle has asked it, and names the scripts of its pages itself: see `Request::loaders`.
+//! Finds the imports that Bun loads as an HTML page: by the `type` attribute, or else by the loader of the extension.
 
 use bun_ast::{Loader, LoaderHashTable};
 use bun_paths::fs::PathName;
@@ -43,8 +35,7 @@ struct Import {
     names_nothing: bool,
 }
 
-/// The `with` clauses and the `import()` options of one file, by the position of the specifier they belong to. Made
-/// for the first use that asks.
+/// The `with` clauses and the `import()` options of one file, by the position of their specifier. Made on first use.
 #[derive(Default)]
 struct Attributes {
     /// Each `import` declaration, from its first token to its end. Sorted.
@@ -82,6 +73,7 @@ impl<'a, 's> Pages<'a, 's> {
         for &specifier in module.bound.specifiers.iter() {
             let written = self.files.atoms.bytes(specifier);
             let has_page_extension = self.has_page_extension(written);
+            // Where a specifier that is no path leads is for Bun's resolver to say.
             if (has_page_extension || names_html) && is_relative(written) {
                 imports.push(Import {
                     specifier,
@@ -119,8 +111,7 @@ impl<'a, 's> Pages<'a, 's> {
         scripts
     }
 
-    /// True if Bun loads a file at `path` as a page, unless the import says otherwise. `Path::loader` in
-    /// src/resolver/lib.rs takes the extension the same way: `.html` is the extension of a file named `.html`.
+    /// True if `path` has the extension of a page. Read as `Path::loader` reads it: a file named `.html` has one.
     fn has_page_extension(&self, path: &[u8]) -> bool {
         if !self.can_end_like_a_page(path) {
             return false;
@@ -131,8 +122,7 @@ impl<'a, 's> Pages<'a, 's> {
         }
     }
 
-    /// False for nearly every specifier of a program, after a byte or two compared: `path` ends with no extension
-    /// that a page can have.
+    /// False for nearly every specifier, after a byte or two compared: `path` ends with no extension of a page.
     fn can_end_like_a_page(&self, path: &[u8]) -> bool {
         let ends_with = |end: &[u8]| {
             let start = path.len().checked_sub(end.len());
@@ -143,9 +133,7 @@ impl<'a, 's> Pages<'a, 's> {
             || self.other_page_extensions.iter().any(|it| ends_with(it))
     }
 
-    /// The path to read the page at `real` by, which `written` names. The scripts of a page are relative to its real
-    /// folder. The files of the program have the names they were found by, so the page keeps the spelling of the
-    /// folder it was found in, as long as it is at or below that folder: a project can be named through a link.
+    /// `real` in the spelling `written` has for its folder: a page's scripts get the names the program's files have.
     fn in_spelling_of(&self, written: &[u8], real: &[u8]) -> Vec<u8> {
         if written == real {
             return real.to_vec();
@@ -167,8 +155,7 @@ impl<'a, 's> Pages<'a, 's> {
             let Ok(at) = found else {
                 continue;
             };
-            // As Bun's parser reads it: after the specifier of an `import` declaration, and in the options of an
-            // `import()`. It reads none after `export .. from`.
+            // Bun reads attributes after `import .. from` and in the options of `import()`, not after `export .. from`.
             let clause = match specifier_use.kind {
                 SpecifierKind::Import | SpecifierKind::SideEffect => {
                     attributes.of_declaration(hir, specifier_use.pos)
@@ -186,8 +173,7 @@ impl<'a, 's> Pages<'a, 's> {
         }
     }
 
-    /// The value of `with` in the options of an `import()`. The runtime evaluates the options, so only a literal is
-    /// known here.
+    /// The value of `with` in the options of an `import()`, if the call has them written: the runtime evaluates them.
     fn with_in(&self, hir: &hir::File<'s>, options: ExprId) -> Option<ExprId> {
         let ExprKind::Object(options) = hir[skip_assertions(hir, options)].kind else {
             return None;

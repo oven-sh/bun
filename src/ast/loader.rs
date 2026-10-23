@@ -184,8 +184,7 @@ impl Loader {
         })
     }
 
-    /// The loader of a file by its `extension`, which includes the dot: the entry of `loaders`, or else the loader
-    /// that has the extension's name.
+    /// The loader of a file by its `extension`, dot included: the entry of `loaders`, or else the loader of that name.
     pub fn of_extension(extension: &[u8], loaders: &LoaderHashTable) -> Option<Loader> {
         loaders
             .get(extension)

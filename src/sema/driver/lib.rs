@@ -884,10 +884,7 @@ pub struct Request<'a> {
     pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
-    /// Bun loads `paths` and what they import, file by file: an import that it loads as an HTML page stands for the
-    /// page's scripts (`Host::scripts_of_page`). This is the loader of a file by its extension, as `--loader` sets it
-    /// (`bun_ast::Loader::of_extension`). `None`: no import is followed as a page. A bundle passes `None`, because it
-    /// names the scripts of its pages among `paths` itself.
+    /// The loaders by extension (`--loader`), which say what import is an HTML page to follow. `None`: follow none.
     pub loaders: Option<&'a bun_ast::LoaderHashTable>,
     /// Compiler options given on the command line. They override the configuration file, including those of referenced
     /// projects.

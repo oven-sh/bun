@@ -288,7 +288,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            // `writer.close()` below re-enters `onClose` which releases the
+            // `runPending` below closes the writer, so `onClose` releases the
             // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
             // which may drop the JS wrapper's ref. Hold a local ref so `this`
             // stays valid for the rest of this function (same pattern as `onWrite`).
@@ -310,18 +310,13 @@ impl FileSink {
                 }
             }
 
-            // SAFETY(JsCell): `IOWriter::close` does not call into JS directly; the
-            // `on_close` re-entry it triggers goes via the stored `*mut FileSink`
-            // backref, not through this `JsCell` borrow.
-            (*this).writer.with_mut(|w| w.close());
-
             (*this).pending.with_mut(|p| {
                 p.result = streams::Writable::Err(sys::Error::from_code(
                     sys::Errno::EPIPE,
                     sys::Tag::write,
                 ));
             });
-            FileSink::run_pending(this);
+            FileSink::run_pending(this, Settle::Closed);
 
             // `writer.close()` → `onClose` already released this above; kept for
             // paths where `onClose` isn't reached (e.g. writer already closed).
@@ -334,12 +329,29 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `WritablePending::run`
     /// may re-enter JS / drop refs / free `this` on the last `deref`; the body
     /// reborrows `(*this).field` per-statement only.
-    unsafe fn run_pending(this: *mut FileSink) {
+    #[cold]
+    unsafe fn run_pending(this: *mut FileSink, how: Settle) {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             let _guard = RefPtr::init_ref(this);
 
+            // A sink that takes no more bytes ends its writer before its parked promise settles.
+            match how {
+                Settle::Written(status) => (*this).end_if_done(status),
+                Settle::Queued if (*this).owes_parked_bytes() => return,
+                Settle::Queued => {}
+                // SAFETY(JsCell): `close` re-enters `on_close` via the backref, not this borrow.
+                Settle::Closed => (*this).writer.with_mut(|w| w.close()),
+            }
+
             (*this).run_pending_later.has.set(false);
+
+            debug_assert!(
+                (*this).pending.get().state != streams::PendingState::Pending
+                    || !(*this).done.get()
+                    || (*this).writer_finished(),
+                "FileSink: the parked promise of a done sink settles with its writer open"
+            );
 
             let _entered = (*this).event_loop().entered();
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
@@ -351,6 +363,40 @@ impl FileSink {
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
             (*this).js_sink_ref.with_mut(|r| r.deinit());
+        }
+    }
+
+    /// Ends the writer of a `done` sink once nothing is buffered. Harmless if it has ended.
+    fn end_if_done(&self, status: WriteStatus) {
+        if !self.done.get() || self.writer.get().has_pending_data() {
+            return;
+        }
+        if status == WriteStatus::EndOfFile {
+            self.writer.with_mut(|w| w.close());
+        } else {
+            self.end_writer();
+        }
+    }
+
+    /// The parked promise stands for bytes the writer still holds.
+    fn owes_parked_bytes(&self) -> bool {
+        let pending = self.pending.get();
+        pending.state == streams::PendingState::Pending
+            // A failed `write()` is reported now: the drain of earlier bytes would report success.
+            && !matches!(pending.result, streams::Writable::Err(_))
+            && self.writer.get().has_pending_data()
+    }
+
+    /// No close is still to come: the writer gave up its fd, or (Windows) does not own it.
+    fn writer_finished(&self) -> bool {
+        let writer = self.writer.get();
+        #[cfg(unix)]
+        {
+            matches!(writer.handle, bun_io::pipes::PollOrFd::Closed)
+        }
+        #[cfg(windows)]
+        {
+            writer.source.is_none() || !writer.owns_fd
         }
     }
 
@@ -389,20 +435,18 @@ impl FileSink {
                 }
             }
 
-            // if we are not done yet and has pending data we just wait so we do not runPending twice
-            if status == WriteStatus::Pending && has_pending_data {
+            // The writer still holds bytes (it says `Drained` for a chunk it only buffers): wait.
+            if has_pending_data && status != WriteStatus::EndOfFile {
                 return;
             }
 
-            let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
-            let resumes = was_pending || (status == WriteStatus::Drained && !has_pending_data);
+            // Two arms, so that a write with no promise parked takes one branch past this case.
+            let resumes;
             // Opened before `run_pending` so the settle and the resume share one checkpoint.
-            let _entered = if resumes && (*this).source_pending_pull.get() {
-                (*this).completion_scope()
-            } else {
-                None
-            };
-            if was_pending {
+            let _entered;
+            if (*this).pending.get().state == streams::PendingState::Pending {
+                resumes = true;
+                _entered = (*this).resume_scope(resumes);
                 // `consumed` was credited when the pending operation accepted its
                 // bytes; `amount` is only what this drain pushed to the fd.
                 let consumed = (*this).pending.get().consumed;
@@ -417,7 +461,10 @@ impl FileSink {
                         .with_mut(|p| p.result = streams::Writable::Owned(consumed));
                 }
 
-                FileSink::run_pending(this);
+                FileSink::run_pending(this, Settle::Written(status));
+            } else {
+                resumes = status == WriteStatus::Drained;
+                _entered = (*this).resume_scope(resumes);
             }
 
             if resumes && (*this).source_pending_pull.replace(false) {
@@ -433,13 +480,7 @@ impl FileSink {
             // Pending, sets `done`). `status` predates that, so a close on a stale
             // `Drained` drops the tail. Re-read the buffer instead; draining the
             // tail calls back here and finishes the teardown.
-            if (*this).done.get() && !(*this).writer.get().has_pending_data() {
-                if status == WriteStatus::EndOfFile {
-                    (*this).writer.with_mut(|w| w.close());
-                } else {
-                    (*this).end_writer();
-                }
-            }
+            (*this).end_if_done(status);
 
             if status == WriteStatus::EndOfFile {
                 let mut src = *(*this).source.get();
@@ -456,7 +497,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // The streaming writer follows every `onError` with `close()` →
         // `onClose` (on both platforms), which fires `source.close()` and
-        // releases the keep-alive ref. The JS `run_pending` runs can get there
+        // releases the keep-alive ref. `run_pending`, or the JS it runs, can get there
         // first: a failed pump closes the writer, and `this` is then only kept
         // alive by the ref the writer holds until its own `close()` returns.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
@@ -473,7 +514,7 @@ impl FileSink {
                     }
                 }
 
-                FileSink::run_pending(this);
+                FileSink::run_pending(this, Settle::Closed);
             }
         }
     }
@@ -498,6 +539,15 @@ impl FileSink {
     fn completion_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
         self.pipe.get().cell()?;
         Some(self.event_loop().entered())
+    }
+
+    /// [`completion_scope`](Self::completion_scope) for a callback that resumes a parked source.
+    fn resume_scope(&self, resumes: bool) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
+        if resumes && self.source_pending_pull.get() {
+            self.completion_scope()
+        } else {
+            None
+        }
     }
 
     /// This sink opened its file itself, for the script that is running: if that is a
@@ -961,6 +1011,7 @@ impl FileSink {
                             .with_mut(|p| p.result = streams::Writable::Err(err));
                     }
                     (*this).writer.with_mut(|w| w.end());
+                    // Even with nothing parked: the task runs what `on_close` queued.
                     (*this).run_pending_later();
                     (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                     return false;
@@ -972,9 +1023,14 @@ impl FileSink {
                 WriteResult::Wrote(amount_drained) => {
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
-                        (*this).run_pending_later();
                         // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
-                        if (*this).source_pending_pull.replace(false) {
+                        let resumes = (*this).source_pending_pull.replace(false);
+                        // The task settles a parked promise, or runs what a resumed source queues.
+                        let parked = (*this).pending.get().state == streams::PendingState::Pending;
+                        if resumes || parked {
+                            (*this).run_pending_later();
+                        }
+                        if resumes {
                             let mut src = *(*this).source.get();
                             src.ready(None, None);
                         }
@@ -1631,7 +1687,7 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
     // that never reads would keep it open for ever), and a parked write gives up its promise and
     // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
     // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
-    // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
+    // write+dealloc provenance; the guard keeps it so across `run_pending`.
     unsafe {
         let _guard = RefPtr::init_ref(this);
         (*this).done.set(true);
@@ -1641,11 +1697,21 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
             (*this).settle_stream_done();
             (*this).release_pipe();
         }
-        (*this).writer.with_mut(|w| w.close());
-        FileSink::run_pending(this);
+        FileSink::run_pending(this, Settle::Closed);
         FileSink::clear_keep_alive_ref(this);
     }
 });
+
+/// What [`FileSink::run_pending`] does with the writer before it settles the parked promise.
+#[derive(Clone, Copy)]
+enum Settle {
+    /// From `on_write`: ends the writer of a `done` sink that has nothing left to write.
+    Written(WriteStatus),
+    /// From the flush task: leaves a promise whose bytes are still buffered to the drain.
+    Queued,
+    /// An error, the exit of the attached process, an abort: closes the writer.
+    Closed,
+}
 
 #[derive(Default)]
 pub(crate) struct FlushPendingTask {
@@ -1691,7 +1757,7 @@ impl FlushPendingTask {
             // SAFETY: `this` is the canonical `*mut FileSink` recovered via
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.
-            unsafe { FileSink::run_pending(this) };
+            unsafe { FileSink::run_pending(this, Settle::Queued) };
         }
     }
 }

@@ -1334,6 +1334,676 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   });
 });
 
+// A sink that takes no more bytes ends its writer before the promise it parked settles. A reaction
+// of that promise then runs with the close of the fd issued: the reader has end-of-file without
+// another turn of the writer's event loop. The promise used to settle first, inside the callback
+// that drained the buffer, and the close came after its reactions. It also settled from a task
+// that an earlier flush had queued, with its bytes still in the sink.
+//
+// Each body runs in a child, because its reaction keeps the thread: it polls the reader until a
+// deadline and does not return to the event loop. On Linux another thread runs close(2), so
+// end-of-file is polled for and not expected at once.
+describe("a FileSink ends its writer before its parked promise settles", () => {
+  const parse = (stdout: string) => {
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return stdout;
+    }
+  };
+
+  async function output(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: parse(stdout), stderr, exitCode };
+  }
+
+  // The grandchild reads only once end() has been called, so end() finds every byte still owed,
+  // on every platform. It creates the marker file when its stdin ends.
+  it.concurrent("await proc.stdin.end() returns once the child's stdin has ended", async () => {
+    using dir = tempDir("filesink-settle-stdin", {});
+    const flag = join(String(dir), "ended");
+    const marker = join(String(dir), "eof");
+    const reader = `
+      const fs = require("fs");
+      const [flag, marker] = process.argv.slice(-2);
+      const deadline = Date.now() + 60_000;
+      while (!fs.existsSync(flag)) {
+        if (Date.now() > deadline) process.exit(3);
+        Bun.sleepSync(1);
+      }
+      await Bun.stdin.bytes();
+      fs.writeFileSync(marker, "");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const [flag, marker] = process.argv.slice(-2);
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", ${JSON.stringify(reader)}, flag, marker],
+            stdin: "pipe",
+            stdout: "ignore",
+            stderr: "inherit",
+          });
+          let ended;
+          try {
+            child.stdin.write(Buffer.alloc(4 * 1024 * 1024, 97));
+            ended = child.stdin.end();
+          } finally {
+            fs.writeFileSync(flag, "");
+          }
+          await ended;
+          // The thread stays here until the grandchild has reported end-of-file.
+          const deadline = performance.now() + 2000;
+          while (!fs.existsSync(marker) && performance.now() < deadline) Bun.sleepSync(1);
+          console.log(JSON.stringify({ end: ended instanceof Promise ? "Promise" : typeof ended, eof: fs.existsSync(marker) }));
+          await child.exited;
+        `,
+        flag,
+        marker,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await output(proc)).toEqual({ stdout: { end: "Promise", eof: true }, stderr: "", exitCode: 0 });
+  });
+
+  describe.skipIf(!isPosix)("on a FIFO", () => {
+    const big = 300 * 1024;
+
+    // The fixture holds the read end of the FIFO that its sink writes to.
+    const prelude = `
+      const fs = require("fs");
+      const fifo = process.argv.at(-1);
+      const rfd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const buffer = Buffer.alloc(64 * 1024);
+      const big = Buffer.alloc(${big}, 97);
+      let received = 0;
+      // Reads what the FIFO holds. Returns false once every write end is closed.
+      function readAvailable() {
+        for (;;) {
+          let n;
+          try {
+            n = fs.readSync(rfd, buffer);
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+            return true;
+          }
+          if (n === 0) return false;
+          received += n;
+        }
+      }
+      // For a reaction of the promise: the thread stays here until end-of-file arrives.
+      function closedNow() {
+        const deadline = performance.now() + 2000;
+        while (readAvailable()) {
+          if (performance.now() > deadline) return false;
+          Bun.sleepSync(1);
+        }
+        return true;
+      }
+      // Reads a loop turn at a time, so that the sink can write, until the promise has settled.
+      async function drainUntil(promise) {
+        let settled = false;
+        promise.then(() => (settled = true), () => (settled = true));
+        const deadline = performance.now() + 10_000;
+        while (!settled) {
+          if (performance.now() > deadline) throw new Error("the promise did not settle");
+          readAvailable();
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      async function turns(count) {
+        for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve));
+      }
+      // Fills the FIFO through a second write end: the sink's next write(2) gets EAGAIN.
+      function fill() {
+        const fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        let filled = 0;
+        try {
+          for (;;) filled += fs.writeSync(fd, buffer);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+        return { fd, filled };
+      }
+      // How many bytes the FIFO holds. It is empty again afterwards. Exact on Linux only: a
+      // macOS FIFO takes more in one write than in the chunks that filled it here.
+      function capacity() {
+        const { fd, filled } = fill();
+        fs.closeSync(fd);
+        readAvailable();
+        received -= filled;
+        return filled;
+      }
+      const show = value => (value instanceof Promise ? "Promise" : typeof value);
+    `;
+
+    async function run(body: string) {
+      using dir = tempDir("filesink-settle-fifo", {});
+      const path = join(String(dir), "sink.fifo");
+      mkfifo(path, 0o666);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", prelude + body, path],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return await output(proc);
+    }
+
+    // Linux only: the bodies that call `capacity()`, and those in which the reader goes away.
+    // macOS does not wake the writer of a FIFO when its last reader closes.
+    const itOnLinux = it.concurrent.skipIf(!isLinux);
+
+    it.concurrent("end() after a write() that backed up", async () => {
+      expect(
+        await run(`
+          const sink = Bun.file(fifo).writer();
+          const wrote = sink.write(big);
+          const ended = sink.end();
+          const closed = ended.then(closedNow);
+          await drainUntil(ended);
+          console.log(JSON.stringify({ write: show(wrote), same: wrote === ended, closed: await closed, received }));
+        `),
+      ).toEqual({
+        stdout: { write: "Promise", same: true, closed: true, received: big },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // No write() promise here: the chunk is small and the sink buffers it. end() cannot flush it
+    // into the full FIFO and parks the promise itself.
+    it.concurrent("end() that cannot flush a buffered chunk", async () => {
+      expect(
+        await run(`
+          const { fd, filled } = fill();
+          const sink = Bun.file(fifo).writer();
+          fs.closeSync(fd);
+          const wrote = sink.write("tail");
+          const ended = sink.end();
+          const closed = ended.then(closedNow);
+          await drainUntil(ended);
+          console.log(JSON.stringify({ write: show(wrote), end: show(ended), closed: await closed, received: received - filled }));
+        `),
+      ).toEqual({
+        stdout: { write: "number", end: "Promise", closed: true, received: 4 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("end() after a flush() that could not drain", async () => {
+      expect(
+        await run(`
+          const { fd, filled } = fill();
+          const sink = Bun.file(fifo).writer();
+          fs.closeSync(fd);
+          const wrote = sink.write("tail");
+          const flushed = sink.flush();
+          const ended = sink.end();
+          const closed = ended.then(closedNow);
+          await drainUntil(ended);
+          console.log(JSON.stringify({ write: show(wrote), flush: show(flushed), same: flushed === ended, closed: await closed, received: received - filled }));
+        `),
+      ).toEqual({
+        stdout: { write: "number", flush: "Promise", same: true, closed: true, received: 4 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("close() after a write() that backed up", async () => {
+      expect(
+        await run(`
+          const sink = Bun.file(fifo).writer();
+          const wrote = sink.write(big);
+          const closed = wrote.then(closedNow);
+          sink.close();
+          await drainUntil(wrote);
+          console.log(JSON.stringify({ write: show(wrote), closed: await closed, received }));
+        `),
+      ).toEqual({
+        stdout: { write: "Promise", closed: true, received: big },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Bun.write() pipes the stream in. Nothing is parked on the sink when it drains, so the
+    // callback that drains it has only the close and the promise of controller.end() to run.
+    it.concurrent("controller.end() of a direct stream that cannot flush a buffered chunk", async () => {
+      expect(
+        await run(`
+          const { fd, filled } = fill();
+          const { promise: pulled, resolve } = Promise.withResolvers();
+          const stream = new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              fs.closeSync(fd);
+              const wrote = controller.write("tail");
+              const ended = controller.end();
+              const closed = Promise.resolve(ended).then(closedNow);
+              setImmediate(readAvailable);
+              resolve({ write: show(wrote), end: show(ended), closed: await closed });
+            },
+          });
+          const written = await Bun.write(Bun.file(fifo), new Response(stream));
+          console.log(JSON.stringify({ ...(await pulled), written, received: received - filled }));
+        `),
+      ).toEqual({
+        stdout: { write: "number", end: "Promise", closed: true, written: 4, received: 4 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The sink flushes a small write after the callback that made it, and used to queue a task
+    // each time. The task settled whatever promise was parked when it ran: here the promise of a
+    // write() and an end() made by the next callback of the same loop turn, with every byte
+    // still buffered. Two immediates run back to back, with no task between them.
+    it.concurrent("a flush earlier in the loop turn does not settle a later end()", async () => {
+      expect(
+        await run(`
+          const sink = Bun.file(fifo).writer();
+          const { promise: both, resolve } = Promise.withResolvers();
+          setImmediate(() => sink.write("small"));
+          setImmediate(() => {
+            const wrote = sink.write(big);
+            resolve({ wrote, ended: sink.end() });
+          });
+          const { wrote, ended } = await both;
+          let settled = false;
+          const closed = ended.then(() => ((settled = true), closedNow()));
+          // Nothing has been read yet.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(ended);
+          console.log(JSON.stringify({ write: show(wrote), same: wrote === ended, settledBeforeRead, closed: await closed, received }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "Promise", same: true, settledBeforeRead: false, closed: true, received: 5 + big },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("a flush earlier in the loop turn does not settle a later write()", async () => {
+      expect(
+        await run(`
+          const sink = Bun.file(fifo).writer();
+          const { promise: later, resolve } = Promise.withResolvers();
+          setImmediate(() => sink.write("small"));
+          setImmediate(() => resolve({ wrote: sink.write(big) }));
+          const { wrote } = await later;
+          let settled = false;
+          wrote.then(() => (settled = true));
+          // Nothing has been read yet.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(wrote);
+          // The sink has written everything: the FIFO holds the rest.
+          readAvailable();
+          console.log(JSON.stringify({ write: show(wrote), settledBeforeRead, resolved: await wrote, received }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "Promise", settledBeforeRead: false, resolved: big, received: 5 + big },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("a flush earlier in the loop turn does not settle a later flush()", async () => {
+      expect(
+        await run(`
+          const sink = Bun.file(fifo).writer();
+          const { promise: later, resolve } = Promise.withResolvers();
+          setImmediate(() => sink.write("small"));
+          setImmediate(() => {
+            const { fd, filled } = fill();
+            fs.closeSync(fd);
+            const wrote = sink.write("tail");
+            resolve({ wrote, flushed: sink.flush(), filled });
+          });
+          const { wrote, flushed, filled } = await later;
+          let settled = false;
+          flushed.then(() => (settled = true));
+          // Nothing has been read yet.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(flushed);
+          readAvailable();
+          console.log(JSON.stringify({ write: show(wrote), flush: show(flushed), settledBeforeRead, received: received - filled }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "number", flush: "Promise", settledBeforeRead: false, received: 9 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Here the task is owed: a flush wrote the rest of the first chunk, and the task settles the
+    // promise of that write(). Before it runs, a second chunk backs up behind the same promise
+    // and end() is called. The promise now stands for bytes that are still buffered.
+    itOnLinux("a flush that drained one write() does not settle the next one behind it", async () => {
+      expect(
+        await run(`
+          const size = capacity();
+          const sink = Bun.file(fifo).writer();
+          // The FIFO takes half of the chunk and the sink holds the other half.
+          const first = sink.write(Buffer.alloc(2 * size, 97));
+          const { promise: both, resolve } = Promise.withResolvers();
+          // Makes room. The flush after this callback writes the half the sink holds.
+          setImmediate(readAvailable);
+          setImmediate(() => {
+            readAvailable();
+            const drained = received === 2 * size;
+            const second = sink.write(Buffer.alloc(2 * size, 98));
+            resolve({ drained, second, ended: sink.end() });
+          });
+          const { drained, second, ended } = await both;
+          let settled = false;
+          const closed = ended.then(() => ((settled = true), closedNow()));
+          // Nothing has been read since: half of the second chunk is still buffered.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(ended);
+          console.log(JSON.stringify({ first: show(first), drained, same: first === second && second === ended, settledBeforeRead, closed: await closed, chunks: received / (2 * size) }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { first: "Promise", drained: true, same: true, settledBeforeRead: false, closed: true, chunks: 2 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("a flush that drained a flush() does not settle the write() behind it", async () => {
+      expect(
+        await run(`
+          const { fd, filled } = fill();
+          const sink = Bun.file(fifo).writer();
+          fs.closeSync(fd);
+          const wrote = sink.write("tail");
+          const flushed = sink.flush();
+          const { promise: later, resolve } = Promise.withResolvers();
+          // Makes room. The flush after this callback writes "tail".
+          setImmediate(readAvailable);
+          setImmediate(() => resolve({ second: sink.write(big) }));
+          const { second } = await later;
+          let settled = false;
+          flushed.then(() => (settled = true));
+          // Nothing has been read since: most of the second chunk is still buffered.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(flushed);
+          readAvailable();
+          console.log(JSON.stringify({ write: show(wrote), flush: show(flushed), same: flushed === second, settledBeforeRead, received: received - filled }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "number", flush: "Promise", same: true, settledBeforeRead: false, received: 4 + big },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The writer reports a small chunk that it only buffers as written. With a promise parked
+    // that report used to settle it, with the bytes of both chunks still in the sink.
+    itOnLinux("a small write() behind a write() that backed up does not settle it", async () => {
+      expect(
+        await run(`
+          const size = capacity();
+          const sink = Bun.file(fifo).writer();
+          // The FIFO takes all but the last 100 bytes.
+          const first = sink.write(Buffer.alloc(size + 100, 97));
+          let settled = false;
+          first.then(() => (settled = true));
+          const second = sink.write("x");
+          // Nothing has been read yet: the sink holds 101 bytes.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(first);
+          readAvailable();
+          console.log(JSON.stringify({ first: show(first), second: show(second), settledBeforeRead, resolved: (await first) - size, received: received - size }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { first: "Promise", second: "number", settledBeforeRead: false, resolved: 100, received: 101 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("a small write() behind a flush() that could not drain does not settle it", async () => {
+      expect(
+        await run(`
+          const { fd, filled } = fill();
+          const sink = Bun.file(fifo).writer();
+          fs.closeSync(fd);
+          const wrote = sink.write("tail");
+          const flushed = sink.flush();
+          let settled = false;
+          flushed.then(() => (settled = true));
+          const more = sink.write("more");
+          // Nothing has been read yet: the FIFO is full and the sink holds 8 bytes.
+          await turns(4);
+          const settledBeforeRead = settled;
+          await drainUntil(flushed);
+          readAvailable();
+          console.log(JSON.stringify({ write: show(wrote), flush: show(flushed), more: show(more), settledBeforeRead, received: received - filled }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "number", flush: "Promise", more: "number", settledBeforeRead: false, received: 8 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The cases in which the flush after a callback still queues its task.
+    //
+    // A promise is parked, and the flush wrote the last of its bytes: only the task settles it.
+    itOnLinux("a write() whose last bytes a flush writes resolves", async () => {
+      expect(
+        await run(`
+          const size = capacity();
+          const sink = Bun.file(fifo).writer();
+          const wrote = sink.write(Buffer.alloc(size + 100, 97));
+          let settled = "pending";
+          wrote.then(n => (settled = "resolved " + (n - size)));
+          // Makes room, once. The flush after this callback writes the last 100 bytes.
+          setImmediate(readAvailable);
+          await turns(4);
+          readAvailable();
+          console.log(JSON.stringify({ write: show(wrote), settled, received: received - size }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "Promise", settled: "resolved 100", received: 100 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // end() parks the promise itself, and start() opens the sink again: the flush after a
+    // callback writes the chunk. No write() backed up, so nothing but the parked promise asks for
+    // the task.
+    it.concurrent("end() that start() follows settles once a flush writes the chunk", async () => {
+      expect(
+        await run(`
+          const { fd, filled } = fill();
+          const sink = Bun.file(fifo).writer();
+          fs.closeSync(fd);
+          const wrote = sink.write("tail");
+          const ended = sink.end();
+          sink.start();
+          let settled = "pending";
+          ended.then(n => (settled = "resolved " + n));
+          // Makes room, once. The flush after this callback writes "tail".
+          setImmediate(readAvailable);
+          await turns(4);
+          readAvailable();
+          console.log(JSON.stringify({ write: show(wrote), end: show(ended), settled, received: received - filled }));
+          process.exit(0);
+        `),
+      ).toEqual({
+        stdout: { write: "number", end: "Promise", settled: "resolved 0", received: 4 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The flush resumes a native source (the output of HTMLRewriter), and nothing is parked. The
+    // next step of the source is a microtask, and nothing else is alive: the task is the loop
+    // turn that runs it. Without the task the process exits with the promise pending.
+    itOnLinux("a native source that a flush resumes runs to its end", async () => {
+      expect(
+        await run(`
+          const half = capacity() / 2;
+          const chunk = new TextEncoder().encode("<p>" + Buffer.alloc(half - 7, "x").toString() + "</p>");
+          let pulls = 0;
+          const source = new ReadableStream({
+            pull(controller) {
+              if (++pulls <= 3) return controller.enqueue(chunk);
+              controller.close();
+            },
+          });
+          const rewritten = new HTMLRewriter().on("p", { element() {} }).transform(new Response(source));
+          let settled = "pending";
+          Bun.write(Bun.file(fifo), rewritten).then(
+            n => (settled = "resolved " + n / half),
+            e => (settled = "rejected " + e),
+          );
+          // Makes room, once. Nothing else is scheduled.
+          setImmediate(readAvailable);
+          process.on("exit", () => {
+            readAvailable();
+            console.log(JSON.stringify({ settled, received: received / half }));
+          });
+        `),
+      ).toEqual({
+        stdout: { settled: "resolved 3", received: 3 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The promise that the early task used to resolve is still parked when the reader goes
+    // away: it rejects. The error used to arrive with nothing parked, and was dropped.
+    itOnLinux("end() rejects when the reader goes away with the chunk still buffered", async () => {
+      expect(
+        await run(`
+          const sink = Bun.file(fifo).writer();
+          const { promise: both, resolve } = Promise.withResolvers();
+          setImmediate(() => sink.write("small"));
+          setImmediate(() => {
+            sink.write(big);
+            resolve({ ended: sink.end() });
+          });
+          const { ended } = await both;
+          let settled = "pending";
+          const done = ended.then(
+            () => (settled = "resolved"),
+            e => (settled = "rejected " + e.code),
+          );
+          await turns(4);
+          const before = settled;
+          fs.closeSync(rfd);
+          await done;
+          console.log(JSON.stringify({ before, settled }));
+        `),
+      ).toEqual({
+        stdout: { before: "pending", settled: "rejected EPIPE" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The reader goes away while the writer is idle, and end() keeps the flush that follows each
+    // callback away from the sink: only the sink's poll can find the error. The sink closes
+    // (Bun.write() rejects) and then rejects the parked promise. It used to reject first.
+    itOnLinux("a write error the poll finds closes the sink before it rejects the parked promise", async () => {
+      using dir = tempDir("filesink-settle-error", {});
+      const path = join(String(dir), "sink.fifo");
+      mkfifo(path, 0o666);
+      const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      let fdOpen = true;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const events = [];
+              process.on("unhandledRejection", e => events.push("unhandledRejection " + (e?.code ?? e)));
+              process.on("exit", () => console.log(JSON.stringify(events)));
+              const stream = new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  controller.write(Buffer.alloc(8 * 1024 * 1024, 97));
+                  const ended = controller.end();
+                  setImmediate(() => console.error("parked"));
+                  try {
+                    await ended;
+                    events.push("end() resolved");
+                  } catch (e) {
+                    events.push("end() rejected " + e.code);
+                  }
+                },
+                cancel(reason) {
+                  events.push("cancel(" + (reason?.code ?? reason) + ")");
+                },
+              });
+              await Bun.write(Bun.file(process.argv.at(-1)), new Response(stream)).then(
+                n => events.push("Bun.write() resolved " + n),
+                e => events.push("Bun.write() rejected " + (e?.code ?? e)),
+              );
+            `,
+            path,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        // The child is idle once it has printed "parked": its write is parked on the full FIFO.
+        const reader = proc.stderr.getReader();
+        const decoder = new TextDecoder();
+        let stderr = "";
+        while (!stderr.startsWith("parked\n")) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          stderr += decoder.decode(value, { stream: true });
+        }
+        fs.closeSync(fd);
+        fdOpen = false;
+        const rest = (async () => {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) return;
+            stderr += decoder.decode(value, { stream: true });
+          }
+        })();
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), rest, proc.exited]);
+        expect({ stdout: parse(stdout), stderr, exitCode }).toEqual({
+          stdout: ["Bun.write() rejected EPIPE", "end() rejected EPIPE"],
+          stderr: "parked\n",
+          exitCode: 0,
+        });
+      } finally {
+        if (fdOpen) fs.closeSync(fd);
+      }
+    });
+  });
+});
+
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
 // on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
 // sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase

@@ -13,6 +13,7 @@ import {
   runInThisContext,
   Script,
   SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1146,6 +1147,75 @@ test.each([
     ]);
   },
 );
+
+describe("SourceTextModules with the same identifier and source", () => {
+  // JSC lets module records with the same key and source text run one ModuleProgramExecutable, which keeps the source
+  // of the record that linked it. import() and stack traces read that source, and node:vm keeps each module's
+  // importModuleDynamically hook and line/column offsets there, so two SourceTextModules must never run one executable.
+  // JSC finds an executable to share through a weak map, and a module's functions keep it alive: every source here
+  // exports a function and every module stays reachable, so the earlier module's executable is there to be found.
+  const modules: SourceTextModule[] = [];
+  // No module here has a static import, so link() never calls its linker.
+  const noDependencies = () => {
+    throw new Error("unreachable");
+  };
+
+  async function load(tag: string) {
+    const dependency = new SyntheticModule(["tag"], function () {
+      this.setExport("tag", tag);
+    });
+    await dependency.link(noDependencies);
+    await dependency.evaluate();
+
+    const calls: { specifier: string; referrerIsThisModule: boolean }[] = [];
+    const module = new SourceTextModule(
+      `export const fromTopLevel = import("dep");
+       export function fromFunction() { return import("dep"); }`,
+      {
+        identifier: "same-identifier-and-source.mjs",
+        importModuleDynamically(specifier, referrer) {
+          calls.push({ specifier, referrerIsThisModule: referrer === module });
+          return dependency;
+        },
+      },
+    );
+    modules.push(module);
+    await module.link(noDependencies);
+    await module.evaluate();
+    const namespace = module.namespace as any;
+    return { calls, imported: [(await namespace.fromTopLevel).tag, (await namespace.fromFunction()).tag] };
+  }
+
+  test("each call their own importModuleDynamically", async () => {
+    const first = await load("first");
+    const second = await load("second");
+    const calls = [
+      { specifier: "dep", referrerIsThisModule: true },
+      { specifier: "dep", referrerIsThisModule: true },
+    ];
+    expect({ first, second }).toEqual({
+      first: { calls, imported: ["first", "first"] },
+      second: { calls, imported: ["second", "second"] },
+    });
+  });
+
+  test("each report positions with their own lineOffset", async () => {
+    async function lineOfThrow(identifier: string, lineOffset: number) {
+      const module = new SourceTextModule(`export function where() { return new Error("here").stack; }`, {
+        identifier,
+        lineOffset,
+      });
+      modules.push(module);
+      await module.link(noDependencies);
+      await module.evaluate();
+      return Number(/:(\d+):\d+\)?$/m.exec((module.namespace as any).where())![1]);
+    }
+    const shifted = await lineOfThrow("same-identifier-other-offset.mjs", 100);
+    const unshifted = await lineOfThrow("same-identifier-other-offset.mjs", 0);
+    expect(unshifted).toBe(await lineOfThrow("never-seen-identifier.mjs", 0));
+    expect(shifted).toBeGreaterThan(unshifted);
+  });
+});
 
 // NodeVMSourceTextModule::createModuleRecord pairs import declarations with requestedModules() by position, but JSC lists
 // a specifier once however many declarations name it: builds with assertions enabled abort on "More attributes nodes

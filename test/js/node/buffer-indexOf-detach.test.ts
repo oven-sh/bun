@@ -98,7 +98,7 @@ describe("Buffer.indexOf/lastIndexOf/includes with buffer detached via side-effe
     const buf = Buffer.from(ab);
     buf.fill(0x41); // 'A'
 
-    const result = buf.indexOf("A", 0, {
+    const result = buf.indexOf("A", 0, undefined, {
       toString() {
         ab.transfer(2048);
         return "utf8";
@@ -113,7 +113,7 @@ describe("Buffer.indexOf/lastIndexOf/includes with buffer detached via side-effe
     buf.fill(0x42);
     const needle = Buffer.from([0x42]);
 
-    const result = buf.indexOf(needle, 0, {
+    const result = buf.indexOf(needle, 0, undefined, {
       toString() {
         ab.transfer(2048);
         return "utf8";
@@ -153,7 +153,7 @@ describe("Buffer.indexOf/lastIndexOf/includes with buffer detached via side-effe
     needle[1] = 0x63;
     needle[2] = 0x64;
 
-    const result = buf.indexOf(needle, 0, {
+    const result = buf.indexOf(needle, 0, undefined, {
       toString() {
         needleAb.transfer(2048);
         return "utf8";

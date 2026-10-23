@@ -320,9 +320,7 @@ impl Expansion {
             vec![me.current_out.clone()]
         } else {
             let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
-            let arena = bun_alloc::Arena::new();
             if let Err(e) = braces::expand(
-                &arena,
                 &mut lexer_output.tokens[..],
                 &mut expanded[..],
                 lexer_output.contains_nested,
@@ -338,7 +336,6 @@ impl Expansion {
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
                 return;
             }
-            drop(arena);
             expanded
         };
 

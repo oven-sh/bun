@@ -522,6 +522,36 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 
 In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
 
+### Types
+
+TypeScript reads the types for `"vitest"` from the `vitest` package. Once you uninstall it, use the ones in `bun-types`:
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "types": ["bun-types/vitest"]
+  }
+}
+```
+
+| `types` entry              | Declares                                                         |
+| -------------------------- | ---------------------------------------------------------------- |
+| `bun-types/vitest`         | the `"vitest"` module                                            |
+| `bun-types/vitest-globals` | the module and its globals. Use it in place of `vitest/globals`. |
+
+A directive in one file of your project does the same as the `types` entry:
+
+```ts title="global.d.ts" icon="/icons/typescript.svg"
+/// <reference types="bun-types/vitest" />
+```
+
+- Neither entry loads the rest of Bun's types, so they don't declare `Bun` or change the type of `fetch`. Add `"bun"` to `types` if you want those too.
+- Load an entry only after you uninstall `vitest`. The entry and the package declare the same module, and their declarations conflict.
+- The types follow Vitest 5, where `Matchers` and `Assertion` have two type parameters, `R` and `T`. TypeScript rejects a `declare module "vitest"` block that declares them with Vitest 4's `<T = any>`.
+- The types declare what `bun test` implements. Vitest's other entry points, such as `vitest/node` and `vitest/config`, have no types, because Bun doesn't have those modules.
+- `assert` and `should` get their types from `@types/chai`. Without it, they are `any`.
+- `inject()` has the type `ProvidedContext[key] | undefined`, because it returns `undefined`.
+
 ## Promises
 
 `.resolves` and `.rejects` run the matcher on the value a promise resolves to or rejects with. They also accept a thenable or a function that returns a promise. The matcher returns a promise, so `await` it:

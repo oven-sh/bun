@@ -1048,6 +1048,53 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe('"vitest" types', () => {
+    async function check(fixtureDir: string, types: string[], files: string[]) {
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.files = files.map(file => `vitest/${file}`);
+      tsconfig.compilerOptions.lib = ["ESNext", "DOM"];
+      tsconfig.compilerOptions.types = types;
+      tsconfig.compilerOptions.skipLibCheck = false;
+      await Bun.write(join(fixtureDir, "tsconfig.vitest.json"), JSON.stringify(tsconfig, null, 2));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.vitest.json"],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    }
+
+    // Neither entry loads index.d.ts, so a project gets these types without Bun's globals.
+    test.each([
+      ["bun-types/vitest", ["api.ts", "patterns.ts", "differences.ts", "no-chai.ts"]],
+      ["bun-types/vitest-globals", ["globals.ts"]],
+    ])('%s declares the "vitest" module', async (entry, files) => {
+      expect(await check(BASE_FIXTURE_DIR, [entry], files)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    test("assert and should use chai's types when @types/chai is installed", async () => {
+      const fixtureDir = await createIsolatedFixture(["@types/chai"]);
+      expect(await check(fixtureDir, ["bun-types/vitest"], ["chai.ts"])).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // An ambient declaration would override the types of an installed vitest package.
+    test('"types": ["bun"] doesn\'t declare the "vitest" module', async () => {
+      const { stdout, exitCode } = await check(BASE_FIXTURE_DIR, ["bun"], ["differences.ts"]);
+      expect(stdout).toContain("error TS2307: Cannot find module 'vitest'");
+      expect(exitCode).not.toBe(0);
+    });
+  });
+
   describe("bun:bundle feature()", () => {
     typeTest("Registry augmentation restricts feature() to known flags", {
       files: {

@@ -120,6 +120,7 @@ The `--globals` flag overrides `bunfig.toml`. Write it with `=`, as in `--global
 - `true` and `false`, the values Vitest takes, are accepted and change nothing. So is `--globals` without a value.
 - If a preload script sets one of these globals itself (`globalThis.expect = chai.expect`), files that import from `"bun:test"`, `"@jest/globals"` or `"vitest"` keep the preload's value.
 - As in Vitest, the `"vitest"` globals don't include `jest`, `xit`, `xtest` or `xdescribe`.
+- For their types, see [`bun-types/vitest-globals`](/test/writing-tests#types).
 - A module keeps the globals it was first loaded with. With `--isolate`, it keeps them until the next file. So a library loaded by a preload script sees `jest`, unless that script imports from `"vitest"` or `globals = "vitest"` is set.
 
 Libraries such as `@testing-library/dom` look for a global `jest` and use it to advance fake timers while they wait. Without one, they leave the clock alone. To make them advance it, use `vi.useFakeTimers({ shouldAdvanceTime: true })` or set `globalThis.jest = { advanceTimersByTime: ms => vi.advanceTimersByTime(ms) }`.

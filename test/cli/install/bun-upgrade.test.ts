@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   bunExe,
   bunEnv as env,
@@ -520,11 +520,10 @@ describe.concurrent("packageManager pin in package.json", () => {
   const staleLine = (old: string, why: string) =>
     `package.json is bun@${old}, the installed version is bun@${version} (not updated: ${why})\n`;
 
-  let zipPath: string;
-  beforeAll(async () => {
-    zipPath = join(tmpdirSync(), "release.zip");
-    await writeFakeReleaseZip(zipPath, version);
-  });
+  const zipDir = tempDir("bun-upgrade-pin-release", {});
+  const zipPath = join(String(zipDir), "release.zip");
+  beforeAll(() => writeFakeReleaseZip(zipPath, version));
+  afterAll(() => zipDir[Symbol.dispose]());
 
   // Runs `bun upgrade --stable` with `files` laid out in a fresh project
   // directory, from `cwd` inside it. Returns the files as they are afterwards.
@@ -532,8 +531,8 @@ describe.concurrent("packageManager pin in package.json", () => {
     files: Record<string, string>,
     opts: { args?: string[]; env?: Record<string, string>; tagName?: string; zip?: string; cwd?: string } = {},
   ) {
-    const installDir = tmpdirSync();
-    const execPath = await installStandIn(installDir);
+    using installDir = tempDir("bun-upgrade-pin-install", {});
+    const execPath = await installStandIn(String(installDir));
     using project = tempDir("bun-upgrade-pin", files);
     using stagingRoot = tempDir("bun-upgrade-pin-staging", {});
     using server = startReleaseServer({ tagName: opts.tagName ?? `bun-v${version}`, zipPath: opts.zip ?? zipPath });
@@ -640,7 +639,8 @@ describe.concurrent("packageManager pin in package.json", () => {
   // type. On Windows the archive has to carry a real bun.exe, which reports its
   // own version.
   it.skipIf(isWindows)("updates the pin after installing a newer release", async () => {
-    const newer = join(tmpdirSync(), "release.zip");
+    using newerDir = tempDir("bun-upgrade-pin-release", {});
+    const newer = join(String(newerDir), "release.zip");
     await writeFakeReleaseZip(newer, "9.9.9");
     const before = pinned("bun@1.0.0");
     const { stderr, exitCode, after } = await runUpgrade(
@@ -667,7 +667,8 @@ describe.concurrent("packageManager pin in package.json", () => {
   it("does not touch the pin when the upgrade fails", async () => {
     // The archive unpacks to a bun that reports a version other than the one
     // the release is tagged with, so the upgrade aborts before the swap.
-    const mismatched = join(tmpdirSync(), "release.zip");
+    using mismatchedDir = tempDir("bun-upgrade-pin-release", {});
+    const mismatched = join(String(mismatchedDir), "release.zip");
     await writeFakeReleaseZip(mismatched, "9.9.8");
     const before = pinned("bun@1.0.0");
     const { stderr, exitCode, after } = await runUpgrade(

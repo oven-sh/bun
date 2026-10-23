@@ -39,8 +39,8 @@ pub(crate) fn refresh(start_dir: &[u8], installed: &[u8], write: Write) {
             Ok(_) => {}
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
             Err(err) => {
-                bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r><d>:<r> failed to read {}: {}",
+                bun_core::warn!(
+                    "failed to read {}: {}",
                     bstr::BStr::new(package_json_path.as_bytes()),
                     bstr::BStr::new(err.name())
                 );
@@ -80,8 +80,8 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
     let mut document = match parsed {
         Ok(document) if log.errors == 0 => document,
         _ => {
-            bun_core::pretty_errorln!(
-                "<r><yellow>warn<r><d>:<r> failed to parse {}, its packageManager field was not updated",
+            bun_core::warn!(
+                "failed to parse {}, its packageManager field was not updated",
                 bstr::BStr::new(package_json_path.as_bytes())
             );
             return Walk::Done;
@@ -91,8 +91,8 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
         return Walk::Continue;
     };
     let Some(value) = value.as_string(&arena) else {
-        bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> packageManager in {} is not a string, it was not updated",
+        bun_core::warn!(
+            "packageManager in {} is not a string, it was not updated",
             bstr::BStr::new(package_json_path.as_bytes())
         );
         return Walk::Done;
@@ -156,11 +156,7 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
             ..Default::default()
         },
     ) {
-        bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> failed to save {}: {}",
-            path,
-            err.name()
-        );
+        bun_core::warn!("failed to save {}: {}", path, err.name());
         return Walk::Done;
     }
 
@@ -169,11 +165,7 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
         package_json_path,
         writer.ctx.written_without_trailing_zero(),
     ) {
-        bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> failed to write {}: {}",
-            path,
-            bstr::BStr::new(err.name())
-        );
+        bun_core::warn!("failed to write {}: {}", path, bstr::BStr::new(err.name()));
         return Walk::Done;
     }
     bun_core::pretty_errorln!(

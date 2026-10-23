@@ -15,6 +15,8 @@
 // A round parks 15 of the 20 server sockets: all 20 are paused with an unread piece, all 20
 // resume, and the next iteration reads 5 and parks the rest. The sweep is run by hand, which
 // turns no loop iteration, so the queue keeps those 15 for as many ticks as a step needs.
+//
+// With the argument "again" the fixture runs only the step whose sockets are parked four times.
 import type { Socket } from "bun";
 import { getEventLoopStats, sweepSocketTimers } from "bun:internal-for-testing";
 import { tls as certs } from "harness";
@@ -44,6 +46,8 @@ const summary = {
   unarmed: [] as number[],
   // The sockets stay parked: [before their 30th tick in the queue, after it].
   parkedTooLong: [] as number[],
+  // One timeout, four stays of 10 ticks in the queue: [in the first two, in the last two].
+  parkedAgain: [] as number[],
   errors: 0,
 };
 
@@ -96,10 +100,11 @@ const { server, address } = listen("s", {
 
 const clients: Socket[] = [];
 
-// Every server socket is paused with an unread piece. Parks N - BUDGET of them and arms `seconds` on all N.
-async function park(seconds: number) {
+// Every server socket is paused with an unread piece. Parks N - BUDGET of them and arms `seconds` on all N, if given.
+async function park(seconds?: number) {
   for (const s of accepted) s.resume();
   await afterIterations(1);
+  if (seconds === undefined) return;
   sweepSocketTimers(1);
   for (const s of accepted) s.timeout(seconds);
   takeTimeouts();
@@ -133,6 +138,19 @@ try {
   await until(`${N} connections`, () => accepted.length === N && clientOpens === N);
   // One more turn and every record head is in the server's receive queue.
   await afterIterations(2);
+
+  if (process.argv[2] === "again") {
+    await park(TIMEOUT_SECONDS);
+    for (let stay = 0; stay < 4; stay++) {
+      if (stay > 0) {
+        await release();
+        await park();
+      }
+      sweepSocketTimers(10);
+      if (stay % 2) summary.parkedAgain.push(takeTimeouts());
+    }
+    report();
+  }
 
   await park(TIMEOUT_SECONDS);
   sweepSocketTimers(20);

@@ -40,6 +40,8 @@ pub enum Error {
     TruncatedGzip,
     #[error("gzip decompression failed")]
     GzipDecompressionFailed,
+    #[error("GZip compression failed")]
+    GzipCompressionFailed,
     #[error("gzip trailer mismatch: bad CRC32 or uncompressed size")]
     GzipTrailerMismatch,
     #[error("Out of memory")]

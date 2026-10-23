@@ -302,3 +302,90 @@ impl Decoder {
         }
     }
 }
+
+/// Compresses into one gzip member with no name and no time in its header, so that the same input
+/// always gives the same bytes.
+pub struct Encoder<O: crate::writer::Output> {
+    out: O,
+    deflate: bun_zlib::DeflateEncoder,
+    buffer: Vec<u8>,
+    crc: u32,
+    size: u32,
+}
+
+/// `deflate()` is shown what is left of a buffer of this size. At level 0 that decides where a
+/// stored block ends, so it is part of what keeps the output stable.
+const ENCODER_BUFFER: usize = 61440;
+const OS_UNKNOWN: u8 = 255;
+
+impl<O: crate::writer::Output> Encoder<O> {
+    /// `level` is 0 to 9.
+    pub fn new(out: O, level: u8) -> Result<Self> {
+        let mut buffer = Vec::new();
+        buffer
+            .try_reserve_exact(ENCODER_BUFFER)
+            .map_err(|_| Error::OutOfMemory)?;
+        let extra_flags = match level {
+            9 => 2,
+            1 => 4,
+            _ => 0,
+        };
+        buffer.extend_from_slice(&[0x1f, 0x8b, 8, 0, 0, 0, 0, 0, extra_flags, OS_UNKNOWN]);
+        Ok(Self {
+            out,
+            deflate: bun_zlib::DeflateEncoder::new(i32::from(level), RAW_DEFLATE, 8, 0)
+                .map_err(|_| Error::OutOfMemory)?,
+            buffer,
+            crc: 0,
+            size: 0,
+        })
+    }
+
+    fn drive(&mut self, mut input: &[u8], finishing: bool) -> Result<()> {
+        loop {
+            if self.buffer.len() >= ENCODER_BUFFER {
+                self.out.write(&self.buffer)?;
+                self.buffer.clear();
+            }
+            if !finishing && input.is_empty() {
+                return Ok(());
+            }
+            let room = ENCODER_BUFFER.saturating_sub(self.buffer.len());
+            let (used, code) = self.deflate.step_limited(
+                input,
+                &mut self.buffer,
+                room,
+                if finishing {
+                    bun_zlib::FlushValue::Finish
+                } else {
+                    bun_zlib::FlushValue::NoFlush
+                },
+            );
+            input = input.get(used..).unwrap_or_default();
+            match code {
+                ReturnCode::Ok => {}
+                ReturnCode::StreamEnd => return Ok(()),
+                ReturnCode::MemError => return Err(Error::OutOfMemory),
+                _ => return Err(Error::GzipCompressionFailed),
+            }
+        }
+    }
+
+    pub fn finish(mut self) -> Result<O> {
+        self.drive(&[], true)?;
+        self.out.write(&self.buffer)?;
+        let mut trailer = [0u8; 8];
+        trailer[..4].copy_from_slice(&self.crc.to_le_bytes());
+        trailer[4..].copy_from_slice(&self.size.to_le_bytes());
+        self.out.write(&trailer)?;
+        Ok(self.out)
+    }
+}
+
+impl<O: crate::writer::Output> crate::writer::Output for Encoder<O> {
+    fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        self.crc = crc32_bytes(self.crc, bytes);
+        self.size = self.size.wrapping_add(bytes.len() as u32);
+        self.drive(bytes, false)
+    }
+}

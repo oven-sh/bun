@@ -1141,7 +1141,7 @@ impl Reader {
         let text = until_nul(text);
         match self.options.charset {
             Charset::Ascii => strings::first_non_ascii(text).is_none(),
-            Charset::Utf8 => strings::is_valid_utf8(text),
+            Charset::Utf8 => crate::compose::converts(text),
         }
     }
 
@@ -1413,6 +1413,7 @@ impl Reader {
         if magic == gnu::MAGIC {
             self.format = Format::Gnu;
             if self.entry.path.is_empty() {
+                self.entry.path_is_utf8 = false;
                 assign(&mut self.entry.path, until_nul(header::name(&h)))?;
             }
             if !npm {
@@ -1433,6 +1434,7 @@ impl Reader {
                 self.format = Format::Ustar;
             }
             if self.entry.path.is_empty() {
+                self.entry.path_is_utf8 = false;
                 let prefix = until_nul(header::prefix(&h));
                 assign(&mut self.entry.path, prefix)?;
                 if !prefix.is_empty() && prefix.last() != Some(&b'/') {
@@ -1443,6 +1445,7 @@ impl Reader {
         } else {
             self.format = Format::Old;
             if self.entry.path.is_empty() {
+                self.entry.path_is_utf8 = false;
                 assign(&mut self.entry.path, until_nul(header::name(&h)))?;
             }
         }
@@ -1505,6 +1508,7 @@ impl Reader {
             b'1' => {
                 self.entry.link_kind = LinkKind::Hard;
                 if self.entry.link.is_empty() {
+                    self.entry.link_is_utf8 = false;
                     assign(&mut self.entry.link, until_nul(header::linkname(&h)))?;
                 }
                 if self.entry.size > 0 {
@@ -1525,6 +1529,7 @@ impl Reader {
             b'2' => {
                 self.entry.link_kind = LinkKind::Symbolic;
                 if self.entry.link.is_empty() {
+                    self.entry.link_is_utf8 = false;
                     assign(&mut self.entry.link, until_nul(header::linkname(&h)))?;
                 }
                 no_body(&mut self.entry, S_IFLNK);

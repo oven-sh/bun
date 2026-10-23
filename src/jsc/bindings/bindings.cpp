@@ -174,7 +174,8 @@
 
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
+#include "GeneratedExpect.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
@@ -350,6 +351,7 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
+    using namespace Bun::Bindgen::Generated;
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
@@ -616,7 +618,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         // and it would result in a double negation
         flags = flags & ~FLAG_NOT;
 
-        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->wrapped(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
+        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->payload(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
         return passed ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
     }
 
@@ -2984,7 +2986,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (dynamicDowncast<WebCore::JSFetchHeaders>(cell))
             return static_cast<double>(uncheckedDowncast<WebCore::JSFetchHeaders>(cell)->wrapped().size());
 
-        if (auto* blob = dynamicDowncast<WebCore::JSBlob>(cell)) {
+        if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(cell)) {
             uint64_t size = Bun__Blob__getSizeForBindings(blob->wrapped());
             if (size == std::numeric_limits<uint64_t>::max())
                 return std::numeric_limits<double>::max();
@@ -4941,6 +4943,33 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
+// A mitigation, not an exact fix: zeroes a fixed amount of dead stack between the heap iteration and the collection in
+// JSC__VM__runGC. Zeroing dead stack cannot free anything live; the worst it can do is not help.
+//
+// What it is for: deleteAllUnlinkedCodeBlocks() stops the allocators to iterate the heap, and prologues under
+// MarkedBlock::Handle::stopAllocating() spill a register holding a free list's sentinel (the address of the first cell
+// allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
+// every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
+// Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
+// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
+//
+// The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
+// stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
+// few times that and nothing derives them from the collector's frames. If such a test fails again after the collector's
+// call path grows, measure again. The fix without a constant is to capture the stack before
+// deleteAllUnlinkedCodeBlocks() and have the collection use that capture as its conservative roots.
+static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
+{
+#if ASAN_ENABLED || ASSERT_ENABLED
+    constexpr size_t size = 16 * 1024;
+#else
+    constexpr size_t size = 2 * 1024;
+#endif
+    volatile char dead[size];
+    for (size_t i = 0; i < size; ++i)
+        dead[i] = 0;
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
@@ -4958,12 +4987,15 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+        // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
+        clearStackBelowCaller();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+        clearStackBelowCaller();
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 
@@ -6363,12 +6395,12 @@ extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* 
 
 extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+    return JSValue::encode(Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSExpect>(globalObject));
 }
 
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+    return JSValue::encode(Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSExpectStatic>(globalObject));
 }
 
 extern "C" EncodedJSValue JSFunction__createFromZig(
@@ -6555,6 +6587,11 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outSourceURL = Bun::toStringRef(sourceURL);
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
+}
+
+CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+{
+    Bun__CallFrame__getCallerSrcLoc(JSC::getVM(globalObject).topCallFrame, globalObject, outSourceURL, outLine, outColumn);
 }
 
 extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)

@@ -5,12 +5,8 @@ use crate::generated_bindgen::timer::js_Timeout as js;
 
 use super::Kind;
 
-// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
-// (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
-// `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
-// `impl_timer_object!` in `super` (timer/mod.rs).
 // `Timeout`, declared in `Timer.bind.ts`.
-super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
+super::impl_timer_object!(TimeoutObject);
 
 impl TimeoutObject {
     pub(crate) fn init(
@@ -24,7 +20,7 @@ impl TimeoutObject {
         Self::init_with(cx, id, kind, interval, callback, arguments)
     }
 
-    pub(crate) fn do_refresh(
+    pub(crate) fn refresh(
         this: &Self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,

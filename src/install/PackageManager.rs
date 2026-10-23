@@ -366,28 +366,6 @@ impl Default for ManifestFailure {
     }
 }
 
-/// An optional row that got no answer from the registry and took a package of bun.lock (`enqueue::keep_locked`); `bun update` has not checked that package.
-pub(crate) struct KeptLocked {
-    /// Both by their ids before `clean_lockfile`.
-    pub(crate) row: DependencyID,
-    pub(crate) package: PackageID,
-    /// The manifest request that failed. `None`: `--offline` sent none.
-    pub(crate) task: Option<Task::Id>,
-    /// Finds the package.json entry of the row after `clean_lockfile`: its workspace, as `PackageManager::workspace_name_hash` names it, and its key. `None`: a row of an installed package.
-    pub(crate) entry: Option<(Option<PackageNameHash>, PackageNameHash)>,
-}
-
-impl KeptLocked {
-    /// Whether one of `kept` is the entry `key` in the package.json of `workspace`.
-    pub(crate) fn has_entry(
-        kept: &[KeptLocked],
-        workspace: Option<PackageNameHash>,
-        key: PackageNameHash,
-    ) -> bool {
-        kept.iter().any(|kept| kept.entry == Some((workspace, key)))
-    }
-}
-
 /// How far along the messages of a `ManifestFailure` are in being reported.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FailureReport {
@@ -637,11 +615,6 @@ pub struct PackageManager {
     // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
-    pub(crate) kept_locked: Vec<KeptLocked>,
-    // bun update: the packages that a "was not checked for updates" warning names, by their ids before `clean_lockfile`.
-    pub(crate) warned_unchecked: Vec<PackageID>,
-    // The root and workspace rows as bun.lock has them, taken before the differ binds them anew.
-    pub(crate) direct_before: crate::update_transitive::DirectDependencies,
 
     // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
     // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
@@ -1753,9 +1726,6 @@ fn allocate_package_manager(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
-        wr!(kept_locked, Vec::new());
-        wr!(warned_unchecked, Vec::new());
-        wr!(direct_before, Default::default());
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());

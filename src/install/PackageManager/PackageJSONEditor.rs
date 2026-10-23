@@ -12,14 +12,12 @@ use crate::bun_fs::FileSystem;
 use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{Dependency, DependencyID, INVALID_PACKAGE_ID, Lockfile, resolution};
+use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::{Do, Enable};
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult};
-use super::{
-    CatalogUpdateInfo, KeptLocked, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest,
-};
+use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
 
@@ -328,7 +326,6 @@ pub(crate) fn edit_update_no_args(
 ) -> Result<bool, bun_alloc::AllocError> {
     edit_update_entries(
         &manager.lockfile,
-        &manager.kept_locked,
         &manager.ast_arena,
         &mut manager.updating_packages,
         manager.workspace_name_hash,
@@ -353,7 +350,6 @@ fn edit_update_aliases_of_requests(
     };
     edit_update_entries(
         &manager.lockfile,
-        &manager.kept_locked,
         &manager.ast_arena,
         &mut manager.updating_packages,
         manager.workspace_name_hash,
@@ -385,7 +381,6 @@ pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
 /// Split borrows, for callers holding a `&mut` to another `PackageManager` field.
 pub(crate) fn edit_update_entries(
     lockfile: &crate::Lockfile,
-    kept_locked: &[KeptLocked],
     arena: &bun_alloc::Arena,
     updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
     workspace_name_hash: Option<PackageNameHash>,
@@ -467,21 +462,17 @@ pub(crate) fn edit_update_entries(
                 continue;
             }
             entry.written_back = true;
-            let Some((workspace_dep, package_id)) = (workspace_deps.iter())
-                .zip(workspace_resolution_ids.iter().copied())
-                .find(|&(workspace_dep, package_id)| {
-                    package_id != INVALID_PACKAGE_ID
-                        && resolutions[package_id as usize].tag == resolution::Tag::Npm
+            let Some((workspace_dep, resolution)) = (workspace_deps.iter())
+                .zip(workspace_resolution_ids)
+                .filter(|&(_, &package_id)| package_id != INVALID_PACKAGE_ID)
+                .map(|(row, &package_id)| (row, &resolutions[package_id as usize]))
+                .find(|(workspace_dep, resolution)| {
+                    resolution.tag == resolution::Tag::Npm
                         && strings::eql_long(workspace_dep.name.slice(string_buf), key_str, true)
                 })
             else {
                 continue;
             };
-            let resolution = &resolutions[package_id as usize];
-            // The registry gave no answer for it: the entry stays as written.
-            if KeptLocked::has_entry(kept_locked, workspace_name_hash, workspace_dep.name_hash) {
-                continue;
-            }
 
             // an exact pin is not moved by a plain `bun update`
             if !update_to_latest
@@ -762,7 +753,6 @@ pub(crate) fn edit_catalogs_after_update(
     let index = CatalogInfoIndex::init(&infos)?;
     resolve_catalog_literals(
         &manager.lockfile,
-        &manager.kept_locked,
         &mut infos,
         &index,
         manager.options.do_.contains(Do::UPDATE_TO_LATEST),
@@ -837,7 +827,6 @@ impl CatalogInfoIndex {
 
 fn resolve_catalog_literals(
     lockfile: &Lockfile,
-    kept_locked: &[KeptLocked],
     infos: &mut [CatalogUpdateInfo],
     by_name: &CatalogInfoIndex,
     update_to_latest: bool,
@@ -850,12 +839,11 @@ fn resolve_catalog_literals(
         lockfile.buffers.dependencies.len(),
         lockfile.buffers.resolutions.len()
     );
-    for (row, (dep, &package_id)) in lockfile
+    for (dep, &package_id) in lockfile
         .buffers
         .dependencies
         .iter()
         .zip(lockfile.buffers.resolutions.iter())
-        .enumerate()
     {
         if dep.version.tag != dependency::Tag::Catalog || package_id == INVALID_PACKAGE_ID {
             continue;
@@ -871,13 +859,6 @@ fn resolve_catalog_literals(
 
         let resolution = &package_resolutions[package_id as usize];
         if resolution.tag != resolution::Tag::Npm {
-            continue;
-        }
-        // The registry gave no answer for it: its entry stays as written.
-        if !kept_locked.is_empty()
-            && let Some((_, workspace)) = lockfile.declaring_workspace(row as DependencyID)
-            && KeptLocked::has_entry(kept_locked, workspace, dep.name_hash)
-        {
             continue;
         }
 

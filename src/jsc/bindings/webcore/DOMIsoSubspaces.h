@@ -19,7 +19,6 @@ public:
     // Every member is an owned `IsoSubspace*`; one loop instead of ~300 inlined unique_ptr destructors.
     ~DOMIsoSubspaces();
     /*-- BUN --*/
-    IsoSubspace* m_subspaceForBunClassConstructor { nullptr };
     IsoSubspace* m_subspaceForFFIFunction { nullptr };
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };
@@ -75,7 +74,6 @@ public:
     IsoSubspace* m_subspaceForJSNodePerformanceHooksHistogram { nullptr };
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
-#include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 

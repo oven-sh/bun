@@ -150,6 +150,7 @@ If `bun lint` and ESLint 10 disagree about a rule, that's a bug. [Open an issue]
 - **One extra line on stderr** with the number of files and the time.
 - **In GitHub Actions, `::error` and `::warning` lines follow the `stylish` report** on stdout, so problems show up in the pull request diff. If a problem matcher such as the one from `actions/setup-node` already does that, you get each annotation twice. `-f json` and the other machine-readable formats don't have these lines.
 - **In a terminal, the `stylish` report shows control characters as text.** A file name, a message, or a rule name can contain a character that a terminal acts on, such as ESC. Bun prints `\x1b` in its place. Piped output and `-o` files have what ESLint prints.
+- **When `stylish` goes to a terminal, parsers and plugins run with `NO_COLOR=1` and `FORCE_COLOR=0`.** A library that checks these variables returns plain text, such as the code frame of a Babel syntax error. In the report, a color code that a plugin writes without a check shows as text. Text that a plugin prints itself, and the error of a rule that throws, have no library colors either.
 
 ---
 

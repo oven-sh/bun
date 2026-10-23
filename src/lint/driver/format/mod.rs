@@ -104,7 +104,7 @@ impl Format {
         )
     }
 
-    /// True for `stylish` in a terminal: control characters print as text there ([`escaped`]).
+    /// True for `stylish` in a terminal: control characters print as text ([`escaped`]), and realm code gets no colors.
     pub(crate) fn escapes(self, to_terminal: bool) -> bool {
         to_terminal && matches!(self, Format::Stylish | Format::OxlintStylish)
     }

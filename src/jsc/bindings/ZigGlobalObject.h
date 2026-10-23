@@ -516,7 +516,6 @@ public:
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
-    V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
     /* The innermost open handle scope (Node-API or V8), where new napi_values and V8 handles are */         \
     /* created. You must not pass any napi_values back to a NAPI function without putting them in the */     \

@@ -95,7 +95,7 @@ interface FsBinding
   realpathNativeSync: NodeFS["realpathSync"]["native"];
   rmdir(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): Promise<void>;
   rmdirSync(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): void;
-  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $ZigGeneratedClasses.FSWatcher;
+  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $Bindgen.FSWatcher;
   watchFile(
     path: string,
     options: import("node:fs").WatchFileOptions | undefined,

@@ -16,14 +16,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
-/// `generate-classes.ts` resolves the native backing struct to
-/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
-/// `RedisClient::method(…)` thunks against it. The actual host type is
-/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
-/// spelling here so the generated `pub use` and prototype thunks resolve.
-pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
-
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state

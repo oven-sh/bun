@@ -266,7 +266,7 @@ function appendTlsKeylog(path: string, line: Buffer) {
 }
 let BlockList, SocketAddress;
 function lazyBlockList() {
-  return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
+  return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList"));
 }
 const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
@@ -4641,7 +4641,7 @@ const netExports = {
     Object.defineProperty(netExports, "BlockList", { value, writable: true, enumerable: true, configurable: true });
   },
   get SocketAddress() {
-    return (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress"));
+    return (SocketAddress ??= $bindgen("SocketAddress.bind.ts", "SocketAddress"));
   },
   set SocketAddress(value) {
     Object.defineProperty(netExports, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });

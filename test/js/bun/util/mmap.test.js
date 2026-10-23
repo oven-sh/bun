@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
-import { statSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -117,6 +117,52 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
       at99: 0,
       at100: 0xab,
       at101: 0xcd,
+    });
+  });
+
+  describe("mmap of a file the process cannot write", () => {
+    // A running executable cannot be opened for writing (ETXTBSY on Linux),
+    // even by root. A private mapping only needs a readable file.
+    it("shared: false maps a running executable", () => {
+      const map = Bun.mmap(process.execPath, { shared: false, size: 4096 });
+      expect(map.length).toBe(4096);
+      expect(Buffer.from(map).equals(readFileSync(process.execPath).subarray(0, 4096))).toBe(true);
+    });
+
+    // Root bypasses the mode bits, so these two only prove anything as a user.
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+    it.skipIf(isRoot)("shared: false maps a 0444 file and keeps writes private", () => {
+      using dir = tempDir("mmap-readonly", {});
+      const file = join(String(dir), "readonly.bin");
+      writeFileSync(file, new Uint8Array([1, 2, 3, 4]));
+      chmodSync(file, 0o444);
+
+      const map = Bun.mmap(file, { shared: false });
+      expect(Array.from(map)).toEqual([1, 2, 3, 4]);
+      map[0] = 9;
+      expect(map[0]).toBe(9);
+      expect(Array.from(readFileSync(file))).toEqual([1, 2, 3, 4]);
+    });
+
+    it.skipIf(isRoot)("shared: true still needs a writable file", () => {
+      using dir = tempDir("mmap-readonly-shared", {});
+      const file = join(String(dir), "readonly.bin");
+      writeFileSync(file, new Uint8Array([1, 2, 3, 4]));
+      chmodSync(file, 0o444);
+
+      for (const options of [undefined, { shared: true }]) {
+        expect(() => Bun.mmap(file, options)).toThrow(expect.objectContaining({ code: "EACCES", syscall: "open" }));
+      }
+    });
+
+    it("a directory throws EISDIR from open in both modes", () => {
+      using dir = tempDir("mmap-dir", {});
+      for (const options of [{ shared: false }, { shared: true }]) {
+        expect(() => Bun.mmap(String(dir), options)).toThrow(
+          expect.objectContaining({ code: "EISDIR", syscall: "open", path: String(dir) }),
+        );
+      }
     });
   });
 

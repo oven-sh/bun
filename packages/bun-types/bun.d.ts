@@ -5370,6 +5370,11 @@ declare module "bun" {
     /**
      * Whether other processes see writes immediately.
      * `true` maps with MAP_SHARED; `false` maps with MAP_PRIVATE.
+     *
+     * `true` opens the file read-write, so the file must be writable.
+     * `false` opens the file read-only: writes to the array stay private
+     * to this process (copy-on-write) and never reach the file, so a
+     * read-only file or a file on a read-only filesystem can be mapped.
      * @default true
      */
     shared?: boolean;
@@ -5386,7 +5391,8 @@ declare module "bun" {
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
-   * - Writing to the array writes to the file.
+   * - Writing to the array writes to the file (with `shared: false`, writes
+   *   stay in this process and the file is opened read-only).
    * - Reading from the array reads from the file.
    *
    * This uses the [`mmap()`](https://man7.org/linux/man-pages/man2/mmap.2.html) syscall.

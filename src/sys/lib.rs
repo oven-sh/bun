@@ -3433,7 +3433,15 @@ mod posix_impl {
         Ok(())
     }
 
-    /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
+    /// `bun.sys.mmapFile` — open `path`, fstat for size, mmap [offset, offset+len)
+    /// with `PROT_READ | PROT_WRITE`.
+    ///
+    /// A `MAP_PRIVATE` mapping never writes back to the file and the kernel
+    /// accepts `PROT_WRITE` on an `O_RDONLY` fd for it, so the file is opened
+    /// read-only: a 0444 file, a read-only mount or a running executable maps.
+    /// `MAP_SHARED` writes through and needs `O_RDWR`. `MAP_SHARED_VALIDATE`
+    /// is `MAP_SHARED | MAP_PRIVATE`, hence the mask.
+    ///
     /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
     /// `delta = offset % page_size` is the byte offset into `map` at which the
     /// requested `offset` begins. Caller is responsible for `munmap(map)`.
@@ -3443,12 +3451,27 @@ mod posix_impl {
         wanted_size: Option<usize>,
         offset: usize,
     ) -> Maybe<(&'static mut [u8], usize)> {
-        let fd = open(path, O::RDWR, 0)?;
+        let private = flags & (libc::MAP_SHARED | libc::MAP_PRIVATE) == libc::MAP_PRIVATE;
+        // O_NONBLOCK: a read-only open of a FIFO blocks until a writer opens
+        // it, while O_RDWR does not. Keep the open immediate in both modes.
+        let open_flags = if private {
+            O::RDONLY | O::NONBLOCK
+        } else {
+            O::RDWR
+        };
+        let fd = open(path, open_flags, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
 
         let stat_size = {
             let result = fstat(fd)?;
+            // open(O_RDWR) fails with EISDIR on a directory; the read-only
+            // open succeeds and mmap would fail with ENODEV. Keep EISDIR.
+            if kind_from_mode(result.st_mode as Mode) == FileKind::Directory {
+                return Err(
+                    Error::from_code_int(libc::EISDIR, Tag::open).with_path(path.as_bytes())
+                );
+            }
             usize::try_from(result.st_size).unwrap_or(0)
         };
 

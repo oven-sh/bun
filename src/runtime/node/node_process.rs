@@ -399,7 +399,7 @@ mod _impl {
         } else {
             b"/[stdin]"
         };
-        if let Some(main) = vm.main()
+        if let Some(main) = vm.main_for_argv()
             && !strings::ends_with(main, EVAL_SUFFIX)
             && !strings::ends_with(main, STDIN_SUFFIX)
         {

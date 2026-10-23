@@ -1629,9 +1629,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_and_append_stmt(list, stmt)?;
             }
 
-            // How many statements of `visited` stay ahead of `before`.
-            let mut prologue_len = 0;
-
             // Transform block-level function declarations into variable declarations
             if before.len() > 0 {
                 let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
@@ -1755,9 +1752,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 before.extend_from_slice(&non_fn_stmts);
 
-                // A directive only counts while it comes first, so these statements go after
-                // the prologue. The dead-code pass below keeps directives and comments.
-                prologue_len = leading_directive_count(&visited);
+                // A directive only counts while it comes first, so the prologue of
+                // `visited` moves ahead of these statements.
+                let prologue_len = leading_directive_count(&visited);
+                if prologue_len > 0 {
+                    let mut with_prologue =
+                        ListManaged::with_capacity_in(prologue_len + before.len(), p.arena);
+                    with_prologue.extend_from_slice(&visited[..prologue_len]);
+                    with_prologue.extend_from_slice(&before);
+                    before = with_prologue;
+                    visited.copy_within(prologue_len.., 0);
+                    let rest = visited.len() - prologue_len;
+                    visited.truncate(rest);
+                }
             }
 
             let mut visited_count = visited.len();
@@ -1779,9 +1786,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // filler value.
             stmts.clear();
             stmts.reserve(visited_count + before.len() + after.len());
-            stmts.extend_from_slice(&visited[..prologue_len]);
             stmts.extend_from_slice(&before);
-            stmts.extend_from_slice(&visited[prologue_len..visited_count]);
+            stmts.extend_from_slice(&visited[..visited_count]);
             stmts.extend_from_slice(&after);
 
             // manual restore for the block-level `defer`s

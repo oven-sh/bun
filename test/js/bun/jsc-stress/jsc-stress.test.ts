@@ -149,6 +149,7 @@ const wasmFixtures = [
   "jspi-resuspension.js",
   "jspi-exceptions-from-wasm.js",
   "jspi-exceptions-from-js.js",
+  "jspi-tail-call-restore-frame.js",
 ];
 
 const ffiFixturesDir = path.join(fixturesDir, "ffi");

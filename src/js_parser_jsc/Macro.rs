@@ -489,7 +489,11 @@ impl Macro {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
             unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                (*vm).unhandled_rejection_keep_alive(
+                    &*(*vm).global,
+                    result,
+                    (*loaded_result).to_js(),
+                );
             }
             return Err(crate::Error::MacroLoadError);
         }
@@ -699,8 +703,9 @@ impl<'a> Run<'a> {
         match tag {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                let _ = unsafe {
+                    (*self.macro_.vm()).uncaught_exception_keep_alive(self.global, value)
+                };
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -733,7 +738,7 @@ impl<'a> Run<'a> {
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                         let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
+                            (*self.macro_.vm()).uncaught_exception_keep_alive(self.global, value)
                         };
                         return Err(MacroError::MacroFailed);
                     }
@@ -929,7 +934,7 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut().unhandled_rejection(
+                    vm.as_mut().unhandled_rejection_keep_alive(
                         self.global,
                         promise_result,
                         promise.as_value(),

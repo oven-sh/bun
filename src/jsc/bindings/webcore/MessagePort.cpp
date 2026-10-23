@@ -198,7 +198,7 @@ void MessagePort::flushQueuedMessagesBeforeClose()
         if (!message)
             break;
         dispatchOneMessage(*context, WTF::move(*message));
-        if (globalObject->drainMicrotasks())
+        if (globalObject->drainMicrotasksAfterCallback() == Zig::Checkpoint::Stopped)
             break; // termination pending
     }
 }

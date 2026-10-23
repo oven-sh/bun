@@ -45,6 +45,7 @@ void RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer
         rejectionOwners.append(entry.rejectionOwner.get());
     }
     m_entries.clear();
+    m_hasEntries = false;
 }
 
 template<typename Visitor>

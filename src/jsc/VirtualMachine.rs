@@ -353,6 +353,10 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// Ends the process once an error that nothing handled is printed, as node's
+    /// `TriggerUncaughtException` does. `bun run` installs it, except under `--watch` and `--hot`.
+    /// A VM without it counts the error and returns to the caller.
+    pub unhandled_error_exit: Option<fn(&mut VirtualMachine) -> !>,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
     hot_run_failed: bool,
     /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
@@ -658,10 +662,20 @@ pub enum GCLevel {
     Aggressive = 2,
 }
 
+/// What a report does when nothing handles the error.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Unhandled {
+    /// `unhandled_error_exit` ends the run, if the host installed it.
+    EndsTheRun,
+    /// Count the error, print it and return, whatever the host installed.
+    KeepAlive,
+}
+
 pub struct UnhandledRejectionScope {
     pub ctx: Option<*mut c_void>,
     pub(crate) on_unhandled_rejection: OnUnhandledRejection,
     pub(crate) count: usize,
+    unhandled_error_exit: Option<fn(&mut VirtualMachine) -> !>,
 }
 
 impl UnhandledRejectionScope {
@@ -669,6 +683,7 @@ impl UnhandledRejectionScope {
         vm.on_unhandled_rejection = self.on_unhandled_rejection;
         vm.on_unhandled_rejection_ctx = self.ctx;
         vm.unhandled_error_counter = self.count;
+        vm.unhandled_error_exit = self.unhandled_error_exit;
     }
 }
 
@@ -1852,11 +1867,14 @@ impl VirtualMachine {
         }
     }
 
-    pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
+    /// Saves what [`UnhandledRejectionScope::apply`] restores. The caller installs its own
+    /// `on_unhandled_rejection` for the window, so a rejection it captures must not end the run.
+    pub fn unhandled_rejection_scope(&mut self) -> UnhandledRejectionScope {
         UnhandledRejectionScope {
             on_unhandled_rejection: self.on_unhandled_rejection,
             ctx: self.on_unhandled_rejection_ctx,
             count: self.unhandled_error_counter,
+            unhandled_error_exit: self.unhandled_error_exit.take(),
         }
     }
 
@@ -2147,6 +2165,26 @@ impl VirtualMachine {
         err: JSValue,
         is_rejection: bool,
     ) -> bool {
+        self.uncaught_exception_impl(global_object, err, is_rejection, Unhandled::EndsTheRun)
+    }
+
+    /// [`uncaught_exception`](Self::uncaught_exception) for a caller that goes on when nothing
+    /// handles the error: `reportError()`, a macro, the `bun:sqlite` update hook.
+    pub fn uncaught_exception_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+    ) -> bool {
+        self.uncaught_exception_impl(global_object, err, false, Unhandled::KeepAlive)
+    }
+
+    fn uncaught_exception_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        is_rejection: bool,
+        unhandled: Unhandled,
+    ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
@@ -2214,6 +2252,14 @@ impl VirtualMachine {
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
+            if unhandled == Unhandled::EndsTheRun
+                && let Some(exit) = self.unhandled_error_exit
+            {
+                // `exit` emits 'exit'. A listener that throws re-enters here: as above, without
+                // the recursion guard.
+                self.is_handling_uncaught_exception = false;
+                exit(self);
+            }
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
@@ -4477,6 +4523,18 @@ impl VirtualMachine {
         self.unhandled_rejection_owned(global_object, reason, promise, owner);
     }
 
+    /// [`unhandled_rejection`](Self::unhandled_rejection) for a caller that goes on when nothing
+    /// handles the rejection: a macro, which hands the error to its caller as a build error.
+    pub fn unhandled_rejection_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+    ) {
+        let owner = Bun__ModuleGraph__rejecting(global_object);
+        self.unhandled_rejection_impl(global_object, reason, promise, owner, Unhandled::KeepAlive);
+    }
+
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
     /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(
@@ -4485,6 +4543,17 @@ impl VirtualMachine {
         reason: JSValue,
         promise: JSValue,
         owner: JSValue,
+    ) {
+        self.unhandled_rejection_impl(global_object, reason, promise, owner, Unhandled::EndsTheRun);
+    }
+
+    fn unhandled_rejection_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+        owner: JSValue,
+        unhandled: Unhandled,
     ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
@@ -4558,7 +4627,7 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception(global_object, wrapped, true);
+                let _ = self.uncaught_exception_impl(global_object, wrapped, true, unhandled);
                 let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
@@ -4572,7 +4641,7 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception(global_object, wrapped, true) {
+                if self.uncaught_exception_impl(global_object, wrapped, true, unhandled) {
                     drain(self);
                     return;
                 }
@@ -4586,6 +4655,11 @@ impl VirtualMachine {
         }
         self.unhandled_error_counter += 1;
         (self.on_unhandled_rejection)(self, global_object, reason);
+        if unhandled == Unhandled::EndsTheRun
+            && let Some(exit) = self.unhandled_error_exit
+        {
+            exit(self);
+        }
     }
 
     /// The promise of the latest load of the entry point. `--hot` looks at it on every tick,

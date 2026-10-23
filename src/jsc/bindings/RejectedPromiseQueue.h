@@ -24,7 +24,12 @@ public:
     // Right before a drained promise is reported as unhandled.
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
-    bool isEmpty() const { return m_entries.isEmpty(); }
+    // A byte of its own, not m_entries.size(): every microtask checkpoint returns it (GlobalObject::drainMicrotasks()).
+    bool hasEntries() const
+    {
+        ASSERT(m_hasEntries == !m_entries.isEmpty());
+        return m_hasEntries;
+    }
 
 private:
     struct Entry {
@@ -39,6 +44,8 @@ private:
     WTF::Vector<Entry> m_entries;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
+    // !m_entries.isEmpty(). append(), didHandle() and drainTo() keep it.
+    bool m_hasEntries { false };
 };
 
 // Inlined into promiseRejectionTracker, their one caller.
@@ -50,6 +57,7 @@ ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner,
     m_entries.unsafeAppendWithoutCapacityCheck(Entry {});
     m_entries.last().promise.set(vm, owner, promise);
     m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSC::JSValue(rejectionOwner) : JSC::jsNull());
+    m_hasEntries = true;
 }
 
 ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPromise* promise)
@@ -59,6 +67,7 @@ ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPr
         m_entries.removeLast();
         while (!m_entries.isEmpty() && isHandled(m_entries.last()))
             m_entries.removeLast();
+        m_hasEntries = !m_entries.isEmpty();
         return false;
     }
     return m_reported && wasReported(promise);

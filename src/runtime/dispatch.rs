@@ -805,7 +805,7 @@ pub(crate) fn tick_queue_with_count(
             // uncaught, or stand the loop down if it is the VM's termination.
             Err(err) => report_error_or_terminate(global, err)?,
         }
-        el.drain_microtasks_with_global(global, global_vm)?;
+        el.drain_microtasks_after_callback_with_global(global, global_vm)?;
     }
     el.tasks.reset_head_if_empty();
     Ok(())

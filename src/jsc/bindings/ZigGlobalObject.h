@@ -101,6 +101,18 @@ namespace Zig {
 
 class JSCStackTrace;
 
+// What a microtask checkpoint says to its caller.
+enum class Checkpoint : uint8_t {
+    Drained = 0,
+    // Drained, and a promise that the checkpoint leaves rejected has no handler. The frame that an event
+    // loop callback returns to reports it before the next callback: handleRejectedPromisesAfterCallback().
+    DrainedWithRejections = 1,
+    // The VM is terminating.
+    Stopped = 2,
+    // JSC__JSGlobalObject__drainMicrotasks() only: a non-termination exception is pending, so no checkpoint ran.
+    PendingException = 3,
+};
+
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public Bun::GlobalScope {
@@ -340,9 +352,18 @@ public:
     JSC::JSObject* processEnvObject();
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    uint8_t drainMicrotasks();
+    Checkpoint drainMicrotasks();
+    // drainMicrotasks() for the frame that an event loop callback returns to.
+    ALWAYS_INLINE Checkpoint drainMicrotasksAfterCallback()
+    {
+        auto result = drainMicrotasks();
+        if (result == Checkpoint::DrainedWithRejections) [[unlikely]]
+            return handleRejectedPromisesAfterCallback();
+        return result;
+    }
 
     void handleRejectedPromises();
+    Checkpoint handleRejectedPromisesAfterCallback();
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const

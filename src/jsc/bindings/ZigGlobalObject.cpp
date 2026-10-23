@@ -3216,7 +3216,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
-uint8_t GlobalObject::drainMicrotasks()
+Checkpoint GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3225,13 +3225,13 @@ uint8_t GlobalObject::drainMicrotasks()
     // landing frame may already have taken it), nothing queued may execute any more.
     if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         Bun__VM__takeTerminationOutsideScript(this);
-        return 1;
+        return Checkpoint::Stopped;
     }
 
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
             Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
+            return Checkpoint::Stopped;
         }
 
 #if ASSERT_ENABLED
@@ -3255,18 +3255,24 @@ uint8_t GlobalObject::drainMicrotasks()
     if (!vm.entryScope)
         m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
+    // One byte load: the queue keeps the flag, and true is DrainedWithRejections.
+    static_assert(static_cast<uint8_t>(Checkpoint::Drained) == 0 && static_cast<uint8_t>(Checkpoint::DrainedWithRejections) == 1);
+    auto drained = [&]() -> Checkpoint {
+        return static_cast<Checkpoint>(m_aboutToBeNotifiedRejectedPromises.hasEntries());
+    };
+
     // The result of the checkpoint when an exception ends it.
-    auto endedByException = [&]() -> std::optional<uint8_t> {
+    auto endedByException = [&]() -> std::optional<Checkpoint> {
         auto* exception = scope.exception();
         if (!exception)
             return std::nullopt;
         if (vm.isTerminationException(exception)) {
             Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
+            return Checkpoint::Stopped;
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
-        return 0;
+        return drained();
     };
 
     // Scheduled ticks run first, and processTicksAndRejections runs the microtasks after them.
@@ -3289,25 +3295,30 @@ uint8_t GlobalObject::drainMicrotasks()
             return *result;
     }
 
-    return 0;
+    return drained();
 }
 
 // The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the
-// drains between queued items): 0 drained, 1 the VM is terminating.
+// drains between queued items). `drain_result` in event_loop.rs has the codes.
 //
 // One case is answered here instead: a Rust frame can be leaving through
 // `exit()` with a (non-termination) exception pending that the dispatcher above
 // it will take and report. For drainMicrotasks() an exception pending on entry
 // is a caller bug (its C++ callers are top-level loops); for this caller it only
-// means "not a checkpoint yet" - so say so (2) without draining or reporting,
+// means "not a checkpoint yet" - so say so without draining or reporting,
 // and the fold checkpoints once it has taken the exception.
 extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto* pending = vm.exceptionForInspection();
     if (pending && !vm.isTerminationException(pending)) [[unlikely]]
-        return 2;
-    return globalObject->drainMicrotasks();
+        return static_cast<uint8_t>(Checkpoint::PendingException);
+    return static_cast<uint8_t>(globalObject->drainMicrotasks());
+}
+
+extern "C" uint8_t JSC__JSGlobalObject__handleRejectedPromisesAfterCallback(Zig::GlobalObject* globalObject)
+{
+    return static_cast<uint8_t>(globalObject->handleRejectedPromisesAfterCallback());
 }
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
@@ -3488,7 +3499,7 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 
 void GlobalObject::handleRejectedPromises()
 {
-    if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
+    if (!m_aboutToBeNotifiedRejectedPromises.hasEntries()) [[likely]]
         return;
 
     JSC::VM& virtual_machine = vm();
@@ -3518,7 +3529,25 @@ void GlobalObject::handleRejectedPromises()
         }
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.
-    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+    } while (m_aboutToBeNotifiedRejectedPromises.hasEntries());
+}
+
+// For the frame that an event loop callback returns to, when its checkpoint says DrainedWithRejections.
+// Node does this in processTicksAndRejections(): report, run what the listeners queued, and repeat
+// until nothing is left. The next callback runs after that.
+Checkpoint GlobalObject::handleRejectedPromisesAfterCallback()
+{
+    // Script is on the stack: native code reached a checkpoint in the middle of a JS turn, and that
+    // script can still attach a handler. `bun test` reports once per loop turn, to the running test.
+    if (vm().entryScope || isBunTest)
+        return Checkpoint::DrainedWithRejections;
+
+    Checkpoint result;
+    do {
+        handleRejectedPromises();
+        result = drainMicrotasks();
+    } while (result == Checkpoint::DrainedWithRejections);
+    return result;
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

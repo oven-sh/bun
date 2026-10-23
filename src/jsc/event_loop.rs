@@ -144,17 +144,22 @@ impl Default for EventLoop {
     }
 }
 
+/// `Zig::Checkpoint` (ZigGlobalObject.h).
 mod drain_result {
     pub(super) const SUCCESS: u8 = 0;
-    pub(super) const STOPPED: u8 = 1;
+    /// Drained, and a promise that the checkpoint leaves rejected has no handler.
+    pub(super) const REJECTIONS: u8 = 1;
+    pub(super) const STOPPED: u8 = 2;
     /// A (non-termination) exception is pending: no checkpoint ran.
-    pub(super) const PENDING_EXCEPTION: u8 = 2;
+    pub(super) const PENDING_EXCEPTION: u8 = 3;
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn JSC__JSGlobalObject__handleRejectedPromisesAfterCallback(global: &JSGlobalObject)
+    -> u8;
 }
 
 impl JSGlobalObject {
@@ -166,7 +171,9 @@ impl JSGlobalObject {
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
         match JSC__JSGlobalObject__drainMicrotasks(self) {
-            drain_result::SUCCESS | drain_result::PENDING_EXCEPTION => Ok(()),
+            drain_result::SUCCESS | drain_result::REJECTIONS | drain_result::PENDING_EXCEPTION => {
+                Ok(())
+            }
             drain_result::STOPPED => Err(Stopped),
             _ => unreachable!(),
         }
@@ -320,7 +327,7 @@ impl EventLoop {
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
         if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
-            let _ = self.drain_microtasks();
+            let _ = self.drain_microtasks_after_callback();
         }
 
         self.entered_event_loop_count -= 1;
@@ -390,7 +397,7 @@ impl EventLoop {
 
         let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
         let result = if allow_drain_microtask && count == 1 && !inside_deferred {
-            self.drain_microtasks()
+            self.drain_microtasks_after_callback()
         } else {
             Ok(())
         };
@@ -407,6 +414,31 @@ impl EventLoop {
         &mut self,
         global_object: &JSGlobalObject,
         jsc_vm: &jsc::VM,
+    ) -> Result<(), Stopped> {
+        self.checkpoint(global_object, jsc_vm, false)
+    }
+
+    /// The checkpoint that ends a callback the event loop dispatched, with no script left above
+    /// it: a timer, an immediate, a queued task, an `enter()`/`exit()` scope. What the callback
+    /// left rejected and unhandled is reported here, before the next callback runs.
+    ///
+    /// A dispatcher that drains and then reads the promise its handler returned uses
+    /// [`drain_microtasks_with_global`](Self::drain_microtasks_with_global): that promise is
+    /// not unhandled yet.
+    pub fn drain_microtasks_after_callback_with_global(
+        &mut self,
+        global_object: &JSGlobalObject,
+        jsc_vm: &jsc::VM,
+    ) -> Result<(), Stopped> {
+        self.checkpoint(global_object, jsc_vm, true)
+    }
+
+    #[inline(always)]
+    fn checkpoint(
+        &mut self,
+        global_object: &JSGlobalObject,
+        jsc_vm: &jsc::VM,
+        after_callback: bool,
     ) -> Result<(), Stopped> {
         // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
         // load across the FFI calls below (`release_weak_refs`, `JSC__JSGlobalObject__drainMicrotasks`,
@@ -425,15 +457,18 @@ impl EventLoop {
         jsc::mark_binding();
         jsc_vm.release_weak_refs();
 
-        match JSC__JSGlobalObject__drainMicrotasks(global_object) {
-            drain_result::SUCCESS => {}
-            drain_result::STOPPED => return Err(Stopped),
-            // The exception is on its way to a fold, which drains after taking
-            // it; the deferred tasks wait for that checkpoint too.
-            drain_result::PENDING_EXCEPTION => return Ok(()),
-            _ => unreachable!(),
+        let drained = JSC__JSGlobalObject__drainMicrotasks(global_object);
+        if drained != drain_result::SUCCESS {
+            return self.checkpoint_not_clean(global_object, vm, drained, after_callback);
         }
 
+        self.run_deferred_tasks(vm);
+        Ok(())
+    }
+
+    /// What every checkpoint that drained ends with.
+    #[inline(always)]
+    fn run_deferred_tasks(&mut self, vm: &VirtualMachine) {
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         vm.is_inside_deferred_task_queue.set(true);
@@ -446,8 +481,33 @@ impl EventLoop {
         if vm.event_loop_handle.is_some() {
             vm.uws_loop_mut().drain_quic_if_necessary();
         }
+    }
 
-        Ok(())
+    /// The checkpoint did not answer `SUCCESS`. Out of line, so that the answer every other
+    /// checkpoint gets costs it one compare.
+    #[cold]
+    #[inline(never)]
+    fn checkpoint_not_clean(
+        &mut self,
+        global_object: &JSGlobalObject,
+        vm: &VirtualMachine,
+        mut drained: u8,
+        after_callback: bool,
+    ) -> Result<(), Stopped> {
+        if drained == drain_result::REJECTIONS && after_callback {
+            drained = JSC__JSGlobalObject__handleRejectedPromisesAfterCallback(global_object);
+        }
+        match drained {
+            drain_result::SUCCESS | drain_result::REJECTIONS => {
+                self.run_deferred_tasks(vm);
+                Ok(())
+            }
+            drain_result::STOPPED => Err(Stopped),
+            // The exception is on its way to a fold, which drains after taking
+            // it; the deferred tasks wait for that checkpoint too.
+            drain_result::PENDING_EXCEPTION => Ok(()),
+            _ => unreachable!(),
+        }
     }
 
     #[inline(always)]
@@ -460,11 +520,20 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
+    /// [`drain_microtasks`](Self::drain_microtasks) as
+    /// [`drain_microtasks_after_callback_with_global`](Self::drain_microtasks_after_callback_with_global).
+    #[inline(always)]
+    fn drain_microtasks_after_callback(&mut self) -> Result<(), Stopped> {
+        let global = self.global_ref();
+        let jsc_vm = self.vm_ref().jsc_vm();
+        self.drain_microtasks_after_callback_with_global(global, jsc_vm)
+    }
+
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
         if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
         {
-            return self.drain_microtasks();
+            return self.drain_microtasks_after_callback();
         }
         Ok(())
     }
@@ -1032,13 +1101,13 @@ impl EventLoop {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
         let this: *mut Self = core::hint::black_box(this);
 
-        // make sure microtasks are drained if the last task had an exception
+        // A task that threw skipped its own checkpoint: it runs here, after the rest of the batch.
         if exception_thrown {
             // SAFETY: as above.
             let _ = unsafe { (*this).maybe_drain_microtasks() };

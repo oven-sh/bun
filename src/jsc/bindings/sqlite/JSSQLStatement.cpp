@@ -1821,7 +1821,7 @@ static void callUpdateHook(void* cell, int operation, const char* schema, const 
     // SQLite goes on with the statement whatever happens here.
     if (auto* exception = scope.exception(); exception && !vm.hasPendingTerminationException()) [[unlikely]] {
         scope.clearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        Bun__reportError(globalObject, JSValue::encode(exception));
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

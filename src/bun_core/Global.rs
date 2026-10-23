@@ -713,9 +713,12 @@ pub fn exit(code: u32) -> ! {
         // kills it. No args, no preconditions: `safe fn`.
         unsafe extern "C" {
             safe fn Bun__lockThreadSuspensionForExit();
+            safe fn bsd_shutdown_owned_sockets();
         }
         Bun__onExit();
         Bun__lockThreadSuspensionForExit();
+        // A POSIX kernel ends the connections an exiting process left open. Winsock resets them.
+        bsd_shutdown_owned_sockets();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }

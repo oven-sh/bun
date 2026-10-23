@@ -22,6 +22,7 @@ const server = Bun.serve({
 
 let opened = 0;
 let settled = 0;
+let reaped = 0;
 const held = new Set<net.Socket>();
 const socks: net.Socket[] = [];
 for (let i = 0; i < N; i++) {
@@ -31,7 +32,7 @@ for (let i = 0; i < N; i++) {
   });
   s.on("error", () => {});
   s.on("close", () => {
-    held.delete(s);
+    if (held.delete(s)) reaped++;
     settled++;
   });
   socks.push(s);
@@ -39,14 +40,15 @@ for (let i = 0; i < N; i++) {
 
 // The idle timeout is 10s, which is due at the third or fourth sweep after the accept, and
 // nothing reports the accept: on Linux the kernel holds the burst back for about a
-// second. So this runs the sweep by hand until the first connection is closed. A
-// parked connection's timeout is held back for 30 sweeps, so a server that has
-// not reaped the rest a few sweeps later has parked them.
+// second. So this runs the sweep by hand until the first open connection is closed
+// (one that a full accept backlog turned away doesn't count). A parked connection's
+// timeout is held back for 30 sweeps, so a server that has not reaped the rest a few
+// sweeps later has parked them.
 const deadline = performance.now() + DEADLINE_MS;
 for (let sweepsSinceFirstClose = 0; settled < N && sweepsSinceFirstClose < 8 && performance.now() < deadline; ) {
   await Bun.sleep(20);
   sweepSocketTimers(1);
-  if (settled > 0) sweepsSinceFirstClose++;
+  if (reaped > 0) sweepsSinceFirstClose++;
 }
 
 console.log(JSON.stringify({ opened, held: held.size }));

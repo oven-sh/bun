@@ -7400,6 +7400,66 @@ describe.concurrent("end(data) larger than the send buffer", () => {
     );
   });
 
+  // An ended socket takes no more writes. Windows queues no tail.
+  describe.skipIf(isWindows).each(["tcp", "unix", "tls"] as const)("%s", transport => {
+    it.each(["nothing", "flush", "shutdown", "close"] as const)(
+      "write() in data() is refused after end(data) left a tail and %s followed",
+      async second => {
+        using dir = tempDir("write-after-end", {});
+        const writes: number[] = [];
+        let received = Buffer.alloc(0);
+        const opened = Promise.withResolvers<Socket>();
+        const peerOpened = Promise.withResolvers<Socket>();
+        const readOrClosed = Promise.withResolvers<void>();
+        const peerClosed = Promise.withResolvers<void>();
+        const ready = transport === "tls" ? "handshake" : "open";
+        const unix = join(String(dir), "socket");
+        using listener = Bun.listen({
+          ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+          tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+          socket: {
+            [ready]: (socket: Socket) => opened.resolve(socket),
+            data(socket) {
+              writes.push(socket.write("LATE"));
+              readOrClosed.resolve();
+            },
+            close: () => readOrClosed.resolve(),
+          },
+        });
+        await Bun.connect({
+          ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: listener.port }),
+          tls: transport === "tls" ? { ca: tls.cert } : undefined,
+          socket: {
+            [ready](socket: Socket) {
+              socket.pause();
+              peerOpened.resolve(socket);
+            },
+            data: (_, chunk) => void (received = Buffer.concat([received, chunk])),
+            error() {},
+            close: () => peerClosed.resolve(),
+          },
+        });
+        const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+        try {
+          // More than the kernel takes for a peer that doesn't read.
+          const size = 8 << 20;
+          expect(socket.end(Buffer.alloc(size, "a"))).toBe(size);
+          if (second !== "nothing") socket[second]();
+          peer.write("x");
+          await readOrClosed.promise;
+          peer.resume();
+          await peerClosed.promise;
+          // A TCP or unix socket closes inside close(), so it reads nothing more.
+          expect(writes).toEqual(second === "close" && transport !== "tls" ? [] : [-1]);
+          expect(received.equals(Buffer.alloc(received.length, "a"))).toBe(true);
+        } finally {
+          socket.terminate();
+          peer.terminate();
+        }
+      },
+    );
+  });
+
   // In its own process: an uncaught error sets the exit code.
   it.skipIf(isWindows)(
     "closes without an uncaught error when the peer disconnects before the tail is sent",

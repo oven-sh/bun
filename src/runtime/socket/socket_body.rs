@@ -943,7 +943,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.fail_write_of_stopped_reader();
     }
 
-    /// The transport stays open for a reader. A socket that doesn't read would wait for ever, maybe for this very write, so it closes a turn later.
+    /// The transport stays open for a reader. A socket that doesn't read closes a turn later.
     fn fail_write_of_stopped_reader(&self) {
         if self.lost_write_of_stopped_reader()
             && let Some(handlers) = self.handlers.get()
@@ -1651,7 +1651,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             && !this.socket.get().is_detached()
             && this.buffered_data_for_node_net.get().len() > 0
         {
-            // No writable event follows a write that the `open` handler queued.
+            // What the `open` handler queued is sent again at once.
             return Self::on_writable(this, socket);
         }
         Ok(())
@@ -2524,6 +2524,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let socket = self.socket.get();
         !socket.is_shutdown()
             && !socket.is_closed()
+            // The program closed it. `data` still comes while the TLS layer sends what it holds.
+            && self.closing.get().is_detached()
             && !(SSL && self.flags.get().contains(Flags::REJECTED))
     }
 

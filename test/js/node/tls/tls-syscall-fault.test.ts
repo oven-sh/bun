@@ -428,7 +428,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(client.events).toEqual(["error", "close(hadError=true)"]);
   });
 
-  // The TLS layer's send of records it held races the poll for a reset, so both report it alike. Any other failed send is the write's.
+  // The TLS layer reports a reset that its own send meets as a failed read. Any other failed send is the write's.
   test.each([
     ["ECONNRESET", "at the writable event", ["error read ECONNRESET", "write callback write ECANCELED", "close true"]],
     ["EPIPE", "at the writable event", ["write callback write EPIPE", "error write EPIPE", "close true"]],

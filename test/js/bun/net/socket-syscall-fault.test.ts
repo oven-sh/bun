@@ -464,83 +464,79 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
   },
 );
 
-// A reset that lands after the poll: the writable event carries no error flag, and the failed send takes the socket's error with it.
-describe.skipIf(skip)("a send that fails for the queued rest of end(data) on a socket that called pause()", () => {
+describe.skipIf(skip)("a paused socket closes with the error of a failed send", () => {
   const cases = (["listen", "connect"] as const).flatMap(side =>
     (["tcp", "unix", "tls"] as const).flatMap(transport =>
-      (["unread bytes", "nothing unread"] as const).flatMap(input =>
+      ([true, false] as const).flatMap(input =>
         (["ECONNRESET", "EPIPE"] as const).map(errno => {
-          // The TLS layer sends the records it held first, by itself. That send races the poll for a reset, so both report it alike.
+          // The TLS layer reports a reset that its own send meets as a failed read.
           const syscall = transport === "tls" && errno === "ECONNRESET" ? "read" : "write";
           return [side, transport, input, errno, syscall] as const;
         }),
       ),
     ),
   );
-  test.each(cases)(
-    "Bun.%s over %s with %s: %s closes as a failed %s",
-    async (side, transport, input, errno, syscall) => {
-      using dir = tempDir("paused-end", {});
-      const events: string[] = [];
-      const opened = Promise.withResolvers<Socket>();
-      const peerOpened = Promise.withResolvers<Socket>();
-      const peerSawTheEnd = Promise.withResolvers<void>();
-      const ready = transport === "tls" ? "handshake" : "open";
-      const underTest: SocketHandler = {
-        [ready]: (socket: Socket) => opened.resolve(socket),
-        data: (_, chunk) => void events.push(`data ${chunk.length}`),
-        drain: () => void events.push("drain"),
-        error: (_, error) => void events.push(`error ${(error as NodeJS.ErrnoException).code}`),
-        close: (_, error) => {
-          const { code, syscall } = (error ?? {}) as NodeJS.ErrnoException;
-          events.push(`close ${code} ${syscall}`);
-        },
-      };
-      const peerHandlers: SocketHandler = {
-        [ready](socket: Socket) {
-          socket.pause();
-          peerOpened.resolve(socket);
-        },
-        data() {},
-        error() {},
-        end: () => peerSawTheEnd.resolve(),
-        close: () => peerSawTheEnd.resolve(),
-      };
-      const unix = join(String(dir), "socket");
-      using listener = Bun.listen({
-        ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
-        tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
-        socket: side === "listen" ? underTest : peerHandlers,
-      });
-      await Bun.connect({
-        ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: listener.port }),
-        tls: transport === "tls" ? { ca: tls.cert } : undefined,
-        socket: side === "connect" ? underTest : peerHandlers,
-      });
-      const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
-      try {
-        // Small buffers on both ends, so most of the chunk waits in user space until the peer reads.
-        setSocketOptions(socket, 1, 4096);
-        setSocketOptions(peer, 2, 4096);
+  test.each(cases)("Bun.%s over %s (input: %p): %s is a failed %s", async (side, transport, input, errno, syscall) => {
+    using dir = tempDir("paused-end", {});
+    const events: string[] = [];
+    const opened = Promise.withResolvers<Socket>();
+    const peerOpened = Promise.withResolvers<Socket>();
+    const peerSawTheEnd = Promise.withResolvers<void>();
+    const ready = transport === "tls" ? "handshake" : "open";
+    const underTest: SocketHandler = {
+      [ready]: (socket: Socket) => opened.resolve(socket),
+      data: (_, chunk) => void events.push(`data ${chunk.length}`),
+      drain: () => void events.push("drain"),
+      error: (_, error) => void events.push(`error ${(error as NodeJS.ErrnoException).code}`),
+      close: (_, error) => {
+        const { code, syscall } = (error ?? {}) as NodeJS.ErrnoException;
+        events.push(`close ${code} ${syscall}`);
+      },
+    };
+    const peerHandlers: SocketHandler = {
+      [ready](socket: Socket) {
         socket.pause();
-        // A TLS client has had the `drain` that follows its handshake.
-        events.length = 0;
-        const size = 1 << 20;
-        expect(socket.end(Buffer.alloc(size))).toBe(size);
-        if (input === "unread bytes") peer.write("unread");
-        fault.set({ syscall: "send", action: "errno", errno, repeat: -1, fd: (socket as any).fd });
-        peer.resume();
-        // The failed send shuts the write side down.
-        await peerSawTheEnd.promise;
-        for (let turn = 0; turn < 3; turn++) await new Promise(resolve => setImmediate(resolve));
-        expect(events).toEqual([`close ${errno} ${syscall}`]);
-      } finally {
-        fault.clear();
-        socket.terminate();
-        peer.terminate();
-      }
-    },
-  );
+        peerOpened.resolve(socket);
+      },
+      data() {},
+      error() {},
+      end: () => peerSawTheEnd.resolve(),
+      close: () => peerSawTheEnd.resolve(),
+    };
+    const unix = join(String(dir), "socket");
+    using listener = Bun.listen({
+      ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: side === "listen" ? underTest : peerHandlers,
+    });
+    await Bun.connect({
+      ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: listener.port }),
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: side === "connect" ? underTest : peerHandlers,
+    });
+    const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+    try {
+      // Small buffers on both ends, so most of the chunk waits in user space until the peer reads.
+      setSocketOptions(socket, 1, 4096);
+      setSocketOptions(peer, 2, 4096);
+      socket.pause();
+      // A TLS client has had the `drain` that follows its handshake.
+      events.length = 0;
+      const size = 1 << 20;
+      expect(socket.end(Buffer.alloc(size))).toBe(size);
+      if (input) peer.write("input");
+      fault.set({ syscall: "send", action: "errno", errno, repeat: -1, fd: (socket as any).fd });
+      peer.resume();
+      // The failed send shuts the write side down.
+      await peerSawTheEnd.promise;
+      for (let turn = 0; turn < 3; turn++) await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual([`close ${errno} ${syscall}`]);
+    } finally {
+      fault.clear();
+      socket.terminate();
+      peer.terminate();
+    }
+  });
 });
 
 describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOTYPE)", () => {

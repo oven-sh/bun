@@ -120,7 +120,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
          * reply. Callers (e.g. Listener.deinit) free the embedding storage
          * next, which would leave s->group dangling. */
         if (!us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, 0);
         }
     }
     group->iterator = 0;

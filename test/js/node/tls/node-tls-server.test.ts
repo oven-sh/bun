@@ -5769,42 +5769,39 @@ describe("a send that the kernel rejects", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Whichever of the poll and the send meets the reset. Other kernels answer a send to a peer that reset with EPIPE.
-  it.skipIf(!isLinux)(
-    "for the reset of a peer that stops reading is a failed read, and the write is canceled",
-    async () => {
-      const events: string[] = [];
-      const closed = Promise.withResolvers<void>();
-      const chunk = Buffer.alloc(64 * 1024, "q");
-      await using server: Server = createServer(COMMON_CERT, socket => {
-        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
-        socket.on("close", hadError => {
-          events.push(`close ${hadError}`);
-          closed.resolve();
-        });
-        let failed = false;
-        function onWritten(err?: NodeJS.ErrnoException | null) {
-          if (!err || failed) return;
-          failed = true;
-          events.push(`write callback ${err.syscall} ${err.code}`);
-        }
-        (function pump() {
-          if (socket.destroyed) return;
-          if (socket.write(chunk, onWritten)) setImmediate(pump);
-          else socket.once("drain", pump);
-        })();
+  // Other kernels answer that send with EPIPE.
+  it.skipIf(!isLinux)("for a reset is a failed read, and the write is canceled", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const chunk = Buffer.alloc(64 * 1024, "q");
+    await using server: Server = createServer(COMMON_CERT, socket => {
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+      socket.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        closed.resolve();
       });
-      let received = 0;
-      const client = connect(await listening(server));
-      client.on("error", () => {});
-      client.on("data", data => {
-        received += data.length;
-        if (received > 300_000) client.destroy();
-      });
-      await closed.promise;
-      expect(events).toEqual(["error read ECONNRESET", "write callback write ECANCELED", "close true"]);
-    },
-  );
+      let failed = false;
+      function onWritten(err?: NodeJS.ErrnoException | null) {
+        if (!err || failed) return;
+        failed = true;
+        events.push(`write callback ${err.syscall} ${err.code}`);
+      }
+      (function pump() {
+        if (socket.destroyed) return;
+        if (socket.write(chunk, onWritten)) setImmediate(pump);
+        else socket.once("drain", pump);
+      })();
+    });
+    let received = 0;
+    const client = connect(await listening(server));
+    client.on("error", () => {});
+    client.on("data", data => {
+      received += data.length;
+      if (received > 300_000) client.destroy();
+    });
+    await closed.promise;
+    expect(events).toEqual(["error read ECONNRESET", "write callback write ECANCELED", "close true"]);
+  });
 
   it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {
     const clientHello = Promise.withResolvers<Buffer>();

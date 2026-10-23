@@ -15,7 +15,7 @@ use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
-use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
+use bun_ast::{B, Binding, E, ExportsKind, Expr, G, Ref, S, Stmt, StrictModeKind, Target};
 use bun_js_parser::lexer as js_lexer;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
@@ -77,6 +77,28 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             }
 
             let hmr_api_ref = ast.wrapper_ref;
+
+            // ES module code is strict, but the page runs a hot-update chunk as a classic script.
+            let has_es_module_semantics = ast.exports_kind == ExportsKind::Esm
+                || matches!(
+                    ast.module_scope.strict_mode,
+                    StrictModeKind::ImplicitStrictModeImport
+                        | StrictModeKind::ImplicitStrictModeExport
+                        | StrictModeKind::ImplicitStrictModeTopLevelAwait
+                );
+            if has_es_module_semantics
+                && ast.target == Target::Browser
+                && !ast.flags.contains(AstFlags::HAS_LAZY_EXPORT)
+            {
+                bun_core::handle_oom(stmts.inside_wrapper_prefix.append_non_dependency(
+                    Stmt::alloc(
+                        S::Directive {
+                            value: bun_ast::StoreStr::new(b"use strict"),
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
+                ));
+            }
 
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {

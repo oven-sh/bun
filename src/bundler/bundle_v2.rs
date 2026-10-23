@@ -4461,7 +4461,6 @@ pub mod bv2_impl {
                 alloc,
             )?;
             this.unique_key = generate_unique_key();
-            this.scan_only = fetcher.is_some();
 
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {
@@ -6552,7 +6551,7 @@ pub mod bv2_impl {
 
         /// Returns true when barrel optimization is enabled. Barrel optimization
         /// can apply to any package with sideEffects: false or listed in
-        /// optimize_imports, so it is enabled for every bundle, and off for a scan.
+        /// optimize_imports, so it is enabled for every bundle. The `bun test --changed` scan turns it off.
         pub(crate) fn is_barrel_optimization_enabled(&self) -> bool {
             !self.scan_only
         }

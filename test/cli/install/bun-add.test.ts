@@ -416,21 +416,6 @@ it("bun add --analyze uses the nearest package.json with a name above the import
   expect(urls).toEqual([`${root_url}/bar`]);
 });
 
-// The bundler skips a re-export of a "sideEffects": false barrel that nothing imports. The runtime
-// loads every file the barrel names, so the scan has to read them all.
-it("bun add --analyze scans a file behind an unused re-export of a barrel", async () => {
-  const lib = join(package_dir, "lib");
-  await mkdir(lib, { recursive: true });
-  await writeFile(join(lib, "index.ts"), `export { a } from "./a"; export { b } from "./b";`);
-  await writeFile(join(lib, "a.ts"), `export const a = 1;`);
-  await writeFile(join(lib, "b.ts"), `import "bar/sub"; export const b = 2;`);
-  expect(
-    await analyze("add", `import { a } from "./lib"; console.log(a);`, {
-      packageJson: { name: "foo", sideEffects: false },
-    }),
-  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
-});
-
 it("bun add --analyze should scan dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

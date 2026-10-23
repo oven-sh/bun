@@ -5,7 +5,7 @@ use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
 use crate::linker_context_mod::debug;
 use crate::options::{Loader, Target};
-use crate::{EntryPoint, Index, LinkerContext, WrapKind};
+use crate::{EntryPoint, LinkerContext, WrapKind};
 
 bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
 
@@ -1020,7 +1020,7 @@ pub(crate) fn merge_small_chunks(
         let target = ast_targets[source_index as usize];
         // Only the runtime helpers a chunk uses are emitted, so its source
         // size says nothing about the chunk's; count it as free.
-        let size = if source_index == Index::RUNTIME.value() {
+        let size = if this.graph.is_runtime(source_index) {
             0
         } else {
             sources[source_index as usize].contents().len() as u64

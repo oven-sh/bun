@@ -141,16 +141,17 @@ pub(crate) fn find_imported_parts_in_js_order(
     };
 
     // The runtime goes first: every helper a file calls is declared above it.
-    let runtime = Index::RUNTIME.value();
-    if chunk.files_with_parts_in_chunk.contains(&runtime) {
-        layout.place(PartRun {
-            source_index: runtime,
-            begin: 0,
-            end: u32::MAX,
-        });
+    for runtime in this.graph.runtimes() {
+        if chunk.files_with_parts_in_chunk.contains(&runtime) {
+            layout.place(PartRun {
+                source_index: runtime,
+                begin: 0,
+                end: u32::MAX,
+            });
+        }
     }
     for &run in runs {
-        if run.source_index != runtime {
+        if !this.graph.is_runtime(run.source_index) {
             layout.place(run);
         }
     }
@@ -453,7 +454,7 @@ impl LoadTimeReads {
         for_each_live_part(&mut |file, id, part| {
             // A wrapped file runs when it is called, and a namespace object prints ahead of every file.
             if flags[file].wrap == Wrap::None
-                && file as u32 != Index::RUNTIME.value()
+                && !c.graph.is_runtime(file as u32)
                 && id - first_part_id[file] != bun_ast::NAMESPACE_EXPORT_PART_INDEX
             {
                 effects[id as usize] = LoadEffect::of(part);
@@ -744,7 +745,7 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
                     loader,
                 } => (source_index, loader),
             };
-            if source_index == Index::RUNTIME.value() || visited.is_set(source_index as usize) {
+            if c.graph.is_runtime(source_index) || visited.is_set(source_index as usize) {
                 continue;
             }
             // A load evaluates the files that its entry point loads. It goes through the others.
@@ -819,11 +820,10 @@ impl EntryWalk {
         );
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
-        let runtime = Index::RUNTIME.value();
         for slot in 0..self.owned.len() {
             let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
-                if source_index != runtime && !seen.is_set(source_index as usize) {
+                if !c.graph.is_runtime(source_index) && !seen.is_set(source_index as usize) {
                     self.walk(
                         c,
                         plan,
@@ -921,7 +921,7 @@ impl EntryWalk {
             let owned = &mut self.owned;
             // The parts ahead of the one that imports `other` print before `other` does.
             let mut import = |part_index: u32, other: IndexInt, loader: u32| {
-                if other == Index::RUNTIME.value() {
+                if c.graph.is_runtime(other) {
                     return;
                 }
                 if seen.is_set(other as usize) {
@@ -1066,7 +1066,7 @@ impl ChunkLayout<'_, '_> {
                             .c
                             .should_include_part(source_index, &parts[part_index as usize]))
                 {
-                    let is_runtime = source_index == Index::RUNTIME.value();
+                    let is_runtime = self.c.graph.is_runtime(source_index);
                     // The part is empty in the dev server format, which takes one range per file.
                     if is_namespace_export
                         && !is_runtime
@@ -1159,7 +1159,7 @@ fn reached_chunks_in_order(
     let mut visited = AutoBitSet::init_empty(c.graph.files.len())?;
     let mut stack: Vec<Frame> = Vec::new();
 
-    for &root in core::iter::once(&Index::RUNTIME.value()).chain(&roots) {
+    for root in c.graph.runtimes().chain(roots.iter().copied()) {
         stack.push(Frame::Enter(root));
         while let Some(frame) = stack.pop() {
             let source_index = match frame {

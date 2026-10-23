@@ -1957,14 +1957,22 @@ pub mod bv2_impl {
             }
         }
 
-        fn ensure_client_transpiler(&mut self) {
+        /// An error is also in the log of the build, and the build fails on it.
+        fn ensure_client_transpiler(&mut self) -> Result<(), Error> {
             if self.client_transpiler.is_none() {
-                let _ = self
-                    .initialize_client_transpiler()
-                    .unwrap_or_else(|e: Error| {
-                        panic!("Failed to initialize client transpiler: {}", e.name());
-                    });
+                if let Err(err) = self.initialize_client_transpiler() {
+                    self.transpiler.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Failed to bundle an HTML file for the browser: {}",
+                            err.name()
+                        ),
+                    );
+                    return Err(err);
+                }
             }
+            Ok(())
         }
 
         pub(crate) fn initialize_client_transpiler(
@@ -1983,7 +1991,7 @@ pub mod bv2_impl {
             // `arena` holds what the clone's define table points to; the
             // returned `Transpiler` itself is NOT placed in it.
             // SAFETY: `graph.heap` outlives the bundle pass; erase the `&self`
-            // borrow so the `'a` widen inside `for_worker` doesn't keep `self`
+            // borrow so the `'a` widen inside `for_target` doesn't keep `self`
             // borrowed.
             let arena: &'a bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
@@ -2028,7 +2036,7 @@ pub mod bv2_impl {
             // leak them (bumpalo never drops).
             let mut boxed: Box<Transpiler<'a>> = Box::new(ct);
             // Log/allocator/linker-resolver/macro-context/cache wiring is all
-            // handled by `for_worker` + `wire_after_move`.
+            // handled by `for_target` + `wire_after_move`.
             boxed.wire_after_move();
 
             // Re-project the resolver subset now that `public_path` has been overwritten.
@@ -2046,13 +2054,11 @@ pub mod bv2_impl {
             Ok(ct)
         }
 
-        /// The hint of a browser build says which target to set. The page of a server build has no such choice.
+        /// The hint of a browser build says which target to set. A page has no such choice.
         fn browser_build_hint(&self, graph: Target, set_target: &'static str) -> &'static str {
-            let is_page_of_server_build = graph == Target::Browser
-                && self.framework.is_none()
-                && self.transpiler.options.target.is_server_side();
-            if is_page_of_server_build {
-                ". The scripts of an HTML file are bundled for the browser"
+            let build = self.transpiler.options.target;
+            if graph.is_page_of_server_build(build, self.framework.is_some()) {
+                options::PAGE_OF_SERVER_BUILD_HINT
             } else {
                 set_target
             }
@@ -3612,7 +3618,7 @@ pub mod bv2_impl {
                         if let Some(path) = resolved.path_const() {
                             if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
                                 if loader == Loader::Html {
-                                    self.ensure_client_transpiler();
+                                    self.ensure_client_transpiler()?;
                                     break 'brk Target::Browser;
                                 }
                             }
@@ -7313,6 +7319,10 @@ pub mod bv2_impl {
                 }
 
                 if is_html_entrypoint {
+                    if let Err(err) = self.ensure_client_transpiler() {
+                        last_error = Some(err);
+                        continue;
+                    }
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
@@ -7403,6 +7413,9 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
+                if is_html_entrypoint && self.ensure_client_transpiler().is_err() {
+                    continue;
+                }
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
                 // so the &mut on self.graph is released before we touch other fields.
                 let (found_existing, value_ptr): (bool, *mut IndexInt) = {
@@ -7458,7 +7471,6 @@ pub mod bv2_impl {
                     let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
                     if is_html_entrypoint {
-                        self.ensure_client_transpiler();
                         self.graph
                             .entry_points
                             .push(bun_ast::Index(new_source_index));
@@ -7684,7 +7696,6 @@ pub mod bv2_impl {
                 .html_imports
                 .server_source_indices
                 .push(fake_source_index.0);
-            self.ensure_client_transpiler();
             Ok(())
         }
     }

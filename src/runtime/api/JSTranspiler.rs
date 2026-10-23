@@ -972,7 +972,7 @@ impl JSTranspiler {
         // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
-        // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
+        // `set_log` doesn't update `options.log`.
         transpiler.options.log = &raw mut config.log;
 
         transpiler.options.no_macros = config.no_macros;

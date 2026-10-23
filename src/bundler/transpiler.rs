@@ -187,7 +187,7 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
-    /// `&self` so call sites in `configure_defines` / `run_env_loader` can
+    /// `&self` so call sites in `run_env_loader` can
     /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
     /// borrows.
     #[inline]
@@ -255,7 +255,12 @@ impl<'a> Transpiler<'a> {
         // `from` reported what is wrong with the user's flags when it read them.
         let mut repeated = bun_ast::Log::init();
         let mut options = from.options.for_target(target, &mut repeated)?;
-        options.load_defines(arena, Some(from.env()), &mut repeated)?;
+        if let Err(err) = options.load_defines(arena, Some(from.env()), &mut repeated) {
+            // The stack is deeper here than where `from` parsed the same values, so a nested one can fail.
+            // SAFETY: `log` is live and nothing else borrows it here (see fn doc).
+            repeated.append_to_with_recycled(unsafe { &mut *log }, false);
+            return Err(err);
+        }
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_target: log is non-null");
         // SAFETY: see fn doc.
         let resolver = unsafe {
@@ -1074,10 +1079,7 @@ fn resolver_bundle_options_subset(
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
         main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
-        // `auto_main` is projected as a
-        // bool: it's "default" iff the user did not pass `--main-fields`
-        // (`from_api` overwrites `main_fields` only when
-        // `transform.main_fields` is non-empty — options.rs:2231).
+        // `auto_main` is projected as a bool.
         main_fields: src.main_fields.clone(),
         main_fields_is_default: src.main_fields_is_default,
         mark_builtins_as_external: src.mark_builtins_as_external,

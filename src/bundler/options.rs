@@ -294,7 +294,23 @@ pub trait TargetExt: Copy {
 
     /// A bundle leaves the builtin modules of its own platform as imports.
     fn keeps_builtins_external(self) -> bool;
+
+    /// Whether this graph is a page: the browser graph that an HTML file adds to a build for a server.
+    fn is_page_of_server_build(self, build: Target, has_framework: bool) -> bool;
 }
+
+macro_rules! page_of_server_build_note {
+    ($before:literal, $after:literal) => {
+        concat!(
+            $before,
+            "This file is loaded by an HTML file, so it is bundled for the browser. Use this import only in files that no HTML file loads",
+            $after
+        )
+    };
+}
+/// What an error says about an import in a page. The target of the build is the server's, so "set the target" is no remedy.
+pub(crate) const PAGE_OF_SERVER_BUILD_HINT: &str = page_of_server_build_note!(". ", "");
+pub(crate) const PAGE_OF_SERVER_BUILD_NOTE: &str = page_of_server_build_note!("", ".");
 
 impl TargetExt for Target {
     fn bake_graph(self) -> crate::bake_types::Graph {
@@ -307,6 +323,11 @@ impl TargetExt for Target {
 
     fn keeps_builtins_external(self) -> bool {
         self.is_bun() || self == Target::Node
+    }
+
+    fn is_page_of_server_build(self, build: Target, has_framework: bool) -> bool {
+        // With a framework, the browser graph is the one of bake.
+        self == Target::Browser && build.is_server_side() && !has_framework
     }
 
     fn out_extensions(self) -> StringHashMap<&'static [u8]> {
@@ -1431,7 +1452,7 @@ pub struct BundleOptions<'a> {
 // bundle_v2.rs / transpiler.rs are unchanged.
 pub use bun_options_types::ForceNodeEnv;
 
-/// The `BundleOptions` fields that the target decides. Only `init` derives them.
+/// The `BundleOptions` fields that `from_api` and `for_target` both derive from a target. Only `init` derives them.
 pub(crate) struct TargetOptions {
     target: Target,
     loaders: LoaderHashTable,
@@ -1787,37 +1808,29 @@ impl<'a> BundleOptions<'a> {
         if self.defines_loaded {
             return Ok(());
         }
-        // PERF: borrowed static literals for the three
-        // constant cases; only the env-loader case needs an owned copy (it has
-        // to outlive the `&mut loader_` we pass below, so it can't stay a borrow
-        // into the loader). `Cow` keeps the literals zero-alloc — matters because
-        // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
-        let node_env: Option<Cow<[u8]>> = 'node_env: {
-            if let Some(e) = loader_ {
-                if let Some(env_) = e.get_node_env() {
-                    break 'node_env Some(Cow::Owned(env_.to_vec()));
-                }
+        let node_env: &[u8] = 'node_env: {
+            if let Some(env_) = loader_.and_then(|e| e.get_node_env()) {
+                break 'node_env env_;
             }
 
             if self.is_test() {
-                break 'node_env Some(Cow::Borrowed(b"\"test\"".as_slice()));
+                break 'node_env b"\"test\"";
             }
 
             // With a user `process.env.NODE_ENV`, `configure_defines` sets `production` from this table.
             if self.production && !self.user_defines_node_env() {
-                break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
+                break 'node_env b"\"production\"";
             }
 
-            Some(Cow::Borrowed(b"\"development\"".as_slice()))
+            b"\"development\""
         };
-        // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
             log,
             self.transform_options.define.as_ref(),
             self.target,
             loader_,
             Some(&self.env),
-            node_env.as_deref(),
+            Some(node_env),
             // `&self.drop` is `Box<[Box<[u8]>]>`; the callee wants `&[&[u8]]`,
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),

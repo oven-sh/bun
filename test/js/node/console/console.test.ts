@@ -157,11 +157,17 @@ describe("console.Console", () => {
         process.env = { NO_COLOR, get FORCE_COLOR() { reads++; return FORCE_COLOR; } };
         new Console(streamInto([])).log("a string");
         const afterString = reads;
+        // Without a \`process\` nothing can warn, and the warning waits for the next decision.
+        const real = process;
+        globalThis.process = undefined;
+        const withoutProcess = logged();
+        globalThis.process = real;
         const both = [logged(), logged()];
+        const seen = () => ({ afterString, decides: reads > afterString, withoutProcess, both, warnings });
         warned
           // A second warning would be one tick behind the first.
           .then(() => new Promise(resolve => setImmediate(resolve)))
-          .then(() => process.stdout.write(JSON.stringify({ afterString, decides: reads > afterString, both, warnings })));`;
+          .then(() => process.stdout.write(JSON.stringify(seen())));`;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", program],
         env: { ...bunEnv, NO_COLOR: "1", FORCE_COLOR: "1" },
@@ -173,6 +179,7 @@ describe("console.Console", () => {
         seen: {
           afterString: 0,
           decides: true,
+          withoutProcess: "colors",
           both: ["colors", "colors"],
           warnings: ["The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set."],
         },

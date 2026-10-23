@@ -1813,7 +1813,10 @@ impl<'a> Formatter<'a> {
                                 Err(_) => b"",
                             }
                         };
-                        if out_buf.len() > 2 {
+                        if value.get_unix_timestamp().is_nan() {
+                            // an invalid Date stringifies to the unquoted `null`
+                            out_buf = b"Invalid Date";
+                        } else if out_buf.len() > 2 {
                             // trim the quotes
                             out_buf = &out_buf[1..out_buf.len() - 1];
                         }

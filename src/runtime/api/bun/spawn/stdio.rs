@@ -98,6 +98,7 @@ impl Stdio {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn take_as_memfd(&mut self) -> Option<sys::File> {
         use crate::api::bun_process::spawn_sys;
+        use sys::FdExt as _;
         let Self::Blob(blob) = &*self else {
             return None;
         };
@@ -106,10 +107,14 @@ impl Stdio {
         }
 
         // Close-on-exec: the child gets it through a `dup2` action, which does not carry the flag over.
-        let memfd = sys::File::from_fd(
-            spawn_sys::memfd_create(c"spawn_stdio_stdin", spawn_sys::MemfdFlag::NonExecutable)
-                .ok()?,
-        );
+        let fd = spawn_sys::memfd_create(c"spawn_stdio_stdin", spawn_sys::MemfdFlag::NonExecutable)
+            .ok()?;
+        // At the descriptor limit a memfd stays on a closed fd 0, 1 or 2, and `File` does not close those.
+        if fd.is_stdio() {
+            let _ = fd.close_allowing_standard_io(None);
+            return None;
+        }
+        let memfd = sys::File::from_fd(fd);
 
         let mut remain = blob.slice();
 

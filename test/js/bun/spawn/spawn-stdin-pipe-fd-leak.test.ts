@@ -204,8 +204,8 @@ test.skipIf(!isLinux)("a buffer stdin memfd is closed in the parent when the chi
 
 test.skipIf(!isLinux)("Bun.spawnSync closes a buffer stdin memfd before it waits for the child", () => {
   // The parent stays inside spawnSync until the child exits, so the child is the one that looks
-  // at the parent's descriptors. The parent closes the memfd right after the spawn, which can be
-  // a moment after the child starts: the child polls until the memfd is gone.
+  // at the parent's descriptors. It reads its stdin only when the parent holds no stdin memfd:
+  // a parent that keeps the memfd for as long as the child runs makes this test time out.
   const child = `
     const fs = require("node:fs");
     const parentFds = "/proc/" + process.ppid + "/fd";
@@ -217,16 +217,9 @@ test.skipIf(!isLinux)("Bun.spawnSync closes a buffer stdin memfd before it waits
           return false;
         }
       }).length - ${countOpenStdinMemfds()};
-    const deadline = performance.now() + 2000;
-    while (heldByParent() > 0 && performance.now() < deadline) Bun.sleepSync(5);
-    console.log(
-      JSON.stringify({
-        stdin: fs.readlinkSync("/proc/self/fd/0"),
-        heldByParent: heldByParent(),
-        // Read only now: the bytes do not depend on the parent's descriptor.
-        bytesRead: fs.readFileSync(0).length,
-      }),
-    );
+    // The parent closes the memfd right after the spawn, which can be a moment after this starts.
+    while (heldByParent() > 0) Bun.sleepSync(5);
+    console.log(JSON.stringify({ stdin: fs.readlinkSync("/proc/self/fd/0"), bytesRead: fs.readFileSync(0).length }));
   `;
   const { stdout, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "-e", child],
@@ -236,9 +229,7 @@ test.skipIf(!isLinux)("Bun.spawnSync closes a buffer stdin memfd before it waits
     stderr: "inherit",
   });
 
-  expect(stdout.toString()).toBe(
-    JSON.stringify({ stdin: `${stdinMemfd} (deleted)`, heldByParent: 0, bytesRead: 1024 * 1024 }) + "\n",
-  );
+  expect(stdout.toString()).toBe(JSON.stringify({ stdin: `${stdinMemfd} (deleted)`, bytesRead: 1024 * 1024 }) + "\n");
   expect(exitCode).toBe(0);
 });
 

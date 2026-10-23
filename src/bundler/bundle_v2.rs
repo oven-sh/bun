@@ -2549,6 +2549,11 @@ pub mod bv2_impl {
             let is_loaded_by_plugin = |index: usize| {
                 flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
             };
+            // A page's manifest module has the page's path and no text: not a file to check.
+            let mut is_manifest = vec![false; sources.len()];
+            for &index in self.graph.html_imports.server_source_indices.slice() {
+                is_manifest[index as usize] = true;
+            }
             // What cannot be named stands for what it imports: a page, and what only a plugin can
             // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
             // which is not of the project.
@@ -2578,19 +2583,22 @@ pub mod bv2_impl {
             }
             let mut entry_points = (named.iter().copied())
                 .filter(|&index| {
-                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                    loaders[index].is_javascript_like()
+                        && sources[index].path.is_file()
+                        && !is_manifest[index]
                 })
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let mut sources = (sources.iter().zip(loaders).zip(flags))
-                .filter(|((source, loader), flags)| {
+            let mut sources = (sources.iter().zip(loaders).zip(flags).enumerate())
+                .filter(|&(index, ((source, loader), flags))| {
                     loader.is_javascript_like_or_json()
                         && source.path.is_file()
+                        && !is_manifest[index]
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+                .map(|(_, ((source, loader), _))| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
                 cwd: self.transpiler.fs().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
@@ -7312,10 +7320,6 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if is_html_entrypoint {
-                    import_record.kind = ImportKind::HtmlManifest;
-                }
-
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
@@ -7337,7 +7341,7 @@ pub mod bv2_impl {
                 // SAFETY: arena outlives the bundle pass.
                 let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
 
-                resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
+                resolve_task.known_target = if is_html_entrypoint {
                     Target::Browser
                 } else {
                     target
@@ -7644,7 +7648,7 @@ pub mod bv2_impl {
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
 
-            let ast_for_html_entrypoint = JSAst::init(
+            let mut ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
@@ -7665,9 +7669,13 @@ pub mod bv2_impl {
                 )?
                 .ok_or(Error::ParserError)?,
             );
+            // The parser defaults `target` to browser; this module belongs to the importing side.
+            ast_for_html_entrypoint.target = target;
 
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),
+                // A split chunk's loader and bytecode come from its entry point's loader.
+                loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
                 ..Default::default()
             };

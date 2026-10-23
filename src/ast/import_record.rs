@@ -3,7 +3,7 @@
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
 
-use crate::Range;
+use crate::{Loc, Range};
 use bun_paths::fs::Path;
 
 // Re-exported here (canonical at crate root) so callers that path through
@@ -31,7 +31,17 @@ pub struct ImportRecord {
     /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
+
+    /// `import(specifier, options)` in a bundle: why only the runtime can read the
+    /// `with` attributes of `options`. The bundler then picks the loader from the file
+    /// extension, and `BundleV2` warns when it bundles the call.
+    pub unreadable_attributes: Option<UnreadableAttributes>,
+    /// The expression that hides those attributes.
+    pub unreadable_attributes_loc: Loc,
 }
+
+// The two `unreadable_attributes` fields sit in what was padding.
+const _: () = assert!(core::mem::size_of::<ImportRecord>() == 96);
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
@@ -108,6 +118,20 @@ bitflags::bitflags! {
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
     }
+}
+
+/// Why a bundler cannot read the `with` attributes of `import(specifier, options)`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum UnreadableAttributes {
+    /// `import(x, options)`, `import(x, null)`
+    OptionsNotObjectLiteral,
+    /// `import(x, { with: attributes })`
+    WithNotObjectLiteral,
+    /// `import(x, { with: { type } })`, `import(x, { with: { type: 1 } })`
+    TypeNotStringLiteral,
+    /// The definition of `with` or `type` that wins is a getter, a setter or a method,
+    /// or `__proto__` can supply `with`.
+    PropertyNotPlain,
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;

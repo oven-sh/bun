@@ -602,6 +602,45 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
+  // See "import() options the bundler cannot read" in bundler_loader.test.ts.
+  test("import() with options the bundler cannot read is bundled with a warning", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      target: "bun",
+      files: {
+        "/entry.js": `const o = { with: { type: "text" } };\nconsole.log((await import("./d.json", o)).default);`,
+        "/d.json": `{"in":"memory"}`,
+      },
+    });
+    expect({
+      success: result.success,
+      logs: result.logs.map(log => ({
+        level: log.level,
+        message: log.message,
+        line: log.position?.line,
+        column: log.position?.column,
+        notes: log.notes.map(note => note.message),
+      })),
+      outputs: await Promise.all(result.outputs.map(output => output.text())),
+    }).toEqual({
+      success: true,
+      logs: [
+        {
+          level: "warn",
+          message:
+            "The bundler cannot read the attributes of this import() because the second argument is not an object literal",
+          line: 2,
+          column: 39,
+          notes: [
+            'This import is bundled with the loader for its file extension. To use the "type" attribute at build time, write the attributes as literals in the call, such as import(path, { with: { type: "json" } }).',
+          ],
+        },
+      ],
+      // The JSON loader, from the extension.
+      outputs: [expect.stringContaining(`in: "memory"`)],
+    });
+  });
+
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These

@@ -1876,7 +1876,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ),
                 import_options: e_.options,
                 loc: e.loc,
-                import_loader: e_.import_record_loader(),
                 ..Default::default()
             };
 

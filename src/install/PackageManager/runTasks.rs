@@ -35,7 +35,7 @@ use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::{Do, Enable};
+use super::package_manager_options::Do;
 use crate::isolated_install::store as Store;
 
 macro_rules! add_error_or_warning_pretty {
@@ -882,18 +882,7 @@ fn run_tasks_erased(
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
                         manager.look_ahead.arrived.push(task.task_id);
 
-                        if manager.options.enable.contains(Enable::MANIFEST_CACHE)
-                            && let Ok(temp_dir) = directories::try_get_temporary_directory(manager)
-                        {
-                            // reshaped for borrowck — compute the
-                            // `&mut`-taking directory accessors first so the
-                            // shared `scope_for_package_name` / `manifests`
-                            // borrows below do not overlap them. `save_async`
-                            // only needs `&PackageManifest`, so reborrow the
-                            // freshly-inserted entry immutably alongside the
-                            // scope (both `&manager`, no conflict).
-                            let tmp_fd = temp_dir.handle.fd;
-                            let cache_fd = directories::get_cache_directory(manager);
+                        if let Some(store) = manager.manifest_store() {
                             npm::package_manifest::Serializer::save_async(
                                 manager
                                     .manifests
@@ -902,8 +891,8 @@ fn run_tasks_erased(
                                     .unwrap()
                                     .manifest(),
                                 manager.scope_for_package_name(name),
-                                tmp_fd,
-                                cache_fd,
+                                store.tmpdir,
+                                store.cache_dir,
                             );
                         }
 

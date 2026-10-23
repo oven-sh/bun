@@ -1,4 +1,5 @@
 import { file, spawn } from "bun";
+import { npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import {
@@ -62,14 +63,15 @@ const PROGRESS_LINES = /^(?:Resolving dependencies|Resolved, downloaded and extr
 
 // stdout comes back normalized for inline snapshots. stderr comes back without the two progress lines every
 // resolving run prints, so callers assert the rest of it exactly.
-async function run(ctx: TestContext, args: string[], cwd = "") {
+async function run(ctx: TestContext, args: string[], cwd = "", extraEnv: Record<string, string> = {}, keys?: string) {
   await using proc = spawn({
     cmd: [bunExe(), ...args],
     cwd: join(ctx.package_dir, cwd),
-    env,
+    env: { ...env, ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
-    stdin: "ignore",
+    // `keys` is what a user types into an interactive command.
+    stdin: keys === undefined ? "ignore" : Buffer.from(keys),
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { out: normalizeBunSnapshot(out), err: err.replace(PROGRESS_LINES, ""), exitCode };
@@ -1370,6 +1372,313 @@ it.concurrent("bun update <name> rejects a name that is not in the lockfile", as
   expect(exitCode).toBe(1);
   expect(await packageJsonOf(ctx)).toStrictEqual(packageJson);
   expect(await lockText(ctx)).toBe(lockBefore);
+});
+
+// `bun update` asks the registry for every manifest. It stores what the registry sends, so the cache is not older than
+// the bun.lock that the update wrote.
+describe("bun update and the manifest cache", () => {
+  type Published = Record<string, string[]>;
+
+  // The project gets a manifest cache of its own (the context's bunfig has none). `published` lists the versions of
+  // each package, and a test changes it to publish or remove one. `dependencies` lists what each package depends on.
+  // Every manifest has an ETag, so a request that was made from a cached manifest would be conditional. If a test
+  // sets `served.cacheControl`, the registry sends it, and answers a request whose ETag still holds with 304.
+  async function cachedProject(
+    ctx: TestContext,
+    published: Published,
+    packageJson: Json,
+    install: Json = {},
+    dependencies: Record<string, Json> = {},
+  ) {
+    const cache = join(ctx.package_dir, ".bun-cache");
+    const requests: string[] = [];
+    const served: { cacheControl?: string } = {};
+    const tarballs = new Map<string, Blob>();
+    setContextHandler(ctx, async request => {
+      const path = request.url.slice(ctx.registry_url.length);
+      requests.push(request.headers.has("if-none-match") ? `${path} (conditional)` : path);
+      const [, name, version] = path.match(/^(.+)-(\d+\.\d+\.\d+)\.tgz$/) ?? [];
+      if (name) {
+        const files = { "package/package.json": JSON.stringify({ name, version, dependencies: dependencies[name] }) };
+        if (!tarballs.has(path)) tarballs.set(path, await new Bun.Archive(files, { compress: "gzip" }).blob());
+        return new Response(tarballs.get(path));
+      }
+      if (!published[path]) return new Response("not found", { status: 404 });
+      const versions = published[path].map(version => [
+        version,
+        {
+          name: path,
+          version,
+          dependencies: dependencies[path],
+          dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` },
+        },
+      ]);
+      const etag = `"${published[path].join()}"`;
+      const headers: Record<string, string> = served.cacheControl ? { "cache-control": served.cacheControl } : {};
+      if (served.cacheControl && request.headers.get("if-none-match") === etag) {
+        return new Response(null, { status: 304, headers });
+      }
+      return Response.json(
+        { name: path, versions: Object.fromEntries(versions), "dist-tags": { latest: published[path].at(-1) } },
+        { headers: { etag, ...headers } },
+      );
+    });
+    const bunfig = { registry: ctx.registry_url, saveTextLockfile: true, linker: "hoisted", ...install };
+    await Promise.all([
+      writeFile(join(ctx.package_dir, "bunfig.toml"), Bun.TOML.stringify({ install: bunfig })),
+      writeFile(join(ctx.package_dir, "package.json"), JSON.stringify(packageJson)),
+    ]);
+    const manifestFiles = async () => (await readdirSorted(cache)).filter(name => name.endsWith(".npm"));
+    return {
+      requests,
+      served,
+      // CI exports BUN_INSTALL_CACHE_DIR, which wins over bunfig.toml.
+      bun: (args: string[], extraEnv: Record<string, string> = {}, keys?: string) =>
+        run(ctx, args, "", { BUN_INSTALL_CACHE_DIR: cache, ...extraEnv }, keys),
+      // The versions that each manifest in the cache lists. The version of a dist-tag is listed again.
+      async cached(): Promise<Published> {
+        const manifests = (await manifestFiles()).map(name =>
+          npm_manifest_test_helpers.parseManifest(join(cache, name), ctx.registry_url),
+        );
+        return Object.fromEntries(
+          manifests.map(({ name, versions }) => [name, [...new Set(versions)].sort(Bun.semver.order)]),
+        );
+      },
+      // Leaves the packages in the cache and removes their manifests.
+      forgetManifests: async () => void (await Promise.all((await manifestFiles()).map(name => rm(join(cache, name))))),
+      // The versions of `name` in bun.lock.
+      locked: async (name: string) => (await lockText(ctx)).match(new RegExp(`"${name}@[\\d.]+"`, "g")),
+    };
+  }
+
+  async function installed(project: Awaited<ReturnType<typeof cachedProject>>) {
+    expect(await project.bun(["install"])).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    return project;
+  }
+
+  // `req` is a dependency and `leaf` an optional dependency, both on `range`. They are installed at 1.0.0, then 1.1.0
+  // is published and an online `bun update` moves both.
+  async function updatedProject(ctx: TestContext, range: string) {
+    const published = { leaf: ["1.0.0"], req: ["1.0.0"] };
+    const packageJson = { name: "foo", dependencies: { req: range }, optionalDependencies: { leaf: range } };
+    const project = await installed(await cachedProject(ctx, published, packageJson));
+    published.leaf.push("1.1.0");
+    published.req.push("1.1.0");
+    const { out, exitCode } = await project.bun(["update"]);
+    expect(out).toContain("^ leaf 1.0.0 -> 1.1.0\n^ req 1.0.0 -> 1.1.0");
+    expect(exitCode).toBe(0);
+    project.requests.length = 0;
+    return project;
+  }
+
+  // `req` depends on `dep ^1.0.0`, and `pinned` is an exact version.
+  async function transitiveProject(ctx: TestContext, published: Published) {
+    const packageJson = { name: "foo", dependencies: { pinned: "1.0.0", req: "^1.0.0" } };
+    return installed(await cachedProject(ctx, published, packageJson, {}, { req: { dep: "^1.0.0" } }));
+  }
+
+  // One row per setting that decides whether an online update stores in the cache directory. The update runs on a
+  // cache that has no manifest, so every manifest that is there afterwards came from it. `[install.cache] disable`
+  // leaves no cache directory to list: bun-install.test.ts lists `node_modules/.cache` for it.
+  it.concurrent.each<[string, boolean, string[], { install?: Json; env?: Record<string, string> }?]>([
+    ["bun update", true, []],
+    ["bun update req", true, ["req"]],
+    ["bun update --latest", true, ["--latest"]],
+    ["bun update --force", true, ["--force"]],
+    ["bun update --no-cache", false, ["--no-cache"]],
+    ["bun update with install.cache.disableManifest", false, [], { install: { cache: { disableManifest: true } } }],
+    ["bun update with BUN_MANIFEST_CACHE=0", false, [], { env: { BUN_MANIFEST_CACHE: "0" } }],
+    // The offline modes resolve from the cache, so they store what they have to fetch whatever else is set.
+    ["bun update --prefer-offline --no-cache", true, ["--prefer-offline", "--no-cache"]],
+    ['bun update --no-cache with install.prefer = "offline"', true, ["--no-cache"], { install: { prefer: "offline" } }],
+  ])("%s stores the manifest that it fetches: %p", async (_, stores, args, { install, env: extraEnv } = {}) => {
+    using ctx = await testContext();
+    const published = { req: ["1.0.0"] };
+    const packageJson = { name: "foo", dependencies: { req: ">=1.0.0" } };
+    const project = await installed(await cachedProject(ctx, published, packageJson, install));
+    await project.forgetManifests();
+    published.req.push("1.1.0");
+
+    const { out, exitCode } = await project.bun(["update", ...args], extraEnv);
+    expect(out).toContain("^ req 1.0.0 -> 1.1.0");
+    expect(await project.cached()).toEqual(stores ? { req: ["1.0.0", "1.1.0"] } : {});
+    expect(exitCode).toBe(0);
+  });
+
+  // The menu lists what the registry sent. Space selects the one row and Enter confirms.
+  it.concurrent("bun update --interactive stores the manifest that it fetches", async () => {
+    using ctx = await testContext();
+    const published = { req: ["1.0.0"] };
+    const packageJson = { name: "foo", dependencies: { req: ">=1.0.0" } };
+    const project = await installed(await cachedProject(ctx, published, packageJson));
+    await project.forgetManifests();
+    published.req.push("1.1.0");
+
+    const { err, exitCode } = await project.bun(["update", "--interactive"], {}, " \r");
+    expect(err).not.toContain("error:");
+    expect(await project.cached()).toEqual({ req: ["1.0.0", "1.1.0"] });
+    expect(await project.locked("req")).toEqual(['"req@1.1.0"']);
+    expect(exitCode).toBe(0);
+  });
+
+  // A store of only the packages that moved, or of only the entries of package.json, would leave the cache of an
+  // earlier version of bun, or of a pulled bun.lock, as it is.
+  it.concurrent("asks for every manifest and stores each one: unmoved, transitive and exact", async () => {
+    using ctx = await testContext();
+    const published = { dep: ["1.0.0"], pinned: ["1.0.0"], req: ["1.0.0"] };
+    const project = await transitiveProject(ctx, published);
+    await project.forgetManifests();
+
+    project.requests.length = 0;
+    const unmoved = await project.bun(["update"]);
+    expect(project.requests.sort()).toEqual(["dep", "pinned", "req"]);
+    expect(unmoved.out).not.toContain(" -> ");
+    expect(await project.cached()).toEqual({ dep: ["1.0.0"], pinned: ["1.0.0"], req: ["1.0.0"] });
+    expect(unmoved.exitCode).toBe(0);
+
+    // The stored manifests do not answer the next update, and its requests are not conditional.
+    published.dep.push("1.1.0");
+    project.requests.length = 0;
+    const moved = await project.bun(["update"]);
+    expect(project.requests.filter(path => !path.endsWith(".tgz")).sort()).toEqual(["dep", "pinned", "req"]);
+    expect(moved.out).toContain("^ dep 1.0.0 -> 1.1.0");
+    expect(await project.cached()).toEqual({ dep: ["1.0.0", "1.1.0"], pinned: ["1.0.0"], req: ["1.0.0"] });
+    expect(moved.exitCode).toBe(0);
+  });
+
+  // The cached manifests list what the online update installed, so an update that resolves from them changes nothing.
+  describe.each(["--offline", "--prefer-offline"])("bun update %s after an online update", flag => {
+    it.concurrent.each<[string, string, string[], string]>([
+      ["a range that already allowed the new version", ">=1.0.0", [], ">=1.0.0"],
+      ["a range that the online update rewrote", "^1.0.0", [], "^1.1.0"],
+      ["--latest", ">=1.0.0", ["--latest"], "^1.1.0"],
+      ["named packages", ">=1.0.0", ["req", "leaf"], ">=1.0.0"],
+    ])("%s: moves nothing and sends no request", async (_, range, args, rangeAfter) => {
+      using ctx = await testContext();
+      const project = await updatedProject(ctx, range);
+
+      const { out, err, exitCode } = await project.bun(["update", flag, ...args]);
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain(" -> ");
+      expect(project.requests).toEqual([]);
+      expect(await packageJsonOf(ctx)).toEqual({
+        name: "foo",
+        dependencies: { req: rangeAfter },
+        optionalDependencies: { leaf: rangeAfter },
+      });
+      expect([await project.locked("leaf"), await project.locked("req")]).toEqual([['"leaf@1.1.0"'], ['"req@1.1.0"']]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // A bare offline update leaves a transitive package where it is. These two resolve it again.
+  it.concurrent.each<[string, string]>([
+    ["update dep --offline", "(no changes)"],
+    ["add dep", "installed dep@1.1.0"],
+  ])("bun %s keeps the transitive package where an online update put it", async (command, printed) => {
+    using ctx = await testContext();
+    const published = { dep: ["1.0.0"], pinned: ["1.0.0"], req: ["1.0.0"] };
+    const project = await transitiveProject(ctx, published);
+    published.dep.push("1.1.0");
+    expect((await project.bun(["update"])).out).toContain("^ dep 1.0.0 -> 1.1.0");
+    project.requests.length = 0;
+
+    const { out, err, exitCode } = await project.bun(command.split(" "));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(printed);
+    expect(project.requests).toEqual([]);
+    expect(await project.locked("dep")).toEqual(['"dep@1.1.0"']);
+    expect(exitCode).toBe(0);
+  });
+
+  // The manifests that the install cached are still fresh, so these commands send no request. The manifests must not
+  // be older than what the update saw.
+  it.concurrent("bun add after an online update resolves the version that the update installed", async () => {
+    using ctx = await testContext();
+    const project = await updatedProject(ctx, ">=1.0.0");
+
+    const { out, err, exitCode } = await project.bun(["add", "req"]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed req@1.1.0");
+    expect(project.requests).toEqual([]);
+    expect((await packageJsonOf(ctx)).dependencies).toEqual({ req: "^1.1.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("bun outdated after an online update lists nothing", async () => {
+    using ctx = await testContext();
+    const project = await updatedProject(ctx, ">=1.0.0");
+
+    expect(await project.bun(["outdated"])).toEqual({
+      out: "bun outdated <version> (<revision>)",
+      err: "",
+      exitCode: 0,
+    });
+    expect(project.requests).toEqual([]);
+  });
+
+  // The entry that the update stored holds the ETag, so the next command asks with it. The 304 has a new max-age,
+  // and the command after it sends no request only if the 304 was stored too.
+  it.concurrent("a manifest that bun update stored is checked with its ETag, and the 304 is stored", async () => {
+    using ctx = await testContext();
+    const published = { req: ["1.0.0"] };
+    const packageJson = { name: "foo", dependencies: { req: ">=1.0.0" } };
+    const project = await installed(await cachedProject(ctx, published, packageJson));
+    await project.forgetManifests();
+    published.req.push("1.1.0");
+    project.served.cacheControl = "max-age=0";
+    expect((await project.bun(["update"])).out).toContain("^ req 1.0.0 -> 1.1.0");
+
+    project.requests.length = 0;
+    project.served.cacheControl = "max-age=300";
+    for (const expected of [["req (conditional)"], []]) {
+      const { out, exitCode } = await project.bun(["add", "req"]);
+      expect(out).toContain("installed req@1.1.0");
+      expect(project.requests.splice(0)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // The registry no longer lists 1.0.1, and the online update moved off it.
+  it.concurrent("bun update --offline does not go back to a version that the registry removed", async () => {
+    using ctx = await testContext();
+    const published = { req: ["1.0.0", "1.0.1"] };
+    const project = await installed(
+      await cachedProject(ctx, published, { name: "foo", dependencies: { req: "^1.0.0" } }),
+    );
+    published.req.pop();
+    expect((await project.bun(["update"])).out).toContain("^ req 1.0.1 -> 1.0.0");
+    project.requests.length = 0;
+
+    const { out, err, exitCode } = await project.bun(["update", "--offline"]);
+    expect(err).toBe("");
+    expect(out).not.toContain(" -> ");
+    expect(project.requests).toEqual([]);
+    expect(await project.locked("req")).toEqual(['"req@1.0.0"']);
+    expect(exitCode).toBe(0);
+  });
+
+  // `--lockfile-only` downloads no tarball. The cache then lists a version that an offline update cannot install.
+  it.concurrent(
+    "bun update --offline after bun update --lockfile-only fails on the tarball that is not cached",
+    async () => {
+      using ctx = await testContext();
+      const published = { req: ["1.0.0"] };
+      const project = await installed(
+        await cachedProject(ctx, published, { name: "foo", dependencies: { req: ">=1.0.0" } }),
+      );
+      published.req.push("1.1.0");
+      expect((await project.bun(["update", "--lockfile-only"])).out).toContain("^ req 1.0.0 -> 1.1.0");
+      project.requests.length = 0;
+
+      expect(await project.bun(["update", "--offline"])).toMatchObject({
+        err: 'error: --offline: "req" is not in the cache\n',
+        exitCode: 1,
+      });
+      expect(project.requests).toEqual([]);
+      expect(await project.locked("req")).toEqual(['"req@1.1.0"']);
+    },
+  );
 });
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0; a-dep 1.0.1..1.0.10; dep-with-tags latest=3.0.0, pre-2=2.0.1; @types/* 1.0.0/2.0.0.

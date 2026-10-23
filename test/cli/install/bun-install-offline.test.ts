@@ -48,9 +48,9 @@ afterEach(async () => {
 // bunfig cache dirs these tests populate and inspect
 const { BUN_INSTALL_CACHE_DIR: _ciCacheDir, ...installEnv } = env;
 
-async function install(cwd: string, args: string[], extraEnv: Record<string, string> = {}) {
+async function install(cwd: string, args: string[], extraEnv: Record<string, string> = {}, command = "install") {
   await using proc = spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), command, ...args],
     cwd,
     env: { ...installEnv, ...extraEnv },
     stdout: "pipe",
@@ -141,6 +141,23 @@ int renameat(int from_dir, const char *from, int to_dir, const char *to) {
     expect(r.code).toBe(0);
   },
 );
+
+it("--offline resolves from the manifests that an online `bun update` fetched", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
+  // The update is the only command that reaches the registry. It starts with an empty cache.
+  let r = await install(await newProject({ baz: ">=0.0.3" }), [], {}, "update");
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  const before = urls.length;
+  expect(before).toBeGreaterThan(0);
+
+  r = await install(await newProject({ baz: ">=0.0.3" }), ["--offline"]);
+  expect(r.err).not.toContain("error:");
+  expect(r.out).toContain("+ baz@0.0.5");
+  expect(urls.slice(before)).toEqual([]);
+  expect(r.code).toBe(0);
+});
 
 describe.each(["hoisted", "isolated"] as const)("--offline (%s linker)", linker => {
   it("never issues a request and fails cleanly on a cache miss", async () => {

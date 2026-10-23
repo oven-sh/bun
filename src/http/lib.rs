@@ -2308,10 +2308,7 @@ impl<'a> HTTPClient<'a> {
         self.is_in_progress()
             && self.allow_retry
             && self.method.is_idempotent()
-            // Only a Bytes body can be rebuilt from `original_request_body`.
-            // Stream/Sendfile bodies are consumed as they are written, so a
-            // retry would silently replay a truncated request.
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+            && self.request_body_from_start().is_some()
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
     }
@@ -2333,14 +2330,12 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        if self.retries_on_close() {
+        if self.retries_on_close()
+            && let Some(body) = self.request_body_from_start()
+        {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
             self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
             self.start(body);
             return;
         }
@@ -2778,19 +2773,24 @@ impl<'a> HTTPClient<'a> {
         self.start(request_body);
     }
 
-    /// A `Stream` body only gets here on a 303, which is already a bodiless GET.
-    fn request_body_for_redirect(&self) -> HTTPRequestBody<'a> {
-        if !self.state.flags.resend_request_body_on_redirect {
-            return HTTPRequestBody::Bytes(b"");
-        }
+    /// The request body as it was before any of it was written, or `None` for a `Stream`, which is consumed as it's written.
+    fn request_body_from_start(&self) -> Option<HTTPRequestBody<'a>> {
         match self.state.original_request_body {
-            HTTPRequestBody::Bytes(bytes) => HTTPRequestBody::Bytes(bytes),
+            HTTPRequestBody::Bytes(bytes) => Some(HTTPRequestBody::Bytes(bytes)),
             HTTPRequestBody::Sendfile(mut sendfile) => {
                 sendfile.rewind();
-                HTTPRequestBody::Sendfile(sendfile)
+                Some(HTTPRequestBody::Sendfile(sendfile))
             }
-            HTTPRequestBody::Stream(_) => HTTPRequestBody::Bytes(b""),
+            HTTPRequestBody::Stream(_) => None,
         }
+    }
+
+    /// A `Stream` body only gets here on a 303, which is already a bodiless GET.
+    fn request_body_for_redirect(&self) -> HTTPRequestBody<'a> {
+        (self.state.flags.resend_request_body_on_redirect)
+            .then(|| self.request_body_from_start())
+            .flatten()
+            .unwrap_or(HTTPRequestBody::Bytes(b""))
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -3552,6 +3552,14 @@ impl<'a> HTTPClient<'a> {
                         match status {
                             crate::send_file::Status::Done => {
                                 self.state.request_stage = RequestStage::Done;
+                                return;
+                            }
+                            // sendfile(2) reports at once what `socket.write()` leaves to the close event.
+                            crate::send_file::Status::Err(crate::Error::Sys(
+                                bun_errno::SystemErrno::EPIPE | bun_errno::SystemErrno::ECONNRESET,
+                            )) => {
+                                GenHttpContext::<IS_SSL>::terminate_socket(socket);
+                                self.on_close();
                                 return;
                             }
                             crate::send_file::Status::Err(err) => {
@@ -4414,10 +4422,8 @@ impl<'a> HTTPClient<'a> {
                 !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
             }),
         };
-        // The hop reuses this socket before a FIN behind the 3xx is read, and `on_close` only retries an idempotent method with a `Bytes` body.
-        let hop_can_retry = !redirecting
-            || (self.method.is_idempotent()
-                && matches!(self.request_body_for_redirect(), HTTPRequestBody::Bytes(_)));
+        // The hop reuses this socket before a FIN behind the 3xx is read, and `on_close` only retries an idempotent method.
+        let hop_can_retry = !redirecting || self.method.is_idempotent();
 
         // The pool never gets a paused socket.
         if core::mem::take(&mut self.state.flags.receive_paused) && !socket.is_closed_or_has_error()

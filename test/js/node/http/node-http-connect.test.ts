@@ -9,6 +9,8 @@ import net from "node:net";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { getDefaultHighWaterMark, PassThrough, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
+import { pipeline } from "node:stream/promises";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
 
@@ -2408,7 +2410,7 @@ test("a proxy made of two pipes closes the socket of a tunnel with its connectio
   }
 });
 
-// With a listener every row is Node.js v26's. Without one, Node.js emits 'error' all the same.
+// Node.js emits 'error' in every row.
 describe.each(["http", "https"] as const)("%s: a socket handed to a listener, when its connection fails", proto => {
   const requests = {
     upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
@@ -2454,8 +2456,8 @@ describe.each(["http", "https"] as const)("%s: a socket handed to a listener, wh
       if (writes) for (const chunk of ["a", "b"]) socket.write(chunk, () => callbacks++);
 
       expect({ hadError: await closed, events, callbacks, listeners }).toEqual({
-        hadError: listens,
-        events: [listens ? "error" : "end"],
+        hadError: false,
+        events: ["end"],
         callbacks: writes ? 2 : 0,
         // A TLSSocket has one of its own, as in Node.js.
         listeners: Number(listens) + Number(proto === "https"),
@@ -2480,7 +2482,7 @@ describe.each(["http", "https"] as const)("%s: a socket handed to a listener, wh
         ),
       ),
     ),
-  )("%s, without an 'error' listener", async (_name, event, both, writes) => {
+  )("%s", async (_name, event, both, writes) => {
     const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
     await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
     server.on(event, (_req, socket) => {
@@ -2500,19 +2502,11 @@ describe.each(["http", "https"] as const)("%s: a socket handed to a listener, wh
       const sink = new PassThrough();
       source.pipe(socket);
       if (both) socket.pipe(sink).resume();
-      // Printed if the row fails: how the failure reached the socket differs by platform.
-      const seen: string[] = [];
-      const destroy = socket._destroy;
-      socket._destroy = function (err: any, callback) {
-        seen.push(`_destroy(${err?.code} ${err?.syscall})`);
-        destroy.call(this, err, callback);
-      };
-      socket.on("end", () => seen.push("end"));
       socket.on("close", () => onClosed());
       raw.resetAndDestroy();
       if (writes) for (const chunk of ["a", "b"]) source.write(chunk);
       await closed;
-      expect({ destroyed: socket.destroyed, sinkEnded: sink.writableEnded }, seen.join(", ")).toEqual({
+      expect({ destroyed: socket.destroyed, sinkEnded: sink.writableEnded }).toEqual({
         destroyed: true,
         sinkEnded: both,
       });
@@ -2523,7 +2517,37 @@ describe.each(["http", "https"] as const)("%s: a socket handed to a listener, wh
   });
 });
 
-test("unref() on the socket that 'upgrade' got lets the process exit with the connection open", async () => {
+test.each([
+  ["for await", async (socket: net.Socket) => void (await Array.fromAsync(socket))],
+  ["events.once(socket, 'close')", async (socket: net.Socket) => void (await once(socket.resume(), "close"))],
+  ["events.once(socket, 'end')", async (socket: net.Socket) => void (await once(socket.resume(), "end"))],
+  ["stream/promises.pipeline()", (socket: net.Socket) => pipeline(socket, new PassThrough().resume())],
+  ["stream/consumers.text()", async (socket: net.Socket) => void (await text(socket))],
+])("%s on a socket handed to 'upgrade' resolves when the connection fails", async (_name, read) => {
+  const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
+  await using server = http.createServer();
+  server.on("upgrade", (_req, socket) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    onHandedOff(socket as net.Socket);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+    const [socket] = await Promise.all([handedOff, once(client, "data")]);
+    const done = read(socket);
+    client.resetAndDestroy();
+    expect(await done).toBeUndefined();
+  } finally {
+    client.destroy();
+  }
+});
+
+test.each([
+  ["", ""],
+  [", also after server.ref()", "server.ref();"],
+])("unref() on the socket that 'upgrade' got lets the process exit with the connection open%s", async (_name, then) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2533,6 +2557,7 @@ test("unref() on the socket that 'upgrade' got lets the process exit with the co
         server.on("upgrade", (req, socket) => {
           socket.write("HTTP/1.1 101 Switching Protocols\\r\\n\\r\\n");
           socket.unref();
+          ${then}
           server.close();
         });
         server.listen(0, "127.0.0.1", () => console.log(server.address().port));

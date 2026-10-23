@@ -576,9 +576,10 @@ function onRequestTimeout(socket) {
 }
 
 Server.prototype.ref = function () {
+  // Only what unref() let go of: a socket can have an unref() of the program's own.
+  if (this._unref) for (const socket of this[kHandedOffSockets]) socket.ref();
   this._unref = false;
   this[serverSymbol]?.ref?.();
-  for (const socket of this[kHandedOffSockets]) socket.ref();
   return this;
 };
 
@@ -1545,8 +1546,7 @@ function detachFromHttp(socket, req) {
   socket.removeListener("data", noopOnData);
   delete socket._onTimeout;
   delete socket._final;
-  socket._destroy = handedOffSocketDestroy;
-  socket.emit = handedOffSocketEmit;
+  delete socket._destroy;
   const server = socket.server;
   server[kTrackedConnections].delete(socket);
   // In Node each socket holds the process itself. Here unref() on the server has always let go of these sockets too.
@@ -1565,33 +1565,6 @@ function detachFromHttp(socket, req) {
 // A socket whose connection has closed closes too, also with bytes that nobody reads. Node keeps those for a reader.
 function destroyUnreadSocket(this: any) {
   if (this.readableLength > 0 && !this.readableFlowing) this.destroy();
-}
-// node:tls's own listener does nothing after the handshake, and pipe()'s would take it for one of the program's.
-function hasNoErrorListener(socket) {
-  for (const listener of socket.listeners("_tlsError")) socket.removeListener("error", listener);
-  return socket.listenerCount("error") === 0;
-}
-// Without an 'error' listener of the program's, a failed read or write ends the socket and closes it, as it always has here. Node emits 'error'.
-function handedOffSocketDestroy(this: any, err, callback) {
-  if (err?.syscall !== undefined && hasNoErrorListener(this)) {
-    err = null;
-    this._readableState.errored = null;
-    this.push(null);
-    this.read(0);
-  }
-  NetSocket.prototype._destroy.$call(this, err, callback);
-}
-// The same for a listener that passes the failure on when no other is left, as pipe()'s does.
-function handedOffSocketEmit(this: any, event, err) {
-  if (event !== "error" || err?.syscall === undefined || !hasNoErrorListener(this)) {
-    return NetSocket.prototype.emit.$apply(this, arguments);
-  }
-  const state = this._readableState;
-  if (!state.endEmitted && state.length === 0) {
-    state.ended = state.endEmitted = true;
-    NetSocket.prototype.emit.$call(this, "end");
-  }
-  return false;
 }
 function handOffSocket(socket, req, isPipelined) {
   detachFromHttp(socket, req);
@@ -1776,6 +1749,8 @@ function connectionListenerInternal(server, socket) {
   socket.setEncoding = socketSetEncoding;
 
   socket._paused = false;
+  // Only the event loop feeds a socket that reads a descriptor, so no tick can hand the parser more bytes in the middle of a read.
+  parser._consumed = socket._handle?.fd >= 0;
   // Node's parser reads from the handle, so a pause() by the socket's previous owner doesn't stop it.
   socket.resume();
 }

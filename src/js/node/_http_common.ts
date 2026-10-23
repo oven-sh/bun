@@ -2,6 +2,7 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
+const { drainMicrotasks } = require("internal/http");
 interface HTTPParserError extends Error {
   bytesParsed: number;
   code: string;
@@ -141,6 +142,12 @@ const MAX_HEADER_PAIRS = 2000;
 // across multiple TCP packets or too large to be
 // processed in a single run. This method is also
 // called to process trailing HTTP headers.
+// Node makes kOnHeaders and kOnBody with MakeCallback(), which runs the ticks and the microtasks when the read came from the handle.
+function runTaskQueues(parser) {
+  // A tick could hand the parser what the socket still holds, in the middle of this read.
+  if (parser._consumed && parser.socket.readableLength === 0) drainMicrotasks();
+}
+
 function parserOnHeaders(headers, url) {
   // Once we exceeded headers limit - stop collecting them
   const capacity = this.maxHeaderPairs - this._headers.length;
@@ -150,6 +157,7 @@ function parserOnHeaders(headers, url) {
     this._headers.push(...headers.slice(0, capacity));
   }
   this._url += url;
+  runTaskQueues(this);
 }
 
 // `headers` and `url` are set only if .onHeaders() has not been called for
@@ -216,13 +224,12 @@ function parserOnBody(b) {
   const stream = this.incoming;
 
   // If the stream has already been removed, then drop it.
-  if (stream === null || stream[kSkipPendingData]) return;
-
-  // Pretend this was the result of a stream._read call.
-  if (!stream._dumped && !stream.destroyed) {
+  if (stream !== null && !stream[kSkipPendingData] && !stream._dumped && !stream.destroyed) {
+    // Pretend this was the result of a stream._read call.
     const ret = stream.push(b);
     if (!ret) readStop(this.socket);
   }
+  runTaskQueues(this);
 }
 
 function parserOnMessageComplete() {
@@ -239,10 +246,6 @@ function parserOnMessageComplete() {
       parser._headers = [];
       parser._url = "";
     }
-
-    // Node's parser runs the tick queue between its callbacks, so a read that the 'request' listener scheduled has called _read() by now.
-    const state = stream._readableState;
-    if (state.resumeScheduled || state.readableListening) stream._consuming = true;
 
     // For emit end event
     stream.push(null);

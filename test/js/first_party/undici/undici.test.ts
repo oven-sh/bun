@@ -562,11 +562,18 @@ describe("undici dispatchers", () => {
     });
 
     it.each([
-      ["echo", "path must be an absolute URL or start with a slash"],
-      [undefined, "path must be a string"],
-    ])("rejects the path %p", async (path, message) => {
+      ["echo", "UND_ERR_INVALID_ARG", "path must be an absolute URL or start with a slash"],
+      ["ftp://other.invalid/echo", "UND_ERR_INVALID_ARG", "path must be an absolute URL or start with a slash"],
+      [undefined, "UND_ERR_INVALID_ARG", "path must be a string"],
+      ["http://other.invalid/echo", "UND_ERR_NOT_SUPPORTED", "An absolute URL as `path` is not yet implemented in Bun"],
+      [
+        "https://other.invalid/echo",
+        "UND_ERR_NOT_SUPPORTED",
+        "An absolute URL as `path` is not yet implemented in Bun",
+      ],
+    ])("rejects the path %p", async (path, code, message) => {
       const error = await new Pool(origin).request({ path: path as never, method: "GET" }).catch(e => e);
-      expect({ code: error.code, message: error.message }).toEqual({ code: "UND_ERR_INVALID_ARG", message });
+      expect({ code: error.code, message: error.message }).toEqual({ code, message });
     });
 
     it("keeps its origin when the path starts with two slashes", async () => {
@@ -1201,18 +1208,15 @@ describe("undici dispatchers", () => {
       expect(takeProxied()).toEqual(Array(2).fill({ target: `127.0.0.1:${secure.port}` }));
     });
 
-    it("still verifies an https: proxy when requestTls has rejectUnauthorized: false", async () => {
-      using secureProxy = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("reached") });
-      const dispatcher = new ProxyAgent({
-        uri: `https://127.0.0.1:${secureProxy.port}`,
-        requestTls: { rejectUnauthorized: false },
-      });
-      expect(
-        await undiciFetch(`${origin}/echo`, { dispatcher }).then(
-          response => response.text(),
-          e => e.code,
-        ),
-      ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    it("refuses requestTls with an https: proxy, which it would apply to as well", () => {
+      expect(() => new ProxyAgent({ uri: "https://127.0.0.1:1", requestTls: { ca: tls.cert } })).toThrow(
+        expect.objectContaining({
+          name: "InvalidArgumentError",
+          code: "UND_ERR_INVALID_ARG",
+          message: "requestTls is not supported with an https: proxy",
+        }),
+      );
+      expect(new ProxyAgent({ uri: "https://127.0.0.1:1", requestTls: undefined })).toBeInstanceOf(ProxyAgent);
     });
 
     describe("sends every request through its proxy, whatever the environment says", () => {

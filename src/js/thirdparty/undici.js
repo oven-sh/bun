@@ -617,6 +617,10 @@ class DispatcherBase extends Dispatcher {
       throw new InvalidArgumentError("opts.origin must be a non-empty string or URL.");
     }
     if (typeof path !== "string") throw new InvalidArgumentError("path must be a string");
+    // undici sends an absolute URL to the origin as the request target, which fetch() can't.
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      throw new NotSupportedError("An absolute URL as `path` is not yet implemented in Bun");
+    }
     if (path[0] !== "/") throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
     // new URL(path, origin) would let a path like "//host/" replace the origin.
     return new URL((this.#origin ?? parseOrigin(origin)) + path);
@@ -763,9 +767,11 @@ class ProxyAgent extends DispatcherBase {
       headers["proxy-authorization"] = token;
     }
     // fetch()'s `tls` also covers the connection to an https: proxy, which requestTls must not relax.
-    const connect = url.startsWith("https:") ? undefined : opts.requestTls;
+    if (opts.requestTls != null && url.startsWith("https:")) {
+      throw new InvalidArgumentError("requestTls is not supported with an https: proxy");
+    }
     // Only EnvHttpProxyAgent follows NO_PROXY.
-    super({ connect }, undefined, { url, headers, respectNoProxy: false });
+    super({ connect: opts.requestTls }, undefined, { url, headers, respectNoProxy: false });
   }
 }
 

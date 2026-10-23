@@ -6368,6 +6368,196 @@ it.each([
   }
 });
 
+describe.each([
+  ["Transfer-Encoding: chunked", ""],
+  ["Content-Length", ""],
+  ["Transfer-Encoding: chunked", "Connection: close\r\n"],
+])("a request body over server.emit('connection'), framing %#", (framing, extra) => {
+  const parts = Array.from("abcd", fill => Buffer.alloc(1024, fill));
+  const request =
+    framing === "Content-Length"
+      ? Buffer.concat([Buffer.from("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4096\r\n\r\n"), ...parts])
+      : Buffer.concat([
+          Buffer.from(`POST / HTTP/1.1\r\nHost: x\r\n${extra}Transfer-Encoding: chunked\r\n\r\n`),
+          ...parts.flatMap(part => [Buffer.from("400\r\n"), part, Buffer.from("\r\n")]),
+          Buffer.from("0\r\n\r\n"),
+        ]);
+  const starts: [string, (read: () => void) => void][] = [
+    ["at once", read => read()],
+    ["after an await", read => void Promise.resolve().then(read)],
+    ["in a process.nextTick()", read => process.nextTick(read)],
+  ];
+  type Reader = (req: IncomingMessage, res: ServerResponse, take: (chunk: Buffer) => void, end: () => void) => void;
+  const readers: [string, Reader][] = [
+    [
+      "pipe() into a slow Writable",
+      (req, _res, take, end) => {
+        req.on("end", end).pipe(
+          new Writable({
+            highWaterMark: 1,
+            write(chunk, _encoding, callback) {
+              take(chunk);
+              setImmediate(callback);
+            },
+          }),
+        );
+      },
+    ],
+    [
+      "on('data') and pause()",
+      (req, _res, take, end) => {
+        req.on("end", end).on("data", chunk => {
+          take(chunk);
+          req.pause();
+          setImmediate(() => req.resume());
+        });
+      },
+    ],
+    [
+      "once('data') then pause(), and the rest once the response has closed",
+      (req, res, take, end) => {
+        req.once("data", chunk => {
+          take(chunk);
+          req.pause();
+        });
+        res.on("close", () => setImmediate(() => req.on("end", end).on("data", take).resume()));
+      },
+    ],
+    [
+      "'readable' and read(n)",
+      (req, _res, take, end) => {
+        req.on("end", end).on("readable", () => {
+          for (let chunk; (chunk = req.read(512)) !== null;) take(chunk);
+        });
+      },
+    ],
+  ];
+
+  it.each(starts.flatMap(([when, start]) => readers.map(([how, read]) => [when, how, start, read] as const)))(
+    "is delivered whole to a listener that starts to read %s with %s and answers",
+    async (_when, _how, start, read) => {
+      const { promise, resolve } = Promise.withResolvers<{ bytes: number; end: boolean }>();
+      const server = createServer((req, res) => {
+        const seen = { bytes: 0, end: false };
+        req.on("close", () => setImmediate(resolve, seen));
+        start(() => {
+          read(
+            req,
+            res,
+            chunk => (seen.bytes += chunk.length),
+            () => (seen.end = true),
+          );
+          res.end("ok");
+        });
+      });
+      const listener = createNetServer(socket => server.emit("connection", socket));
+      await once(listener.listen(0, "127.0.0.1"), "listening");
+      const client = connect((listener.address() as AddressInfo).port, "127.0.0.1");
+      try {
+        client.on("error", () => {}).resume();
+        client.write(request);
+        expect(await promise).toEqual({ bytes: 4096, end: true });
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+        listener.close();
+      }
+    },
+  );
+});
+
+async function eventsOverEmittedConnection(
+  request: string,
+  listener: (req: IncomingMessage, res: ServerResponse, log: (event: string) => void) => void,
+  until: string,
+) {
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const log = (event: string) => {
+    events.push(event);
+    if (event === until) resolve();
+  };
+  const server = createServer((req, res) => listener(req, res, log));
+  server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
+    log(`clientError ${error.code}`);
+    socket.destroy();
+  });
+  const front = createNetServer(socket => server.emit("connection", socket));
+  await once(front.listen(0, "127.0.0.1"), "listening");
+  const client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+  let received = "";
+  try {
+    client.on("error", () => {}).on("data", chunk => (received += chunk.toString("latin1")));
+    client.write(request);
+    await promise;
+    return { events, received: () => received, closed: client.closed ? Promise.resolve() : once(client, "close") };
+  } finally {
+    server.closeAllConnections();
+    front.close();
+  }
+}
+
+it("the response that closes a connection is sent before the connection's parse error is reported", async () => {
+  const { events, received, closed } = await eventsOverEmittedConnection(
+    "POST /1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n" +
+      "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n",
+    async (req, res, log) => {
+      log(`request ${req.url}`);
+      res.on("finish", () => log("finish"));
+      await null;
+      req.resume();
+      res.end("ok");
+    },
+    "clientError HPE_CLOSED_CONNECTION",
+  );
+  await closed;
+  expect(events).toEqual(["request /1", "finish", "clientError HPE_CLOSED_CONNECTION"]);
+  expect(received()).toStartWith("HTTP/1.1 200 OK\r\n");
+});
+
+it("what a 'request' listener queued runs before the parser reports a long list of headers", async () => {
+  const { events } = await eventsOverEmittedConnection(
+    "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n" +
+      `GET /2 HTTP/1.1\r\nHost: x\r\n${Array.from({ length: 40 }, (_, i) => `h${i}: v\r\n`).join("")}\r\n`,
+    async (req, res, log) => {
+      log(`request ${req.url}`);
+      process.nextTick(log, `tick ${req.url}`);
+      await null;
+      log(`microtask ${req.url}`);
+      res.end();
+    },
+    "microtask /2",
+  );
+  expect(events).toEqual(["request /1", "tick /1", "microtask /1", "request /2", "tick /2", "microtask /2"]);
+});
+
+it.each([
+  [
+    "read and paused is not resumed when its response finishes",
+    (req: IncomingMessage) => void req.on("data", () => req.pause()),
+    ["req resume", "req pause", "res finish", "req end", "res close", "req close"],
+  ],
+  [
+    "read to its end closes a tick after its 'end'",
+    (req: IncomingMessage) => void req.read(),
+    ["req end", "res finish", "req close", "res close"],
+  ],
+])("a request that was received whole and is then %s", async (_, read, expected) => {
+  const { events } = await eventsOverEmittedConnection(
+    "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi",
+    (req, res, log) => {
+      for (const event of ["resume", "pause", "end", "close"]) req.on(event, () => log(`req ${event}`));
+      for (const event of ["finish", "close"]) res.on(event, () => log(`res ${event}`));
+      setImmediate(() => {
+        read(req);
+        res.end();
+      });
+    },
+    expected.at(-1)!,
+  );
+  expect(events).toEqual(expected);
+});
+
 it("connectionListener sends the trailers of a chunked response", async () => {
   const server = createServer((req, res) => {
     res.setHeader("Trailer", "X-Checksum");

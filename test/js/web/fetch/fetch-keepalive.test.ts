@@ -258,6 +258,50 @@ test.concurrent.each([
   20_000,
 );
 
+// A small file is read into memory and a large one is sent from its descriptor. Both can be sent from the start again.
+test.concurrent.each([
+  ["small", 1000],
+  ["large", 300_000],
+])("PUT of a %s Bun.file() is sent again when the reused connection drops", async (_, size) => {
+  using dir = tempDir("fetch-keepalive-file", {});
+  const content = Buffer.alloc(size, "0123456789");
+  await Bun.write(join(String(dir), "body"), content);
+
+  const received: Buffer[] = [];
+  let connections = 0;
+  const server = createServer(socket => {
+    const first = ++connections === 1;
+    let buffered = Buffer.alloc(0);
+    socket.on("error", () => {});
+    socket.on("data", data => {
+      buffered = Buffer.concat([buffered, data]);
+      const headEnd = buffered.indexOf("\r\n\r\n");
+      if (headEnd < 0) return;
+      const isUpload = buffered.toString("latin1", 0, 4) === "PUT ";
+      // The first connection answers the GET and goes away once the upload has started.
+      if (first && isUpload) return void socket.destroy();
+      if (isUpload && buffered.length < headEnd + 4 + size) return;
+      if (isUpload) received.push(buffered.subarray(headEnd + 4));
+      buffered = Buffer.alloc(0);
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    expect(await (await fetch(url)).text()).toBe("ok");
+    const res = await fetch(url, { method: "PUT", body: Bun.file(join(String(dir), "body")) });
+    expect(await res.text()).toBe("ok");
+    expect({ connections, uploads: received.length, whole: received[0]?.equals(content) }).toEqual({
+      connections: 2,
+      uploads: 1,
+      whole: true,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 // A reused keep-alive connection reset during a streaming PUT must reject with
 // ECONNRESET, not retry: the stream body is already consumed, and the retry
 // panicked in send_initial_request_payload. Subprocess: the panic aborts the process.
@@ -578,13 +622,19 @@ test.concurrent.each([
   ["POST -> 307", "/307", '{ method: "POST", body: "payload" }', "POST:7", 5],
   ["POST -> 307, then the server closes", "/307-end", '{ method: "POST", body: "payload" }', "POST:7", 5],
   ["PUT -> 307, then the server closes (hop is retried)", "/307-end", '{ method: "PUT", body: "payload" }', "PUT:7", 5],
-  // Neither can a hop that uploads straight from a file. Windows reads the file into memory first.
   [
-    "PUT of a Bun.file() -> 307",
+    "PUT of a Bun.file() -> 307 (hop resends the file)",
     "/307",
     '{ method: "PUT", body: Bun.file(process.execPath).slice(0, 40000) }',
     "PUT:40000",
-    isWindows ? 1 : 5,
+    1,
+  ],
+  [
+    "PUT of a Bun.file() -> 307, then the server closes (hop is retried)",
+    "/307-end",
+    '{ method: "PUT", body: Bun.file(process.execPath).slice(0, 40000) }',
+    "PUT:40000",
+    5,
   ],
 ])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
   await using proc = Bun.spawn({

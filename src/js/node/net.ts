@@ -381,7 +381,8 @@ function onWriteComplete(self, handle, status) {
     unrefAfterDrain(self, handle);
   }
   // Node's WriteWrap is an AsyncResource that write() creates.
-  AsyncContextFrame.run(req.frame, req.callback, undefined, err);
+  if (err && endsWithoutError(self)) process.nextTick(AsyncContextFrame.run, req.frame, req.callback, undefined, err);
+  else AsyncContextFrame.run(req.frame, req.callback, undefined, err);
 }
 function endNT(self, socket, callback) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -807,6 +808,14 @@ function finishSocketEnd(self) {
   }
 }
 
+// A socket that node:http handed to 'upgrade' or 'connect' ends and closes when its connection fails, and emits no 'error' for it. The failed write's callback follows 'end'.
+function endsWithoutError(self) {
+  if (self[kHandleClosed] === undefined) return false;
+  finishSocketEnd(self);
+  self.destroy();
+  return true;
+}
+
 function deferEndForOnreadTail(self) {
   if (self[kOnreadTail] === undefined || self.destroyed) return false;
   self[kOnreadPendingEnd] = true;
@@ -815,7 +824,7 @@ function deferEndForOnreadTail(self) {
 
 // EOF, or the read error the handle closed with: https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L207-L234
 function onReadEnd(self, err?) {
-  if (self.destroyed) return;
+  if (self.destroyed || (err && endsWithoutError(self))) return;
   // A reset after both directions finished. Node stops reading at EOF, so it never sees one.
   const teardownNoise = self[kended] && self.writableFinished;
   const hasErrorListener = self.listenerCount("error") > 0;
@@ -825,7 +834,7 @@ function onReadEnd(self, err?) {
     // Its TLS socket reports the error. The handle is gone, so this socket closes with nothing to report.
     if (self.emit(kReadError, err)) return void self.destroy();
     // The listener can be gone by the tick that emits 'error' (a request that finished as the reset arrived).
-    if (hasErrorListener && self[kHandleClosed] === undefined) self.once("error", noop);
+    if (hasErrorListener) self.once("error", noop);
     return void self.destroy(new ErrnoException(err.errno, err.syscall));
   }
   if (!self[kended]) {
@@ -1218,6 +1227,8 @@ const SocketHandlers = {
       return;
     }
     const tlsError = establishedTLSError(self, error);
+    // What a listener threw comes here too, and has neither.
+    if ((tlsError || (error as NodeJS.ErrnoException)?.syscall !== undefined) && endsWithoutError(self)) return;
     if (tlsError) error = tlsError;
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
     if (!self._secureEstablished) {
@@ -2572,7 +2583,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
   } else if (status !== true) {
     // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L158-L159
-    callback(new ErrnoException(status, "write"));
+    const err = new ErrnoException(status, "write");
+    if (endsWithoutError(this)) process.nextTick(callback, err);
+    else callback(err);
   } else if (this.encrypted) {
     // A TLS write is never done in the same call in Node, so writableLength counts it until the next tick (test-tls-buffersize.js).
     process.nextTick(callback);

@@ -407,6 +407,8 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     socket.destroy(err);
     const state = { cleanup: undefined as undefined | (() => void) };
     state.cleanup = finished(socket, onFinishedAfterDestroy.bind(this, state, err, cb));
+  } else if (err == null && !this.aborted) {
+    cb();
   } else {
     // pipeline() and `for await` destroy a request but keep its connection (req.socket is null). The rest of the body is dropped, not held back.
     if (!socket && !this.complete) readStart(this.client);
@@ -721,7 +723,8 @@ IncomingMessage.prototype._dump = function _dump() {
     // Remove 'data' event listeners explicitly.
     this.removeAllListeners("data");
     // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
-    this.resume();
+    if (this._readableState.ended && !this.destroyed && this.readableLength === 0) this.read(0);
+    else this.resume();
   }
 };
 

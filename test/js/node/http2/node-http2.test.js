@@ -13,7 +13,7 @@ import path from "node:path";
 import { PerformanceObserver } from "node:perf_hooks";
 import tls from "node:tls";
 import util from "node:util";
-import { Duplex, duplexPair, finished } from "stream";
+import { Duplex, duplexPair, finished, Writable } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, beforeEach, createCallCheckCtx, mock } = createTest(
@@ -6416,6 +6416,47 @@ it.each([
     server.close();
   }
 });
+
+it.each([
+  ["an await", read => void Promise.resolve().then(read)],
+  ["a process.nextTick()", read => process.nextTick(read)],
+])(
+  "http2 allowHTTP1 fallback delivers a request body whole to a listener that starts to read it after %s",
+  async (_, start) => {
+    const { promise, resolve } = Promise.withResolvers();
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+      start(() => {
+        let bytes = 0;
+        const slow = new Writable({
+          highWaterMark: 1,
+          write(chunk, _encoding, callback) {
+            bytes += chunk.length;
+            setImmediate(callback);
+          },
+        });
+        req.pipe(slow).on("finish", () => resolve(bytes));
+        res.end("ok");
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = tls.connect(
+      { host: "127.0.0.1", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () =>
+        socket.write(
+          "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n" +
+            Array.from("abcd", fill => `400\r\n${fill.repeat(1024)}\r\n`).join("") +
+            "0\r\n\r\n",
+        ),
+    );
+    try {
+      socket.on("error", () => {}).resume();
+      expect(await promise).toBe(4096);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  },
+);
 
 it("http2 allowHTTP1 fallback closes the connection after an HTTP/1.0 keep-alive request", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {

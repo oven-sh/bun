@@ -25,10 +25,19 @@ impl SendFile {
         url.is_http() && url.href.len() > 0
     }
 
-    /// Moves the cursor back to the first byte so a redirect can send the body again.
+    /// Moves the cursor back to the first byte so a redirect or a retry can send the body again.
     pub(crate) fn rewind(&mut self) {
         self.offset -= self.content_size - self.remain;
         self.remain = self.content_size;
+    }
+
+    /// The head promised `content_size` bytes, and the file can have become shorter since it was measured.
+    fn at_end_of_file(&self) -> Status {
+        if self.remain == 0 {
+            Status::Done
+        } else {
+            Status::Err(crate::Error::RequestBodyLengthMismatch)
+        }
     }
 
     /// `pread` + `send`, for a connection `sendfile(2)` can't write to. Nothing here touches `self` after `send` fails.
@@ -47,8 +56,7 @@ impl SendFile {
             }
             let offset = i64::try_from(self.offset).expect("int cast");
             let read = match bun_sys::pread(self.fd, &mut buf[..want], offset) {
-                // The file shrank after it was measured.
-                Ok(0) => return Status::Done,
+                Ok(0) => return self.at_end_of_file(),
                 Ok(n) => n,
                 Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
             };
@@ -100,7 +108,7 @@ impl SendFile {
 
             if errcode != bun_sys::E::SUCCESS || self.remain == 0 || val == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.at_end_of_file();
                 }
 
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
@@ -130,7 +138,7 @@ impl SendFile {
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.at_end_of_file();
                 }
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }

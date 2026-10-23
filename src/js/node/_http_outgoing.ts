@@ -372,10 +372,10 @@ OutgoingMessage.prototype.uncork = function uncork() {
     socket?.uncork();
   }
 
-  // If we had a pending drain and flushed all data, emit the drain event.
+  // Node emits 'drain' right here, where a listener that is added after uncork() returns misses it.
   if (this[kNeedDrain] && this.writableLength === 0) {
     this[kNeedDrain] = false;
-    this.emit("drain");
+    process.nextTick(emitDrainNT, this);
   }
 };
 

@@ -8,9 +8,13 @@ import {
   isPosix,
   isWindows,
   tempDir,
+  tls,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { once } from "node:events";
+import { closeSync, existsSync, openSync, truncateSync } from "node:fs";
+import net from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -418,6 +422,43 @@ describe("a body that can't be read rejects with a TypeError", () => {
   test.skipIf(isWindows)("Bun.file() of a closed file descriptor", async () => {
     const fd = 1 << 30;
     expect(await bodyError(fetch(url, { method: "POST", body: Bun.file(fd) }))).toMatchObject({ code: "EBADF", fd });
+  });
+});
+
+// Windows reads the whole file before it sends the head.
+describe.skipIf(isWindows)("a file that becomes shorter during the upload", () => {
+  test.concurrent.each(["the first hop", "a redirected hop over TLS"])("rejects on %s", async hop => {
+    using dir = tempDir("fetch-file-shorter", {});
+    const path = join(String(dir), "body");
+    // More than the socket buffers of both ends can take. Sparse, so it costs nothing to make.
+    closeSync(openSync(path, "w"));
+    truncateSync(path, 64 * 1024 * 1024);
+
+    // Stops reading at the head, cuts the file, and reads on.
+    const onConnection = (socket: net.Socket) => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.pause();
+        truncateSync(path, 0);
+        socket.resume();
+      });
+    };
+    const target = hop === "the first hop" ? net.createServer(onConnection) : createTlsServer(tls, onConnection);
+    await once(target.listen(0, "127.0.0.1"), "listening");
+    const { port } = target.address() as net.AddressInfo;
+    using redirector = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(null, { status: 307, headers: { Location: `https://127.0.0.1:${port}/` } }),
+    });
+    try {
+      const url = hop === "the first hop" ? `http://127.0.0.1:${port}/` : redirector.url;
+      // The signal only ends a run in which the fetch would otherwise wait for its idle timeout.
+      const init = { method: "PUT", body: Bun.file(path), tls: { ca: tls.cert }, signal: AbortSignal.timeout(4000) };
+      await expect(fetch(url, init)).rejects.toMatchObject({ code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH" });
+    } finally {
+      target.close();
+    }
   });
 });
 

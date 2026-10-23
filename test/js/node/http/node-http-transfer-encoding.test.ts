@@ -2309,16 +2309,20 @@ describe("a chunked request body written under req.cork()", () => {
     });
   });
 
-  test("uncork() emits 'drain' after a corked write() returned false", async () => {
-    const body = Buffer.alloc(64 * 1024, "a").toString();
-    const echoed = await echo(async req => {
-      req.cork();
-      expect(req.write(body)).toBe(false);
-      const drained = once(req, "drain");
-      req.uncork();
-      await drained;
-      req.end();
-    }, true);
-    expect(echoed).toBe(body);
-  });
+  test.each(["before", "after"])(
+    "a 'drain' listener added %s uncork() runs when a corked write() returned false",
+    async when => {
+      const body = Buffer.alloc(64 * 1024, "a").toString();
+      const echoed = await echo(async req => {
+        req.cork();
+        expect(req.write(body)).toBe(false);
+        let drained = when === "before" ? once(req, "drain") : undefined;
+        req.uncork();
+        drained ??= once(req, "drain");
+        await drained;
+        req.end();
+      }, true);
+      expect(echoed).toBe(body);
+    },
+  );
 });

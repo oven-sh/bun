@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { connect } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
+import { Writable } from "node:stream";
 
 test("aborting a connection settles every queued pipelined response callback once", async () => {
   const queued = Promise.withResolvers<void>();
@@ -71,5 +72,46 @@ test("aborting a connection settles every queued pipelined response callback onc
     if (server.listening) {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
+  }
+});
+
+test("a request body that was put back on its socket before emit('connection') is delivered whole to a listener that reads it after an await", async () => {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const server = createServer(async (req, res) => {
+    await null;
+    let bytes = 0;
+    const slow = new Writable({
+      highWaterMark: 1,
+      write(chunk, _encoding, callback) {
+        bytes += chunk.length;
+        setImmediate(callback);
+      },
+    });
+    req.pipe(slow).on("finish", () => resolve(bytes));
+    res.end();
+  });
+  const front = createNetServer(socket => {
+    socket.once("data", first => {
+      socket.pause();
+      socket.unshift(first);
+      server.emit("connection", socket);
+      socket.resume();
+    });
+  });
+  front.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => front.once("listening", resolve));
+  const client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    client.on("error", () => {}).resume();
+    client.write(
+      "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n" +
+        Array.from("abcd", fill => `400\r\n${fill.repeat(1024)}\r\n`).join("") +
+        "0\r\n\r\n",
+    );
+    expect(await promise).toBe(4096);
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    front.close();
   }
 });

@@ -1363,19 +1363,26 @@ impl FetchTasklet {
             }
         }
 
-        if fail == http::Error::RequestBodyLengthMismatch
-            && let Some(declared) = self.declared_request_body_len
-        {
+        if fail == http::Error::RequestBodyLengthMismatch {
+            let code = jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH;
             let written = self.request_body_len_written;
-            let err = self
-                .global_this
-                .err(
-                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    format_args!(
-                        "Request body of {written} bytes does not match the Content-Length of {declared}"
-                    ),
-                )
-                .to_js();
+            let global = &self.global_this;
+            let err = match self.declared_request_body_len {
+                Some(declared) => global
+                    .err(
+                        code,
+                        format_args!(
+                            "Request body of {written} bytes does not match the Content-Length of {declared}"
+                        ),
+                    )
+                    .to_js(),
+                None => global
+                    .err(
+                        code,
+                        format_args!("The file became shorter while it was being uploaded"),
+                    )
+                    .to_js(),
+            };
             return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
         }
 

@@ -708,6 +708,43 @@ describe("Readable.fromWeb() of a native stream that something has started", () 
       expect((await collect(readable)).equals(payload)).toBe(true);
     });
   });
+
+  // The child writes more than a pipe holds, so the result doesn't depend on when the pipe closes.
+  it("closes the source if the Readable constructor throws", async () => {
+    const child = `
+      const fs = require("fs");
+      process.stdin.once("data", () => {
+        let result = "written";
+        try {
+          for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(1, rest));
+        } catch (error) {
+          result = "failed:" + error.code;
+        }
+        fs.writeSync(2, result);
+        process.exit(0);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", child],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const signal = {
+      get aborted() {
+        throw new Error("boom");
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    expect(() => Readable.fromWeb(proc.stdout, { signal })).toThrow("boom");
+    expect(proc.stdout.locked).toBe(true);
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "failed:EPIPE", exitCode: 0 });
+  });
 });
 
 // A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk

@@ -1264,6 +1264,41 @@ describe("bundler", () => {
     run: { stdout: JSON.stringify({ a: "from a", b: "from b", sameA: "same", sameB: "same", icon: "icon" }) },
   });
 
+  // An executable would keep one of two embedded files that have one name.
+  itBundled("compile/AssetNoOverwriteSameName", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a/logo.file" with { type: "file" };
+        import b from "./b/logo.file" with { type: "file" };
+        console.log(await Bun.file(a).text(), await Bun.file(b).text());
+      `,
+      "/a/logo.file": "from a",
+      "/b/logo.file": "from b",
+    },
+    bundleErrors: {
+      "<bun>": [`Multiple files share the same output path`],
+    },
+  });
+
+  // An executable looks an embedded file up by its name as written: "a/../logo.file" and
+  // "b/../logo.file" are two files.
+  itBundled("compile/AssetSameNameInParentDirectory", {
+    compile: true,
+    assetNaming: "[dir]/../[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a/logo.file" with { type: "file" };
+        import b from "./b/logo.file" with { type: "file" };
+        console.log(await Bun.file(a).text(), await Bun.file(b).text());
+      `,
+      "/a/logo.file": "from a",
+      "/b/logo.file": "from b",
+    },
+    run: { stdout: "from a from b" },
+  });
+
   // A browser chunk of a full-stack executable cannot reach the embedded
   // module graph, so its text imports stay inline string literals.
   itBundled("compile/TextImportClientChunkStaysInline", {

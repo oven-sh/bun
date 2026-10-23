@@ -237,7 +237,6 @@ describe("bundler", () => {
     },
   });
   itBundled("naming/AssetNoOverwrite", {
-    todo: true,
     files: {
       "/src/entry.js": /* js */ `
         import asset1 from "./asset1.file";
@@ -258,7 +257,70 @@ describe("bundler", () => {
       ".file": "file",
     },
     bundleErrors: {
-      "<bun>": ['Multiple files share the same output path: "same-filename.txt"'],
+      // expectBundled does not support newlines.
+      "<bun>": [`Multiple files share the same output path`],
+    },
+  });
+  itBundled("naming/AssetNoOverwriteSameName", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import a from "./a/logo.file";
+        import b from "./b/logo.file";
+        console.log(a, b);
+      `,
+      "/src/a/logo.file": `the first logo`,
+      "/src/b/logo.file": `the second logo`,
+    },
+    root: "/src",
+    assetNaming: "[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    bundleErrors: {
+      "<bun>": [`Multiple files share the same output path`],
+    },
+  });
+  // Two spellings of one path: the entry point renders as "sub/entry.js" and the asset as
+  // "./sub/entry.js", and "assets/../entry.js" is "entry.js" in the output directory.
+  for (const [name, entry, logo, assetNaming] of [
+    ["", "entry.js", "./logo.file", "entry.js"],
+    ["InSubdirectory", "sub/entry.js", "../logo.file", "sub/entry.js"],
+    ["ThroughParentDirectory", "entry.js", "./logo.file", "assets/../entry.js"],
+  ] as const) {
+    itBundled(`naming/AssetNoOverwriteEntryPoint${name}`, {
+      files: {
+        [`/src/${entry}`]: /* js */ `
+          import asset from "${logo}";
+          console.log(asset);
+        `,
+        "/src/logo.file": `the logo`,
+      },
+      root: "/src",
+      assetNaming,
+      entryPointsRaw: [`./src/${entry}`],
+      bundleErrors: {
+        "<bun>": [`Multiple files share the same output path`],
+      },
+    });
+  }
+  itBundled("naming/AssetSameNameSameContent", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import a from "./a/logo.file";
+        import b from "./b/logo.file";
+        console.log(a, b, await Bun.file(import.meta.dir + "/" + a).text());
+      `,
+      "/src/a/logo.file": `the logo`,
+      "/src/b/logo.file": `the logo`,
+    },
+    root: "/src",
+    target: "bun",
+    assetNaming: "[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry.js", "logo.file"]);
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "./logo.file ./logo.file the logo",
     },
   });
   itBundled("naming/AssetFileLoaderPath1", {

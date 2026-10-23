@@ -3406,6 +3406,9 @@ pub mod bv2_impl {
                 &this.transpiler.options.entry_naming,
                 crate::options::PlaceholderField::Hash,
             );
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
+            this.linker.options.asset_naming =
+                unsafe { interned_slice(&this.transpiler.options.asset_naming) };
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;

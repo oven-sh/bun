@@ -5456,10 +5456,9 @@ pub mod bv2_impl {
                         path.namespace = result_ns_static;
                     }
                     if !result.external {
-                        // Only the path that the record asked for is the record's module, under the record's key.
-                        let is_requested_path = path.text == &*resolve.import_record.specifier;
-                        let key_loader = if is_requested_path
-                            && resolve.import_record.kind != ImportKind::EntryPointBuild
+                        // An import keeps its `with { type }` whoever resolved it. An entry point has no record.
+                        let key_loader = if resolve.import_record.kind
+                            != ImportKind::EntryPointBuild
                         {
                             let path_loader = this.requested_file_loader(&path, None);
                             let for_dev_server = this.dev_server.is_some();
@@ -5515,11 +5514,14 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
+                            // An entry point that a plugin resolved to another file keeps that file's loader.
                             let loader = key_loader.unwrap_or_else(|| {
                                 this.requested_file_loader(
                                     &path,
-                                    resolve.import_record.loader.filter(|_| is_requested_path),
+                                    resolve
+                                        .import_record
+                                        .loader
+                                        .filter(|_| path.text == &*resolve.import_record.specifier),
                                 )
                             });
 

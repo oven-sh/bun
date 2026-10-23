@@ -694,6 +694,175 @@ describe("FormData", () => {
     });
   });
 
+  // Fetch "extract a MIME type": of the comma-joined Content-Type values, the
+  // last one that parses decides. formData() switches on its essence, the text
+  // before the first ";". Text in a parameter selects no parser.
+  describe("Content-Type MIME type selects the parser", () => {
+    const U = "application/x-www-form-urlencoded";
+    const M = "multipart/form-data";
+    const B = "aab03x";
+    const multipart = (boundary: string) =>
+      `--${boundary}\r\nContent-Disposition: form-data; name="comment"\r\n\r\nhello&role=admin&z=\r\n--${boundary}--\r\n`;
+    const urlencoded = "a=1&b=2";
+    const part = [["comment", "hello&role=admin&z="]];
+    const pairs = [
+      ["a", "1"],
+      ["b", "2"],
+    ];
+    const REJECT = null;
+    type Row = [contentType: string, body: string, expected: string[][] | null];
+
+    const rows: Row[] = [
+      // A parameter names the other form type.
+      [`${M}; boundary=${B}; x="${U}"`, multipart(B), part],
+      [`${M}; boundary=${B}; x=${U}`, multipart(B), part],
+      [`${M}; boundary=${U}`, multipart(U), part],
+      [`${U}; x=${M}; boundary=${B}`, urlencoded, pairs],
+      // A parameter names a form type and the media type is something else.
+      [`text/plain; x=${M}; boundary=${B}`, multipart(B), REJECT],
+      [`text/plain; boundary=${B}; ${M}`, multipart(B), REJECT],
+      [`application/json; a="${M}"; boundary=${B}`, multipart(B), REJECT],
+      [`text/plain;x=${U}`, urlencoded, REJECT],
+      // The media type only contains a form type.
+      [`x${M}; boundary=${B}`, multipart(B), REJECT],
+      [`${M}x; boundary=${B}`, multipart(B), REJECT],
+      [`"${M}"; boundary=${B}`, multipart(B), REJECT],
+      [`${M} x; boundary=${B}`, multipart(B), REJECT],
+      [`x${U}`, urlencoded, REJECT],
+      [`${U}x`, urlencoded, REJECT],
+      [`${U} charset=UTF-8`, urlencoded, REJECT],
+      // Whitespace around the media type is not part of it.
+      [`${M} ; boundary=${B}`, multipart(B), part],
+      [`${U} ;charset=utf-8`, urlencoded, pairs],
+      [` ${U} `, urlencoded, pairs],
+      // Several values: the last one that parses as a MIME type decides.
+      [`${U}, ${U}`, urlencoded, pairs],
+      [`text/plain, ${U}`, urlencoded, pairs],
+      [`${U};charset=utf-8, text/plain`, urlencoded, REJECT],
+      [`${U}, ${M}; boundary=${B}`, multipart(B), part],
+      [`${M}; boundary=other, ${M}; boundary=${B}`, multipart(B), part],
+      [`${M}; boundary=${B} , */*`, multipart(B), part],
+      [`${M}; boundary=${B}, not/a type`, multipart(B), part],
+      // A comma ends a value unless it is inside a quoted string.
+      [`${M}; boundary="a,b"`, multipart("a,b"), part],
+      [`${M}; boundary=a,b`, multipart("a"), part],
+      [`text/plain; x="a, ${U}"`, urlencoded, REJECT],
+      [`text/plain; x="\\"", ${U}`, urlencoded, pairs],
+      // An empty boundary is no boundary.
+      [`${M}; boundary=""`, multipart(""), REJECT],
+      [`${M}; boundary=;charset=utf-8`, multipart(""), REJECT],
+    ];
+    // new Blob() drops a type that has a TAB, so these go through headers only.
+    const headerRows: Row[] = [
+      [`${M}\t; boundary=${B}`, multipart(B), part],
+      [`${U}\t;charset=utf-8`, urlencoded, pairs],
+    ];
+    // Only a data: URL can put other control bytes in the type. CR and LF are HTTP whitespace.
+    const dataUrlRows: Row[] = [
+      [`${M}\r; boundary=${B}`, multipart(B), part],
+      [`\r\n${M}\n; boundary=${B}`, multipart(B), part],
+      [`${U}\r\n`, urlencoded, pairs],
+      [`${M}\x0b; boundary=${B}`, multipart(B), REJECT],
+      [`${M}\x0c; boundary=${B}`, multipart(B), REJECT],
+      [`${U}\x0b`, urlencoded, REJECT],
+    ];
+
+    const wrongType = "Can't decode form data from body because of incorrect MIME type/boundary";
+    const read = (body: Response | Request | Blob) =>
+      body.formData().then(
+        fd => [...fd],
+        e => e.message,
+      );
+    const stream = (body: string) =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body));
+          controller.close();
+        },
+      });
+    const headers = (type: string) => ({ "Content-Type": type });
+    const post = (body: string | ReadableStream, type: string) => ({ method: "POST", body, headers: headers(type) });
+
+    describe.each([
+      ["Response", (body: string, type: string) => new Response(body, { headers: headers(type) })],
+      ["Request", (body: string, type: string) => new Request("http://x/", post(body, type))],
+      [
+        "Response with a stream body",
+        (body: string, type: string) => new Response(stream(body), { headers: headers(type) }),
+      ],
+      [
+        "Request with a stream body",
+        (body: string, type: string) => new Request("http://x/", post(stream(body), type)),
+      ],
+    ] as const)("%s", (_name, make) => {
+      it.each([...rows, ...headerRows])("%j", async (type, body, expected) => {
+        expect(await read(make(body, type))).toEqual(expected ?? wrongType);
+      });
+    });
+
+    describe("Blob", () => {
+      it.each(rows)("%j", async (type, body, expected) => {
+        expect(await read(new Blob([body], { type }))).toEqual(expected ?? "Invalid encoding");
+      });
+    });
+
+    describe("fetch(data:)", () => {
+      it.each(dataUrlRows)("%j", async (type, body, expected) => {
+        expect(await read(await fetch(`data:${type};base64,${btoa(body)}`))).toEqual(expected ?? wrongType);
+      });
+    });
+
+    const serve = () =>
+      Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const { search } = new URL(req.url);
+          // The header comes from the socket first, and from req.headers after one event loop turn.
+          if (search === "?late") await new Promise(resolve => setImmediate(resolve));
+          // Reading .body makes the body a stream.
+          if (search === "?stream") void req.body;
+          return Response.json(await read(req));
+        },
+      });
+
+    it("Bun.serve req.formData()", async () => {
+      await using server = serve();
+      const got: unknown[] = [];
+      const want: unknown[] = [];
+      for (const [type, body, expected] of [...rows, ...headerRows]) {
+        for (const path of ["/", "/?late", "/?stream"]) {
+          const res = await fetch(new URL(path, server.url), post(body, type));
+          got.push([type, path, await res.json()]);
+          want.push([type, path, expected ?? wrongType]);
+        }
+      }
+      expect(got).toEqual(want);
+    });
+
+    it("Bun.serve req.formData() with two identical Content-Type lines", async () => {
+      await using server = serve();
+      for (const path of ["/", "/?late"]) {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        let response = "";
+        await using socket = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port!,
+          socket: {
+            data: (_, chunk) => void (response += chunk.toString()),
+            close: () => resolve(response),
+            error: (_, error) => reject(error),
+          },
+        });
+        socket.write(
+          `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Type: ${U}\r\nContent-Type: ${U}\r\n` +
+            `Content-Length: ${urlencoded.length}\r\nConnection: close\r\n\r\n${urlencoded}`,
+        );
+        const text = await promise;
+        expect([path, text.slice(text.indexOf("\r\n\r\n") + 4)]).toEqual([path, JSON.stringify(pairs)]);
+      }
+    });
+  });
+
   describe("URLEncoded", () => {
     test("should parse URL encoded", async () => {
       const response = new Response("foo=bar&baz=qux", {

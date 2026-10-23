@@ -5346,23 +5346,90 @@ pub mod form_data {
         Multipart(Box<[u8]>),
     }
 
+    const HTTP_WHITESPACE: &[u8] = b" \t\r\n";
+
+    /// Whether the essence (`type/subtype`) of `mime_type` is `name`, ASCII case-insensitive.
+    fn has_essence(mime_type: &[u8], name: &[u8]) -> bool {
+        let value = crate::strings_impl::trim_left(mime_type, HTTP_WHITESPACE);
+        let Some((essence, rest)) = value.split_at_checked(name.len()) else {
+            return false;
+        };
+        essence.eq_ignore_ascii_case(name)
+            && matches!(
+                crate::strings_impl::trim_left(rest, HTTP_WHITESPACE).first(),
+                None | Some(b';')
+            )
+    }
+
+    /// Fetch "extract a MIME type": the last `,`-separated value that parses and is not `*/*`.
+    fn last_mime_type(content_type: &[u8]) -> Option<&[u8]> {
+        let mut last = None;
+        let mut rest = content_type;
+        loop {
+            let end = index_of_unquoted_comma(rest).unwrap_or(rest.len());
+            let value = crate::strings_impl::trim(&rest[..end], HTTP_WHITESPACE);
+            if is_mime_type(value) {
+                last = Some(value);
+            }
+            if end == rest.len() {
+                return last;
+            }
+            rest = &rest[end + 1..];
+        }
+    }
+
+    /// Whether WHATWG "parse a MIME type" accepts `value`, with an essence other than `*/*`.
+    fn is_mime_type(value: &[u8]) -> bool {
+        let end = crate::strings::index_of_char_usize(value, b';').unwrap_or(value.len());
+        let essence = crate::strings_impl::trim(&value[..end], HTTP_WHITESPACE);
+        let Some(slash) = crate::strings::index_of_char_usize(essence, b'/') else {
+            return false;
+        };
+        is_http_token(&essence[..slash])
+            && is_http_token(&essence[slash + 1..])
+            && essence != b"*/*"
+    }
+
+    fn is_http_token(s: &[u8]) -> bool {
+        !s.is_empty()
+            && s.iter().all(|&b| {
+                b.is_ascii_alphanumeric() || crate::strings::contains_char(b"!#$%&'*+-.^_`|~", b)
+            })
+    }
+
+    fn index_of_unquoted_comma(s: &[u8]) -> Option<usize> {
+        let mut in_quotes = false;
+        let mut i = 0;
+        while i < s.len() {
+            match s[i] {
+                b'"' => in_quotes = !in_quotes,
+                b'\\' if in_quotes => i += 1,
+                b',' if !in_quotes => return Some(i),
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
     impl Encoding {
         pub fn get(content_type: &[u8]) -> Option<Encoding> {
-            // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type and subtype are
-            // case-insensitive.
-            if crate::strings_impl::contains_case_insensitive_ascii(
-                content_type,
-                b"application/x-www-form-urlencoded",
-            ) {
+            // Two `Content-Type` lines, or `Headers.append` twice, give one `,`-joined value.
+            let mime_type = if crate::strings::contains_char(content_type, b',') {
+                last_mime_type(content_type)?
+            } else {
+                content_type
+            };
+            if has_essence(mime_type, b"application/x-www-form-urlencoded") {
                 return Some(Encoding::URLEncoded);
             }
-            if !crate::strings_impl::contains_case_insensitive_ascii(
-                content_type,
-                b"multipart/form-data",
-            ) {
+            if !has_essence(mime_type, b"multipart/form-data") {
                 return None;
             }
-            let boundary = get_boundary(content_type)?;
+            let boundary = get_boundary(mime_type)?;
+            if boundary.is_empty() {
+                return None;
+            }
             Some(Encoding::Multipart(Box::from(boundary)))
         }
     }

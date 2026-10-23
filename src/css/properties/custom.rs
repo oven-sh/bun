@@ -985,6 +985,9 @@ impl UnresolvedColor {
                     }
                     i.expect_delim(b'/')?;
                     let alpha = TokenListFns::parse(i, options, depth + 1)?;
+                    // The channels print as bytes, so two colors with the same bytes are one value.
+                    let [r, g, b] =
+                        [r, g, b].map(|c| f32::from(css_values::color::clamp_unit_f32(c)) / 255.0);
                     Ok(UnresolvedColor::RGB { r, g, b, alpha })
                 })
             }),

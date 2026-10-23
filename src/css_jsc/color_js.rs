@@ -291,7 +291,7 @@ pub(crate) fn color<'a>(
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
                             let srgba: SRGB = match &result {
-                                CssColor::Float(float) => match &**float {
+                                CssColor::Float(float) => match float {
                                     css::FloatColor::Rgb(rgb) => *rgb,
                                     other => other.into_srgb(),
                                 },
@@ -420,7 +420,7 @@ pub(crate) fn color<'a>(
 
                         OutputColorFormat::Hsl => {
                             let hsl: HSL = match &result {
-                                CssColor::Float(float) => match &**float {
+                                CssColor::Float(float) => match float {
                                     css::FloatColor::Hsl(hsl) => *hsl,
                                     other => other.into_hsl(),
                                 },

@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tls as tlsCert, withoutAsanQuarantine } from "harness";
 import { createServer, request } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
+import { join } from "path";
 import type { Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
@@ -1177,6 +1178,290 @@ test("pipelined chunked request keeps its own trailers when the next one is pars
   const trailers = await done.promise;
   socket.destroy();
   expect(trailers).toEqual({ "x-a": "a" });
+});
+
+test("a pipelined request whose response is still queued at its last chunk gets its own trailers", async () => {
+  // /a answers only after /b ended, so the body of /b ends while the response to /b waits behind the one to /a:
+  // the section goes to the response that read the body, not to the one that the connection writes.
+  const seen: Record<string, Record<string, string | string[] | undefined>> = {};
+  const secondEnded = Promise.withResolvers<void>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    req.on("end", async () => {
+      seen[req.url!] = { ...req.trailers };
+      if (req.url === "/a") {
+        await secondEnded.promise;
+        res.end("a");
+      } else {
+        res.end("b");
+        secondEnded.resolve();
+      }
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nX-A: a\r\n\r\n" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\nX-B: b\r\n\r\n",
+    );
+  });
+  let wire = "";
+  socket.on("data", chunk => (wire += chunk.toString("latin1")));
+  socket.on("error", reject);
+  socket.on("close", () => resolve(wire));
+  const bodies = (await promise)
+    .split("\r\n\r\n")
+    .slice(1)
+    .map(part => part[0]);
+  expect({ seen, bodies }).toEqual({
+    seen: { "/a": { "x-a": "a" }, "/b": { "x-b": "b" } },
+    bodies: ["a", "b"],
+  });
+});
+
+test("a request trailer section reaches req.rawTrailers over TLS", async () => {
+  const { promise: seen, resolve, reject } = Promise.withResolvers<string[]>();
+  await using server = createHttpsServer(tlsCert, (req, res) => {
+    req.resume();
+    req.on("end", () => {
+      resolve([...req.rawTrailers]);
+      res.end("ok");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  // The section is longer than the inline buffer of a std::string.
+  const request =
+    "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n" +
+    "X-Checksum: 0123456789abcdef\r\nX-Other: 1\r\n\r\n";
+  const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request));
+  socket.on("error", reject);
+  try {
+    expect(await seen).toEqual(["X-Checksum", "0123456789abcdef", "X-Other", "1"]);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// An accepted Upgrade request gets the end of its body when the peer's FIN cuts it. A trailer
+// section that the parser rejected before that FIN, or that the FIN cut, is not the request's.
+describe("an Upgrade request gets no trailer fields at the peer's FIN", () => {
+  test.each([
+    // These 10 bytes fit in the inline buffer of a std::string in every standard library. The
+    // sections of the last two rows fit in none. The limit goes down after the head of the
+    // request, which has more fields than that. Node.js does not reject a section for its
+    // count: it gives the request the fields up to the limit.
+    ["more fields than server.maxHeadersCount", "a:\r\nb:\r\n\r\n", 1, "HPE_HEADER_OVERFLOW"],
+    ["a Content-Length field", "Content-Length: 5\r\n\r\n", undefined, "HPE_INVALID_CONTENT_LENGTH"],
+    [
+      "a Transfer-Encoding field behind a valid field",
+      "X-Ok: 1\r\nTransfer-Encoding: chunked\r\n\r\n",
+      undefined,
+      "HPE_INVALID_TRANSFER_ENCODING",
+    ],
+    // No error: the FIN comes before the end of the section.
+    ["199 field lines and no end", Buffer.alloc(199 * 6, "a: 1\r\n").toString(), undefined, undefined],
+  ])("from a section with %s", async (_, section, maxHeadersCount, code) => {
+    const { promise: atFin, resolve, reject } = Promise.withResolvers<string[]>();
+    const clientErrors: (string | undefined)[] = [];
+    const opened: Duplex[] = [];
+    await using server = createServer();
+    server.on("upgrade", (req, socket: Duplex) => {
+      opened.push(socket.on("error", () => {}));
+      req.on("error", () => {});
+      req.resume();
+      socket.on("end", () => resolve([...req.rawTrailers]));
+      socket.resume();
+      if (maxHeadersCount) server.maxHeadersCount = maxHeadersCount;
+      // The client sends the section when it has this.
+      socket.write("go");
+    });
+    // It leaves the socket open, so that the FIN reaches the socket of the 'upgrade' listener.
+    server.on("clientError", (err: NodeJS.ErrnoException) => clientErrors.push(err.code));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    socket.on("error", reject);
+    socket.write(
+      "POST / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: chunked\r\n\r\n" +
+        "3\r\nabc\r\n0\r\n",
+    );
+    try {
+      await once(socket, "data");
+      socket.end(section);
+      expect({ rawTrailers: await atFin, clientErrors }).toEqual({ rawTrailers: [], clientErrors: code ? [code] : [] });
+    } finally {
+      socket.destroy();
+      for (const each of opened) each.destroy();
+    }
+  });
+});
+
+test("the parser accepts a trailer section that a nested event-loop tick inside 'end' started", async () => {
+  // The 'end' listener of /a runs inside the parser's dispatch of the last chunk of /a. There,
+  // Bun.build() ticks the event loop until the plugin's setup() settles. That tick parses the
+  // head, the body and the first half of the trailer section of /b on the same connection, so
+  // the connection must hold nothing of the section of /a by then. /c is behind the second half.
+  // /b gets no 'end' in this flow, so the test does not wait for one.
+  using dir = tempDir("node-http-nested-tick", { "entry.js": "export default 1;" });
+  const events: string[] = [];
+  const firstHalfParsed = Promise.withResolvers<void>();
+  const settled = Promise.withResolvers<void>();
+  let build: Promise<unknown> | undefined;
+  let client!: ReturnType<typeof connect>;
+  await using server = createServer((req, res) => {
+    events.push(`request ${req.url}`);
+    if (req.url === "/c") {
+      res.end("c");
+      settled.resolve();
+      return;
+    }
+    // The next turn of the loop: the read that held the head of /b is parsed to its end by then.
+    if (req.url === "/b") setImmediate(firstHalfParsed.resolve);
+    req.resume();
+    req.on("end", () => {
+      res.end("ok");
+      if (req.url !== "/a") return;
+      client.write("POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nX-B: b\r\nX-C");
+      build = Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        plugins: [{ name: "tick", setup: () => firstHalfParsed.promise }],
+      });
+      events.push(`/b dispatched inside 'end' of /a: ${events.includes("request /b")}`);
+      setImmediate(() => client.write(": c\r\n\r\nGET /c HTTP/1.1\r\nHost: x\r\n\r\n"));
+    });
+  });
+  server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+    settled.resolve();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  await once(client, "connect");
+  client.on("error", settled.reject);
+  client.resume();
+  client.write("POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nX-A: a\r\n\r\n");
+  try {
+    await settled.promise;
+    expect(events).toEqual(["request /a", "request /b", "/b dispatched inside 'end' of /a: true", "request /c"]);
+  } finally {
+    client.destroy();
+    await build;
+  }
+});
+
+// The tests share one server in another process and run one after the other. Each "is not kept"
+// test holds open connections to it, each after one request with the section, and reads the RSS
+// that they add to the server. A connection that keeps the section adds about 2 MiB.
+describe("a 2,000,000 byte request trailer section", () => {
+  const head = (target: string, upgrade = "") =>
+    `POST ${target} HTTP/1.1\r\nHost: x\r\n${upgrade}Transfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n`;
+  // Where the request reads the section, its value is whitespace that the parser trims: the
+  // section is large and req.trailers is not, so the server has no large strings to collect.
+  const trimmed = `a:${Buffer.alloc(2_000_000, " ").toString()}`;
+  // Where no request reads the section, its value is one that the parser keeps.
+  const kept = `a:${Buffer.alloc(2_000_000, "v").toString()}`;
+  // A debug build parses a section at about 100 ns a byte, so it gets fewer of them.
+  const connections = isDebug ? 4 : 32;
+
+  let server: ReturnType<typeof Bun.spawn>;
+  let port: number;
+  const sockets: ReturnType<typeof connect>[] = [];
+  beforeAll(async () => {
+    server = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-http-idle-connection-trailers-fixture.mjs")],
+      // Without the JIT: a compilation adds RSS at a time that no connection decides.
+      env: { ...withoutAsanQuarantine(bunEnv), BUN_JSC_useJIT: "0" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let firstLine = "";
+    for await (const chunk of server.stdout as ReadableStream<Uint8Array>) {
+      firstLine += Buffer.from(chunk).toString();
+      if (firstLine.includes("\n")) break;
+    }
+    if (!firstLine.includes("\n")) {
+      throw new Error(`the fixture exited with code ${await server.exited} before it printed its port`);
+    }
+    ({ port } = JSON.parse(firstLine));
+  });
+  afterAll(() => {
+    for (const socket of sockets) socket.destroy();
+    server?.kill();
+  });
+
+  const rss = async () => Number(await (await fetch(`http://127.0.0.1:${port}/rss`)).text());
+
+  // Opens `count` connections one after the other. Each sends the request, and its FIN behind it
+  // when `cutByFin`, waits for the answer "done", and stays open.
+  async function openConnections(count: number, request: Buffer, cutByFin: boolean) {
+    for (let i = 0; i < count; i++) {
+      const socket = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      sockets.push(socket);
+      await once(socket, "connect");
+      const { promise: answered, resolve, reject } = Promise.withResolvers<void>();
+      let tail = "";
+      socket.on("data", (chunk: Buffer) => {
+        tail = (tail + chunk.toString("latin1", Math.max(0, chunk.length - 8))).slice(-8);
+        if (tail === "\r\n\r\ndone") resolve();
+      });
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error(`connection ${i} closed before its answer`)));
+      if (cutByFin) socket.end(request);
+      else socket.write(request);
+      await answered;
+      socket.removeAllListeners("close");
+    }
+  }
+
+  test("reaches req.rawTrailers", async () => {
+    const socket = connect({ port, host: "127.0.0.1" });
+    sockets.push(socket);
+    const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve());
+    socket.write(Buffer.from(`${head("/trailers")}${trimmed}\r\nx-end: yes\r\n\r\n`, "latin1"));
+    await closed;
+    const response = Buffer.concat(chunks).toString("latin1");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(JSON.stringify(["a", "", "x-end", "yes"]));
+  });
+
+  const upgrade = "Connection: Upgrade\r\nUpgrade: x\r\n";
+  test.each([
+    // No request follows: the section is gone when its own message is over.
+    ["a request whose body the handler read", `${head("/read")}${trimmed}\r\n\r\n`, false],
+    // The server answers /done only after it has the whole message before it.
+    [
+      "a request that stream.pipeline() destroyed",
+      `${head("/destroyed")}${kept}\r\n\r\nGET /done HTTP/1.1\r\nHost: x\r\n\r\n`,
+      false,
+    ],
+    // The section ends in a bare LF.
+    ["a request that failed to parse, on a socket that 'clientError' keeps", `${head("/read")}${kept}\n`, false],
+    ["a request that the peer's FIN cut, on a socket that 'clientError' keeps", `${head("/cut")}${kept}`, true],
+    ["an Upgrade request that the peer's FIN cut, on its tunnel", `${head("/read", upgrade)}${trimmed}`, true],
+    [
+      "an Upgrade request that stream.pipeline() destroyed and the peer's FIN cut, on its tunnel",
+      `${head("/destroyed", upgrade)}${kept}`,
+      true,
+    ],
+  ])("is not kept by the connection of %s", async (_, request, cutByFin) => {
+    const requestBytes = Buffer.from(request, "latin1");
+    // The first one pays for what this kind of request allocates once. It stays open, like the
+    // others: what a closed connection frees would hide what the next ones keep.
+    await openConnections(1, requestBytes, cutByFin);
+    const before = await rss();
+    await openConnections(connections, requestBytes, cutByFin);
+    const deltaMiB = ((await rss()) - before) / 1024 / 1024;
+    // Each of them added 1.9 MiB or more before the server freed the section.
+    expect(deltaMiB).toBeLessThan(connections);
+  });
 });
 
 // Once the header section is on the wire, tearing a response down (res.destroy(),

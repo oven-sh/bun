@@ -188,14 +188,12 @@ unsafe extern "C" {
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
 
-    // Moves the connection's captured node:http request-trailer section out. `*out` points into
-    // a C++ thread-local valid until the next call on this thread; caller copies immediately.
-    // Returns 0 when nothing captured or socket closed.
+    // Copies the connection's captured request-trailer section onto `response` (NodeHTTPResponse__adoptRequestTrailers), then frees the connection's copy.
     safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
         is_ssl: bool,
         socket: *mut c_void,
-        out: *mut *const u8,
-    ) -> usize;
+        response: *mut c_void,
+    );
     // Parses a raw trailer section into a flat [name, value, ...] JSArray, or
     // jsUndefined() when it contains no fields.
     safe fn Bun__NodeHTTP__parseRequestTrailers(
@@ -470,19 +468,11 @@ impl NodeHTTPResponse {
         let Some(raw) = self.reader() else {
             return;
         };
-        let mut ptr: *const u8 = std::ptr::null();
-        let length = Bun__NodeHTTP__takeRequestTrailerBytes(
+        Bun__NodeHTTP__takeRequestTrailerBytes(
             any_response_is_ssl(&raw),
             raw.socket().cast(),
-            &raw mut ptr,
+            self.as_ctx_ptr().cast(),
         );
-        if length == 0 {
-            return;
-        }
-        // SAFETY: C++ handed back a (ptr, length) into a thread-local it keeps
-        // alive until the next call on this thread; copy it out immediately.
-        let bytes = unsafe { std::slice::from_raw_parts(ptr, length) };
-        self.request_trailers.with_mut(|v| v.append_slice(bytes));
     }
 
     pub(crate) fn pause_socket(&self) {
@@ -2471,6 +2461,22 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
     let bytes = unsafe { core::slice::from_raw_parts(data, length) };
     response
         .raw_request_headers
+        .with_mut(|v| v.append_slice(bytes));
+}
+
+/// SAFETY: `response` is the live response whose take calls this, and `data`/`length` are valid for the call.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRequestTrailers(
+    response: *mut NodeHTTPResponse,
+    data: *const u8,
+    length: usize,
+) {
+    // SAFETY: see the function-level contract above.
+    let response = unsafe { &*response };
+    // SAFETY: see the function-level contract above.
+    let bytes = unsafe { core::slice::from_raw_parts(data, length) };
+    response
+        .request_trailers
         .with_mut(|v| v.append_slice(bytes));
 }
 

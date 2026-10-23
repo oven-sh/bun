@@ -716,6 +716,9 @@ private:
                 if (fin) {
                     httpResponseData->inStream = nullptr;
                 }
+            } else if (IsNodeHttp && fin) {
+                /* node:http: no reader gets the last chunk, so nothing takes the trailer section of this message. */
+                ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
             }
             if constexpr (IsNodeHttp) {
                 if (switchToTunnelAfterThisChunk) {
@@ -751,6 +754,8 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                /* The listener can keep the socket, and an Upgrade request still gets its end at the peer's FIN: neither keeps nor gets a section that failed. */
+                ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
@@ -802,6 +807,10 @@ private:
             us_socket_unref((us_socket_t *) returnedData);
 
             if constexpr (IsNodeHttp) {
+                /* JavaScript stopped the parser inside this read: no request takes what the read still captured of a trailer section. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) [[unlikely]] {
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
+                }
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
                     Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData);
@@ -1044,6 +1053,8 @@ private:
                 if (!us_socket_is_closed(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
                     httpResponseData->isConnectRequest = true;
+                    /* That body did not complete: its request gets nothing of the trailer section, and the tunnel keeps nothing of it. */
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
                     if (httpResponseData->inStream) {
                         httpResponseData->inStream((HttpResponse<SSL> *) s, "", 0, true, httpResponseData->userData);
                         if (!us_socket_is_closed(s)) {
@@ -1083,6 +1094,7 @@ private:
                 && (httpResponseData->hasBufferedPartialRequestHeaders()
                     || httpResponseData->hasIncompleteRequestBody())) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
                 httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
                 if (us_socket_is_closed(s)) {
                     return s;

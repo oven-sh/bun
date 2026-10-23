@@ -7,11 +7,14 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/Debugger.h>
+#include <array>
 #include <atomic>
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "IsolatedModuleCache.h"
 #include "ModuleGraph.h"
+#include "StrongRef.h"
 #include "ZigSourceProvider.h"
 #include "wtf/Forward.h"
 
@@ -96,33 +99,102 @@ static String internalModuleSource(uint32_t id)
     }
     return WTF::String::fromUTF8(contents.value());
 }
+
+// The text is read from disk at each load so that an edit takes effect: code made from another text is stale.
+static bool isInternalModuleSourceUnchanged(uint32_t id, JSC::SourceProvider& provider)
+{
+    return provider.source() == internalModuleSource(id);
+}
 #else
 static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
     return internalModuleString(m.codeOffset, m.codeLength);
 }
+
+static bool isInternalModuleSourceUnchanged(uint32_t, JSC::SourceProvider&)
+{
+    return true;
+}
 #endif
 
-JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
+// What a VM keeps of a JS internal module under `bun test --isolate`, for the test files after the one that loaded it.
+struct InternalModuleCode {
+    RefPtr<JSC::SourceProvider> provider;
+    // Roots the UnlinkedFunctionExecutable, and with it the bytecode generated under it so far.
+    StrongRefImpl* executable { nullptr };
+};
+
+struct InternalModuleCodeTable {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(InternalModuleCodeTable);
+
+    std::array<InternalModuleCode, InternalModuleRegistryConstants::moduleCount> slots {};
+};
+
+// Runs after the heap's last finalization: the root slots are gone with it, so only the providers are released.
+void InternalModuleCodeTableDeleter::operator()(InternalModuleCodeTable* table) const
 {
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    delete table;
+}
+
+struct LinkableInternalModule {
+    SourceCode source;
+    UnlinkedFunctionExecutable* executable;
+    // The executable is the one the VM keeps: other globals link it too.
+    bool isShared;
+};
+
+static LinkableInternalModule internalModuleCode(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
+{
+    auto* clientData = WebCore::clientData(vm);
+    // Only the default global, which test isolation replaces: two running globals must not link one unlinked function (#45545).
+    bool isShared = IsolatedModuleCache::canUse(vm, ::bunVM(globalObject)) && clientData->defaultGlobalObject == globalObject;
+    if (isShared && clientData->internalModuleCode) {
+        InternalModuleCode& code = clientData->internalModuleCode->slots[id];
+        if (code.executable) {
+            auto* executable = uncheckedDowncast<UnlinkedFunctionExecutable>(strongRefGet(code.executable).asCell());
+            // The slot holds while the top level's bytecode exists in this global's mode, as an entry of JSC's CodeCache does.
+            auto* topLevelCode = executable->codeBlocksDecodingCached(vm).first;
+            if (topLevelCode && topLevelCode->codeGenerationMode() == globalObject->defaultCodeGenerationMode() && isInternalModuleSourceUnchanged(id, *code.provider))
+                return { SourceCode(Ref { *code.provider }), executable, true };
+        }
+    }
+
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
     maybeAddCodeCoverage(vm, source);
 
-    UnlinkedFunctionExecutable* executable = nullptr;
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
     if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
-        executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
-        if (executable)
+        // Not kept: each global decodes its own from the payload of the executable.
+        if (auto* executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp)) {
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
+            return { WTF::move(source), executable, false };
+        }
     }
-    if (!executable)
-        executable = createInternalModuleExecutable(vm, source, moduleName);
+
+    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
+    if (isShared) {
+        auto& table = clientData->internalModuleCode;
+        if (!table)
+            table.reset(new InternalModuleCodeTable);
+        InternalModuleCode& code = table->slots[id];
+        code.provider = source.provider();
+        if (code.executable)
+            Bun__StrongRef__set(code.executable, globalObject, JSValue::encode(executable));
+        else
+            code.executable = Bun__StrongRef__new(globalObject, JSValue::encode(executable));
+    }
+    return { WTF::move(source), executable, isShared };
+}
+
+JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto [source, executable, isShared] = internalModuleCode(globalObject, vm, id);
 
     JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
 
@@ -142,11 +214,17 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         JSC::getCallData(func),
         globalObject, JSC::MarkedArgumentBuffer());
 
+    // The execution count is kept with the shared code, where one run per test file adds up to a hot function.
+    if (isShared) {
+        if (auto* codeBlock = func->jsExecutable()->codeBlockForCall())
+            codeBlock->dontJITAnytimeSoon();
+    }
+
     RETURN_IF_EXCEPTION(throwScope, {});
     ASSERT(
         result && result.isCell() && dynamicDowncast<JSObject>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().legacyCStringPointer());
+        source.provider()->sourceURL().utf8().legacyCStringPointer());
     return result;
 }
 

@@ -24,11 +24,11 @@ static ALWAYS_INLINE WebCore::JSVMClientData* clientDataFast(JSC::VM& vm)
 // JSC cells live in the low 48 bits of the address space (the same invariant
 // JSValue NaN-boxing and StructureID encoding rely on), and the slot index is
 // bounded by StrongRootBlock::capacity.
-static constexpr unsigned kStrongRefIndexShift = 48;
-static constexpr uintptr_t kStrongRefSlotMask = (static_cast<uintptr_t>(1) << kStrongRefIndexShift) - 1;
+using Bun::kStrongRefIndexShift;
+using Bun::kStrongRefSlotMask;
 static_assert(sizeof(uintptr_t) == 8, "StrongRef handle encoding requires 64-bit pointers");
 static_assert(StrongRootBlock::capacity < (1u << (64 - kStrongRefIndexShift)), "slot index must fit in the top 16 bits");
-static_assert(sizeof(StrongRootBlock::Slot) == sizeof(JSC::JSValue), "Rust Impl::get reads the slot as a JSValue");
+static_assert(sizeof(StrongRootBlock::Slot) == sizeof(JSC::JSValue), "Rust Impl::get and Bun::strongRefGet read the slot as a JSValue");
 
 static ALWAYS_INLINE StrongRefImpl* encodeStrongRef(StrongRootBlock* block, unsigned index)
 {

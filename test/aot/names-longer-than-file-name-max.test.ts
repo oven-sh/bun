@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const long = Buffer.alloc(300, "a").toString();
@@ -11,12 +12,6 @@ const programs: Record<string, string> = {
   "imported.mjs": `let said = "loaded";\ntry {\n  await import("${long}");\n} catch (error) {\n  ${said}\n}\nconsole.log(said);\n`,
   "a-folder-of-a-package.cjs": `let said = "loaded";\ntry {\n  require("package/${long}/file.js");\n} catch (error) {\n  ${said}\n}\nconsole.log(said);\n`,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("a module named by more bytes than a file name may have is a module that is not found", async () => {
   using dir = tempDir("names-too-long", programs);

@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run as spawned } from "./harness/run";
 import { test } from "./supported";
 
 // `require` is one function per module: every mention of it is the same object, and so are `module.require` and `arguments[1]`.
@@ -28,12 +29,6 @@ const files = {
   "data.json": `{ "k": 1 }`,
   "lib/data.json": `{ "k": 2 }`,
 };
-
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("bun run --aot prints what bun run prints", async () => {
   using dir = tempDir("require-identity", files);

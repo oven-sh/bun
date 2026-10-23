@@ -48,14 +48,10 @@ impl ExportsStatus {
             Self::InvalidPackageTarget => CodeFailure::InvalidPackageTarget,
             Self::UnsupportedDirectoryImport => CodeFailure::UnsupportedDirectoryImport,
             Self::PackageImportNotDefined => CodeFailure::PackageImportNotDefined,
-            Self::PackagePathNotExported
-            | Self::PackagePathDisabled
-            | Self::Undefined
-            | Self::UndefinedNoConditionsMatch
-            | Self::Null => CodeFailure::PackagePathNotExported,
             Self::Exact | Self::ExactEndsWithStar | Self::Inexact | Self::PackageResolve => {
                 CodeFailure::ModuleNotFound
             }
+            _ => CodeFailure::PackagePathNotExported,
         }
     }
 }

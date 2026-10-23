@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // `bun test` hands a test file `test`, `expect`, `describe` and the hooks without an import. `bun test --aot` type checks the file with their declarations, whether or not a package of types is installed.
@@ -27,14 +28,7 @@ test("a test file that imports nothing and has no types installed", async () => 
         expect(o.m()).toBe(2);
       });`,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const { stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir));
   expect(stderr).not.toContain("TS2");
   expect(stderr).toContain(" 4 pass");
   expect(exitCode).toBe(0);

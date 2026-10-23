@@ -1,8 +1,0 @@
-{
-  "name": "bun-sound-trees-fuse",
-  "private": true,
-  "dependencies": {
-    "@types/node": "22.20.5",
-    "fuse.js": "7.0.0"
-  }
-}

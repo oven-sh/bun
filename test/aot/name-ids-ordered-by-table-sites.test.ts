@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -19,14 +20,11 @@ console.log(total, settings.seldom);
 test("bun run --aot: a name read in a function has a lower number than a name that only code that runs once uses, however often", async () => {
   using dir = tempDir("aot-names-are-numbered-by-sites", files);
   const mapPath = join(String(dir), "main.map");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--debug-aot", "./main.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotMapFilePath: mapPath },
-    stdout: "pipe",
-    stderr: "pipe",
+  const { stdout, stderr, exitCode } = await run([bunExe(), "run", "--debug-aot", "./main.js"], String(dir), {
+    ...bunEnv,
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+    BUN_JSC_aotMapFilePath: mapPath,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("crashIfInterpreterIsUsed");
   expect({ stdout, exitCode }).toEqual({ stdout: "4950 5\n", exitCode: 0 });
   const numbers = new Map<string, number>();

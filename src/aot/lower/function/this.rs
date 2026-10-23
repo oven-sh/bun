@@ -25,27 +25,7 @@ fn find_lexical_owner(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> Lexica
         ScopeKind::File => LexicalOwner::File(owner),
         ScopeKind::Fn(function) => LexicalOwner::Function(owner, function),
         ScopeKind::FieldInitializer(_) => LexicalOwner::FieldInitializer(owner),
-        ScopeKind::Module(_)
-        | ScopeKind::Block
-        | ScopeKind::Class(_)
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => {
+        _ => {
             debug_assert!(
                 false,
                 "a lexical owner is a file, function or field initializer"
@@ -71,10 +51,7 @@ pub(super) fn lower_this_expression(
         LexicalOwner::File(_) if lowering.file.compiled.analysis.has_esm_syntax => {
             lowering.builder.undefined()
         }
-        LexicalOwner::Generated
-        | LexicalOwner::File(_)
-        | LexicalOwner::Function(..)
-        | LexicalOwner::FieldInitializer(_) => get_this(lowering),
+        _ => get_this(lowering),
     }
 }
 
@@ -83,11 +60,7 @@ pub(super) fn get_this(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> V
         LexicalOwner::Generated => get_entry_this(lowering),
         LexicalOwner::File(scope) => match lowering.file.inputs.modules.kind(lowering.file.file) {
             ModuleKind::CommonJs => scope::get_slot(lowering, scope, ScopeSlot::This),
-            ModuleKind::SourceText
-            | ModuleKind::Data
-            | ModuleKind::RuntimeSource
-            | ModuleKind::Runtime
-            | ModuleKind::External => lowering.builder.undefined(),
+            _ => lowering.builder.undefined(),
         },
         LexicalOwner::Function(scope, function) => {
             if is_derived_constructor(lowering.file, function) {
@@ -175,16 +148,7 @@ pub(super) fn get_new_target(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>
                 FnKind::Decl | FnKind::Expr | FnKind::Constructor => {
                     scope::get_slot(lowering, scope, ScopeSlot::NewTarget)
                 }
-                FnKind::Arrow
-                | FnKind::Method
-                | FnKind::Getter
-                | FnKind::Setter
-                | FnKind::StaticBlock
-                | FnKind::CallSignature
-                | FnKind::ConstructSignature
-                | FnKind::FunctionType
-                | FnKind::ConstructorType
-                | FnKind::IndexSignature => lowering.builder.undefined(),
+                _ => lowering.builder.undefined(),
             }
         }
         LexicalOwner::Generated | LexicalOwner::File(_) | LexicalOwner::FieldInitializer(_) => {
@@ -225,15 +189,6 @@ fn get_object_literal_home(
         FnKind::Method | FnKind::Getter | FnKind::Setter => {
             scope::get_slot(lowering, owner, ScopeSlot::HomeObject)
         }
-        FnKind::Decl
-        | FnKind::Expr
-        | FnKind::Arrow
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => lowering.builder.undefined(),
+        _ => lowering.builder.undefined(),
     }
 }

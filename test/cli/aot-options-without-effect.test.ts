@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { run } from "../aot/harness/run";
 
 const files = {
   "app.ts": "console.log(1);\n",
@@ -10,14 +11,7 @@ const files = {
 };
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd,
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd, { ...bunEnv, NO_COLOR: "1" });
   return { stdout, stderr, exitCode };
 }
 
@@ -113,14 +107,11 @@ describe("environment variables and --aot builds", () => {
     const hashes: string[] = [];
     for (const env of [{}, removed]) {
       rmSync(join(folder, isWindows ? "out.exe" : "out"), { force: true });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "out"],
-        cwd: folder,
-        env: { ...bunEnv, NO_COLOR: "1", ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const { stderr, exitCode } = await run(
+        [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "out"],
+        folder,
+        { ...bunEnv, NO_COLOR: "1", ...env },
+      );
       if (unsupported.test(stderr)) return;
       expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
       hashes.push(

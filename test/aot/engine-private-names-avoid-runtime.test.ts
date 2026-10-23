@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -22,12 +23,6 @@ const files = {
 };
 
 const operations = ["operationAOTGetByIdAndCache", "operationAOTGetById"];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("a built-in module that reads a property under a private name of the engine stops asking the run time for it", async () => {
   using dir = tempDir("aot-private-names-of-the-engine", files);

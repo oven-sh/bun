@@ -48,12 +48,7 @@ import {
   textOfNativeSymbol,
   textOfStaticTableEntry,
 } from "./builtins/guards.ts";
-import {
-  checkOfDeclaredType,
-  nativeInstances,
-  parseDeclaredAlternative,
-  typeScriptOf,
-} from "./declared-type-checks.ts";
+import { typeScriptOf } from "./declared-type-checks.ts";
 import { cap, low } from "./helpers.ts";
 import {
   guardedCall,
@@ -708,14 +703,7 @@ function cppContext({ name, expected, validatorExpects }: Argument, i: number, v
   return { ctx, lines: [cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`)] };
 }
 
-/** Whose result it is, for the message of a check, and a C++ expression for the receiver. */
-interface ResultSite {
-  owner: string;
-  member: string;
-  receiver: string;
-}
-
-/** What the generated C++ holds a result to: the words of `.returning`, and a class or a JS string, for which Rust may hand back any JS value. */
+/** What a result is only declared to be: the words of `.returning`, and a class or a JS string, for which Rust may hand back any JS value. */
 export function checkedWordsOf(type: Type): readonly string[] | null {
   if (type instanceof AnyType) return type.checkedResult;
   if (type instanceof ClassType) return [type.name];
@@ -725,51 +713,12 @@ export function checkedWordsOf(type: Type): readonly string[] | null {
   return words && [...words, type.modifier === "optional" ? "undefined" : "null"];
 }
 
-/** Lines that, in a build with assertions, end the process where `value`, a `JSC::JSValue`, is none of the words of `.returning`. `vm` is in scope. */
-function cppCheckResult(type: Type, { owner, member, receiver }: ResultSite, value: string): string[] {
-  const words = checkedWordsOf(type);
-  if (words === null) return [];
-  const check = checkOfDeclaredType({
-    className: owner,
-    member,
-    type: words.join(" | "),
-    value,
-    receiver,
-    mayBeEmpty: true,
-    cppClassOfGeneratedClass: name => classesByName.get(name)?.cpp,
-  }).split("\n");
-  return ["if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {", ...check.map(line => `    ${line}`), "}"];
-}
-
-/** What `cppCheckResult` names. */
-function getHeadersOfCheckedResult(type: Type, out: Set<string>): void {
-  const words = checkedWordsOf(type);
-  if (words === null) return;
-  out.add("DeclaredTypeChecks.h");
-  for (const word of words) {
-    const alternative = parseDeclaredAlternative(word);
-    if (typeof alternative !== "object") continue;
-    const generated = classesByName.get(alternative.instance);
-    const header = generated
-      ? `Generated${generated.origin!.namespace}.h`
-      : nativeInstances[alternative.instance]?.header;
-    if (header !== undefined) out.add(header);
-  }
-}
-
-/** The lines that return what `call` returns. */
-const cppReturnResult = (type: Type, site: ResultSite) => (call: string) => {
-  const check = cppCheckResult(type, site, "JSC::JSValue::decode(result)");
-  if (check.length === 0) return [`RELEASE_AND_RETURN(scope, ${call});`];
-  return [`JSC::EncodedJSValue result = ${call};`, ...check, "RELEASE_AND_RETURN(scope, result);"];
-};
-
 /** Converts the arguments, then ends with the lines `finish` makes from `symbol(globalObject, ...leading, ...converted)`. */
 function cppCallBody(
   signature: Signature,
   symbol: string,
   leading: readonly string[],
-  finish: (call: string) => string[],
+  finish = (call: string) => [`RELEASE_AND_RETURN(scope, ${call});`],
 ): string {
   const indented = (lines: readonly string[]) => lines.map(line => `    ${line}`).join("\n");
   if (signature.cppInlineBody) {
@@ -1041,7 +990,6 @@ ${cppHostFunction(
   host,
   fn,
   symbol,
-  type.name,
   isStaticFunction(fn)
     ? ""
     : `    auto* thisObject = ${cppCastThisValue(type, "callFrame->thisValue()")};
@@ -1057,31 +1005,10 @@ ${cppHostFunction(
 }
 
 function cppStaticGetter(type: ClassType, getter: Getter): string {
-  const get = getterHostFunctionName(type, getter);
-  const check = cppCheckResult(getter.type, resultSiteOfGetter(type, getter), "JSC::JSValue::decode(result)");
   return `
 extern "C" JSC_DECLARE_CUSTOM_GETTER(${getterSymbolName(type, getter)});
-${
-  check.length === 0
-    ? ""
-    : `[[maybe_unused]] static JSC_DECLARE_CUSTOM_GETTER(${get}Checked);
-static constexpr auto ${get} = ASSERT_ENABLED || ASAN_ENABLED ? ${get}Checked : ${getterSymbolName(type, getter)};
-JSC_DEFINE_CUSTOM_GETTER(${get}Checked, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName))
-{
-    [[maybe_unused]] auto& vm = JSC::getVM(globalObject);
-    JSC::EncodedJSValue result = ${getterSymbolName(type, getter)}(globalObject, thisValue, attributeName);
-    ${check.join("\n    ")}
-    return result;
+${getter.hasSetter ? cppSetter(type, getter) : ""}`;
 }
-`
-}${getter.hasSetter ? cppSetter(type, getter) : ""}`;
-}
-
-const resultSiteOfGetter = (type: ClassType, getter: Getter): ResultSite => ({
-  owner: type.name,
-  member: getter.name,
-  receiver: "JSC::JSValue::decode(thisValue)",
-});
 
 /** Code compiled ahead of time enters the getter of an instance by its address. */
 const cppGetterLinkage = (type: ClassType) => (type.forBind ? "static " : "");
@@ -1146,7 +1073,6 @@ ${
 function cppGetter(type: ClassType, getter: Getter): string {
   const get = getterHostFunctionName(type, getter);
   const getSymbol = getterSymbolName(type, getter);
-  const site = resultSiteOfGetter(type, getter);
   return `
 extern "C" SYSV_ABI JSC::EncodedJSValue ${getSymbol}(JSC::JSGlobalObject*, JSC::JSCell*);
 ${cppGetterLinkage(type)}JSC_DECLARE_CUSTOM_GETTER(${get});
@@ -1164,38 +1090,18 @@ ${
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
 ${
   getter.internalField === undefined
-    ? `    ${cppReturnResult(getter.type, site)(`${getSymbol}(globalObject, thisObject)`).join("\n    ")}`
+    ? `    RELEASE_AND_RETURN(scope, ${getSymbol}(globalObject, thisObject));`
     : `    auto& cachedValue = thisObject->m_${getter.internalField};
     if (JSC::JSValue cached = cachedValue.get())
         return JSC::JSValue::encode(cached);
     JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));
-    RETURN_IF_EXCEPTION(scope, {});${cppCheckResult(getter.type, site, "result")
-      .map(line => `\n    ${line}`)
-      .join("")}
+    RETURN_IF_EXCEPTION(scope, {});
     cachedValue.set(vm, thisObject, result);
     return JSC::JSValue::encode(result);`
 }
 }
 ${getter.hasSetter ? cppSetter(type, getter) : getter.writable ? cppInternalFieldSetter(type, getter) : ""}`;
 }
-
-/** The getters that answer an internal field and hold it to the words of `.returning`. */
-const checkedGettersOfField = (type: ClassType, field: string) =>
-  type.getters.filter(getter => getter.internalField === field && checkedWordsOf(getter.type) !== null);
-
-/** What `x_set_cached` calls for a field that a getter holds to a type: compiled code reads the field itself. */
-const cppCheckedFieldSetter = (type: ClassType, field: string) => `
-extern "C" void ${symbolName(type, `${field}SetCached`)}(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    ${checkedGettersOfField(type, field)
-      .flatMap(getter => cppCheckResult(getter.type, resultSiteOfGetter(type, getter), "value"))
-      .join("\n    ")}
-    thisObject->m_${field}.set(vm, thisObject, value);
-}
-`;
 
 function cppSourceForClass(type: ClassType, guards: Guards): string {
   const { name } = type;
@@ -1229,11 +1135,10 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
   const getterRow = (getter: Getter | InternalFieldAccessor) => {
     const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);
     const isStatic = getter instanceof Getter && getter.isStatic;
-    const entersThunk = isStatic && checkedWordsOf(getter.type) === null;
     return row(
       getter.name,
       `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${attributes(getter instanceof Getter ? getter.configurable : undefined)}`,
-      `JSC::HashTableValue::GetterSetterType, ${pointer(isStatic, getter.name, entersThunk ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter))}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter)) : "0"}`,
+      `JSC::HashTableValue::GetterSetterType, ${pointer(isStatic, getter.name, isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter))}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter)) : "0"}`,
     );
   };
   const builtinRow = (builtin: Builtin) =>
@@ -1268,10 +1173,7 @@ ${type.nativeFunctions
   .map(fn => cppMethod(type, fn))
   .join(
     "",
-  )}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}${type.internalFields
-    .filter(field => checkedGettersOfField(type, field).length > 0)
-    .map(field => cppCheckedFieldSetter(type, field))
-    .join("")}
+  )}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
 ${
   construct && !type.illegalConstructor
     ? `${
@@ -1413,18 +1315,11 @@ function cppHostFunction(
   name: string,
   fn: FunctionDefinition,
   symbol: (signature: Signature) => string,
-  owner: string,
   takeThis = "",
   record = "",
 ): string {
   const leading = takeThis ? ["thisObject"] : [];
-  const callBody = (signature: Signature) =>
-    cppCallBody(
-      signature,
-      symbol(signature),
-      leading,
-      cppReturnResult(signature.returns, { owner, member: fn.name, receiver: "callFrame->thisValue()" }),
-    );
+  const callBody = (signature: Signature) => cppCallBody(signature, symbol(signature), leading);
   if (fn.signatures.length === 1) {
     return `JSC_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1473,7 +1368,7 @@ function cppSourceForFunction(fn: FunctionDefinition, guard: Guard | null): stri
   return `
 ${fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature)).join("\n")}
 namespace Bun::Bindgen::Generated::${fn.origin!.namespace} {
-${cppHostFunction(name, fn, signature => thunkSymbol(fn, signature), fn.origin!.namespace, "", record)}
+${cppHostFunction(name, fn, signature => thunkSymbol(fn, signature), "", record)}
 }
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${fn.origin!.stem}_${fn.name}(Zig::GlobalObject* globalObject)
 {
@@ -1490,16 +1385,12 @@ export function cppSource(file: SchemaFile, guards: Guards): string {
   for (const fn of file.functions) {
     for (const signature of fn.signatures) {
       for (const arg of signature.args) arg.type.getHeaders(headers);
-      getHeadersOfCheckedResult(signature.returns, headers);
       if (signature.cppInlineBody) headers.add(signature.cppInlineBody.header);
     }
   }
   for (const type of file.types) {
     if (!(type instanceof ClassType)) continue;
-    for (const used of type.signatureTypes) {
-      used.getHeaders(headers);
-      getHeadersOfCheckedResult(used, headers);
-    }
+    for (const used of type.signatureTypes) used.getHeaders(headers);
     if (type.builtins.length > 0) headers.add("WebCoreJSBuiltins.h");
   }
   headers.delete(`Generated${file.origin.namespace}.h`);
@@ -2053,18 +1944,10 @@ function rustForModule(type: ClassType): string {
   if (!type.sharedThis && type.internalFields.length === 0 && !type.construct) return "";
   const fromJS = symbolName(type, "fromJS");
   const safety = `// SAFETY: \`this_value\` is an instance, which has ${type.internalFields.length} internal fields.`;
-  const checkedFields = type.internalFields.filter(field => checkedGettersOfField(type, field).length > 0);
   return `
 ${
-  checkedFields.length > 0
+  type.sharedThis || type.internalFields.length > 0
     ? `unsafe extern "C" {
-${checkedFields.map(field => `    fn ${symbolName(type, `${field}SetCached`)}(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);`).join("\n")}
-}
-`
-    : ""
-}${
-    type.sharedThis || type.internalFields.length > 0
-      ? `unsafe extern "C" {
     safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;${
       type.sharedThis
         ? `
@@ -2072,8 +1955,8 @@ ${checkedFields.map(field => `    fn ${symbolName(type, `${field}SetCached`)}(th
         : ""
     }
 }`
-      : ""
-  }
+    : ""
+}
 pub mod js_${name} {
     use super::*;
 ${
@@ -2124,11 +2007,7 @@ ${
     pub fn ${id}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         debug_assert!(!${fromJS}(this_value).is_null());
         ${safety}
-        unsafe { ${
-          checkedFields.includes(field)
-            ? `if cfg!(debug_assertions) { ${symbolName(type, `${field}SetCached`)}(this_value, global.as_mut_ptr(), value) } else { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }`
-            : `bindgen::set_internal_field_at(this_value, global, ${offset}, value)`
-        } }
+        unsafe { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }
     }
     /// Reads and clears it.
     #[inline]

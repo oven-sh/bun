@@ -236,7 +236,8 @@ fn prelude_archive_name(name: &str) -> Vec<u8> {
 
 // As `bun run` decides it: `load_env` in src/jsc/VirtualMachine.rs.
 fn runs_own_tests() -> bool {
-    bun_core::env::IS_DEBUG
+    cfg!(test)
+        || bun_core::env::IS_DEBUG
         || (bun_core::getenv_z(bun_core::zstr!("BUN_GARBAGE_COLLECTOR_LEVEL")).is_some()
             && bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING"))
                 .is_some())
@@ -437,6 +438,26 @@ mod tests {
         assert_eq!(runtime.module_resolution(id), HostResolution::Module(id));
         let module = RuntimeModule::from_registry_id(id.0).unwrap();
         assert_eq!(runtime.module_path(module), None);
+    }
+
+    #[test]
+    fn modules_of_own_tests_are_no_modules_for_a_program_built_elsewhere() {
+        let names: [&[u8]; 2] = [b"bun:internal-for-testing", b"internal/test/binding"];
+        let mut runtime = runtime_modules();
+        let importer = runtime.module_path(RuntimeModule::NodeFs).unwrap().to_vec();
+        for name in names {
+            assert!(runtime.resolve_module(name, b"/project/a.js").is_some());
+        }
+        runtime.answers_modules_of_own_tests = false;
+        for name in names {
+            assert_eq!(runtime.resolve_module(name, b"/project/a.js"), None);
+            assert!(runtime.resolve_module(name, &importer).is_some());
+        }
+        assert!(
+            runtime
+                .resolve_module(b"node:fs", b"/project/a.js")
+                .is_some()
+        );
     }
 
     #[test]

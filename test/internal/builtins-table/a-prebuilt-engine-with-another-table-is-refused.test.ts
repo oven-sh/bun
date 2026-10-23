@@ -4,9 +4,9 @@ import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
-const generated = process.env.AOT_BUILTINS_GENERATED;
 const schemas = globAllSources().bindgen;
 
 interface Generated {
@@ -25,6 +25,7 @@ async function generateAgainst(prebuiltGenerated: string, sources: readonly stri
       "--target=Linux",
       `--sources=${sources.map((schema, index) => `${crateOf(schemas[index])}=${schema}`).join(",")}`,
       `--prebuilt-generated=${prebuiltGenerated}`,
+      `--engine-directory=${engineDirectory}`,
     ],
     cwd: bunRoot,
     env: bunEnv,

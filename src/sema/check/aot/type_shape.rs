@@ -125,30 +125,7 @@ impl<'c> TypeShape<'c> {
     pub fn has_members(self) -> bool {
         match self.kind {
             ShapeKind::Object | ShapeKind::Class(_) => true,
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable { .. }
-            | ShapeKind::Never
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::AnyObject
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Array { .. }
-            | ShapeKind::Tuple { .. }
-            | ShapeKind::Builtin { .. }
-            | ShapeKind::Union(_)
-            | ShapeKind::Constrained { .. } => false,
+            _ => false,
         }
     }
 
@@ -163,58 +140,14 @@ impl<'c> TypeShape<'c> {
         match self.kind {
             ShapeKind::Array { .. } | ShapeKind::Tuple { .. } => Some(BuiltinShape::Array),
             ShapeKind::Builtin { class, .. } => Some(BuiltinShape::Class(class)),
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable { .. }
-            | ShapeKind::Never
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::AnyObject
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Class(_)
-            | ShapeKind::Object
-            | ShapeKind::Union(_)
-            | ShapeKind::Constrained { .. } => None,
+            _ => None,
         }
     }
 
     pub fn can_accept_primitives(self) -> bool {
         match self.kind {
             ShapeKind::Object | ShapeKind::Class(_) | ShapeKind::Builtin { .. } => true,
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable { .. }
-            | ShapeKind::Never
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::AnyObject
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Array { .. }
-            | ShapeKind::Tuple { .. }
-            | ShapeKind::Union(_)
-            | ShapeKind::Constrained { .. } => false,
+            _ => false,
         }
     }
 }

@@ -8,7 +8,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::trim::TrimRequest;
 use bun_sys::{Fd, File, O};
 use bun_trim::table::{
-    self, IcuItemRun, IcuLanguage, IcuPackage, Library, ModuleText, RemovableRange, TrimTable,
+    self, IcuItemRun, IcuLanguage, IcuPackage, ModuleText, RemovableRange, TrimTable,
 };
 use bun_trim::{
     ExecutableSettings, Feature, FeatureEdge, TrimError, TrimInput, TrimSummary, UsedFeatures,
@@ -33,25 +33,6 @@ pub(crate) fn trim_executable(global: &JSGlobalObject, frame: &CallFrame) -> JsR
             sign_macho(&bytes).map_err(|error| global.throw(format_args!("{}", error.name())))?;
     }
     write_executable(out.slice(), &bytes).map_err(|error| global.throw(format_args!("{error}")))?;
-
-    create_utf8_for_js(global, &describe_summary(&summary))
-}
-
-pub(crate) fn measure_trim_profile(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let path = frame.argument(0).to_utf8(global)?;
-    let feature_names = frame.argument(1).to_utf8(global)?;
-    let features = parse_feature_names(global, feature_names.slice())?;
-    let mut bytes = read_executable(global, path.slice())?;
-
-    let request = TrimRequest {
-        removes_unused: true,
-        ..Default::default()
-    };
-    let used = UsedFeatures::from_features(&features);
-    let summary = trim_in_memory(global, &mut bytes, &used, &request)?;
 
     create_utf8_for_js(global, &describe_summary(&summary))
 }
@@ -219,20 +200,6 @@ fn write_icu_language(out: &mut Vec<u8>, language: &IcuLanguage) {
     out.push(b'}');
 }
 
-fn write_library(out: &mut Vec<u8>, library: &Library) {
-    out.extend_from_slice(b"{\"name\":");
-    json_stringify(library.name.as_bytes(), out);
-    out.extend_from_slice(b",\"version\":");
-    json_stringify(library.version.as_bytes(), out);
-    out.extend_from_slice(b",\"hasRetainedBytes\":");
-    write_boolean(out, library.has_retained_bytes);
-    out.extend_from_slice(b",\"sets\":");
-    write_array(out, &library.sets, |out, set| {
-        write_number(out, u64::from(set.0));
-    });
-    out.push(b'}');
-}
-
 fn write_module_text(out: &mut Vec<u8>, text: &ModuleText) {
     out.extend_from_slice(b"{\"start\":");
     write_number(out, text.range.start);
@@ -290,8 +257,6 @@ fn describe_table(table: &TrimTable) -> Vec<u8> {
     write_array(&mut out, &table.icu_packages, write_icu_package);
     out.extend_from_slice(b",\"icuLanguages\":");
     write_array(&mut out, &table.icu_languages, write_icu_language);
-    out.extend_from_slice(b",\"libraries\":");
-    write_array(&mut out, &table.libraries, write_library);
     out.extend_from_slice(b",\"moduleTexts\":");
     write_array(&mut out, &table.module_texts, write_module_text);
     out.push(b'}');

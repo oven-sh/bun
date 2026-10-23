@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -34,12 +35,6 @@ const files = {
     console.log(sum);
   `,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("`in` and hasOwn with the answer no leave compiled code once for a new kind of ordinary object, not once for each name", async () => {
   using dir = tempDir("aot-in-on-objects-built-key-by-key", files);

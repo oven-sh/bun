@@ -221,10 +221,7 @@ fn tested_identifier(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
             op: None, target, ..
         } => match classify_assignment_target(file, target) {
             AssignmentTarget::Identifier { identifier, .. } => Some(identifier),
-            AssignmentTarget::Elision
-            | AssignmentTarget::ArrayPattern(_)
-            | AssignmentTarget::ObjectPattern(_)
-            | AssignmentTarget::Expression => None,
+            _ => None,
         },
         ExprKind::Missing
         | ExprKind::PrivateIdentifier(_)
@@ -334,40 +331,7 @@ fn lower_condition_by_kind(
         {
             lower_chain_condition(lowering, expression, if_true, if_false);
         }
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => lower_leaf_test(lowering, expression, if_true, if_false),
+        _ => lower_leaf_test(lowering, expression, if_true, if_false),
     }
 }
 

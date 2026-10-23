@@ -1,17 +1,11 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 async function run(files: Record<string, string>) {
   using dir = tempDir("aot-reports", files);
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--debug-aot", "main.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), "--debug-aot", "main.ts"], String(dir));
   return { stdout, stderr, exitCode };
 }
 

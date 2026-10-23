@@ -46,18 +46,7 @@ pub(crate) fn emit_coroutine_start(lowering: &mut FunctionLowering<'_, '_, '_, '
         FunctionKey::Source(source) => {
             positions::function_positions(lowering.file, source.function).yielded
         }
-        FunctionKey::ModuleBody(_)
-        | FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Signature(_)
-        | FunctionKey::ClassSignature(_)
-        | FunctionKey::ImplicitConstructor(_)
-        | FunctionKey::InstanceInitializer(_)
-        | FunctionKey::StaticInitializer(_)
-        | FunctionKey::AccessorGetter { .. }
-        | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => DeclaredType::untyped(),
+        _ => DeclaredType::untyped(),
     };
     lowering.builder.initial_yield();
     lowering.coroutine.yielded = Some(yielded);

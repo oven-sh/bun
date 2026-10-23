@@ -62,32 +62,7 @@ fn is_default_export(hir: &hir::File<'_>, decl: Decl) -> bool {
         Decl::Fn(f) => hir[f].flags.contains(Flags::DEFAULT),
         Decl::Class(c) => hir[c].flags.contains(Flags::DEFAULT),
         Decl::ExportSpec(x) => hir[x].exported == known::default,
-        Decl::Var(_)
-        | Decl::Param(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportStarAs(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => false,
+        _ => false,
     }
 }
 
@@ -98,32 +73,6 @@ fn is_block_scoped(hir: &hir::File<'_>, bound: &Bound<'_>, decl: Decl) -> bool {
             root_declaration(bound, pat),
             PatParent::Var(d) if hir[d].kind != VarKind::Var
         ),
-        Decl::Param(_)
-        | Decl::Fn(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => false,
+        _ => false,
     }
 }

@@ -55,12 +55,7 @@ fn parsed_paths(host: &StatementsHost) -> Vec<String> {
     let events = host.events().into_iter();
     let paths = events.filter_map(|event| match event {
         HostEvent::ParsedCode(path) => Some(path),
-        HostEvent::ReadCode(_)
-        | HostEvent::StartedBackgroundReads(_)
-        | HostEvent::BackgroundRead(_)
-        | HostEvent::FinishedDeferredReads
-        | HostEvent::RanMacros { .. }
-        | HostEvent::TransformedTree(_) => None,
+        _ => None,
     });
     paths.map(|path| path.as_bstr().to_string()).collect()
 }

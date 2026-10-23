@@ -1,6 +1,0 @@
-export class ProbeFields {
-  static probeStaticField = 3;
-  static {
-    ProbeFields.probeStaticField++;
-  }
-}

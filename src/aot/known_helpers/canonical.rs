@@ -286,13 +286,7 @@ impl Writer<'_, '_> {
             FnKind::Method => 2,
             FnKind::Getter => 3,
             FnKind::Setter => 4,
-            FnKind::Constructor
-            | FnKind::StaticBlock
-            | FnKind::CallSignature
-            | FnKind::ConstructSignature
-            | FnKind::FunctionType
-            | FnKind::ConstructorType
-            | FnKind::IndexSignature => {
+            _ => {
                 self.is_unsupported = true;
                 return;
             }
@@ -554,18 +548,7 @@ impl Writer<'_, '_> {
                 self.byte(19);
                 self.text(raw);
             }
-            StmtKind::Interface(_)
-            | StmtKind::TypeAlias(_)
-            | StmtKind::Enum(_)
-            | StmtKind::Module(_)
-            | StmtKind::Import(_)
-            | StmtKind::ImportEquals(_)
-            | StmtKind::ExportNamed(_)
-            | StmtKind::ExportStar { .. }
-            | StmtKind::ExportDefault(_)
-            | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_)
-            | StmtKind::With { .. } => self.is_unsupported = true,
+            _ => self.is_unsupported = true,
         }
     }
 
@@ -769,18 +752,7 @@ impl Writer<'_, '_> {
                 self.optional_expression(value);
             }
             ExprKind::NewTarget(_) => self.byte(25),
-            ExprKind::PrivateIdentifier(_)
-            | ExprKind::Super
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::JsxText(_) => self.is_unsupported = true,
+            _ => self.is_unsupported = true,
         }
         self.tag(Tag::End);
     }

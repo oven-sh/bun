@@ -234,15 +234,7 @@ impl Resolver<'_, '_> {
         match self.classify_use(e) {
             MentionUse::Aliased => None,
             MentionUse::Holder if self.is_answered_without_object(e, owner) => None,
-            MentionUse::Holder
-            | MentionUse::ReadByComputedKey
-            | MentionUse::Called(_)
-            | MentionUse::Inspected
-            | MentionUse::SearchedFor(_)
-            | MentionUse::SearchedForKeysOf(_)
-            | MentionUse::Destructured(_)
-            | MentionUse::StoredInto(_)
-            | MentionUse::Exposed => Some(ModuleObjectUse::Object),
+            _ => Some(ModuleObjectUse::Object),
         }
     }
 
@@ -322,10 +314,7 @@ impl Resolver<'_, '_> {
                     PropKey::Name(name) if !prop.is_rest => {
                         self.find_named_member(some_module_object(), name)
                     }
-                    PropKey::Name(_)
-                    | PropKey::None
-                    | PropKey::Private(_)
-                    | PropKey::Computed(_) => {
+                    _ => {
                         ways.push((owner, ModuleObjectUse::Parent));
                         ways.push((owner, ModuleObjectUse::Children));
                         continue;

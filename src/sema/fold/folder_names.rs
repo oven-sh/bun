@@ -102,15 +102,7 @@ impl<'s> Folder<'_, 's> {
         }
         match bound.binding_initializer(self.hir, symbol) {
             BindingInitializer::Expression(init) if init < ident => Some(init),
-            BindingInitializer::Expression(_)
-            | BindingInitializer::Class(_)
-            | BindingInitializer::Function(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Import
-            | BindingInitializer::Opaque => None,
+            _ => None,
         }
     }
 
@@ -122,9 +114,7 @@ impl<'s> Folder<'_, 's> {
             FoldedValue::Constant(constant) if self.is_library_binding(symbol) => {
                 self.decide(ident, Decision::Constant(constant))
             }
-            FoldedValue::Constant(_)
-            | FoldedValue::ConstantOutsideDeadZone(_)
-            | FoldedValue::Unknown => {
+            _ => {
                 self.copy_condition(ident, init);
                 Folded::new(self.folded(init).value, Effects::DeadZoneCheck)
             }

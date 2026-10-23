@@ -25,12 +25,7 @@ fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<Symbol
     }
     match bound.binding_stability(symbol) {
         BindingStability::Stable | BindingStability::Linked => Some(symbol),
-        BindingStability::NoBinding
-        | BindingStability::Stored
-        | BindingStability::NotInitializedOnce
-        | BindingStability::VisibleToEval
-        | BindingStability::MappedArgument
-        | BindingStability::ContainerMember => None,
+        _ => None,
     }
 }
 
@@ -55,32 +50,7 @@ fn import_from_node_module(
             let import = &hir[import];
             (!import.flags.contains(Flags::TYPE_ONLY)).then_some((import.target.spec(), None))
         }
-        Decl::Var(_)
-        | Decl::Param(_)
-        | Decl::Fn(_)
-        | Decl::Class(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => None,
+        _ => None,
     });
     let (specifier, export) = imports.next()?;
     is_node_module(specifier).then_some(export)
@@ -117,13 +87,7 @@ fn is_object_of_node_module(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> boo
         BindingInitializer::Expression(source) => {
             is_request_of_node_module(hir, bound, hir.skip_type_assertions(source))
         }
-        BindingInitializer::PatternProperty { .. }
-        | BindingInitializer::Class(_)
-        | BindingInitializer::Function(_)
-        | BindingInitializer::Namespace(_)
-        | BindingInitializer::Enum(_)
-        | BindingInitializer::EntityName(_)
-        | BindingInitializer::Opaque => false,
+        _ => false,
     }
 }
 
@@ -143,13 +107,7 @@ fn is_create_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
         BindingInitializer::PatternProperty { source, path } => {
             path[..] == [known::createRequire] && is_object_of_node_module(hir, bound, source)
         }
-        BindingInitializer::Expression(_)
-        | BindingInitializer::Class(_)
-        | BindingInitializer::Function(_)
-        | BindingInitializer::Namespace(_)
-        | BindingInitializer::Enum(_)
-        | BindingInitializer::EntityName(_)
-        | BindingInitializer::Opaque => false,
+        _ => false,
     }
 }
 
@@ -262,14 +220,7 @@ pub fn find_own_require(
         };
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::Import
-            | BindingInitializer::Class(_)
-            | BindingInitializer::Function(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Opaque => return None,
+            _ => return None,
         }
     }
     None
@@ -284,14 +235,7 @@ pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -
         };
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::Import
-            | BindingInitializer::Class(_)
-            | BindingInitializer::Function(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Opaque => return false,
+            _ => return false,
         }
         if is_import_meta_require(hir, e) {
             return true;
@@ -309,14 +253,7 @@ pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
         };
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::Import
-            | BindingInitializer::Class(_)
-            | BindingInitializer::Function(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Opaque => return false,
+            _ => return false,
         }
     }
     false

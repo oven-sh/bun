@@ -154,11 +154,6 @@
     "musl": 32996,
     "windows": 99160
   },
-  "aot/arrivals-report.test.ts": {
-    "default": 716,
-    "asan": 9459,
-    "musl": 785
-  },
   "aot/assembled-patterns-in-code.test.ts": {
     "default": 32,
     "asan": 372,
@@ -1893,10 +1888,6 @@
     "musl": 1222,
     "windows": 2571
   },
-  "aot/every-program-folder-has-a-runner.test.ts": {
-    "default": 842,
-    "musl": 104
-  },
   "aot/every-store-to-a-variable-of-a-context-shows-on-the-sandbox-object.test.ts": {
     "default": 892,
     "musl": 1111
@@ -2036,15 +2027,6 @@
     "default": 5387,
     "musl": 5978
   },
-  "aot/flattened-objects-under-collections.test.ts": {
-    "default": 6748,
-    "asan": 37322,
-    "musl": 6079
-  },
-  "aot/flattened-objects.test.ts": {
-    "default": 7073,
-    "musl": 22457
-  },
   "aot/flow-schedules.test.ts": {
     "default": 169075,
     "musl": 209282
@@ -2158,8 +2140,8 @@
     "musl": 2762
   },
   "aot/fuzzer-fixed-seeds.test.ts": {
-    "default": 259767,
-    "musl": 300126
+    "default": 170000,
+    "musl": 204000
   },
   "aot/fuzzer-seeds-that-found-faults.test.ts": {
     "default": 61005,
@@ -2582,10 +2564,6 @@
     "default": 33,
     "musl": 35
   },
-  "aot/harness/build-report.test.ts": {
-    "default": 3149,
-    "musl": 2791
-  },
   "aot/heap-limit-too-small.test.ts": {
     "default": 582,
     "asan": 3070,
@@ -2883,15 +2861,6 @@
   },
   "aot/joined-programs-all-code-direct-3.test.ts": {
     "default": 13553
-  },
-  "aot/joined-programs-direct-code-by-linear-scan-1.test.ts": {
-    "default": 41899
-  },
-  "aot/joined-programs-direct-code-by-linear-scan-2.test.ts": {
-    "default": 21097
-  },
-  "aot/joined-programs-direct-code-by-linear-scan-3.test.ts": {
-    "default": 13952
   },
   "aot/jsdoc-import-tags.test.ts": {
     "default": 15050,
@@ -3424,9 +3393,6 @@
   "aot/null-where-the-type-says-none.test.ts": {
     "default": 2259
   },
-  "aot/object-census.test.ts": {
-    "default": 3247
-  },
   "aot/objects-born-by-object-create.test.ts": {
     "default": 1461
   },
@@ -3861,9 +3827,6 @@
     "asan": 4422,
     "windows": 2701
   },
-  "aot/records-are-ratchets.test.ts": {
-    "default": 33
-  },
   "aot/recursive-typed-functions-build-time.test.ts": {
     "default": 2508,
     "asan": 1547,
@@ -3886,33 +3849,6 @@
     "default": 741,
     "asan": 5649,
     "windows": 3845
-  },
-  "aot/relational-summaries-collector-verifies.test.ts": {
-    "default": 5968
-  },
-  "aot/relational-summaries-under-collections.test.ts": {
-    "default": 6317
-  },
-  "aot/relational-summaries-validated.test.ts": {
-    "default": 10799
-  },
-  "aot/relational-summaries-without-inlining.test.ts": {
-    "default": 5403
-  },
-  "aot/relational-summaries.test.ts": {
-    "default": 4092
-  },
-  "aot/relations-at-random-under-collections.test.ts": {
-    "default": 4503
-  },
-  "aot/relations-at-random-without-inlining.test.ts": {
-    "default": 3116
-  },
-  "aot/relations-at-random.test.ts": {
-    "default": 2279
-  },
-  "aot/relations-who-keeps.test.ts": {
-    "default": 14333
   },
   "aot/removable-statements.test.ts": {
     "default": 116
@@ -4052,14 +3988,14 @@
     "asan": 10348,
     "windows": 4756
   },
+  "aot/run-aot-frozen-arrays-1.test.ts": {
+    "default": 15654
+  },
   "aot/run-aot-frozen-arrays-2.test.ts": {
     "default": 15575
   },
   "aot/run-aot-frozen-arrays-3.test.ts": {
     "default": 16343
-  },
-  "aot/run-aot-frozen-arrays.test.ts": {
-    "default": 15654
   },
   "aot/run-aot-keeps-parentheses.test.ts": {
     "default": 2225,
@@ -4580,62 +4516,11 @@
   "aot/typedness/one-line.test.ts": {
     "default": 41048
   },
-  "aot/typedness/typedness-1.test.ts": {
-    "default": 61923,
-    "asan": 35657,
-    "musl": 66445,
-    "windows": 68410
-  },
-  "aot/typedness/typedness-10.test.ts": {
-    "default": 32721,
-    "asan": 29619,
-    "windows": 62335
-  },
-  "aot/typedness/typedness-2.test.ts": {
-    "default": 47369,
-    "asan": 32271,
-    "windows": 71503
-  },
-  "aot/typedness/typedness-3.test.ts": {
-    "default": 32836,
-    "asan": 30887,
-    "windows": 63143
-  },
-  "aot/typedness/typedness-4.test.ts": {
-    "default": 39660,
-    "asan": 27431,
-    "windows": 68169
-  },
-  "aot/typedness/typedness-5.test.ts": {
-    "default": 51814,
-    "asan": 32012,
-    "windows": 62895
-  },
-  "aot/typedness/typedness-6.test.ts": {
-    "default": 33499,
-    "asan": 26661,
-    "windows": 67318
-  },
-  "aot/typedness/typedness-7.test.ts": {
-    "default": 39801,
-    "asan": 27662,
-    "windows": 75308
-  },
-  "aot/typedness/typedness-8.test.ts": {
-    "default": 35946,
-    "asan": 30447,
-    "windows": 58898
-  },
-  "aot/typedness/typedness-9.test.ts": {
-    "default": 33301,
-    "asan": 30394,
-    "windows": 70908
-  },
   "aot/types-of-node-classes-name-what-buns-modules-make.test.ts": {
     "default": 3436
   },
   "aot/typescript-cases.test.ts": {
-    "default": 260324,
+    "default": 75000,
     "asan": 174943,
     "windows": 129576
   },
@@ -4751,12 +4636,6 @@
   "aot/variant-collecting-beside-the-program-3.test.ts": {
     "default": 37584
   },
-  "aot/variant-direct-code-by-linear-scan-1.test.ts": {
-    "default": 12671
-  },
-  "aot/variant-direct-code-by-linear-scan-3.test.ts": {
-    "default": 15053
-  },
   "aot/variant-every-function-cold-1.test.ts": {
     "default": 11784
   },
@@ -4778,23 +4657,11 @@
   "aot/variant-every-function-neither-hot-nor-cold-3.test.ts": {
     "default": 19512
   },
-  "aot/variant-flow-fixpoint-1.test.ts": {
-    "default": 11439
-  },
-  "aot/variant-flow-fixpoint-2.test.ts": {
-    "default": 14043
-  },
   "aot/variant-flow-rules-delayed-2.test.ts": {
     "default": 19921
   },
   "aot/variant-flow-rules-delayed-3.test.ts": {
     "default": 25708
-  },
-  "aot/variant-inner-objects-flattened-wherever-legal-1.test.ts": {
-    "default": 17412
-  },
-  "aot/variant-inner-objects-flattened-wherever-legal-3.test.ts": {
-    "default": 4022
   },
   "aot/variant-no-flow-results-1.test.ts": {
     "default": 13645
@@ -4902,13 +4769,22 @@
     "default": 8194
   },
   "aot/variant-verify-each-pass-1.test.ts": {
-    "default": 122
+    "default": 70000
   },
   "aot/variant-verify-each-pass-2.test.ts": {
-    "default": 69288
+    "default": 70000
   },
   "aot/variant-verify-each-pass-3.test.ts": {
-    "default": 268392
+    "default": 70000
+  },
+  "aot/variant-verify-each-pass-4.test.ts": {
+    "default": 70000
+  },
+  "aot/variant-verify-each-pass-5.test.ts": {
+    "default": 70000
+  },
+  "aot/variant-verify-each-pass-6.test.ts": {
+    "default": 70000
   },
   "aot/variant-wide-references-1.test.ts": {
     "default": 14552,
@@ -4927,17 +4803,17 @@
     "musl": 91987,
     "windows": 117266
   },
-  "aot/variant-wide-references-out-of-range-1.test.ts": {
+  "aot/variant-wide-references-outside-the-reserved-range-1.test.ts": {
     "default": 17764,
     "asan": 64120,
     "windows": 122136
   },
-  "aot/variant-wide-references-out-of-range-2.test.ts": {
+  "aot/variant-wide-references-outside-the-reserved-range-2.test.ts": {
     "default": 17545,
     "asan": 60353,
     "windows": 95744
   },
-  "aot/variant-wide-references-out-of-range-3.test.ts": {
+  "aot/variant-wide-references-outside-the-reserved-range-3.test.ts": {
     "default": 24734,
     "asan": 72524,
     "windows": 116966

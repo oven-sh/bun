@@ -1,0 +1,32 @@
+# A function that returns import.meta or a fresh array is split, and where the worker returns the array the place of import.meta holds an Unspecified of that type: the program tables can describe it, so the build succeeds
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: compile
+# RUN(SPLIT): pipeline SplitFreshResults
+# CHECK: image not empty
+# SPLIT: Unspecified valueType=builtin(ImportMeta)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="print" [isFreeName]
+    v3 = CallDirect v1, v1 function=f1
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = Call v2, -, v5
+    Return
+}
+function f1 name="metaOrArray" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ModuleBuiltin builtin=ImportMeta module=m0
+    Return v3
+  b2():
+    v4 = NewArray v1 contents=anything
+    Return v4
+}

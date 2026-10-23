@@ -1,0 +1,24 @@
+# Entry lines, with what the host reads from the exports of the module
+# RUN: round-trip
+# CHECK: variable g0 name="a" module=m0 declared={type=anything}
+# CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0 exports=[{name="apply" variable=g0}, {name="default" variable=g0}, {name="fetch" variable=g0}]
+# CHECK-NEXT: module m1 path="/b.ts" displayPath="b.ts"
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="apply" builtin=ReflectApply parameter=1}, {exportName="fetch"}]
+# CHECK-NEXT: entry module=m1
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+variable g0 name="a" module=m0 declared={type=anything}
+module m0 path="/a.ts" displayPath="a.ts" body=f0 exports=[{name="apply" variable=g0}, {name="default" variable=g0}, {name="fetch" variable=g0}]
+module m1 path="/b.ts" displayPath="b.ts"
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="apply" builtin=ReflectApply parameter=1}, {exportName="fetch"}]
+entry module=m1

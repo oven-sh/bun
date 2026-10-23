@@ -370,11 +370,6 @@ fn package_pairs() -> Vec<(String, String, String)> {
             "react-reconciler/cjs/react-reconciler.production.js".to_owned(),
         ),
         (
-            "fuse.js/7.0.0/lay/dist/fuse.sound.ts".to_owned(),
-            "fuse".to_owned(),
-            "fuse.js/dist/fuse.js".to_owned(),
-        ),
-        (
             "seroval/1.6.9/lay/dist/index.js".to_owned(),
             "seroval".to_owned(),
             "seroval/dist/index.js".to_owned(),

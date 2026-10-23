@@ -68,11 +68,7 @@ fn find_file_with_copies(
 ) -> Option<ProgramFile> {
     match exporter {
         ProgramModule::File(file) => is_common_js_file(projects, file).then_some(file),
-        ProgramModule::Inner { .. }
-        | ProgramModule::Face(_)
-        | ProgramModule::Check(_)
-        | ProgramModule::Runtime(_)
-        | ProgramModule::External { .. } => None,
+        _ => None,
     }
 }
 
@@ -450,17 +446,7 @@ fn merge_function_type_edges(input: &MergeInput<'_, '_>) -> Vec<(u32, u32)> {
         let definition = match key.key {
             FunctionKey::Signature(declaration) => FunctionKey::Source(declaration),
             FunctionKey::ClassSignature(class) => FunctionKey::ImplicitConstructor(class),
-            FunctionKey::ModuleBody(_)
-            | FunctionKey::WrappedModuleBody(_)
-            | FunctionKey::FaceBody(_)
-            | FunctionKey::CheckBody(_)
-            | FunctionKey::Source(_)
-            | FunctionKey::ImplicitConstructor(_)
-            | FunctionKey::InstanceInitializer(_)
-            | FunctionKey::StaticInitializer(_)
-            | FunctionKey::AccessorGetter { .. }
-            | FunctionKey::AccessorSetter { .. }
-            | FunctionKey::PrivateNameTest { .. } => continue,
+            _ => continue,
         };
         let definition = InProject {
             project: key.project,
@@ -679,24 +665,16 @@ fn collect_runtime_functions(
 
 pub(super) fn empty_layout(key: &LayoutKey) -> Layout {
     let kind = match key {
-        LayoutKey::ObjectType { .. }
-        | LayoutKey::UntypedLiteral { .. }
-        | LayoutKey::TypeParameter(_) => LayoutKind::Record,
         LayoutKey::Container(_) => LayoutKind::Container,
         LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_) => {
             LayoutKind::Instance
         }
         LayoutKey::Environment { .. } => LayoutKind::Environment,
+        _ => LayoutKind::Record,
     };
     let flags = match key {
         LayoutKey::TypeParameter(_) => LayoutFlags::IS_TYPE_PARAMETER,
-        LayoutKey::ObjectType { .. }
-        | LayoutKey::UntypedLiteral { .. }
-        | LayoutKey::Container(_)
-        | LayoutKey::Class(_)
-        | LayoutKey::ConstructorFunction(_)
-        | LayoutKey::Library(_)
-        | LayoutKey::Environment { .. } => LayoutFlags::default(),
+        _ => LayoutFlags::default(),
     };
     Layout {
         kind,

@@ -153,32 +153,7 @@ impl Checker<'_, '_> {
             | StmtKind::ExportNamed(_)
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportDefault(_) => DiagnosticClass::EarlyError,
-            StmtKind::Interface(_)
-            | StmtKind::TypeAlias(_)
-            | StmtKind::Enum(_)
-            | StmtKind::Module(_)
-            | StmtKind::ImportEquals(_)
-            | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_)
-            | StmtKind::Empty
-            | StmtKind::Debugger
-            | StmtKind::Expr(_)
-            | StmtKind::Return(_)
-            | StmtKind::If { .. }
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Block(_)
-            | StmtKind::Switch { .. }
-            | StmtKind::Try { .. }
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Labeled { .. }
-            | StmtKind::With { .. }
-            | StmtKind::Directive { .. } => DiagnosticClass::TypeScriptGrammar,
+            _ => DiagnosticClass::TypeScriptGrammar,
         }
     }
 
@@ -232,30 +207,7 @@ impl Checker<'_, '_> {
             Decl::ExportExpr(statement) => {
                 matches!(hir[statement].kind, StmtKind::ExportDefault(_))
             }
-            Decl::Param(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::Enum(_)
-            | Decl::EnumMember(_)
-            | Decl::Module(_)
-            | Decl::TypeParam(_)
-            | Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::ImportEquals(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => false,
+            _ => false,
         };
         is_export && !self.is_in_ambient_context(declaration)
     }

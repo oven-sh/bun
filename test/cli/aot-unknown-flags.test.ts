@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { run } from "../aot/harness/run";
 
 const files = {
   "app.ts": "console.log(JSON.stringify(process.argv.slice(2)));\n",
@@ -11,14 +12,7 @@ const files = {
 
 async function bun(cwd: string | { cwd: string; BUN_OPTIONS: string }, ...args: string[]) {
   const { cwd: folder, ...env } = typeof cwd === "string" ? { cwd } : cwd;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd: folder,
-    env: { ...bunEnv, NO_COLOR: "1", ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], folder, { ...bunEnv, NO_COLOR: "1", ...env });
   return { stdout, stderr, exitCode };
 }
 

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // The prototype object of a class of the program is fixed under --aot. `bun run --aot` prints what is recorded of the executable,
@@ -48,14 +49,7 @@ test.concurrent.each([
     }
     // From the sources, and as compiled code.
     for (const flag of ["--aot", "--debug-aot"]) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", flag, file],
-        cwd: dirname(file),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { stdout, exitCode } = await run([bunExe(), "run", flag, file], dirname(file));
       expect({ flag, stdout, exitCode }).toEqual({ flag, stdout: expected, exitCode: 0 });
     }
   },

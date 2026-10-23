@@ -22,7 +22,6 @@ members = [
   "src/aot",
   "src/aot/builtins",
   "src/aot/interface",
-  "src/aot/standalone",
   "src/sema",
   "src/sema/baselines",
   "src/sema/driver",

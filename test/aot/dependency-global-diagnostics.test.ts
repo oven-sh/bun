@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function buildAndRun(name: string, lib: string[] | undefined, main: string, dependency: string) {
@@ -25,17 +26,12 @@ async function buildAndRun(name: string, lib: string[] | undefined, main: string
     "node_modules/ships-typescript/index.ts": dependency,
   });
   const outfile = join(String(directory), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
-    cwd: String(directory),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    String(directory),
+  );
   if (exitCode) return { stderr, exitCode, stdout: "" };
-  await using ran = Bun.spawn({ cmd: [outfile], cwd: String(directory), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout] = await Promise.all([ran.stdout.text(), ran.exited]);
+  const { stdout } = await run([outfile], String(directory));
   return { stderr, exitCode, stdout };
 }
 

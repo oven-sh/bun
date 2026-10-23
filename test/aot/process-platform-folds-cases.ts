@@ -14,7 +14,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
-import { buildEnvironment, buildFlags, compileCommand, runtimeEnvironment } from "./harness/flags";
+import { buildFlags, compileCommand, runtimeEnvironment } from "./harness/flags";
+import { printIR, test as testOfIR, writesProgramInto } from "./harness/printed-ir";
 import { built, slot, spawned, told, wanted, withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -265,11 +266,10 @@ const chosenWays = Object.keys(ways).slice(0, wanted === "quick" ? 1 : undefined
 const entryPointsOf = (files: Record<string, string>) => Object.keys(files).filter(name => /^(main|worker)\./.test(name)).sort();
 const executableIn = (folder: string, name: string) => join(folder, name + (isWindows ? ".exe" : ""));
 
-async function compile(folder: string, files: Record<string, string>, flags: string[], environment: Record<string, string> = {}) {
+async function compile(folder: string, files: Record<string, string>, flags: string[]) {
   const executable = executableIn(folder, "program");
-  const build = await spawned([bunExe(), ...compileCommand, ...flags, ...entryPointsOf(files), "--outfile", executable], folder, { ...bunEnv, ...environment });
-  built(build);
-  return { executable, stderr: build.stderr };
+  built(await spawned([bunExe(), ...compileCommand, ...flags, ...entryPointsOf(files), "--outfile", executable], folder, bunEnv));
+  return { executable };
 }
 
 async function runReference(folder: string, { files, reference }: Program) {
@@ -318,16 +318,17 @@ group("compile/aot/process.platform and process.arch/changed by", () => {
   }
 });
 
-// One function's IR as the build prints it after instruction selection. A read that is still by name has the name as its key.
+// One function's IR after instruction selection. A read that is still by name has the name as its key.
 async function selectedCodeOf(functionName: string, { files }: Program) {
   using dir = tempDir("aot-process-platform-code", files);
-  const { stderr } = await compile(String(dir), files, [], { [buildEnvironment.dumpsIR]: "Selected", [buildEnvironment.functionToDump]: functionName });
-  expect(stderr).toContain(`name="${functionName}"`);
-  return stderr;
+  await compile(String(dir), files, [writesProgramInto(String(dir))]);
+  const code = await printIR(String(dir), { until: "Select", functionName });
+  expect(code).toContain(`name="${functionName}"`);
+  return code;
 }
 
 group("compile/aot/process.platform and process.arch/at build time", () => {
-  test("the reads fold and the branch for another platform is removed if nothing changes the properties", () =>
+  testOfIR("the reads fold and the branch for another platform is removed if nothing changes the properties", () =>
     slot(async () => {
       const program = programThatChanges(changes["nothing"]);
       expect(await selectedCodeOf("platformName", program)).not.toContain(`"platform"`);
@@ -338,7 +339,7 @@ group("compile/aot/process.platform and process.arch/at build time", () => {
       expect(branch).not.toContain(`"platform"`);
     }), 600_000);
 
-  test("the same in a program that never mentions this platform's name", () =>
+  testOfIR("the same in a program that never mentions this platform's name", () =>
     slot(async () => {
       const branch = await selectedCodeOf("branch", {
         files: {
@@ -356,7 +357,7 @@ console.log(new CustomEvent("opaque", { detail: branch }).detail());
       expect(branch).not.toContain(`"platform"`);
     }), 600_000);
 
-  test("the reads and both branches stay if the program assigns to the properties", () =>
+  testOfIR("the reads and both branches stay if the program assigns to the properties", () =>
     slot(async () => {
       const program = programThatChanges(changes["an assignment"]);
       expect(await selectedCodeOf("platformName", program)).toContain(`"platform"`);

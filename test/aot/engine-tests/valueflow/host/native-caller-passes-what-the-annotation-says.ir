@@ -1,0 +1,27 @@
+# function parseHandle(text: string, other) { text.x; other.x }   The host calls it on behalf of process.send (runtimefunction 65559), and its row lists no operands.
+# A parameter with an annotation that the checker has held the body against gets the values of that type. One without gets anything.
+# LIBRARY: own
+# RUN: valueflow-why values=f1:v2 values=f1:v3
+# CHECK: values=f1:v2
+# CHECK: operand 0 {{*}} 1 members: primitive{{*}}
+# CHECK: values=f1:v3
+# CHECK: operand 0 {{*}} unknown
+
+typesite w0 module=m0 position=1 kind=Parameter
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="send"
+    v2 = String string="careful"
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="parseHandle" role=Library flags=[IsChecked] enclosingRuntimeFunction=65559 parameters=[{type=string site=w0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v1 key="x"
+    Return v2
+}

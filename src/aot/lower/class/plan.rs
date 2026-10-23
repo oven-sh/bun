@@ -263,10 +263,7 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
         ClassElement::Field { member, .. } | ClassElement::AccessorStorage { member, .. } => {
             !is_moved_to_constructor_body(hir, bound, transform, member)
         }
-        ClassElement::Brand
-        | ClassElement::AssignedField { .. }
-        | ClassElement::RunInitializers { .. }
-        | ClassElement::StaticBlock(_) => false,
+        _ => false,
     });
     let is_at_injection_point = plan.field_semantics == FieldSemantics::Assign
         || (transform == ClassTransform::Standard && !has_defined_field);
@@ -351,11 +348,7 @@ fn find_member_slot(
                 PropKey::Name(_) | PropKey::Computed(_) | PropKey::None => None,
             }
         }
-        MemberKind::Constructor
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature
-        | MemberKind::StaticBlock => None,
+        _ => None,
     }
 }
 

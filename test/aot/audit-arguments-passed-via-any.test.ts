@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Built with --aot-log-type-mismatches, an executable reports a value that contradicts its type and goes on. The type that
@@ -18,20 +19,15 @@ test("a log build reports an argument that does not fit its parameter and goes o
     `,
   });
   const outfile = join(String(dir), isWindows ? "out.exe" : "out");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "--aot-log-type-mismatches", "./main.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, buildErrors, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  const { stderr: buildErrors, exitCode: buildCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "--aot-log-type-mismatches", "./main.ts", "--outfile", outfile],
+    String(dir),
+  );
   expect({ buildErrors: buildErrors.split("\n").filter(line => line.startsWith("error")), buildCode }).toEqual({
     buildErrors: [],
     buildCode: 0,
   });
-  await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await run([outfile], String(dir));
   expect({ last: stdout.trim().split("\n").at(-1), exitCode }).toEqual({ last: "went on", exitCode: 0 });
   expect(stderr.split("\n").filter(line => line.startsWith("[aot] type-mismatch ")).length).toBeGreaterThan(0);
 }, 60_000);

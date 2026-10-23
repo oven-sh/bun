@@ -67,10 +67,7 @@ impl Interop {
     pub fn has_export_table(self) -> bool {
         match self.kind {
             ModuleKind::SourceText | ModuleKind::Data => true,
-            ModuleKind::CommonJs
-            | ModuleKind::RuntimeSource
-            | ModuleKind::Runtime
-            | ModuleKind::External => false,
+            _ => false,
         }
     }
 }

@@ -443,19 +443,12 @@ fn resolve_macro_import(
     };
     match context.host.resolve_code(&request) {
         HostResolution::Unclaimed => {}
-        HostResolution::Path(_)
-        | HostResolution::ModuleSource { .. }
-        | HostResolution::Module(_)
-        | HostResolution::External { .. }
-        | HostResolution::Erased => return None,
+        _ => return None,
     }
     match context.resolver.resolve_code(&request) {
         CodeResolution::File(found) if found.host_module.is_some() => None,
         CodeResolution::File(found) => Some(found.path.to_vec()),
-        CodeResolution::HostModule(_)
-        | CodeResolution::External { .. }
-        | CodeResolution::Erased
-        | CodeResolution::NotFound(_) => None,
+        _ => None,
     }
 }
 

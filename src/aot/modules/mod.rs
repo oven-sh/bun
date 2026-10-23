@@ -379,12 +379,7 @@ fn finish_file(finish_input: &FinishInput<'_, '_>, draft: FileDraft) -> FilePart
         SourceKind::RuntimeModule(module) if interop.kind == ModuleKind::RuntimeSource => {
             Some(module)
         }
-        SourceKind::RuntimeModule(_)
-        | SourceKind::Program
-        | SourceKind::Data
-        | SourceKind::EvaluatedText
-        | SourceKind::RuntimeFunctions
-        | SourceKind::TypesOnly => None,
+        _ => None,
     };
     debug_assert_eq!(
         runtime_module.is_some(),

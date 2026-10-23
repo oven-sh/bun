@@ -428,6 +428,8 @@ The same goes for `node:cluster`. `server.listen()` in a cluster worker asks the
 
 Some properties of `process`, `Bun` and `console` are written in JavaScript too: `process.stdout` needs `node:tty`, and `Bun.sql` needs `bun:sql`. The executable contains the ones your program can reach. Reading `process[name]` with a dynamic name, or storing `process` where the compiler can't follow it, keeps all of them.
 
+The compiler follows a built-in module through variables, parameters, return values and properties of objects that your own code creates, so `fs[name]()` with a dynamic name keeps every function of `node:fs` wherever `fs` got there that way. It can't follow a module through an object that came from outside your code: after `const box = event.detail; box.url = require("node:url")`, `box.url[name]()` throws `'...' was not compiled into this executable because your code never calls it`, unless your program also calls that function by name or reads `url[name]` somewhere the compiler can follow.
+
 The code behind the IPC channel is kept for `process.on("message", ...)` only when the compiler can see that the call is on `process`: called on `process` itself, or on a variable or parameter that holds it. If `process` got there through a value the compiler can't follow, like `error.cause`, a message that carries a `Buffer` or a handle throws an error that names what's missing. Using `process.send` anywhere in your code keeps it.
 
 ### Code that isn't in the executable

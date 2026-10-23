@@ -1,4 +1,4 @@
-// The typed versions of public packages under packages/bun-sound (react-dom, react-reconciler, seroval, fuse.js ..) are compiled
+// The typed versions of public packages under packages/bun-sound (react-dom, react-reconciler, seroval ..) are compiled
 // into large programs and compared with the original packages: packages/bun-sound/run.py, whose top says what it checks. Beside the
 // answers it checks that a typed package is still compiled as typed: a change in the compiler can make one fall back to untyped
 // code with every answer right, and nothing else notices.

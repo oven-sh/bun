@@ -33,6 +33,8 @@ work = tempfile.mkdtemp(prefix="against-the-jit-")
 OPERATIONS = os.path.join(work, "operations")
 subprocess.run([sys.executable, os.path.join(HERE, "operations", "generate.py"), OPERATIONS], check=True, stdout=subprocess.DEVNULL)
 json.dump({"extends": os.path.join(HERE, "operations", "tsconfig.json")}, open(os.path.join(OPERATIONS, "tsconfig.json"), "w"))
+IDIOMS = os.path.join(work, "idioms")
+subprocess.run([jit, os.path.join(HERE, "untyped-idioms.ts"), IDIOMS], check=True)
 STEADY = {"BUN_GC_TIMER_DISABLE": "1", "BUN_JSC_percentCPUPerMBForEdenTimer": "0", "BUN_JSC_percentCPUPerMBForFullTimer": "0", "BUN_JSC_useConcurrentGC": "0", "BUN_JSC_numberOfGCMarkers": "1", "BUN_JSC_useConcurrentJIT": "0"}
 BASE = dict(os.environ, NO_COLOR="1", BUN_ENABLE_CRASH_REPORTING="0", DO_NOT_TRACK="1", BUN_DEBUG_QUIET_LOGS="1", **STEADY)
 
@@ -59,7 +61,7 @@ def build(core, source, cwd, name):
 
 
 def idiom(core, name, turns):
-    root = os.path.join(HERE, "idioms")
+    root = IDIOMS
 
     def one_turn(command):
         short, long = (measure(core, command, root, {"AOT_PERF_TURNS": str(n)}) for n in (turns >> 2, turns))

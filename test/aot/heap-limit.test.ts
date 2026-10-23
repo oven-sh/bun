@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -140,14 +141,7 @@ parentPort!.postMessage("done");
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({
-    cmd,
-    cwd,
-    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env });
   // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };
 }

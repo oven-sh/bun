@@ -217,12 +217,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     false => ThisOwner::Instance(class),
                 })
             }
-            FnKind::Arrow
-            | FnKind::CallSignature
-            | FnKind::ConstructSignature
-            | FnKind::FunctionType
-            | FnKind::ConstructorType
-            | FnKind::IndexSignature => None,
+            _ => None,
         }
     }
 
@@ -312,26 +307,7 @@ fn find_statement_always_evaluating(
                 let statement = statement.some()?;
                 return matches!(hir[statement].kind, StmtKind::Expr(_)).then_some(statement);
             }
-            Parent::None
-            | Parent::File
-            | Parent::VarInit(_)
-            | Parent::ParamDefault(_)
-            | Parent::PatPropDefault(_)
-            | Parent::PatElemDefault(_)
-            | Parent::Prop(_)
-            | Parent::PropKey(_)
-            | Parent::PatKey(_)
-            | Parent::MemberKey(_)
-            | Parent::MethodKey(_)
-            | Parent::MemberInit(_)
-            | Parent::FnBody(_)
-            | Parent::EnumInit(_)
-            | Parent::Case(_)
-            | Parent::ClassExtends(_)
-            | Parent::ClassDecorator(_)
-            | Parent::MemberDecorator(_)
-            | Parent::ParamDecorator(_)
-            | Parent::Module(_) => return None,
+            _ => return None,
         };
         let is_stored_value = matches!(
             hir[parent].kind,
@@ -365,84 +341,14 @@ fn returns_created_object(hir: &hir::File<'_>, statement: StmtId) -> bool {
         | ExprKind::Fn(_)
         | ExprKind::Class(_)
         | ExprKind::New(_) => true,
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => false,
+        _ => false,
     }
 }
 
 fn stored_value_kind(hir: &hir::File<'_>, value: ExprId) -> ObjectMemberKind {
     match hir[value].kind {
         ExprKind::Fn(function) if hir[function].kind != FnKind::Arrow => ObjectMemberKind::Method,
-        ExprKind::Fn(_)
-        | ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => ObjectMemberKind::Field,
+        _ => ObjectMemberKind::Field,
     }
 }
 

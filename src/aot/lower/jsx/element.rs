@@ -63,42 +63,7 @@ fn find_intrinsic_tag_name(file: &FileLowering<'_, '_, '_, '_>, tag: ExprId) -> 
         ExprKind::Ident(name) => {
             is_intrinsic_jsx_name(file.queries.atom_bytes(name)).then_some(name)
         }
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => None,
+        _ => None,
     }
 }
 

@@ -4,7 +4,7 @@
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
 //! reported. A false negative is better than a false positive.
 
-use super::aot::DiagnosticClass;
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::enclosing_declaration::Enclosing;
 use super::errors_aliases::Directives;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -804,7 +804,10 @@ impl Checker<'_, '_> {
             _ => &[module_name, name_text],
         };
         let at = self.span_of_token(from, start);
-        self.error_at(at, code, args).related_information = related;
+        let subject = self.member_container(module);
+        let reported = self.error_at(at, code, args);
+        reported.related_information = related;
+        reported.subject = subject;
     }
 
     /// `reportNonDefaultExport`: the first `export *` of `module` that targets a module with a default export, which
@@ -970,7 +973,8 @@ impl Checker<'_, '_> {
                 Reported::new(at, hint.code, hint.args)
             });
         let args = [Arg::Atom(spec), Arg::Path(atoms.bytes(path))];
-        let diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
+        let mut diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
+        diagnostic.subject = DiagnosticSubject::ModuleSpecifier(spec);
         self.add_diagnostic(diagnostic);
     }
 

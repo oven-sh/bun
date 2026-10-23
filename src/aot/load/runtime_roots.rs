@@ -122,11 +122,7 @@ fn is_uncompiled_code(answer: &CodeAnswer<'_>) -> bool {
 fn implied_module(answer: &CodeAnswer<'_>) -> Option<RuntimeModule> {
     match *answer {
         CodeAnswer::HostModule(id) => Some(to_runtime_module(id)),
-        CodeAnswer::File(_)
-        | CodeAnswer::External { .. }
-        | CodeAnswer::Erased
-        | CodeAnswer::Computed(_)
-        | CodeAnswer::NotFound(_) => None,
+        _ => None,
     }
 }
 

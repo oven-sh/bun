@@ -33,7 +33,7 @@ fn record_with_reason(kind: DeclineKind, reason: u32) -> DeclineRecord {
 
 fn report(records: &[DeclineRecord]) -> Vec<(BString, Option<Position>)> {
     let fixture = ReportFixture::new(ResultRecords {
-        limit_values: &[(LimitId::MaxClonedValuesPerLoopVersion, LOWERED_LIMIT_VALUE)],
+        limit_values: &[(LimitId::MaxThreadedPathCost, LOWERED_LIMIT_VALUE)],
         declines: records,
         ..ResultRecords::default()
     });
@@ -223,7 +223,7 @@ fn absent_limit_has_no_clause() {
 
 #[test]
 fn decline_line_has_every_clause() {
-    let limit = LimitId::MaxClonedValuesPerLoopVersion;
+    let limit = LimitId::MaxThreadedPathCost;
     let record = DeclineRecord {
         limit,
         reason: LoopDeclineReason::LimitReached.to_wire(),
@@ -453,7 +453,7 @@ fn build_without_listed_decline_says_none() {
 
 #[test]
 fn report_lists_totals_by_kind_then_declines_by_position() {
-    let limit = LimitId::MaxClonedValuesPerLoopVersion;
+    let limit = LimitId::MaxThreadedPathCost;
     let not_versioned = DeclineRecord {
         limit,
         witness: witness(PROGRAM_FUNCTION, location(PROGRAM, LINE_2_COLUMN_14)),

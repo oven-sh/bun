@@ -1,0 +1,209 @@
+# view.subarray(begin) that goes into encoder.encodeInto(text, ..) and nowhere else on its way there is not made. In its place travel the view and the place where the range starts, -1 where the value is what it is.
+# Whoever else gets to see the range on another way has it made for him. Nobody may see it twice: two ranges made of one would be two objects.
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" declared={type=anything} initialization=Undefined
+function f0 name="oneAfterTheOther" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number):
+    v4 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v5 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0
+    Return v5
+}
+# CHECK-LABEL: function f0 name="oneAfterTheOther"
+# CHECK-NOT: TypedArrayPrototypeSubarray
+# CHECK: [[start]]: int[-1, 2147483647] = CallBuiltin -, v2, v3 overload=CompilerHelpersStartOfRangeOfBytes/0
+# CHECK-NEXT: v4: {{*}} = CallBuiltin -, v2, v3, [[start]] overload=CompilerHelpersViewOrRangeOfBytes/0
+# CHECK-NEXT: v5: object = CallBuiltin -, v0, v1, v4, [[start]] overload=CompilerHelpersEncodeIntoRangeOfBytes/0
+# CHECK-NEXT: Return v5
+
+function f1 name="theWholeViewOnTheOtherWay" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=boolean}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: boolean):
+    Branch v4 -> taken b1(), notTaken b2(v2)
+  b1():
+    v5 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    Jump -> next b2(v5)
+  b2(v6: Uint8Array):
+    v7 = GetModuleVariable variable=g0
+    v8 = CallBuiltin v0, v1, v6 overload=TextEncoderPrototypeEncodeInto/0
+    Return v8
+}
+# CHECK-LABEL: function f1 name="theWholeViewOnTheOtherWay"
+# CHECK-NOT: TypedArrayPrototypeSubarray
+# CHECK: [[noneOfFirst]]: -1 = Integer integer=-1
+# CHECK: Branch v4 -> taken b1(), notTaken b2(v2, [[noneOfFirst]])
+# CHECK: [[startOfFirst]]: int[-1, 2147483647] = CallBuiltin -, v2, v3 overload=CompilerHelpersStartOfRangeOfBytes/0
+# CHECK-NEXT: v5: {{*}} = CallBuiltin -, v2, v3, [[startOfFirst]] overload=CompilerHelpersViewOrRangeOfBytes/0
+# CHECK-NEXT: Jump -> next b2(v5, [[startOfFirst]])
+# CHECK: b2(v6: Uint8Array, [[mergedOfFirst]]: int[-1, 2147483647]):
+# CHECK: v8: object = CallBuiltin -, v0, v1, v6, [[mergedOfFirst]] overload=CompilerHelpersEncodeIntoRangeOfBytes/0
+
+function f2 name="somebodyElseSeesItOnAnotherWay" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: boolean):
+    v5 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v6 = Upcast v5 castType=anything
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v6 variable=g0
+    v8 = Undefined
+    Return v8
+  b2():
+    v9 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0
+    Return v9
+}
+# CHECK-LABEL: function f2 name="somebodyElseSeesItOnAnotherWay"
+# CHECK-NOT: TypedArrayPrototypeSubarray
+# CHECK: [[startOfSecond]]: int[-1, 2147483647] = CallBuiltin -, v2, v3 overload=CompilerHelpersStartOfRangeOfBytes/0
+# CHECK: b1():
+# CHECK-NEXT: [[madeOfSecond]]: Uint8Array = CallBuiltin -, v6, [[startOfSecond]] overload=CompilerHelpersRangeOfBytes/0
+# CHECK-NEXT: PutModuleVariable [[madeOfSecond]] variable=g0
+# CHECK: v9: object = CallBuiltin -, v0, v1, v5, [[startOfSecond]] overload=CompilerHelpersEncodeIntoRangeOfBytes/0
+
+function f3 name="whatHappensInBetweenChangesNothing" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=anything}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: anything):
+    v5 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v6 = PropGet v4 key="anything"
+    v7 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0
+    Return v7
+}
+# CHECK-LABEL: function f3 name="whatHappensInBetweenChangesNothing"
+# CHECK: overload=CompilerHelpersViewOrRangeOfBytes/0
+# CHECK-NEXT: PropGet v4
+# CHECK-NEXT: overload=CompilerHelpersEncodeIntoRangeOfBytes/0
+
+function f4 name="aTextOfAnyKindAndADestinationThatMayBeNull" parameters=[{type=TextEncoder}, {type=anything}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=boolean}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: anything, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: boolean):
+    v5 = Null
+    Branch v4 -> taken b1(), notTaken b2(v5)
+  b1():
+    v6 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    Jump -> next b2(v6)
+  b2(v7: null|Uint8Array):
+    v8 = CallBuiltin v0, v1, v7 overload=TextEncoderPrototypeEncodeInto/1 builtinCallForm=AnyReceiver
+    Return v8
+}
+# CHECK-LABEL: function f4 name="aTextOfAnyKindAndADestinationThatMayBeNull"
+# CHECK-NOT: TypedArrayPrototypeSubarray
+# CHECK: v8: object = CallBuiltin -, v0, v1, v7, {{*}} overload=CompilerHelpersEncodeIntoRangeOfBytes/1
+
+function f5 name="seenTwice" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number):
+    v4 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v5 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0
+    v6 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0
+    Return v6
+}
+# CHECK-LABEL: function f5 name="seenTwice"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f6 name="seenAgainInALaterBlock" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number):
+    v4 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v5 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0
+    Jump -> next b1()
+  b1():
+    PutModuleVariable v4 variable=g0
+    Return v5
+}
+# CHECK-LABEL: function f6 name="seenAgainInALaterBlock"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f7 name="madeInFrontOfALoopThatUsesIt" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: boolean):
+    v5 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: function f7 name="madeInFrontOfALoopThatUsesIt"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f8 name="madeAnewInEveryTurnOfALoop" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v7 = CallBuiltin v0, v1, v6 overload=TextEncoderPrototypeEncodeInto/0
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: function f8 name="madeAnewInEveryTurnOfALoop"
+# CHECK-NOT: TypedArrayPrototypeSubarray
+# CHECK: overload=CompilerHelpersEncodeIntoRangeOfBytes/0
+
+function f9 name="returned" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}, {type=boolean}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number, v4: boolean):
+    v5 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    v6 = CallBuiltin v0, v1, v5 overload=TextEncoderPrototypeEncodeInto/0
+    Return v6
+}
+# CHECK-LABEL: function f9 name="returned"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f10 name="nobodyEncodesIntoIt" parameters=[{type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Uint8Array<int[0, 255], pristine[Names]>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    PutModuleVariable v2 variable=g0
+    v4 = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f10 name="nobodyEncodesIntoIt"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f11 name="whoKnowsWhetherItIsAnEncoder" parameters=[{type=anything}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=object}] {
+  b0(v0: anything, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number):
+    v4 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v5 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0 builtinCallForm=AnyReceiver
+    Return v5
+}
+# CHECK-LABEL: function f11 name="whoKnowsWhetherItIsAnEncoder"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f12 name="aRangeWithAnEnd" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: number):
+    v4 = CallBuiltin v2, v3, v3 overload=TypedArrayPrototypeSubarray/0
+    v5 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0
+    Return v5
+}
+# CHECK-LABEL: function f12 name="aRangeWithAnEnd"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f13 name="viewsOfAnotherKind" parameters=[{type=TextEncoder}, {type=string}, {type=Int8Array<int[-128, 127], pristine[Names]>}, {type=number}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: string, v2: Int8Array<int[-128, 127], pristine[Names]>, v3: number):
+    v4 = CallBuiltin v2, v3 overload=TypedArrayPrototypeSubarray/0
+    v5 = CallBuiltin v0, v1, v4 overload=TextEncoderPrototypeEncodeInto/0
+    Return v5
+}
+# CHECK-LABEL: function f13 name="viewsOfAnotherKind"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers
+
+function f14 name="theRangeIsTheTextToo" parameters=[{type=TextEncoder}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=object}] {
+  b0(v0: TextEncoder, v1: Uint8Array<int[0, 255], pristine[Names]>, v2: number):
+    v3 = CallBuiltin v1, v2 overload=TypedArrayPrototypeSubarray/0
+    v4 = CallBuiltin v0, v3, v3 overload=TextEncoderPrototypeEncodeInto/1
+    Return v4
+}
+# CHECK-LABEL: function f14 name="theRangeIsTheTextToo"
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-NOT: CompilerHelpers

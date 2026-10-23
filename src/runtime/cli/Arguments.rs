@@ -800,9 +800,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
         ),
         parse_param!(
-            "--dts                            Write TypeScript declaration files (.d.ts) to --outdir. Implies --check"
-        ),
-        parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
         parse_param!(
@@ -853,9 +850,6 @@ const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
-    parse_param!(
-        "--library                        Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json, in --outdir (default: \"dist\")"
-    ),
     parse_param!(
         "--no-aot                         Bundle the JavaScript into the executable instead of compiling it to machine code, like bun build --compile"
     ),
@@ -2348,40 +2342,9 @@ fn parse_build_command_options(
     diag: &mut clap::Diagnostic,
 ) {
     bun_removable_features::removable_definition!(BuildCommand, parse_build_command_options);
-    let library = cmd == CommandTag::CompileCommand && args.flag(b"--library");
-    let compiles = args.flag(b"--compile") || (cmd == CommandTag::CompileCommand && !library);
+    let compiles = args.flag(b"--compile") || cmd == CommandTag::CompileCommand;
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
-    if library {
-        let unsupported = [
-            ("--compile", args.flag(b"--compile")),
-            ("--aot", args.flag(b"--aot")),
-            ("--trim", args.flag(b"--trim")),
-        ];
-        if let Some((flag, _)) = unsupported.iter().find(|(_, is_set)| *is_set) {
-            Output::err_generic("--library cannot be used with {}", format_args!("{}", flag));
-            Global::exit(1);
-        }
-        if args.option(b"--outfile").is_some() {
-            Output::err_generic(
-                "--library writes a folder. Use --outdir instead of --outfile",
-                (),
-            );
-            Global::exit(1);
-        }
-        if args
-            .option(b"--format")
-            .is_some_and(|format| format != b"esm" && format != b"cjs")
-        {
-            Output::err_generic("--library only supports --format=esm and --format=cjs", ());
-            Global::exit(1);
-        }
-        ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();
-        ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
-        opts.target = Some(api::Target::Node);
-    }
-    ctx.bundler_options.library = library;
-    ctx.bundler_options.dts = library || args.flag(b"--dts");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
@@ -2525,24 +2488,19 @@ fn parse_build_command_options(
                 }
             }
 
-            opts.target = Some(
-                opts.target
-                    .filter(|_| !library)
-                    .unwrap_or_else(|| match target {
-                        b"browser" => api::Target::Browser,
-                        b"node" => api::Target::Node,
-                        b"macro" => {
-                            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand)
-                            {
-                                api::Target::BunMacro
-                            } else {
-                                api::Target::Bun
-                            }
-                        }
-                        b"bun" => api::Target::Bun,
-                        _ => cli::invalid_target(diag, target),
-                    }),
-            );
+            opts.target = Some(opts.target.unwrap_or_else(|| match target {
+                b"browser" => api::Target::Browser,
+                b"node" => api::Target::Node,
+                b"macro" => {
+                    if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
+                        api::Target::BunMacro
+                    } else {
+                        api::Target::Bun
+                    }
+                }
+                b"bun" => api::Target::Bun,
+                _ => cli::invalid_target(diag, target),
+            }));
 
             if opts.target.unwrap() == api::Target::Bun {
                 ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;

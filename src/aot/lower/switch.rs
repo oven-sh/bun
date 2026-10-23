@@ -87,9 +87,7 @@ pub(in crate::lower) fn lower_switch(
 fn find_written_name(test: &CaseTest) -> Option<(Atom, BlockId)> {
     match test.constant {
         FoldedValue::Constant(Constant::String(name)) => Some((name, test.target)),
-        FoldedValue::Constant(_)
-        | FoldedValue::ConstantOutsideDeadZone(_)
-        | FoldedValue::Unknown => None,
+        _ => None,
     }
 }
 
@@ -166,9 +164,7 @@ fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
         {
             FoldedValue::Unknown
         }
-        FoldedValue::Constant(_)
-        | FoldedValue::ConstantOutsideDeadZone(_)
-        | FoldedValue::Unknown => folded,
+        _ => folded,
     }
 }
 

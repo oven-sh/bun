@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `import defer * as ns from "./a.mjs"` (https://tc39.es/proposal-defer-import-eval/). The module is loaded with its importer and
@@ -154,12 +155,6 @@ for (let i = 0; i < process.argv.length - 99; i++) console.log(a.value);
 console.log("main ends");
 `,
 };
-
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 

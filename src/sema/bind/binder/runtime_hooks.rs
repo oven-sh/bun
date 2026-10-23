@@ -23,26 +23,7 @@ impl Binder<'_, '_> {
                 | ScopeKind::FieldInitializer(_)
                 | ScopeKind::ClassDecorators(_)
                 | ScopeKind::ImplicitBlock(_) => scope = s.parent,
-                ScopeKind::File
-                | ScopeKind::Module(_)
-                | ScopeKind::Fn(_)
-                | ScopeKind::Block
-                | ScopeKind::Class(_)
-                | ScopeKind::Interface(_)
-                | ScopeKind::TypeAlias(_)
-                | ScopeKind::TypeParams
-                | ScopeKind::Enum(_)
-                | ScopeKind::TypeParamList(_)
-                | ScopeKind::Param(_)
-                | ScopeKind::ReturnType(_)
-                | ScopeKind::Extends
-                | ScopeKind::InferConstraint
-                | ScopeKind::StaticMember
-                | ScopeKind::ComputedName
-                | ScopeKind::BaseExpression
-                | ScopeKind::FunctionName(_)
-                | ScopeKind::PropertyDeclaration(..)
-                | ScopeKind::PropertyType(..) => return scope,
+                _ => return scope,
             }
         }
     }

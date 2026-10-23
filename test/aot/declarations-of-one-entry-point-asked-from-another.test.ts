@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "./harness/run";
 import { test } from "./supported";
 
 const registry = `class Registry {\n  static create(): Registry { return new Registry(); }\n  value = 41;\n}\n`;
@@ -43,12 +44,6 @@ const programs: Record<string, Record<string, string>> = {
     "main.ts": `import { note } from "./shared";\n` + startsTheWorker("event.data + note({ code: -1 })"),
   },
 };
-
-async function spawned(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 for (const [name, files] of Object.entries(programs)) {
   for (const threads of [1, 8]) {

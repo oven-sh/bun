@@ -6,8 +6,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { withoutPass } from "./harness/flags";
+import { describe, printIR, test, writesProgramInto } from "./harness/printed-ir";
 import { built, spawned } from "./run-programs";
-import { describe, test } from "./supported";
 
 const program = `
   declare const console: { log(...values: unknown[]): void };
@@ -24,17 +24,17 @@ const program = `
 describe("a tail call of a built-in that the library implements", () => {
   test("is among the uses of the test that its receiver needs", async () => {
     using dir = tempDir("aot-tail-calls-of-built-ins", { "main.ts": program });
-    const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "PlaceTypeTests", BUN_JSC_aotFunctionToDump: "doubled" };
-    const build = await spawned(
-      [bunExe(), "build", "--compile", "--aot", withoutPass("InlineCalls"), "main.ts", "--outfile", "main"],
-      String(dir),
-      env,
+    const folder = String(dir);
+    const flags = [withoutPass("InlineCalls")];
+    built(
+      await spawned(
+        [bunExe(), "build", "--compile", "--aot", ...flags, writesProgramInto(folder), "main.ts", "--outfile", "main"],
+        folder,
+        { ...bunEnv, NO_COLOR: "1" },
+      ),
     );
-    built(build);
-    const dump = (build.stdout + build.stderr).split("\n");
-    const first = dump.findIndex(line => line.startsWith("AOT IR after PlaceTypeTests"));
-    const end = dump.indexOf("}", first);
-    const body = dump.slice(first, end);
+    const dump = (await printIR(folder, { until: "PlaceTypeTests", functionName: "doubled", flags })).split("\n");
+    const body = dump.slice(0, dump.indexOf("}"));
     expect(body.some(line => line.includes(" = IsPristine "))).toBe(true);
     expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
     const run = await spawned(["./main"], String(dir), bunEnv);

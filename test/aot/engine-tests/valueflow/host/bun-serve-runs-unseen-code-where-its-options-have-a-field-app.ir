@@ -1,0 +1,26 @@
+# Bun.serve({ port: 0, app: { root: "." } })
+# With `app` among its options Bun.serve starts the development server, which bundles files from the disk when it runs and runs them beside the program: code that the build has not seen.
+# The row of the table speaks of the operand, and a call says whether an object with a field of that name reaches it
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code yes
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="port" declared={type=number}}, {key="app" declared={type=L1}}]
+layout L1 fields=[{key="root" declared={type=string}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    v2 = NewObject layout=L1
+    v3 = String string="."
+    PropDefine v2, v3 key="root"
+    v5 = FinishObject v2
+    v6 = NewObject layout=L0
+    v7 = Integer integer=0
+    PropDefine v6, v7 key="port"
+    PropDefine v6, v5 key="app"
+    v10 = FinishObject v6
+    v11 = Call v1, v0, v10
+    Return
+}

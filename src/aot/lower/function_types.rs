@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::{FileLowering, class};
 use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, FunctionRelations, FunctionRole, SourceRange,
+    Function, FunctionFlags, FunctionKind, FunctionRole, SourceRange,
 };
 use crate::ir::{Body, DeclaredType, FunctionId, FunctionKey};
 
@@ -109,7 +109,6 @@ pub(in crate::lower) fn define_signatures(file: &mut FileLowering<'_, '_, '_, '_
         body: Body::default(),
         function_types: Vec::new(),
         builtin_members: Vec::new(),
-        relations: FunctionRelations::default(),
     });
     for function_type in declared {
         file.fragment

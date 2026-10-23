@@ -1,5 +1,6 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 
 setDefaultTimeout(120_000);
 
@@ -58,8 +59,7 @@ const files = {
 };
 
 async function seen(cwd: string, args: string[]) {
-  await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd);
   return { seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode };
 }
 

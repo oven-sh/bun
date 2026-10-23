@@ -371,9 +371,7 @@ fn try_lower_library_module_named_to_made_require(
     {
         FoldedValue::Constant(Constant::String(name))
         | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => name,
-        FoldedValue::Constant(_)
-        | FoldedValue::ConstantOutsideDeadZone(_)
-        | FoldedValue::Unknown => {
+        _ => {
             return None;
         }
     };
@@ -492,10 +490,7 @@ fn find_operation(
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => match answer {
             // The second argument can ask for the file at that path in place of the module.
             SiteAnswer::Computed(_) if argument_count > 1 => None,
-            SiteAnswer::Module(_)
-            | SiteAnswer::Computed(_)
-            | SiteAnswer::Failed(_)
-            | SiteAnswer::Erased => Some(ModuleOperation::Require),
+            _ => Some(ModuleOperation::Require),
         },
         ImportSiteKind::GetBuiltinModule(_) => match answer {
             SiteAnswer::Module(_) | SiteAnswer::Erased => Some(ModuleOperation::Require),
@@ -508,18 +503,9 @@ fn find_operation(
             SiteAnswer::Module(_) if site.consults_resolver && argument_count == 1 => {
                 Some(ModuleOperation::ImportMetaResolve)
             }
-            SiteAnswer::Module(_)
-            | SiteAnswer::Computed(_)
-            | SiteAnswer::Failed(_)
-            | SiteAnswer::Erased => None,
+            _ => None,
         },
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_) => None,
+        _ => None,
     }
 }
 
@@ -830,11 +816,7 @@ fn expect_exports_layout(
 ) -> ValueId {
     let layout = match module {
         ModuleRef::File(file) => layouts::module_exports_layout(lowering.file, file),
-        ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => None,
+        _ => None,
     };
     let Some(layout) = layout else {
         return required;
@@ -969,9 +951,7 @@ fn find_modules_of_every_value(
         let text = match file.decisions().constant(hir, alternative) {
             FoldedValue::Constant(Constant::String(text))
             | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => text,
-            FoldedValue::Constant(_)
-            | FoldedValue::ConstantOutsideDeadZone(_)
-            | FoldedValue::Unknown => return None,
+            _ => return None,
         };
         let spelled = *spelled_modules.iter().find(|it| it.spelling == text)?;
         if !modules.contains(&spelled) {

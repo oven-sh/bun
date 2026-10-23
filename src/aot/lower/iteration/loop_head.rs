@@ -102,37 +102,7 @@ pub(super) fn lower_iteration_body(
             pattern::assign_pattern(lowering, target, value, None);
             statement::lower_statement(lowering, body);
         }
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Fn(_)
-        | StmtKind::Class(_)
-        | StmtKind::Interface(_)
-        | StmtKind::TypeAlias(_)
-        | StmtKind::Enum(_)
-        | StmtKind::Module(_)
-        | StmtKind::Return(_)
-        | StmtKind::If { .. }
-        | StmtKind::For { .. }
-        | StmtKind::ForIn { .. }
-        | StmtKind::ForOf { .. }
-        | StmtKind::While { .. }
-        | StmtKind::DoWhile { .. }
-        | StmtKind::Block(_)
-        | StmtKind::Switch { .. }
-        | StmtKind::Try { .. }
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::Labeled { .. }
-        | StmtKind::Import(_)
-        | StmtKind::ImportEquals(_)
-        | StmtKind::ExportNamed(_)
-        | StmtKind::ExportStar { .. }
-        | StmtKind::ExportDefault(_)
-        | StmtKind::ExportAssign(_)
-        | StmtKind::ExportAsNamespace(_)
-        | StmtKind::With { .. }
-        | StmtKind::Directive { .. } => statement::lower_statement(lowering, body),
+        _ => statement::lower_statement(lowering, body),
     }
     scope::leave_scope(lowering, scope);
 }

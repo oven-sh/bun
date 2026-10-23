@@ -499,17 +499,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let function = self.c.this_container(file, this)?.ok()?;
         match self.c.hir(file)[function].kind {
             FnKind::Decl | FnKind::Expr => Some(function),
-            FnKind::Arrow
-            | FnKind::Method
-            | FnKind::Getter
-            | FnKind::Setter
-            | FnKind::Constructor
-            | FnKind::StaticBlock
-            | FnKind::CallSignature
-            | FnKind::ConstructSignature
-            | FnKind::FunctionType
-            | FnKind::ConstructorType
-            | FnKind::IndexSignature => None,
+            _ => None,
         }
     }
 

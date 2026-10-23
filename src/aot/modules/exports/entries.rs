@@ -180,10 +180,7 @@ impl EntryCollector<'_, '_> {
     fn commonjs_file_at(&self, site: usize) -> Option<FileId> {
         match &self.scan.sites[site] {
             ScannedSite::Module(module) => find_commonjs_file(self.modules, *module),
-            ScannedSite::Unresolved
-            | ScannedSite::AllModules
-            | ScannedSite::Candidates(_)
-            | ScannedSite::Erased => None,
+            _ => None,
         }
     }
 
@@ -287,10 +284,7 @@ impl EntryCollector<'_, '_> {
             let site = self.analysis.import_site_index(kind)?;
             let is_loaded = match self.scan.sites[site] {
                 ScannedSite::Module(_) => true,
-                ScannedSite::Unresolved
-                | ScannedSite::AllModules
-                | ScannedSite::Candidates(_)
-                | ScannedSite::Erased => false,
+                _ => false,
             };
             (is_loaded && container == self.bound.file_symbol).then_some(site as u32)
         };
@@ -316,24 +310,7 @@ impl EntryCollector<'_, '_> {
             | Decl::Module(_)
             | Decl::ImportEquals(_)
             | Decl::ExportExpr(_) => Value,
-            Decl::Param(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::EnumMember(_)
-            | Decl::TypeParam(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => Other,
+            _ => Other,
         }
     }
 
@@ -386,10 +363,7 @@ impl EntryCollector<'_, '_> {
                 let binds_local = self.bound.declared_symbol(declaration) == local;
                 binds_local.then_some((import, imported))
             }
-            DeclarationKind::ExportSpecifier(_)
-            | DeclarationKind::NamespaceExport(_)
-            | DeclarationKind::Value
-            | DeclarationKind::Other => None,
+            _ => None,
         })
     }
 

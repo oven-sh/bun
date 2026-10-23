@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { built } from "./run-programs";
 import { test } from "./supported";
 
@@ -23,12 +24,6 @@ const files = {
     console.log(sum, plain.readUInt16BE(2), subclassed.readUInt16BE(2), reparented.readUInt16BE(2));
   `,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("Buffer accessor sites reached first by Buffer subclasses stay cached for plain Buffers", async () => {
   using dir = tempDir("aot-buffer-accessors-relookup", files);

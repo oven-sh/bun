@@ -2,11 +2,10 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use super::ResultSection as Section;
-use super::sections::{MalformedSection, check_sections};
 use super::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, BunAOTBytes,
-    DeclineRecord, EngineResult, FeatureUseRecord, LimitId, LocaleUseRecord, LossRecord,
-    ObfuscatedSiteRecord, RemainingCheckRecord, ResultRecord, UnseenCodeRecord,
+    DeclineRecord, EngineResult, FeatureUseRecord, LimitId, LocaleUseRecord, ObfuscatedSiteRecord,
+    RemainingCheckRecord, ResultRecord, UnseenCodeRecord,
 };
 use crate::ir::generated::StatisticId;
 
@@ -61,14 +60,9 @@ impl Sections {
             BunAOTBytes::from_slice(&bytes_of(&self.words[index])[..self.lengths[index]])
         })
     }
-
-    pub(super) fn check(&self) -> Result<(), MalformedSection> {
-        check_sections(&self.as_bytes())
-    }
 }
 
 pub(super) fn with_result<R>(sections: &Sections, then: impl FnOnce(&EngineResult) -> R) -> R {
-    assert_eq!(sections.check(), Ok(()));
     // Never dropped: no engine allocated it.
     let result = ManuallyDrop::new(EngineResult {
         result: NonNull::dangling(),
@@ -91,7 +85,6 @@ pub(crate) struct ResultRecords<'a> {
     pub remaining_checks: &'a [RemainingCheckRecord],
     pub declines: &'a [DeclineRecord],
     pub allocation_remarks: &'a [AllocationRemarkRecord],
-    pub losses: &'a [LossRecord],
     pub obfuscated_sites: &'a [ObfuscatedSiteRecord],
 }
 
@@ -114,7 +107,6 @@ impl ResultRecords<'_> {
             .with_records(self.remaining_checks)
             .with_records(self.declines)
             .with_records(self.allocation_remarks)
-            .with_records(self.losses)
             .with_records(self.obfuscated_sites);
         with_result(&sections, then)
     }

@@ -142,17 +142,7 @@ fn sort_and_dedup<T: Ord>(mut list: Vec<T>) -> Vec<T> {
 fn is_function_type(key: FunctionKey) -> bool {
     match key {
         FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) => true,
-        FunctionKey::ModuleBody(_)
-        | FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Source(_)
-        | FunctionKey::ImplicitConstructor(_)
-        | FunctionKey::InstanceInitializer(_)
-        | FunctionKey::StaticInitializer(_)
-        | FunctionKey::AccessorGetter { .. }
-        | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => false,
+        _ => false,
     }
 }
 

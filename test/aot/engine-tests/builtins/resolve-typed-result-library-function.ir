@@ -1,0 +1,90 @@
+# A call that validates its result stays a CallBuiltin, which carries what the result is expected to be, though a function of the library stands behind its entry. Validated against nothing, the value is what that function returns: a direct call, like a helper of the same library file without a typed result
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins ResolveBuiltins
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+runtimefunction id=131115 function=f0
+runtimefunction id=131116 function=f1
+function f0 name="validate" role=Library enclosingRuntimeFunction=131115 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f1 name="validateByPlan" role=Library enclosingRuntimeFunction=131116 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+
+function f2 name="validated" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0 expectedResult=x0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="validated"
+# CHECK-NOT: CallDirect
+# CHECK: v2: anything = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+
+function f3 name="withoutExpectedResult" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="withoutExpectedResult"
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: anything = CallDirect v0 function=f0
+
+function f4 name="resolvedBefore" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="resolvedBefore"
+# CHECK-NOT: CallDirect
+# CHECK: v1: anything = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+
+function f5 name="helperWithoutTypedResult" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = CallBuiltin -, v0, v1 overload=CompilerHelpersValidateByPlan/0
+    Return v2
+}
+# CHECK-LABEL: function f5 name="helperWithoutTypedResult"
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: anything = CallDirect v0, v1 function=f1
+
+function f6 name="validatedInRequiredTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0 expectedResult=x0
+    ReturnCall v2
+}
+# The validation runs in this frame: the call is no tail call
+# CHECK-LABEL: function f6 name="validatedInRequiredTailPosition"
+# CHECK: v2: anything = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+# CHECK-NEXT: Return v2
+
+function f7 name="validatedAgainstNothingInRequiredTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0
+    ReturnCall v2
+}
+# The entry has no function object that a call by value could call
+# CHECK-LABEL: function f7 name="validatedAgainstNothingInRequiredTailPosition"
+# CHECK: v2: anything = CallDirect v0 function=f0
+# CHECK-NEXT: Return v2
+
+function f8 name="otherBuiltinInRequiredTailPosition" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = Builtin builtin=ObjectKeys
+    v2 = Call v1, -, v0
+    ReturnCall v2
+}
+# A native built-in returns to its caller: resolve-builtins-required-tail-call.ir
+# CHECK-LABEL: function f8 name="otherBuiltinInRequiredTailPosition"
+# CHECK: v2:{{*}}= CallBuiltin -, v0 overload=ObjectKeys/0 [isDemotedTailCall]
+# CHECK-NEXT: Return v2

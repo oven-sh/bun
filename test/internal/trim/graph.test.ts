@@ -6,6 +6,7 @@ import {
   findCxxFunctionEntryPoints,
   findStaticTableEntryPoints,
   mergeEntryPoints,
+  onlyReturns,
   readEntryPoints,
   recordBytes,
   stubKinds,
@@ -30,6 +31,7 @@ import {
   type SectionGraphParts,
 } from "../../../scripts/build/trim/graph.ts";
 import { partition } from "../../../scripts/build/trim/partition.ts";
+import { Demangler } from "../../../scripts/build/trim/report.ts";
 import {
   EdgeKind,
   guardOrigins,
@@ -574,7 +576,6 @@ const model: FeatureModel = {
   trimFeatures: [],
   icuData: [],
   icuLanguageGroups: [],
-  profiles: [],
   hash: 0n,
 };
 
@@ -1016,6 +1017,38 @@ describe("readEntryPoints", () => {
   });
 });
 
+describe("onlyReturns", () => {
+  const [returns, procedureRecord, unwindRecord, handler] = [0, 1, 2, 3];
+  const sections = [".text", ".pdata", ".xdata", ".text"];
+  const graphWith = (successors: number[][], more: Partial<SectionGraphParts> = {}) =>
+    createSectionGraph({ ...partsOf(successors), format: "coff", section: sections, ...more });
+  const withRecords = [[procedureRecord, unwindRecord], [returns, unwindRecord], [], []];
+
+  test("a small function that refers to nothing", () => {
+    expect(onlyReturns(graphWith([[], [], [], []]), returns)).toBe(true);
+    expect(onlyReturns(graphWith([[], [], [], []], { size: [33, 12, 8, 16] }), returns)).toBe(false);
+    expect(onlyReturns(graphWith([[handler], [], [], []]), returns)).toBe(false);
+  });
+
+  test("a COFF function's own unwind records do not count as references", () => {
+    expect(onlyReturns(graphWith(withRecords), returns)).toBe(true);
+    expect(
+      onlyReturns(graphWith(withRecords, { section: [".text$mn", ".pdata$x", ".xdata$x", ".text"] }), returns),
+    ).toBe(true);
+  });
+
+  test("unwind records that name a handler, or another function, do", () => {
+    expect(
+      onlyReturns(graphWith([[procedureRecord, unwindRecord], [returns, unwindRecord], [handler], []]), returns),
+    ).toBe(false);
+    expect(onlyReturns(graphWith([[procedureRecord], [returns, handler], [], []]), returns)).toBe(false);
+  });
+
+  test("sections of those names mean nothing in another format", () => {
+    expect(onlyReturns(graphWith(withRecords, { format: "elf" }), returns)).toBe(false);
+  });
+});
+
 describe("findCFunctionEntryPoints", () => {
   const [loop, table, attach, read, shared] = [0, 1, 2, 3, 4];
 
@@ -1223,7 +1256,7 @@ describe("findStaticTableEntryPoints", () => {
       model,
       uses: { entries },
       isCode: output => output === ".text",
-      demangle: list => list.map(name => mangled.get(name) ?? name),
+      demangle: list => new Demangler(undefined).demangle(list.map(name => mangled.get(name) ?? name)),
     });
   }
 
@@ -1266,6 +1299,25 @@ describe("findStaticTableEntryPoints", () => {
       record(table, close, 8),
     ]);
     expect(find(entries, names, "elf")).toEqual([]);
+  });
+
+  test("a function is found by the name that the Microsoft ABI gives it, in a namespace and outside", () => {
+    const names = [
+      ["main"],
+      ["?table@Bun@@3QBUHashTableValue@JSC@@B"],
+      ["?other@Bun@@3QBUHashTableValue@JSC@@B"],
+      ["?jsSqliteOpen@Bun@@YA_JPEAVJSGlobalObject@JSC@@PEAVCallFrame@3@@Z"],
+      ["?jsSqliteClose@@YA_JPEAVJSGlobalObject@JSC@@PEAVCallFrame@2@@Z"],
+      ["??_C@_04PLJBKNIO@text@"],
+    ];
+    const entries = (open: string, close: string) => [
+      builtin(7, "Function", [open], [always("Sqlite")]),
+      builtin(8, "Function", [close], [always("Sqlite")]),
+    ];
+    const found = [record(table, open, 7), record(otherTable, open, 7), record(table, close, 8)];
+    expect(find(entries("jsSqliteOpen", "jsSqliteClose"), names, "coff")).toStrictEqual(found);
+    expect(find(entries("Bun::jsSqliteOpen", "jsSqliteClose"), names, "coff")).toStrictEqual(found);
+    expect(find(entries("Node::jsSqliteOpen", "Bun::jsSqliteClose"), names, "coff")).toEqual([]);
   });
 
   test("a function that no entry names, and data that a table refers to, are no entry points", () => {

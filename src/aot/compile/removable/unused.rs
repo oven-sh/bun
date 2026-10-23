@@ -121,14 +121,7 @@ impl Removable<'_, '_> {
                     simplified.push(expression);
                     self.simplify_unused(operand, simplified)
                 }
-                UnOp::Plus
-                | UnOp::Minus
-                | UnOp::BitNot
-                | UnOp::Delete
-                | UnOp::PreInc
-                | UnOp::PreDec
-                | UnOp::PostInc
-                | UnOp::PostDec => false,
+                _ => false,
             },
             ExprKind::Call(call) | ExprKind::New(call) => {
                 let call = &hir[call];
@@ -167,20 +160,7 @@ impl Removable<'_, '_> {
                     simplified.push(expression);
                     self.simplify_unused(left, simplified)
                 }
-                BinOp::Add
-                | BinOp::Sub
-                | BinOp::Mul
-                | BinOp::Div
-                | BinOp::Rem
-                | BinOp::Pow
-                | BinOp::Shl
-                | BinOp::Shr
-                | BinOp::UShr
-                | BinOp::BitAnd
-                | BinOp::BitOr
-                | BinOp::BitXor
-                | BinOp::In
-                | BinOp::Instanceof => false,
+                _ => false,
             },
             ExprKind::Array(items) => {
                 let is_spread = |item: ExprId| matches!(hir[item].kind, ExprKind::Spread(_));
@@ -209,18 +189,7 @@ impl Removable<'_, '_> {
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => self.simplify_unused(expr, simplified),
             // A cast may test its operand.
-            ExprKind::As { .. }
-            | ExprKind::Template { .. }
-            | ExprKind::Class(_)
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::Super
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Assign { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::ImportCall { .. }
-            | ExprKind::NewTarget(_) => false,
+            _ => false,
         }
     }
 

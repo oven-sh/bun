@@ -23,7 +23,6 @@ const PROGRAM_PATH: &[u8] = b"src/a.ts";
 const PROGRAM_TEXT: &[u8] = b"let first = 1;\nlet second = first.size;\nexport {};\n";
 pub(super) const LINE_1_COLUMN_5: u32 = 4;
 pub(super) const LINE_2_COLUMN_14: u32 = 28;
-pub(super) const LINE_3_COLUMN_1: u32 = 40;
 const DEPENDENCY_PATH: &[u8] = b"node_modules/b/b.js";
 const DEPENDENCY_TEXT: &[u8] = b"module.exports = {};\n";
 const RUNTIME_PATH: &[u8] = b"node:fs";

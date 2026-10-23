@@ -19,10 +19,7 @@ fn can_define_members(hir: &hir::File<'_>, members: &[(EnumMemberId, EnumMemberV
         EnumMemberValue::Number(_) | EnumMemberValue::String(_) | EnumMemberValue::Missing => {
             !has_inherited_setter(hir[id].name)
         }
-        EnumMemberValue::Computed(_)
-        | EnumMemberValue::ComputedNumber(_)
-        | EnumMemberValue::ComputedString(_)
-        | EnumMemberValue::PreviousPlusOne => false,
+        _ => false,
     })
 }
 
@@ -33,11 +30,7 @@ fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> b
             number.trunc() == number && (0.0..f64::from(u32::MAX)).contains(&number)
         }
         EnumMemberValue::String(_) => true,
-        EnumMemberValue::Missing
-        | EnumMemberValue::Computed(_)
-        | EnumMemberValue::ComputedNumber(_)
-        | EnumMemberValue::ComputedString(_)
-        | EnumMemberValue::PreviousPlusOne => false,
+        _ => false,
     })
 }
 
@@ -138,9 +131,6 @@ fn emit_reverse_key(
 ) -> Option<PropertyName> {
     match value {
         EnumMemberValue::String(_) | EnumMemberValue::ComputedString(_) => None,
-        EnumMemberValue::Number(_)
-        | EnumMemberValue::ComputedNumber(_)
-        | EnumMemberValue::PreviousPlusOne => Some(PropertyName::Computed(lowered)),
         EnumMemberValue::Computed(_) => Some(PropertyName::Computed(
             lowering.builder.to_property_key(lowered),
         )),
@@ -148,5 +138,6 @@ fn emit_reverse_key(
             let key = member::name_key(lowering.file, known::undefined);
             Some(PropertyName::Constant(key))
         }
+        _ => Some(PropertyName::Computed(lowered)),
     }
 }

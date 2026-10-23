@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `import "./mod.mjs?two"`. A specifier with a query names a module of its own: the file is evaluated again, with its own
@@ -78,12 +79,6 @@ import { bump as other } from "./mod.mjs?two";
 console.log(bump(), bump(), other(), other === bump);
 `,
 };
-
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
   test.todo("bun run --aot interprets nothing and prints what bun run prints", async () => {

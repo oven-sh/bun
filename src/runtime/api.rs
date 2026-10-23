@@ -36,8 +36,6 @@ pub(crate) mod cron;
 pub(crate) mod cron_parser;
 #[path = "api/csrf_jsc.rs"]
 pub(crate) mod csrf_jsc;
-#[path = "api/declared_types_testing.rs"]
-pub(crate) mod declared_types_testing;
 #[path = "api/filesystem_router.rs"]
 pub(crate) mod filesystem_router;
 #[path = "api/glob.rs"]

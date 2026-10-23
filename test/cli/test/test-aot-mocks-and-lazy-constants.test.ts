@@ -1,18 +1,11 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { run } from "../../aot/harness/run";
 
 setDefaultTimeout(60_000);
 
 async function linesSeen(cwd: string, aot: boolean) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...(aot ? ["--aot"] : []), "./main.test.ts"],
-    env: bunEnv,
-    cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--aot"] : []), "./main.test.ts"], cwd);
   return {
     seen: stdout.split("\n").filter(line => line.startsWith("see:")),
     passed: stderr.includes(" 1 pass"),

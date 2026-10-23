@@ -10,29 +10,7 @@ use crate::lower::{class, commonjs};
 fn find_scope_class(kind: ScopeKind) -> Option<ClassId> {
     match kind {
         ScopeKind::Class(class) => Some(class),
-        ScopeKind::File
-        | ScopeKind::Module(_)
-        | ScopeKind::Fn(_)
-        | ScopeKind::Block
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::FieldInitializer(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => None,
+        _ => None,
     }
 }
 
@@ -325,14 +303,11 @@ impl Walker<'_, '_> {
         let settings = self.input.compiled.settings;
         for slot in class::class_slots(self.hir, self.bound, settings, class) {
             match slot {
-                ClassSlot::ClassObject
-                | ClassSlot::ClassToken
-                | ClassSlot::StaticField(_)
-                | ClassSlot::PrivateMethod(_) => {
+                ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {}
+                _ => {
                     let binding = BindingRef::Slot(scope, ScopeSlot::Class(slot));
                     self.record_eval_use(context, binding, time);
                 }
-                ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {}
             }
         }
     }

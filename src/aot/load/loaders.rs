@@ -131,24 +131,7 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
         Loader::Jsx => Some(ScriptKind::Jsx),
         Loader::Ts => Some(ScriptKind::Ts),
         Loader::Tsx => Some(ScriptKind::Tsx),
-        Loader::Css
-        | Loader::File
-        | Loader::Json
-        | Loader::Jsonc
-        | Loader::Toml
-        | Loader::Wasm
-        | Loader::Napi
-        | Loader::Base64
-        | Loader::Dataurl
-        | Loader::Text
-        | Loader::Bunsh
-        | Loader::Sqlite
-        | Loader::SqliteEmbedded
-        | Loader::Html
-        | Loader::Yaml
-        | Loader::Json5
-        | Loader::Md
-        | Loader::Xml => None,
+        _ => None,
     }
 }
 
@@ -170,21 +153,7 @@ pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
         | Loader::Dataurl
         | Loader::Sqlite
         | Loader::SqliteEmbedded => true,
-        Loader::Jsx
-        | Loader::Js
-        | Loader::Ts
-        | Loader::Tsx
-        | Loader::Css
-        | Loader::Json
-        | Loader::Jsonc
-        | Loader::Toml
-        | Loader::Text
-        | Loader::Bunsh
-        | Loader::Html
-        | Loader::Yaml
-        | Loader::Json5
-        | Loader::Md
-        | Loader::Xml => false,
+        _ => false,
     }
 }
 

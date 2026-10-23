@@ -25,11 +25,7 @@ pub(super) fn collect_modules(
                 "a file without a module record is named as a module"
             );
         }
-        ProgramModule::Inner { .. }
-        | ProgramModule::Face(_)
-        | ProgramModule::Check(_)
-        | ProgramModule::Runtime(_)
-        | ProgramModule::External { .. } => {
+        _ => {
             if known_modules.insert(module) {
                 modules.push(module);
             }
@@ -160,15 +156,12 @@ fn find_module_origin(
         FileOrigin::DependencySource
         | FileOrigin::DependencyJavaScript
         | FileOrigin::ProjectTypedVersion => ModuleOrigin::Dependency,
-        FileOrigin::ProgramSource
-        | FileOrigin::ProgramJavaScript
-        | FileOrigin::EvaluatedText
-        | FileOrigin::NoFile => ModuleOrigin::Program,
         FileOrigin::Declarations => match loaded.files().module(file).is_from_external_library {
             true => ModuleOrigin::Dependency,
             false => ModuleOrigin::Program,
         },
         FileOrigin::Runtime => ModuleOrigin::Runtime,
+        _ => ModuleOrigin::Program,
     }
 }
 
@@ -289,11 +282,7 @@ mod tests {
 
             let leading_files = table.modules.iter().map_while(|&module| match module {
                 ProgramModule::File(file) => Some(file),
-                ProgramModule::Inner { .. }
-                | ProgramModule::Face(_)
-                | ProgramModule::Check(_)
-                | ProgramModule::Runtime(_)
-                | ProgramModule::External { .. } => None,
+                _ => None,
             });
             let leading_files: Vec<ProgramFile> = leading_files.collect();
             let record_files = projects.iter();

@@ -152,17 +152,7 @@ fn create_named_closure(
 fn has_own_name(func: &Func) -> bool {
     match func.kind {
         FnKind::Decl | FnKind::Expr => func.name.is_some(),
-        FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => false,
+        _ => false,
     }
 }
 
@@ -177,17 +167,7 @@ fn method_kind(kind: FnKind) -> MethodKind {
     match kind {
         FnKind::Getter => MethodKind::Getter,
         FnKind::Setter => MethodKind::Setter,
-        FnKind::Decl
-        | FnKind::Expr
-        | FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => MethodKind::Method,
+        _ => MethodKind::Method,
     }
 }
 

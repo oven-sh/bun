@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "./harness/run";
 import { test } from "./supported";
 
 // "Cannot find module 'x'" names the file that asked for it, in the message or in its "Require stack:", and not the entry point.
@@ -38,12 +39,6 @@ say("import(literal file)", await esm.literalFile());
 say("import.meta.resolve", esm.resolve());
 `,
 };
-
-async function spawned(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("bun run --aot names the same file as bun run", async () => {
   using dir = tempDir("module-not-found", files);

@@ -1,17 +1,17 @@
 // The helper behind JSON.parse<T>(text) and validate<T>(value) is part of a bundle only when the bundle holds such a call.
 // A bundle without one is what it would be if the helper did not exist: the helper's own names and the globals it uses reserve nothing.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "../aot/harness/run";
 
 // Today only an ahead-of-time build makes the checks: a bundle has no validators yet, and there "bun:bundle" has no export named `validate`.
 // What a bundle with such a call is to hold stands here as todo.
 const whereNothingIsCompiled = test.todoIf(true);
 
 async function run(cmd: string[], cwd: string): Promise<string> {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd);
   expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return stdout;
 }

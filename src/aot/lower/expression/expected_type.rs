@@ -43,30 +43,7 @@ fn classify_origin(
         | ExprKind::NonNull(_)
         | ExprKind::Jsx(_)
         | ExprKind::ImportCall { .. } => ValueOrigin::Unknown,
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Satisfies { .. }
-        | ExprKind::Instantiation { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => ValueOrigin::DerivedByEngine,
+        _ => ValueOrigin::DerivedByEngine,
     }
 }
 

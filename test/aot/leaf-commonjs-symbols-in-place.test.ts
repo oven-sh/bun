@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -19,14 +20,7 @@ const files = {
 };
 
 async function run(cwd: string, args: string[], env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd,
-    env: { ...bunEnv, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], cwd, { ...bunEnv, ...env });
   return { stdout, stderr, exitCode };
 }
 

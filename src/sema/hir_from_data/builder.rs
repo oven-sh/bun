@@ -38,13 +38,7 @@ fn javascript_module_file() -> FileBuilder {
 fn object_properties<'v>(value: &DataValue<'v>) -> Option<&'v [(Atom, DataValue<'v>)]> {
     match *value {
         DataValue::Object(properties) => Some(properties),
-        DataValue::Undefined
-        | DataValue::Null
-        | DataValue::Boolean(_)
-        | DataValue::Number(_)
-        | DataValue::String(_)
-        | DataValue::BigInt(_)
-        | DataValue::Array(_) => None,
+        _ => None,
     }
 }
 

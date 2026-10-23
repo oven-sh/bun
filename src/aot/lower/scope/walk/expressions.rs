@@ -34,13 +34,7 @@ fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_coun
             SiteAnswer::Module(_) => site.consults_resolver && argument_count == 1,
             SiteAnswer::Computed(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => false,
         },
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_) => false,
+        _ => false,
     }
 }
 
@@ -51,10 +45,7 @@ impl Walker<'_, '_> {
         }
         match self.decisions.decision(expression) {
             Decision::Unknown => {}
-            Decision::Constant(_)
-            | Decision::GlobalPath(_)
-            | Decision::Data(_)
-            | Decision::DeferredData => return,
+            _ => return,
         }
         match self.hir[expression].kind {
             ExprKind::Ident(_) => self.visit_identifier(expression, context),
@@ -79,20 +70,6 @@ impl Walker<'_, '_> {
             ExprKind::Fn(function) => self.visit_function(function, context),
             ExprKind::Class(class) => self.visit_class(class, context),
             ExprKind::Jsx(jsx) => self.visit_jsx(expression, jsx, context),
-            ExprKind::Template { .. }
-            | ExprKind::Array(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::Object(_)
-            | ExprKind::Binary { .. }
-            | ExprKind::Cond { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. } => self.push_evaluated_children(expression, context),
             ExprKind::Missing
             | ExprKind::Super
             | ExprKind::Null
@@ -104,6 +81,7 @@ impl Walker<'_, '_> {
             | ExprKind::Regex { .. }
             | ExprKind::JsxText(_)
             | ExprKind::ImportMeta => {}
+            _ => self.push_evaluated_children(expression, context),
         }
     }
 
@@ -255,17 +233,7 @@ impl Walker<'_, '_> {
             ImportSiteKind::Require(_) => {
                 find_require_call(hir, bound, Some(self.decisions), call.callee, call.args)
             }
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaRequire(_)
-            | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::GetBuiltinModule(_) => None,
+            _ => None,
         };
         let given = match require_call {
             Some(found) => match found.form {

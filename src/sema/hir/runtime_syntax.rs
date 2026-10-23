@@ -101,28 +101,7 @@ impl<S: Storage> FileIn<S> {
             StmtKind::Module(module) => self[module]
                 .flags
                 .intersects(Flags::AMBIENT | Flags::REPARSED),
-            StmtKind::Empty
-            | StmtKind::Debugger
-            | StmtKind::Expr(_)
-            | StmtKind::Return(_)
-            | StmtKind::If { .. }
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Block(_)
-            | StmtKind::Switch { .. }
-            | StmtKind::Try { .. }
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Labeled { .. }
-            | StmtKind::ImportEquals(_)
-            | StmtKind::ExportDefault(_)
-            | StmtKind::ExportAssign(_)
-            | StmtKind::With { .. }
-            | StmtKind::Directive { .. } => false,
+            _ => false,
         }
     }
 
@@ -206,10 +185,7 @@ impl File<'_> {
 pub fn is_proto_setter(property: &Prop) -> bool {
     let is_literal_name = match property.name_kind {
         NameKind::Identifier | NameKind::StringLiteral => true,
-        NameKind::NumericLiteral
-        | NameKind::ComputedString
-        | NameKind::ComputedNumber
-        | NameKind::Jsx => false,
+        _ => false,
     };
     is_literal_name
         && property.kind == PropKind::Init
@@ -241,37 +217,7 @@ pub fn is_moved_to_file_start(hir: &File, statement: StmtId) -> bool {
     match hir[statement].kind {
         StmtKind::Class(class) => can_move_class(hir, class),
         StmtKind::ExportDefault(value) => can_move_expression(hir, value),
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Expr(_)
-        | StmtKind::Var(_)
-        | StmtKind::Fn(_)
-        | StmtKind::Interface(_)
-        | StmtKind::TypeAlias(_)
-        | StmtKind::Enum(_)
-        | StmtKind::Module(_)
-        | StmtKind::Return(_)
-        | StmtKind::If { .. }
-        | StmtKind::For { .. }
-        | StmtKind::ForIn { .. }
-        | StmtKind::ForOf { .. }
-        | StmtKind::While { .. }
-        | StmtKind::DoWhile { .. }
-        | StmtKind::Block(_)
-        | StmtKind::Switch { .. }
-        | StmtKind::Try { .. }
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::Labeled { .. }
-        | StmtKind::Import(_)
-        | StmtKind::ImportEquals(_)
-        | StmtKind::ExportNamed(_)
-        | StmtKind::ExportStar { .. }
-        | StmtKind::ExportAssign(_)
-        | StmtKind::ExportAsNamespace(_)
-        | StmtKind::With { .. }
-        | StmtKind::Directive { .. } => false,
+        _ => false,
     }
 }
 
@@ -322,35 +268,7 @@ fn can_move_expression(hir: &File, expression: ExprId) -> bool {
         | ExprKind::BigInt(_)
         | ExprKind::String(_)
         | ExprKind::ImportMeta => true,
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Regex { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => false,
+        _ => false,
     }
 }
 

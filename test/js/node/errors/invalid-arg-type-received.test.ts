@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "../../../aot/harness/run";
 
 // The text after "Received" in an ERR_INVALID_ARG_TYPE message follows determineSpecificType() in Node's
 // lib/internal/errors.js: it reads value.constructor.name, and falls back to util.inspect(value, { depth: -1 }).
@@ -61,8 +62,7 @@ test.each([
 // none of that code: what it prints is beside the program, in rejected-argument-description.expected.txt.
 test("describing a rejected argument runs the program's code where Node runs it", async () => {
   const program = join(import.meta.dir, "../../../aot/programs/builtin-modules/rejected-argument-description.ts");
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", program], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "run", program]);
   const wrongType = 'ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received ';
   const wrongValue = "ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received ";
   expect({ lines: stdout.split("\n"), stderr, exitCode }).toEqual({

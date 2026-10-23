@@ -187,26 +187,7 @@ fn try_lower_intrinsic_value(
             let function = find_linked_function(lowering, expression, linked)?;
             Ok(lowering.builder.new_closure(function, &[]))
         }
-        Intrinsic::Operation(_)
-        | Intrinsic::Conversion(_)
-        | Intrinsic::Throw(_)
-        | Intrinsic::IfAbruptCloseIterator
-        | Intrinsic::HasJSType { .. }
-        | Intrinsic::Construct(_)
-        | Intrinsic::NativeCall(_)
-        | Intrinsic::IsNullish
-        | Intrinsic::IsObject
-        | Intrinsic::IsCallable
-        | Intrinsic::Call { .. }
-        | Intrinsic::Apply
-        | Intrinsic::ArrayPush
-        | Intrinsic::PutByValDirect { .. }
-        | Intrinsic::GetOwnProperty { .. }
-        | Intrinsic::ArgumentCount
-        | Intrinsic::Argument
-        | Intrinsic::PrependArgument { .. }
-        | Intrinsic::HasPromiseStatus(_)
-        | Intrinsic::BundleError => Err((expression, Misuse::Position)),
+        _ => Err((expression, Misuse::Position)),
     }
 }
 
@@ -265,18 +246,6 @@ fn try_lower_intrinsic_call(
         }
         Intrinsic::Builtin(id) => Ok(lower_builtin_function_call(lowering, site, id)),
         Intrinsic::Construct(id) => lower_builtin_construct(lowering, site, id),
-        Intrinsic::LinkTimeConstant(_)
-        | Intrinsic::NativeBinding(_)
-        | Intrinsic::Undefined
-        | Intrinsic::Int(_)
-        | Intrinsic::Bool(_)
-        | Intrinsic::Double(_)
-        | Intrinsic::PrivateGlobal
-        | Intrinsic::ReplaceablePrivateGlobal => {
-            let function = lower_intrinsic_value(lowering, site.callee, intrinsic, site.exit);
-            let callee = create_anonymous_callee(function, None);
-            Ok(lower_call_with_rest(lowering, site, callee, site.arguments))
-        }
         Intrinsic::IsNullish => lower_type_test(lowering, site, TypeTable::NULLISH),
         Intrinsic::IsObject => lower_type_test(lowering, site, TypeTable::OBJECT),
         Intrinsic::IsCallable => lower_type_test(lowering, site, TypeTable::FUNCTION),
@@ -315,6 +284,11 @@ fn try_lower_intrinsic_call(
         Intrinsic::Erased => Ok(lowering.builder.undefined()),
         Intrinsic::Directive(_) | Intrinsic::NativeCall(_) => Err((site.call, Misuse::Position)),
         Intrinsic::BundleError => Err((site.call, Misuse::BundleError)),
+        _ => {
+            let function = lower_intrinsic_value(lowering, site.callee, intrinsic, site.exit);
+            let callee = create_anonymous_callee(function, None);
+            Ok(lower_call_with_rest(lowering, site, callee, site.arguments))
+        }
     }
 }
 

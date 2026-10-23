@@ -116,25 +116,7 @@ fn find_statement_around(bound: &Bound<'_>, parent: Parent) -> Option<StmtId> {
         Parent::Stmt(statement) => statement.some(),
         Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
         Parent::Case(case) => bound.case_stmt[case.idx()].some(),
-        Parent::None
-        | Parent::File
-        | Parent::Expr(_)
-        | Parent::ParamDefault(_)
-        | Parent::PatPropDefault(_)
-        | Parent::PatElemDefault(_)
-        | Parent::Prop(_)
-        | Parent::PropKey(_)
-        | Parent::PatKey(_)
-        | Parent::MemberKey(_)
-        | Parent::MethodKey(_)
-        | Parent::MemberInit(_)
-        | Parent::FnBody(_)
-        | Parent::EnumInit(_)
-        | Parent::ClassExtends(_)
-        | Parent::ClassDecorator(_)
-        | Parent::MemberDecorator(_)
-        | Parent::ParamDecorator(_)
-        | Parent::Module(_) => None,
+        _ => None,
     }
 }
 
@@ -317,40 +299,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Some(loaded) => self.step_loaded_value(loaded),
                 None => unknown(UnknownReferent::NotAReference),
             },
-            ExprKind::Dot { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Missing
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::Template { .. }
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_)
-            | ExprKind::New(_)
-            | ExprKind::Unary { .. }
-            | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
-            | ExprKind::Cond { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => unknown(UnknownReferent::NotAReference),
+            _ => unknown(UnknownReferent::NotAReference),
         }
     }
 
@@ -704,30 +653,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Decl::Class(class) => value = value.or(Some(DeclaredValue::Class(class))),
                 Decl::Module(_) | Decl::Enum(_) => has_container = true,
                 Decl::Fn(_) | Decl::Interface(_) | Decl::Alias(_) => {}
-                Decl::Var(_)
-                | Decl::Param(_)
-                | Decl::EnumMember(_)
-                | Decl::TypeParam(_)
-                | Decl::ImportDefault(_)
-                | Decl::ImportNamespace(_)
-                | Decl::ImportSpec(_)
-                | Decl::ImportEquals(_)
-                | Decl::ExportSpec(_)
-                | Decl::ExportStarAs(_)
-                | Decl::ExportExpr(_)
-                | Decl::UmdGlobal(_)
-                | Decl::File
-                | Decl::Require(_)
-                | Decl::ModuleExports(_)
-                | Decl::ExportsProperty(_)
-                | Decl::Expando(_)
-                | Decl::ObjectLiteral(_)
-                | Decl::CommonJsVariable
-                | Decl::Member(_)
-                | Decl::ParameterProperty(_)
-                | Decl::ThisProperty(_)
-                | Decl::Property(_)
-                | Decl::TypeLiteral(_) => {
+                _ => {
                     let unstable = BindingStability::ContainerMember;
                     return unknown(UnknownReferent::UnstableBinding(unstable));
                 }

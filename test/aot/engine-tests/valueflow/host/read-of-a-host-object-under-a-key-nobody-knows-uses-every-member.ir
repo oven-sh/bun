@@ -1,0 +1,17 @@
+# main.js: process[globalThis.name]
+# A read under a key nobody knows may name any member, and the host makes the value of the one that it names: the code behind every member is in the image.
+# store-into-a-host-object-is-no-use-of-the-member-it-replaces.ir has the store
+# RUN: valueflow-why used-builtin=ProcessStdin
+# CHECK: used-builtin=ProcessStdin
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = ElemGet v2, v1
+    Return
+}

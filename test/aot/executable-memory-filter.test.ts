@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { isHardened } from "./hardened";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 const compiler = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -165,8 +166,7 @@ if (process.argv.length > 9) dlopen(process.argv[9], {});
 ${waits}`;
 
 async function run(cmd: string[], env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, undefined, env);
   return { stdout, stderr, exitCode };
 }
 

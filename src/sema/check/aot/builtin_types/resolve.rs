@@ -122,33 +122,7 @@ fn is_runtime_declaration(files: &Files<'_>, file: FileId, declaration: Decl) ->
             FnBody::Block(_) | FnBody::Expr(_) => true,
             FnBody::None => false,
         },
-        Decl::Param(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => false,
+        _ => false,
     }
 }
 
@@ -396,41 +370,9 @@ fn find_declared_signature(
         Decl::Member(member) => match hir[member].kind {
             MemberKind::Method => return DeclaredSignature::Function(hir[member].func),
             MemberKind::Property => hir[member].ty,
-            MemberKind::Getter
-            | MemberKind::Setter
-            | MemberKind::Constructor
-            | MemberKind::CallSignature
-            | MemberKind::ConstructSignature
-            | MemberKind::IndexSignature
-            | MemberKind::StaticBlock => return DeclaredSignature::Unknown,
+            _ => return DeclaredSignature::Unknown,
         },
-        Decl::Param(_)
-        | Decl::Class(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => return DeclaredSignature::Unknown,
+        _ => return DeclaredSignature::Unknown,
     };
     match annotation.some() {
         Some(annotation) => DeclaredSignature::Annotation(annotation),

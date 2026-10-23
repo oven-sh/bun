@@ -17,13 +17,7 @@ fn exposes_members(id: BuiltinId) -> bool {
             table::entry(member).kind != BuiltinKind::DataProperty
                 || !table::members(member).is_empty()
         }),
-        BuiltinKind::Namespace
-        | BuiltinKind::Constructor
-        | BuiltinKind::Prototype
-        | BuiltinKind::Accessor
-        | BuiltinKind::DataProperty
-        | BuiltinKind::Constant
-        | BuiltinKind::NativeBinding => !members.is_empty(),
+        _ => !members.is_empty(),
     }
 }
 

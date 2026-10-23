@@ -5,14 +5,9 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim, model } from "../bundler/compile-trim-features";
+import { run } from "./harness/run";
 import { unsupported } from "./run-programs";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const programs = {
   "hello.ts": `console.log("hello world");`,

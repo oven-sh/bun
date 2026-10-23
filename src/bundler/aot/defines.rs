@@ -126,40 +126,7 @@ fn define_value<'s>(
             }
             Some(_) | None => Err(NotData::Expression),
         },
-        Data::EUnary(_)
-        | Data::EBinary(_)
-        | Data::EClass(_)
-        | Data::ENew(_)
-        | Data::EFunction(_)
-        | Data::ECall(_)
-        | Data::EDot(_)
-        | Data::EIndex(_)
-        | Data::EArrow(_)
-        | Data::EJsxElement(_)
-        | Data::ESpread(_)
-        | Data::ETemplate(_)
-        | Data::ERegExp(_)
-        | Data::EAwait(_)
-        | Data::EYield(_)
-        | Data::EIf(_)
-        | Data::EImport(_)
-        | Data::EImportIdentifier(_)
-        | Data::EPrivateIdentifier(_)
-        | Data::ECommonjsExportIdentifier(_)
-        | Data::ERequireString(_)
-        | Data::ERequireResolveString(_)
-        | Data::ERequireCallTarget
-        | Data::ERequireResolveCallTarget
-        | Data::EMissing(_)
-        | Data::EThis(_)
-        | Data::ESuper(_)
-        | Data::ENewTarget(_)
-        | Data::EImportMeta(_)
-        | Data::EImportMetaMain(_)
-        | Data::ERequireMain
-        | Data::ESpecial(_)
-        | Data::EInlinedEnum(_)
-        | Data::ENameOfSymbol(_) => Err(NotData::Expression),
+        _ => Err(NotData::Expression),
     }
 }
 

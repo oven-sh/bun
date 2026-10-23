@@ -95,10 +95,7 @@ fn candidate_subpaths(
     let mut subpaths = vec![b".".to_vec()];
     let map = match *exports {
         ExportsEntry::Map(map) => map,
-        ExportsEntry::Invalid
-        | ExportsEntry::Null
-        | ExportsEntry::Target(_)
-        | ExportsEntry::Array(_) => return subpaths,
+        _ => return subpaths,
     };
     let keys = map.entries.iter().map(|entry| entry.0);
     let exact_keys = keys.filter(|key| {

@@ -1,0 +1,20 @@
+# handedBack = somebody(Bun); new handedBack.Glob(); handedBack.constructor
+# Bun is in unknown hands, so the value that comes back may be Bun. The name Glob read from it spells a name and binds to nothing: it is no use of Bun.Glob
+# RUN: valueflow-solve used
+# CHECK-NOT: BunGlob
+# CHECK-NOT: BunArchive
+# CHECK-NOT: BunTranspiler
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somebody" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v3 key="Glob"
+    v5 = Construct v4, -
+    v6 = PropGet v3 key="constructor"
+    Return v6
+}

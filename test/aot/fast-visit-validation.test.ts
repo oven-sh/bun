@@ -1,6 +1,7 @@
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runProcess } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
@@ -33,12 +34,6 @@ console.log("sum", sum);
 // Only the collector's own visitor compares, and only while the program is stopped: with these two every marked cell is compared.
 const everyCellIsCompared = { BUN_JSC_numberOfGCMarkers: "1", BUN_JSC_useConcurrentGC: "0" };
 const withoutCrashReport = { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
-
-async function runProcess(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 describe("validation of the collector's fast visits", () => {
   const dir = tempDir("fast-visit-validation", { "main.ts": program });

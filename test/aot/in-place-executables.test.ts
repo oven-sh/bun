@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -35,8 +36,7 @@ import(path.join(__dirname, "plugins", "module.mjs")).then(m => console.log("imp
 };
 
 async function run(cwd: string, cmd: string[], env = bunEnv) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, env);
   return { stdout, stderr, exitCode };
 }
 

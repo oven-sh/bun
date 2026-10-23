@@ -1,6 +1,0 @@
-export class ProbeBranded {
-  #probeBrand = 1;
-  static probeIs(probeValue) {
-    return #probeBrand in probeValue;
-  }
-}

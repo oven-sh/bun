@@ -1,10 +1,3 @@
 {
- "e1_how_many_arguments": "all agree",
- "e2_defaults_optional_rest": "all agree",
- "e3_this_and_captures": "all agree",
- "e4_beside_an_object": "all agree",
- "e5_async_generators_constructors": "all agree",
- "e6_hosts_call": "all agree",
- "e7_kinds_of_types": "all agree",
  "e8_what_comes_of_it": "as bun run"
 }

@@ -671,7 +671,7 @@ pub(crate) fn misplaced_key<'a>(key: &'a [u8], is_inside_compile: bool) -> Optio
 
 pub(crate) fn is_aot_requested(cmd: Tag, args: &clap::Args<clap::Help>) -> bool {
     if cmd == Tag::CompileCommand {
-        !args.flag(b"--no-aot") && !args.flag(b"--library")
+        !args.flag(b"--no-aot")
     } else {
         args.flag(b"--aot")
     }
@@ -1031,7 +1031,3 @@ pub(crate) fn reject_unknown_flags(cmd: Tag, unknown: &[clap::UnknownLongFlag<'s
         exit_with_message(&message);
     }
 }
-
-#[cfg(test)]
-#[path = "compile_options/tests.rs"]
-mod tests;

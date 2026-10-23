@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // A CommonJS module that is first required where the stack ends: the RangeError comes before its first statement. Whoever requires it
@@ -40,8 +41,7 @@ describe.concurrent.each(Object.keys(libraries))("%s", name => {
   test("an executable built with --aot answers as bun run", async () => {
     using dir = tempDir("first-required-at-the-end-of-the-stack", { "main.js": main, ...libraries[name] });
     const run = async (cmd: string[]) => {
-      await using proc = Bun.spawn({ cmd, cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { stdout, stderr, exitCode } = await runCommand(cmd, String(dir));
       return { stdout, stderr, exitCode };
     };
     const built = async (flags: string[], outfile: string) => {

@@ -6,7 +6,7 @@ chain, so every array of the program, existing or future, uses SlowPutArrayStora
 with an accessor or a read-only property at an index of an object that others inherit from, or with a Proxy in the prototype chain of such
 an object. The output stays correct, so no other test notices. This test finds a program that gets there because of the engine.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/bad-time.py [-j <jobs>] [--part <i>/<n>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> python3 test/aot/shell/bad-time.py [-j <jobs>] [--part <i>/<n>] <program>... | all
 
     --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../bad-time/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools

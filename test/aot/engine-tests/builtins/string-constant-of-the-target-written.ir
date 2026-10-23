@@ -1,0 +1,31 @@
+# A program that stores to a string constant of the target goes on reading the property, in every function
+# RUN(FLOW): pipeline ResolveBuiltins
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return
+}
+
+function f1 name="readsWhatItStored" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = String string="other"
+    PropSet v0, v1 key="platform" mode=Strict
+    v3 = PropGet v0 key="platform"
+    Return v3
+}
+# FLOW-LABEL: function f1 name="readsWhatItStored"
+# FLOW: PropGet v0 key="platform"
+
+function f2 name="readsWhatAnotherFunctionStored" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="platform"
+    Return v1
+}
+# FLOW-LABEL: function f2 name="readsWhatAnotherFunctionStored"
+# FLOW: PropGet v0 key="platform"

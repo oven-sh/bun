@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "../harness/run";
 import type { CompiledFunction, Counted, Request } from "../instruction-counts/count-instructions";
 
 export type Level = "unknown" | "guarded" | "proven";
@@ -150,13 +151,11 @@ export async function countOperations(
   countsPath: string,
   env: Record<string, string | undefined>,
 ) {
-  await using child = Bun.spawn({
-    cmd: [executable, name, String(rounds)],
-    env: { ...env, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: countsPath },
-    stdout: "pipe",
-    stderr: "pipe",
+  const { stdout, stderr, exitCode } = await run([executable, name, String(rounds)], undefined, {
+    ...env,
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    BUN_JSC_aotCountsPath: countsPath,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   if (exitCode) throw new Error(`${name}: exit code ${exitCode}\n${stderr}`);
   const counts = new Map<string, number>();
   for (const line of readFileSync(countsPath, "utf8").split("\n")) {

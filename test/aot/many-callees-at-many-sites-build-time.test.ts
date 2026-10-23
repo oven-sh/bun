@@ -9,8 +9,9 @@
 //
 // Each has been the cube of N in one place: 117 seconds for 2,000 modules in one file, which took 3 seconds as 2,000 files.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
@@ -46,24 +47,19 @@ function classesWithOneMethodName(count: number) {
 async function buildsAndPrints(source: string) {
   using dir = tempDir("aot-many-callees", { "main.js": source });
   const executable = join(String(dir), isWindows ? "main.exe" : "main");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "--aot-threads=1", "./main.js", "--outfile", executable],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildOutput, buildErrors, buildExitCode] = await Promise.all([
-    build.stdout.text(),
-    build.stderr.text(),
-    build.exited,
-  ]);
+  const {
+    stdout: buildOutput,
+    stderr: buildErrors,
+    exitCode: buildExitCode,
+  } = await runCommand(
+    [bunExe(), "build", "--compile", "--aot", "--aot-threads=1", "./main.js", "--outfile", executable],
+    String(dir),
+  );
   expect({ output: buildExitCode ? buildOutput + buildErrors : "", exitCode: buildExitCode }).toEqual({
     output: "",
     exitCode: 0,
   });
-  await using run = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([executable], String(dir));
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return stdout.trim();
 }

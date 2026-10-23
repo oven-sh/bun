@@ -32,18 +32,12 @@ pub enum CodeImportKind {
 impl CodeImportKind {
     pub fn from_site(kind: ImportSiteKind) -> CodeImportKind {
         match kind {
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::ImportMetaResolve(_) => CodeImportKind::Import,
             ImportSiteKind::ImportEquals(_)
             | ImportSiteKind::Require(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaRequire(_)
             | ImportSiteKind::GetBuiltinModule(_) => CodeImportKind::Require,
+            _ => CodeImportKind::Import,
         }
     }
 }
@@ -60,19 +54,11 @@ pub enum CodeImportForm {
 impl CodeImportForm {
     pub fn from_site(kind: ImportSiteKind) -> CodeImportForm {
         match kind {
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::Require(_)
-            | ImportSiteKind::ImportMetaRequire(_)
-            | ImportSiteKind::GetBuiltinModule(_) => CodeImportForm::Static,
             ImportSiteKind::ImportCall(_) => CodeImportForm::Dynamic,
             ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
                 CodeImportForm::ResolveOnly
             }
+            _ => CodeImportForm::Static,
         }
     }
 }

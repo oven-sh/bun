@@ -11,7 +11,7 @@ mod tests;
 #[cfg(not(test))]
 use bun_aot_interface::diagnostics::shared;
 use bun_ast::{Log, Msg};
-use bun_sema::check::aot::{DiagnosticClass, FileOrigin};
+use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, FileOrigin};
 use bun_sema::hir::File;
 use bun_sema::messages::Category;
 use bun_sema::node::NodeData;
@@ -303,6 +303,7 @@ pub(crate) fn new_driver_diagnostic(
         related: Vec::new(),
         project: 0,
         class: COMPILER_DIAGNOSTIC_CLASS,
+        subject: DiagnosticSubject::None,
         file: None,
     }
 }

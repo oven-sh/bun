@@ -2376,6 +2376,12 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         bun_removable_features::removable_definition!(BunInfo, Self::on_bun_info_request);
+        // What leaves with the route is about as much as the smallest group of the trimmable link. Below that it stays in the file.
+        if bun_removable_features::is_removed(bun_removable_features::Feature::BunInfo) {
+            bun_removable_features::abort_for_removed_feature(
+                bun_removable_features::Feature::BunInfo,
+            );
+        }
         jsc::mark_binding!();
         if !self.config.get().address.is_unix()
             && (!bake::is_allowed_host_header(req, Some(&self.config.get().address))

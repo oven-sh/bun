@@ -1,0 +1,273 @@
+# A static field that some access may meet before its definition has run stays a property read by name and may be undefined. The loss belongs to that field: the fields beside it stay variables
+# The class objects that escape are handed to native code, which only reads them. One call of a callee nobody knows in the program would let code that nobody compiles write to them, and then nobody knows the writers of their static fields
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: pipeline ResolveAccesses
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g10 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g11 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g12 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g13 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g14 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g15 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g16 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g17 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g18 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g19 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g20 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g21 module=
+# ORDER-NOT: stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: module m0 path=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="ReadAbove" constructor=f1 staticFields=[{key="first" variable=g10}, {key="second" variable=g11}, {key="third" variable=g12}]
+layout L1 kind=Instance name="CalledAbove" constructor=f3 staticFields=[{key="early" variable=g13}, {key="count" variable=g14}]
+layout L2 kind=Instance name="EscapesAbove" constructor=f6 staticFields=[{key="before" variable=g15}, {key="early" variable=g16}, {key="count" variable=g17}]
+layout L3 kind=Instance name="EscapesBelow" constructor=f8 staticFields=[{key="count" variable=g18}]
+layout L4 kind=Instance name="DefinedOnOnePath" constructor=f10 staticFields=[{key="count" variable=g19}]
+layout L5 kind=Instance name="ReadInHandler" constructor=f12 staticFields=[{key="count" variable=g20}]
+layout L6 kind=Instance name="InitializerIsClosure" constructor=f14 staticFields=[{key="count" variable=g21}]
+variable g0 name="ReadAbove" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g1 name="CalledAbove" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g2 name="EscapesAbove" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g3 name="EscapesBelow" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g4 name="DefinedOnOnePath" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g5 name="ReadInHandler" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g6 name="InitializerIsClosure" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g7 name="readAll" module=m0 declared={type=function} initialization=Function function=f16 flags=[IsImmutable]
+variable g8 name="unusedFirst" module=m0 declared={type=anything} initialization=Undefined
+variable g9 name="unusedSecond" module=m0 declared={type=anything} initialization=Undefined
+variable g10 module=m0 declared={type=anything} owner=L0
+variable g11 module=m0 declared={type=anything} owner=L0
+variable g12 module=m0 declared={type=anything} owner=L0
+variable g13 module=m0 declared={type=anything} owner=L1
+variable g14 module=m0 declared={type=anything} owner=L1
+variable g15 module=m0 declared={type=anything} owner=L2
+variable g16 module=m0 declared={type=anything} owner=L2
+variable g17 module=m0 declared={type=anything} owner=L2
+variable g18 module=m0 declared={type=anything} owner=L3
+variable g19 module=m0 declared={type=anything} owner=L4
+variable g20 module=m0 declared={type=anything} owner=L5
+variable g21 module=m0 declared={type=anything} owner=L6
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=ConsoleLog
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = CallDirect v4 function=f2
+    PutModuleVariable v4 variable=g0
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L1
+    v9 = NewClosure function=f4
+    DefineMethod v8, v9 layout=L1 side=Static key="peek"
+    v11 = FinishClass v8 layout=L1
+    v12 = CallDirect v11 function=f5
+    PutModuleVariable v11 variable=g1
+    v14 = NewClosure function=f6
+    v15 = NewClass v14 layout=L2
+    v16 = FinishClass v15 layout=L2
+    v17 = CallDirect v16 function=f7
+    PutModuleVariable v16 variable=g2
+    v19 = NewClosure function=f8
+    v20 = NewClass v19 layout=L3
+    v21 = FinishClass v20 layout=L3
+    v22 = CallDirect v21 function=f9
+    PutModuleVariable v21 variable=g3
+    v24 = Call v1, -, v21
+    v25 = NewClosure function=f10
+    v26 = NewClass v25 layout=L4
+    v27 = FinishClass v26 layout=L4
+    v28 = CallDirect v27 function=f11
+    PutModuleVariable v27 variable=g4
+    v30 = NewClosure function=f12
+    v31 = NewClass v30 layout=L5
+    v32 = FinishClass v31 layout=L5
+    PutModuleVariable v32 variable=g5
+    Jump -> next b1()
+  b1() handler=b3():
+    v34 = CallDirect v32 function=f13
+    Jump -> next b2()
+  b2():
+    v35 = NewClosure function=f14
+    v36 = NewClass v35 layout=L6
+    v37 = FinishClass v36 layout=L6
+    v38 = NewClosure function=f15
+    v39 = Call v38, v37
+    PutModuleVariable v37 variable=g6
+    v41 = GetModuleVariable variable=g7
+    v42 = Call v41
+    Return
+  b3() role=CatchHandler:
+    v43 = CatchValue
+    v44 = PropGet v32 key="count"
+    v45 = Call v1, -, v44
+    Jump -> next b2()
+}
+function f1 name="ReadAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="initializeReadAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = PropGet v0 key="second"
+    PropDefine v0, v1 key="first"
+    v3 = Integer integer=1
+    PropDefine v0, v3 key="second"
+    v5 = PropGet v0 key="first"
+    PropDefine v0, v3 key="third"
+    Return v5
+}
+# CHECK-LABEL: function f2 name="initializeReadAbove"
+# CHECK: = PropGet [[readAboveInInitializer]] key="second"
+# CHECK: = GetModuleVariable variable=g10
+function f3 name="CalledAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f4 name="peek" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="peek"
+# CHECK: = PropGet [[calledAboveInMethod]] key="count"
+function f5 name="initializeCalledAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = PropGet v0 key="peek"
+    v2 = Call v1, v0 calleeKey="peek"
+    PropDefine v0, v2 key="early"
+    v4 = Integer integer=0
+    PropDefine v0, v4 key="count"
+    Return v4
+}
+function f6 name="EscapesAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f7 name="initializeEscapesAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="before"
+    v3 = Builtin builtin=GlobalThis
+    v4 = Builtin builtin=ConsoleLog
+    v5 = Call v4, -, v0
+    PropDefine v0, v5 key="early"
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f8 name="EscapesBelow" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    Return v2
+}
+function f9 name="initializeEscapesBelow" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f10 name="DefinedOnOnePath" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}
+function f11 name="initializeDefinedOnOnePath" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="flag" [isFreeName]
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    PropDefine v0, v4 key="count"
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f12 name="ReadInHandler" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    Return v2
+}
+function f13 name="initializeReadInHandler" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Builtin builtin=GlobalThis
+    v2 = Builtin builtin=JSONParse
+    v3 = Call v2
+    PropDefine v0, v3 key="count"
+    Return v3
+}
+function f14 name="InitializerIsClosure" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6
+    Return v2
+}
+function f15 name="initializeByCall" flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f16 name="readAll" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="ReadAbove"
+    v2 = PropGet v1 key="first"
+    v3 = PropGet v1 key="second"
+    v4 = PropGet v1 key="third"
+    v5 = GetModuleVariable variable=g1
+    v6 = CheckInitialized v5 name="CalledAbove"
+    v7 = PropGet v6 key="early"
+    v8 = PropGet v6 key="count"
+    v9 = GetModuleVariable variable=g2
+    v10 = CheckInitialized v9 name="EscapesAbove"
+    v11 = PropGet v10 key="before"
+    v12 = PropGet v10 key="early"
+    v13 = PropGet v10 key="count"
+    v14 = GetModuleVariable variable=g3
+    v15 = CheckInitialized v14 name="EscapesBelow"
+    v16 = PropGet v15 key="count"
+    v17 = GetModuleVariable variable=g4
+    v18 = CheckInitialized v17 name="DefinedOnOnePath"
+    v19 = PropGet v18 key="count"
+    v20 = GetModuleVariable variable=g5
+    v21 = CheckInitialized v20 name="ReadInHandler"
+    v22 = PropGet v21 key="count"
+    v23 = GetModuleVariable variable=g6
+    v24 = CheckInitialized v23 name="InitializerIsClosure"
+    v25 = PropGet v24 key="count"
+    Return
+}
+# CHECK-LABEL: function f16 name="readAll"
+# CHECK: = GetModuleVariable variable=g10
+# CHECK-NEXT: = PropGet [[readAbove]] key="second"
+# CHECK-NEXT: = GetModuleVariable variable=g12
+# CHECK: = GetModuleVariable variable=g13
+# CHECK-NEXT: = PropGet [[calledAbove]] key="count"
+# CHECK: = GetModuleVariable variable=g15
+# CHECK-NEXT: = PropGet [[escapesAbove]] key="early"
+# CHECK-NEXT: = PropGet [[escapesAbove]] key="count"
+# CHECK: = GetModuleVariable variable=g18
+# CHECK: = PropGet [[definedOnOnePath]] key="count"
+# CHECK: = PropGet [[readInHandler]] key="count"
+# CHECK: = PropGet [[initializerIsClosure]] key="count"

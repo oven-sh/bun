@@ -1,0 +1,51 @@
+# function f(x) { return x.charCodeAt(0) }, called only with the strings of an array literal, and the sum is printed: the parameter is a string or the undefined of a hole, the callee is the one built-in, the sum is a number, and nothing opens the program
+# RUN: valueflow-apply
+# CHECK: function f1 name="f" {{*}}parameters=[{type=undefined|string}] results=[{type=number}]
+# CHECK: = Call {{*}} callees=[builtin(StringPrototypeCharCodeAt)]
+# RUN(RESULTS): valueflow-results
+# RESULTS: builtin-use StringPrototypeCharCodeAt [Read, Called]
+# RESULTS-NOT: unseen-code
+# RUN(SOLVE): valueflow-solve
+# SOLVE: calls 3 one-function 1 one-builtin 2 several 0 unknown 0 untracked 0 none 0
+# SOLVE: unseen-code 0
+
+layout L0 fields=[{key="charCodeAt" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}] flags=[HasMembersWithoutLayout] ownFieldCount=1 flow={allocation=NeverAllocated}
+data d0 root=Array{contents=undefined|null|string elements=[String{value="a"}, String{value="bc"}, String{value="def"}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer
+    v2 = Data data=d0
+    v3 = IteratorOpen v2
+    Jump -> next b1(v1)
+  b1(v4):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="console" [isFreeName]
+    v11 = PropGet v10 key="log"
+    v12 = Call v11, v10, v4 calleeKey="log"
+    v13 = Undefined
+    Return v13
+  b3() handler=b4():
+    v14 = Call v0, -, v8
+    v15 = Add v4, v14
+    Jump -> next b1(v15)
+  b4() role=IterationCleanup subject=v3:
+    v16 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v16
+}
+function f1 name="f" module=m0 parameters=[{type=undefined|null|string|L0|nolayout flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string|L0|nolayout):
+    v1 = PropGet v0 key="charCodeAt"
+    v2 = Integer
+    v3 = Call v1, v0, v2 calleeKey="charCodeAt"
+    ReturnCall v3
+}

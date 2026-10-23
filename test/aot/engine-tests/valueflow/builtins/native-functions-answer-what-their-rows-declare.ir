@@ -1,0 +1,53 @@
+# ofFrame(inspected)(); frameOfFrame(frame).method(); emitHandleIPCMessage(handed)
+# Three native functions with rows. Until the program reads Bun.ModuleGraph the first answers undefined, and it only looks at its operand. The second may answer its operand or what is reachable from it.
+# The third hands its operands to listeners, so a function among them is entered.
+# LIBRARY: own
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> NativeFunctionsModuleGraphCppJsFunctionModuleGraphOfFrame
+# CHECK-NOT: f1 v3 -> unknown
+# CHECK: f1 v7 -> NativeFunctionsModuleGraphCppJsFunctionModuleGraphFrameOfFrame
+# CHECK-NEXT: f1 v9 -> f3
+# CHECK-NEXT: f1 v12 -> NativeFunctionsIpcRsEmitHandleIPCMessage
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Frame" fields=[{key="method" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="library" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeNewCppFunctionModuleGraphCppJsFunctionModuleGraphOfFrame
+    v1 = NewClosure function=f2
+    v2 = Call v0, -, v1
+    v3 = Call v2
+    v4 = NativeBinding builtin=NativeNewCppFunctionModuleGraphCppJsFunctionModuleGraphFrameOfFrame
+    v5 = NewClosure function=f3
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Call v4, -, v6
+    v8 = PropGet v7 key="method"
+    v9 = Call v8, v7
+    v10 = NativeBinding builtin=NativeNewRustFunctionIpcRsEmitHandleIPCMessage
+    v11 = NewClosure function=f4
+    v12 = Call v10, -, v11
+    Return
+}
+function f2 name="inspected" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="methodOfFrame" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="handed" results=[{type=anything}] {
+  b0():
+    Return
+}

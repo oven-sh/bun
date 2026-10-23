@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -19,14 +20,7 @@ const tsconfig = JSON.stringify({
 
 async function run(cmd: string[], files: Record<string, string>) {
   using dir = tempDir("aot-explain-reasons", { "tsconfig.json": tsconfig, ...files });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...cmd],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...cmd], String(dir), { ...bunEnv, NO_COLOR: "1" });
   return { stdout, stderr, exitCode, wroteExecutable: existsSync(join(String(dir), isWindows ? "app.exe" : "app")) };
 }
 

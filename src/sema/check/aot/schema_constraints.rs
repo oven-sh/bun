@@ -37,10 +37,7 @@ impl SchemaLiteral {
             SchemaLiteral::Number(number) | SchemaLiteral::NumericEnumMember(number) => {
                 Some(number)
             }
-            SchemaLiteral::String(_)
-            | SchemaLiteral::Boolean(_)
-            | SchemaLiteral::Null
-            | SchemaLiteral::NotLiteral => None,
+            _ => None,
         }
     }
 
@@ -53,11 +50,7 @@ impl SchemaLiteral {
     fn string(self) -> Option<Atom> {
         match self {
             SchemaLiteral::String(text) => Some(text),
-            SchemaLiteral::Number(_)
-            | SchemaLiteral::NumericEnumMember(_)
-            | SchemaLiteral::Boolean(_)
-            | SchemaLiteral::Null
-            | SchemaLiteral::NotLiteral => None,
+            _ => None,
         }
     }
 
@@ -146,29 +139,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             },
             TypeData::StringLit { value, .. } => SchemaLiteral::String(value),
             TypeData::BoolLit { value, .. } => SchemaLiteral::Boolean(value),
-            TypeData::Intrinsic(_)
-            | TypeData::UnresolvedName { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::Enum { .. }
-            | TypeData::EvolvingArray(_)
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::Marker(_)
-            | TypeData::Union(_)
-            | TypeData::Intersection(_)
-            | TypeData::Ref { .. }
-            | TypeData::Tuple { .. }
-            | TypeData::Anon { .. }
-            | TypeData::Fns { .. }
-            | TypeData::Synth(_)
-            | TypeData::ReverseMapped { .. }
-            | TypeData::Cond { .. }
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Keyof(_)
-            | TypeData::Substitution { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. } => SchemaLiteral::NotLiteral,
+            _ => SchemaLiteral::NotLiteral,
         }
     }
 }

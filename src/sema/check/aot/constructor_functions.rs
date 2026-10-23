@@ -9,17 +9,7 @@ use smallvec::SmallVec;
 fn is_constructible_function(function: &Func) -> bool {
     let is_ordinary_function = match function.kind {
         FnKind::Decl | FnKind::Expr => true,
-        FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => false,
+        _ => false,
     };
     is_ordinary_function
         && has_body(function)
@@ -84,13 +74,7 @@ impl Checker<'_, '_> {
                     None
                 }
             }
-            BindingInitializer::Class(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Import
-            | BindingInitializer::Opaque => None,
+            _ => None,
         }
     }
 

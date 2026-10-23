@@ -26,11 +26,18 @@ import { describe, test } from "../supported";
 
 const python = Bun.which("python3");
 const root = String(
-  tempDir("aot-operations", { "tsconfig.json": JSON.stringify({ extends: join(import.meta.dir, "operations", "tsconfig.json") }) }),
+  tempDir("aot-operations", {
+    "tsconfig.json": JSON.stringify({ extends: join(import.meta.dir, "operations", "tsconfig.json") }),
+  }),
 );
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 if (python) {
-  const generated = Bun.spawnSync({ cmd: [python, join(import.meta.dir, "operations", "generate.py"), root], env: bunEnv, stdout: "ignore", stderr: "pipe" });
+  const generated = Bun.spawnSync({
+    cmd: [python, join(import.meta.dir, "operations", "generate.py"), root],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
   if (generated.exitCode !== 0) throw new Error(`generate.py ended with ${generated.exitCode}:\n${generated.stderr}`);
 }
 const mode = process.env.AOT_PERF;
@@ -67,9 +74,9 @@ for (const { title, programs, pinsPath } of columns) {
         ? "it counts with perf_event_open or /usr/bin/time -l"
         : !python
           ? "python3 is not installed"
-        : !existsSync(pinsPath) && mode !== "update"
-          ? `there is no ${pinsPath}`
-          : undefined;
+          : !existsSync(pinsPath) && mode !== "update"
+            ? `there is no ${pinsPath}`
+            : undefined;
   if (skipped) console.error(`SKIPPED: test/aot/perf/operations.test.ts: ${programs}: ${skipped}`);
 
   describe.skipIf(!!skipped)(title, () => {
@@ -133,7 +140,9 @@ for (const { title, programs, pinsPath } of columns) {
                     10,
                 ) / 10;
               const pin = pins[name];
-              console.error(`OPERATION ${programs === "alone" ? "" : programs + " "}${name}\t${now}\t| the pin\t${pin}`);
+              console.error(
+                `OPERATION ${programs === "alone" ? "" : programs + " "}${name}\t${now}\t| the pin\t${pin}`,
+              );
               if (mode === "update") return void (pins[name] = now);
               expect(pin).toBeDefined();
               if (mode === "lower") pins[name] = Math.min(pin, now);

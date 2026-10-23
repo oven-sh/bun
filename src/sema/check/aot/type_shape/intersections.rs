@@ -47,15 +47,6 @@ impl<'c> IntersectionSummary<'c> {
             | ShapeKind::TemplateLiteral { .. } => {
                 self.narrow_primitive.get_or_insert(shape);
             }
-            ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::Number
-            | ShapeKind::BigInt
-            | ShapeKind::String
-            | ShapeKind::Symbol => {
-                self.wide_primitive.get_or_insert(shape);
-            }
             ShapeKind::Union(_) | ShapeKind::Constrained { .. } => {
                 self.has_composite_part = true;
                 self.add_object(shape);
@@ -71,6 +62,9 @@ impl<'c> IntersectionSummary<'c> {
             | ShapeKind::ClassConstructor(_)
             | ShapeKind::Class(_)
             | ShapeKind::Object => self.add_object(shape),
+            _ => {
+                self.wide_primitive.get_or_insert(shape);
+            }
         }
     }
 }

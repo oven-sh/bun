@@ -20,7 +20,7 @@ pub use bun_removable_features::{
 pub use decide::decide;
 pub use error::{TrimError, TrimInternalError, TrimRequestError, UnsupportedReason};
 pub use model::{
-    Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges, LibraryStatus,
+    Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges,
     LocaleTag, OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary,
     UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales, WitnessIndex,
 };

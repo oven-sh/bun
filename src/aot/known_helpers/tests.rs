@@ -52,11 +52,7 @@ var __copyProps = (to, from, except, desc) => {
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 "#;
 
-const ESBUILD_MODULE_SHAPES: [Shape; 3] = [
-    Shape::ExportDefinesGetters,
-    Shape::CopyPropertiesDefinesGetters,
-    Shape::ToCommonJsThroughCopyProperties,
-];
+const ESBUILD_MODULE_SHAPES: [Shape; 1] = [Shape::ExportDefinesGetters];
 
 const SWC_EXPORT: &str = r#"function _export(target, all) {
     for(var name in all)Object.defineProperty(target, name, {
@@ -86,16 +82,6 @@ fn the_export_helper_of_swc_is_known() {
         []
     );
 }
-
-const ESBUILD_PRIVATE_HELPERS: &str = r#"var __typeError = (msg) => {
-  throw TypeError(msg);
-};
-var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
-var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
-var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
-var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
-var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-"#;
 
 fn with_file<R>(path: &str, source: &str, then: impl FnOnce(&FindInput<'_, '_>) -> R) -> R {
     let session = Session::new();
@@ -216,7 +202,7 @@ fn every_published_function_is_read() {
 #[test]
 fn no_tree_is_published_twice() {
     let (table, _) = Table::read(PUBLISHED_FUNCTIONS);
-    let message = "src/codegen/known-helpers/syntax.ts tells apart what canonical.rs calls equal";
+    let message = "two published texts are one tree";
     assert_eq!(table.tree_count(), PUBLISHED_FUNCTIONS.len(), "{message}");
 }
 
@@ -543,17 +529,6 @@ fn helpers_of_esbuild_are_recognized() {
         shapes_in("/a.mjs", &format!("{ESBUILD_MODULE_HELPERS}export {{}};")),
         ESBUILD_MODULE_SHAPES
     );
-    assert_eq!(
-        shapes_in("/a.cjs", ESBUILD_PRIVATE_HELPERS),
-        [
-            Shape::ThrowTypeErrorWithMessage,
-            Shape::AccessCheckThrowsThroughThrowTypeError,
-            Shape::PrivateGetChecksAccess,
-            Shape::PrivateAddRefusesSecondAddThroughThrowTypeError,
-            Shape::PrivateSetChecksAccess,
-            Shape::PrivateMethodChecksAccess,
-        ]
-    );
     let shortened =
         "var a=Object.defineProperty,b=(c,d)=>{for(var e in d)a(c,e,{get:d[e],enumerable:!0})};";
     assert_eq!(
@@ -605,7 +580,6 @@ var __esmMin = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
     assert_eq!(
         shapes_in("/a.mjs", source),
         [
-            Shape::ExportAllTagsModuleUnlessRefused,
             Shape::CommonJsRunsCallbackOnceThenDropsIt,
             Shape::EsmRunsFunctionOnce,
         ]

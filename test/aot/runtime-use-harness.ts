@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 
 export const tsconfig = JSON.stringify({
   compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, allowJs: true, types: [] },
@@ -9,14 +10,7 @@ const importsUndeclaredModule = /\bfrom "(?:bun|(?:bun|node):[^"]*)"|\b(?:import
 export async function runtimeUse(files: Record<string, string>, command = ["check", "--aot", "--no-pretty"], entryPoint = "main.ts", env: Record<string, string> = {}) {
   const hasUndeclaredModule = Object.values(files).some(text => importsUndeclaredModule.test(text));
   using dir = tempDir("aot-runtime-use", { "tsconfig.json": tsconfig, ...Object.fromEntries(Object.entries(files).map(([path, text]) => [path, hasUndeclaredModule && path.endsWith(".ts") ? "// @ts-nocheck\n" + text : text])) });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...command, "--explain=trim", entryPoint],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1", ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...command, "--explain=trim", entryPoint], String(dir), { ...bunEnv, NO_COLOR: "1", ...env });
   const prefix = "aot: trim: ";
   const lines = stderr
     .split("\n")

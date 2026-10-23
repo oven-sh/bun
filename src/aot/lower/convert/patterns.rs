@@ -310,9 +310,7 @@ pub(in crate::lower) fn record_assignment_pattern_flow(
 ) {
     match expression::classify_assignment_target(file, target) {
         AssignmentTarget::ArrayPattern(_) | AssignmentTarget::ObjectPattern(_) => {}
-        AssignmentTarget::Elision
-        | AssignmentTarget::Identifier { .. }
-        | AssignmentTarget::Expression => return,
+        _ => return,
     }
     let mut pending = PendingTargets::new();
     add_flowing_operands(file, &mut pending, target, source);

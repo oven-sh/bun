@@ -1,0 +1,18 @@
+# The load of the entry point answers a promise for its namespace. A function under `then` makes the namespace a thenable: what the function hands on stands in its place,
+# and the host hands the `default` of that to Bun.serve, though the module itself exports no `default`.
+# RUN: valueflow-solve used
+# CHECK: run BunServe
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="then" variable=g0}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]
+variable g0 name="then" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="then" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

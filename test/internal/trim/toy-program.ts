@@ -13,10 +13,10 @@ import {
   type FeatureModel,
   type FeatureName,
 } from "../../../scripts/build/trim/features.ts";
-import type { Library } from "../../../scripts/build/trim/libraries.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
 import { rustSource as removableFeaturesRustSource } from "../../../src/codegen/generate-removable-features.ts";
+import { run as runCommand } from "../../aot/harness/run";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..", "..");
 export const linkScript: string = join(repositoryRoot, "scripts", "build", "trim", "link.ts");
@@ -467,30 +467,27 @@ export const toyBuiltins: BuiltinEntry[] = [
 export interface LinkInputs {
   features: string;
   builtinUses: string;
-  libraries: string;
 }
 
 export function writeLinkInputs(
   folder: string,
-  options?: { minimums?: Record<FeatureName, number>; builtins?: BuiltinEntry[]; libraries?: Library[]; nm?: string },
+  options?: { minimums?: Record<FeatureName, number>; builtins?: BuiltinEntry[] },
 ): LinkInputs {
   const features = join(folder, "features.json");
   const builtinUses = join(folder, "builtin-uses.json");
-  const libraries = join(folder, "libraries.json");
   const withMinimums = model.features.map(feature => {
     const minimum = options?.minimums?.[feature.name];
     return { ...feature, minimumBytes: minimum === undefined ? {} : { elf: minimum, macho: minimum, coff: minimum } };
   });
   writeFileSync(features, serializeFeatureModel({ ...model, features: withMinimums }));
   writeFileSync(builtinUses, serializeBuiltinUses({ entries: options?.builtins ?? toyBuiltins }));
-  writeFileSync(libraries, JSON.stringify({ nm: options?.nm ?? "", libraries: options?.libraries ?? [] }));
-  return { features, builtinUses, libraries };
+  return { features, builtinUses };
 }
 
 export function linkArguments(
   inputs: LinkInputs,
   command: string[],
-  options?: { demangler?: string; validatesRelocations?: boolean | "report" },
+  options?: { demangler?: string },
 ): string[] {
   return [
     bunExe(),
@@ -498,10 +495,7 @@ export function linkArguments(
     "work",
     inputs.features,
     inputs.builtinUses,
-    inputs.libraries,
     ...(options?.demangler === undefined ? [] : [`--demangler=${options.demangler}`]),
-    ...(options?.validatesRelocations === "report" ? ["--validate-relocations=report"] : []),
-    ...(options?.validatesRelocations === true ? ["--validate-relocations"] : []),
     "--",
     ...command,
   ];
@@ -522,14 +516,7 @@ export async function run(
 ): Promise<ProcessResult> {
   // A toy program whose feature was removed aborts, and CI's runner fails a test file beside which a core file appears.
   const withoutCoreDump = isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd];
-  await using child = Bun.spawn({
-    cmd: withoutCoreDump,
-    cwd,
-    env: { ...bunEnv, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump, cwd, { ...bunEnv, ...env });
   return { stdout, stderr, exitCode };
 }
 

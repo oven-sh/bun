@@ -1,0 +1,62 @@
+# Namespaces, static and dynamic imports, requires and resolutions, import.meta, the require function and the module object, and an import that failed to resolve pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat
+# DIAGNOSTIC: CodeOutsideImageIsRefused 4
+# CHECK: image not empty
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/other.js" displayPath="other.js" body=f5
+entry module=m0
+modulefailure q0 importer=m0 specifier="./missing"
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    Return v6
+}
+function f1 name="staticTargets" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = ModuleNamespace module=m1 phase=Defer
+    v2 = ImportModule module=m1 referrer=m0
+    v3 = RequireModule module=m1 referrer=m0 specifier="./other"
+    v4 = ResolveModule module=m1 referrer=m0 specifier="./other"
+    v5 = ResolveModule module=m1 referrer=m0 specifier="./other" [isURL]
+    v6 = NewArray v0, v1, v2, v3, v4, v5 contents=anything
+    Return v6
+}
+function f2 name="dynamicTargets" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ImportDynamic v0 referrer=m0
+    v3 = ImportDynamic v0, v1 referrer=m0
+    v4 = RequireDynamic v0 referrer=m0
+    v5 = RequireDynamic v0 referrer=m0
+    v6 = ResolveDynamic v0 referrer=m0
+    v7 = ResolveDynamic v0 referrer=m0 [isURL]
+    v8 = ResolveDynamic v0 referrer=m0 [isForRequire]
+    v9 = NewArray v2, v3, v4, v5, v6, v7, v8 contents=anything
+    Return v9
+}
+function f3 name="moduleBuiltins" results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ImportMeta module=m0
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = NewArray v0, v1, v2 contents=anything
+    Return v3
+}
+function f4 name="failedImport" results=[{type=anything}] {
+  b0():
+    v0 = ThrowModuleFailure failure=q0
+    Unreachable
+}
+function f5 name="other" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

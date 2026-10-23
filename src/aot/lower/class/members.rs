@@ -226,12 +226,7 @@ fn define_method(
         MemberKind::Method => MethodKind::Method,
         MemberKind::Getter => MethodKind::Getter,
         MemberKind::Setter => MethodKind::Setter,
-        MemberKind::Property
-        | MemberKind::Constructor
-        | MemberKind::StaticBlock
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature => {
+        _ => {
             debug_assert!(false, "only a method, getter or setter is a method piece");
             return;
         }

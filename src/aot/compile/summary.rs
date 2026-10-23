@@ -15,9 +15,7 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
         .iter()
         .filter(|entry_point| match entry_point.kind {
             EntryPointKind::Main | EntryPointKind::Additional => true,
-            EntryPointKind::HostLoadedModule
-            | EntryPointKind::ImportedModule
-            | EntryPointKind::Library => false,
+            _ => false,
         })
         .map(|entry_point| EntryPointPaths {
             public_path: sources.module_paths(entry_point.file).public_path.to_vec(),
@@ -76,11 +74,7 @@ fn create_module_source(
     let ProgramFile { project, file } = match module {
         ProgramModule::File(file) => file,
         // Every position in the text of a file names the record of the file.
-        ProgramModule::Inner { .. }
-        | ProgramModule::Face(_)
-        | ProgramModule::Check(_)
-        | ProgramModule::Runtime(_)
-        | ProgramModule::External { .. } => return None,
+        _ => return None,
     };
     let &(files, sources) = projects.get(project);
     if !files.is_compiled(file) {

@@ -1,1 +1,1 @@
-{ "features": ["RegExpUnicodeProperties"], "build": ["--disallow-code-generation-from-strings"] }
+{ "features": ["RegExpUnicodeProperties"], "build": ["--disallow-code-generation-from-strings"], "runsToday": ["RegExpUnicodeProperties"] }

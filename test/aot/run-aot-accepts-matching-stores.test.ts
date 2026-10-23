@@ -1,20 +1,14 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // `bun run --aot`, and the compiled code under `--debug-aot`, print what plain Bun prints.
 const programs = join(import.meta.dir, "programs");
 
 async function ran(...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", ...args],
-    cwd: programs,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout, exitCode } = await run([bunExe(), "run", ...args], programs);
   return { stdout, exitCode };
 }
 

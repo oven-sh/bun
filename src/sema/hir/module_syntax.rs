@@ -60,27 +60,7 @@ impl<S: Storage> FileIn<S> {
             StmtKind::Enum(x) => self[x].flags,
             StmtKind::Module(x) => self[x].flags,
             StmtKind::ImportEquals(x) => self[x].flags,
-            StmtKind::Empty
-            | StmtKind::Debugger
-            | StmtKind::Expr(_)
-            | StmtKind::Return(_)
-            | StmtKind::If { .. }
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Block(_)
-            | StmtKind::Switch { .. }
-            | StmtKind::Try { .. }
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Labeled { .. }
-            | StmtKind::Import(_)
-            | StmtKind::ExportAssign(_)
-            | StmtKind::With { .. }
-            | StmtKind::Directive { .. } => Flags::empty(),
+            _ => Flags::empty(),
         };
         flags.contains(Flags::EXPORT)
     }

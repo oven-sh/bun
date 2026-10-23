@@ -140,9 +140,7 @@ fn find_member_storage(
     let name = file.bound.private_name_of_member(member)?;
     match file.bound.private_name(name).members {
         PrivateMembers::Field(_) => Some(MemberStorage::PrivateField(name)),
-        PrivateMembers::Method(_)
-        | PrivateMembers::Accessor { .. }
-        | PrivateMembers::AutoAccessor(_) => None,
+        _ => None,
     }
 }
 

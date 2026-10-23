@@ -1,9 +1,10 @@
 // `bun run --aot` checks a program and then runs it from its source. Only compiled code has the checks of `JSON.parse<T>(text)` and `validate<T>(value)`,
 // so a program that validates by type is compiled and run for real there too: the expected output of each program is that of the executable.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "../harness/run";
 import { test } from "../supported";
 
 const programs = join(import.meta.dir, "..", "programs", "data-from-outside");
@@ -16,14 +17,7 @@ test.each([
 ])(
   "bun run --aot %s.ts",
   async name => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--aot", join(programs, name + ".ts")],
-      cwd: programs,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "run", "--aot", join(programs, name + ".ts")], programs);
     expect({ stdout, stderr: exitCode ? stderr : "", exitCode }).toEqual({
       stdout: readFileSync(join(programs, name + ".expected.txt"), "utf8"),
       stderr: "",
@@ -37,14 +31,7 @@ test("without --aot the import of validate is an error", async () => {
   using dir = tempDir("validation-without-aot", {
     "program.ts": `import { validate } from "bun:bundle"; console.log(validate<number>(1));`,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "./program.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "run", "./program.ts"], String(dir));
   expect(stderr).toContain(`"bun:bundle" has no export named "validate"`);
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });

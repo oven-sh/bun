@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "../../aot/harness/run";
 
 const expected = [
   "errno Error open ENOENT orig ENOENT -2 open",
@@ -39,13 +40,10 @@ const expected = [
 ];
 
 test("members of modules that are loaded late", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "late-modules-read-by-name-fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    join(import.meta.dir, "late-modules-read-by-name-fixture.js"),
+  ]);
   expect({ lines: stdout.trimEnd().split("\n"), stderr, exitCode }).toEqual({
     lines: expected,
     stderr: "",

@@ -7,7 +7,7 @@ use crate::decide::decide;
 use crate::error::TrimError;
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
-    Decision, FeatureEdges, IcuPackage, Library, LibraryStatus, ModuleText, OptionRequirement,
+    Decision, FeatureEdges, IcuPackage, ModuleText, OptionRequirement,
     PlannedIcuPackage, PlannedRange, SetIndex, TrimInput, TrimPlan, TrimTable, UsedFeatures,
     UsedLocales, WantedLocaleGroups,
 };
@@ -110,16 +110,10 @@ pub(crate) fn plan_table(
         .iter()
         .filter_map(|package| plan_icu_package(package, &removed_sets, wanted))
         .collect();
-    let libraries = table
-        .libraries
-        .iter()
-        .filter_map(|library| compute_library_status(library, &removed_sets))
-        .collect();
     TrimPlan {
         decision,
         ranges,
         icu_packages,
-        libraries,
     }
 }
 
@@ -177,21 +171,6 @@ fn plan_icu_package(
     })
 }
 
-fn compute_library_status(library: &Library, removed_sets: &[bool]) -> Option<LibraryStatus> {
-    if !library.has_retained_bytes && library.sets.is_empty() {
-        return None;
-    }
-    Some(LibraryStatus {
-        name: library.name.clone(),
-        version: library.version.clone(),
-        is_removed: !library.has_retained_bytes
-            && library
-                .sets
-                .iter()
-                .all(|set| is_set_removed(removed_sets, *set)),
-    })
-}
-
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
@@ -221,7 +200,6 @@ mod tests {
             ranges: Vec::new(),
             icu_packages: Vec::new(),
             icu_languages: Vec::new(),
-            libraries: Vec::new(),
             module_texts: Vec::new(),
         }
     }
@@ -240,15 +218,6 @@ mod tests {
             is_code: true,
             can_be_cut: true,
             can_be_filled: true,
-        }
-    }
-
-    fn library(name: &str, has_retained_bytes: bool, sets: &[u16]) -> Library {
-        Library {
-            name: Box::from(name),
-            version: Box::from("1.0"),
-            has_retained_bytes,
-            sets: sets.iter().copied().map(SetIndex).collect(),
         }
     }
 
@@ -842,36 +811,6 @@ mod tests {
             ..ExecutableSettings::default()
         };
         assert!(planned_offsets(&evaluating_text(&[]), &settings, &removing_unused()).is_empty());
-    }
-
-    #[test]
-    fn library_status_follows_retained_bytes_and_sets() {
-        let table = TrimTable {
-            libraries: vec![
-                library("absent", false, &[]),
-                library("gone", false, &[0]),
-                library("partial", false, &[0, 1]),
-                library("retained", true, &[0]),
-                library("whole", true, &[]),
-            ],
-            ..table_with_sets(&[&[Feature::Jit], &[Feature::Ffi]])
-        };
-        let planned = plan_encoded_table(&table, &removing_internal(&[Feature::Jit]));
-        let statuses: Vec<(&str, bool)> = planned
-            .libraries
-            .iter()
-            .map(|library| (&*library.name, library.is_removed))
-            .collect();
-        assert_eq!(
-            statuses,
-            [
-                ("gone", true),
-                ("partial", false),
-                ("retained", false),
-                ("whole", false)
-            ]
-        );
-        assert_eq!(&*planned.libraries[0].version, "1.0");
     }
 
     #[test]

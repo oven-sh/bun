@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
-import { chmodSync, readdirSync, readFileSync } from "node:fs";
+import { tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BuildError } from "../../../scripts/build/error.ts";
 import type { Feature, FeatureModel } from "../../../scripts/build/trim/features.ts";
-import { libraryBytes } from "../../../scripts/build/trim/libraries.ts";
 import { EdgeKind, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
 import {
   describeFailures,
@@ -503,14 +502,6 @@ describe("failure reports and review files", () => {
     entry: guarded.node("entryA"),
     feature: A,
   };
-  const referenceIntoRange: Extract<LinkFailure, { kind: "ReferenceIntoRemovableRange" }> = {
-    kind: "ReferenceIntoRemovableRange",
-    from: guarded.node("main"),
-    address: guarded.graph.address[guarded.node("main")]! + 16,
-    to: guarded.node("onlyA"),
-    range: rangeOfA,
-  };
-  const referenceToNoSection: LinkFailure = { ...referenceIntoRange, to: undefined };
   const guardOfUnknownBuiltin: LinkFailure = {
     kind: "GuardOfUnknownBuiltin",
     builtin: 9,
@@ -561,10 +552,6 @@ describe("failure reports and review files", () => {
       "RetainedSectionInRemovableRange",
       { kind: "RetainedSectionInRemovableRange", node: guarded.node("shared"), range: rangeOfA },
     ],
-    ["RelinkedImageDiffers", { kind: "RelinkedImageDiffers", section: ".text" }],
-    ["UnknownRelocationType", { kind: "UnknownRelocationType", section: ".rela.text", type: 99 }],
-    ["ReferenceIntoRemovableRange", referenceIntoRange],
-    ["ReferenceIntoRemovableRange for a target in no section", referenceToNoSection],
   ];
 
   test.each(kindCases)("the text of %s starts with its kind", (_label, failure) => {
@@ -573,14 +560,30 @@ describe("failure reports and review files", () => {
     expect(text).not.toEndWith("\n");
   });
 
-  test("a reference into a range names its target section, or says that there is none", () => {
-    const suffix = ", which can be removed with A, and the section graph has no such reference";
-    expect(describeFailures([referenceIntoRange], contextOf(guarded))).toContain(
-      "refers to onlyA (toy.o, 8192 bytes)" + suffix,
+  test("a guard whose entry point is not in the image says what its function does refer to", () => {
+    const busy = partitioned(
+      {
+        main: { root: true, to: ["guardA", "quiet"] },
+        guardA: { to: ["entryA", "one", "two", "three"] },
+        quiet: {},
+        entryA: {},
+        one: {},
+        two: {},
+        three: {},
+      },
+      oneFeatureGuards,
     );
-    expect(describeFailures([referenceToNoSection], contextOf(guarded))).toContain(
-      "refers to an address in no section" + suffix,
+    const gone = (guard: string): LinkFailure => ({
+      kind: "GuardWithoutReference",
+      guard: busy.node(guard),
+      entry: undefined,
+      feature: A,
+      target: "gone",
+    });
+    expect(describeFailures([gone("guardA")], contextOf(busy)).split("\n")[1]).toBe(
+      "  it refers to entryA (toy.o, 8192 bytes), one (toy.o, 8192 bytes), two (toy.o, 8192 bytes) and 1 more",
     );
+    expect(describeFailures([gone("quiet")], contextOf(busy)).split("\n")).toHaveLength(1);
   });
 
   test("a failure of the declared uses names the built-in by its path, the sections and the feature", () => {
@@ -609,14 +612,7 @@ describe("failure reports and review files", () => {
   });
 
   test("failures are printed by kind, in the order of the steps that find them", () => {
-    const failures = [
-      guardWithoutUser,
-      referenceIntoRange,
-      useWithoutGuard,
-      guardWithoutReference,
-      undeclaredUse,
-      guardOfUnknownBuiltin,
-    ];
+    const failures = [guardWithoutUser, useWithoutGuard, guardWithoutReference, undeclaredUse, guardOfUnknownBuiltin];
     expect(
       describeFailures(failures, contextOf(guarded))
         .split("\n")
@@ -627,7 +623,6 @@ describe("failure reports and review files", () => {
       "UndeclaredUse",
       "UseWithoutGuard",
       "GuardWithoutUser",
-      "ReferenceIntoRemovableRange",
     ]);
   });
 
@@ -818,37 +813,4 @@ describe("failure reports and review files", () => {
     const context = { ...contextOf(guarded), demangler: failingTool! };
     expect(() => describeFailures([guardWithoutReference], context)).toThrow(BuildError);
   });
-});
-
-describe("libraryBytes", () => {
-  test.skipIf(isWindows)("library code that is live only by a flag counts as retained", () => {
-    const result = partitioned({ ...oneFeature, flagged: { live: true } }, oneFeatureGuards);
-    using dir = tempDir("trim-libraries", { "nm.sh": "#!/bin/sh\necho onlyA\necho flagged\n" });
-    const nm = join(String(dir), "nm.sh");
-    chmodSync(nm, 0o755);
-    const file = { nm, libraries: [{ name: "toy", version: "1", inputs: ["toy.a"], crates: [] }] };
-    expect(libraryBytes(file, [], result.graph, result, join(String(dir), "work"))).toEqual([
-      { name: "toy", version: "1", retainedBytes: 8192, sets: [result.setOf[result.node("onlyA")]!] },
-    ]);
-  });
-
-  test.skipIf(isWindows).each([
-    ["the program's copy is the one in the image", "ofProgram", "ofLibrary", 0],
-    ["the library's copy is the one in the image", "ofLibrary", "ofProgram", 0],
-    ["both copies are the library's", "ofLibrary", "alsoOfLibrary", 8192],
-  ])(
-    "a function that the linker folded with retained code outside the library is not the library's: %s",
-    (_, inImage, folded, retainedBytes) => {
-      const sections = { ...oneFeature, main: { ...oneFeature.main, to: [...oneFeature.main.to!, inImage] } };
-      const result = partitioned({ ...sections, [inImage]: { foldedWith: [folded] } }, oneFeatureGuards);
-      using dir = tempDir("trim-libraries", { "nm.sh": "#!/bin/sh\necho onlyA\necho ofLibrary\necho alsoOfLibrary\n" });
-      const nm = join(String(dir), "nm.sh");
-      chmodSync(nm, 0o755);
-      const file = { nm, libraries: [{ name: "toy", version: "1", inputs: ["toy.a"], crates: [] }] };
-      expect(result.retained()).toContain(inImage);
-      expect(libraryBytes(file, [], result.graph, result, join(String(dir), "work"))).toEqual([
-        { name: "toy", version: "1", retainedBytes, sets: [result.setOf[result.node("onlyA")]!] },
-      ]);
-    },
-  );
 });

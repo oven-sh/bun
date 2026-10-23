@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 
 // Asked of the Bun under test itself, so that a release build, which has no bun:internal-for-testing, runs this file too.
@@ -43,12 +44,6 @@ console.log(new Intl.NumberFormat("de").format(1234.5), new Intl.PluralRules("de
 console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFormat("de").format(["a", "b"]));`,
   "removed.ts": `console.log(new Date(0).toLocaleDateString("fr", { timeZone: "UTC" }));`,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 describe.skipIf(!canTrim)("--trim-locales", () => {
   for (const flags of [[], ["--aot"]]) {

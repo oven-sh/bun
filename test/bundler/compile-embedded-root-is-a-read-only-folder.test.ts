@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "../aot/harness/run";
 
 // `bun build --compile` without any other flag: the folder that holds the embedded files acts like a folder of a
 // read-only file system.
@@ -49,8 +50,7 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
     stderr: "pipe",
   });
   expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toMatchObject({ exitCode: 0 });
-  await using run = Bun.spawn({ cmd: [executable], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([executable], String(dir));
   expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
     result: {
       chdir: "fine",

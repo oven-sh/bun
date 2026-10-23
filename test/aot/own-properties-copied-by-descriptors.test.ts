@@ -5,9 +5,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { buildEnvironment, compileCommand } from "./harness/flags";
+import { compileCommand } from "./harness/flags";
+import { printIR, test, writesProgramInto } from "./harness/printed-ir";
 import { built, spawned } from "./run-programs";
-import { test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
@@ -48,16 +48,21 @@ test("no object describes a property on its way from one object to another", asy
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
   const build = await spawned(
-    [bunExe(), ...compileCommand, "--explain=statistics", "main.js", "--outfile", executable],
+    [
+      bunExe(),
+      ...compileCommand,
+      "--explain=statistics",
+      writesProgramInto(folder),
+      "main.js",
+      "--outfile",
+      executable,
+    ],
     folder,
-    {
-      ...env,
-      [buildEnvironment.dumpsIR]: "Selected",
-    },
+    env,
   );
   built(build);
+  expect(callsIn(await printIR(folder, { until: "Select" }))).toEqual({ fused: 1, descriptions: 0, definitions: 0 });
   const output = build.stdout + build.stderr;
-  expect(callsIn(output)).toEqual({ fused: 1, descriptions: 0, definitions: 0 });
   expect(Number(/^NativeFunctionsCalledDirectly (\d+)$/m.exec(output)?.[1])).toBeGreaterThan(0);
 
   const plain = await spawned([bunExe(), "main.js"], folder, env);
@@ -69,17 +74,17 @@ test("no object describes a property on its way from one object to another", asy
 test("nor where the copies behind a typed read join between the two calls", async () => {
   const programs = join(import.meta.dir, "programs", "definitions-by-descriptor");
   using dir = tempDir("aot-copied-behind-a-typed-read", {});
-  const executable = join(String(dir), isWindows ? "app.exe" : "app");
-  const build = await spawned(
-    [bunExe(), ...compileCommand, "own-properties-copied-behind-a-typed-read.ts", "--outfile", executable],
-    programs,
-    {
-      ...env,
-      [buildEnvironment.dumpsIR]: "Selected",
-    },
+  const folder = String(dir);
+  const executable = join(folder, isWindows ? "app.exe" : "app");
+  const source = "own-properties-copied-behind-a-typed-read.ts";
+  built(
+    await spawned(
+      [bunExe(), ...compileCommand, writesProgramInto(folder), source, "--outfile", executable],
+      programs,
+      env,
+    ),
   );
-  built(build);
-  const calls = callsIn(build.stdout + build.stderr);
+  const calls = callsIn(await printIR(folder, { until: "Select" }));
   expect(calls.fused).toBeGreaterThan(0);
   expect(calls).toEqual({ fused: calls.fused, descriptions: 0, definitions: 0 });
 }, 300_000);

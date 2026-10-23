@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const often = Array.from({ length: 2600 }, (_, i) => `often${i}`);
@@ -20,14 +21,11 @@ console.log(total);
 test("bun run --aot: name ids beyond the hot range are adjacent within a function", async () => {
   using dir = tempDir("aot-name-ids-adjacent", files);
   const mapPath = join(String(dir), "main.map");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--debug-aot", "./main.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotMapFilePath: mapPath },
-    stdout: "pipe",
-    stderr: "pipe",
+  const { stdout, stderr, exitCode } = await run([bunExe(), "run", "--debug-aot", "./main.js"], String(dir), {
+    ...bunEnv,
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+    BUN_JSC_aotMapFilePath: mapPath,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("crashIfInterpreterIsUsed");
   expect({ stdout, exitCode }).toEqual({ stdout: "6\n", exitCode: 0 });
   const numbers = new Map<string, number>();

@@ -3880,8 +3880,7 @@ declare module "bun" {
      */
     locales?: string[];
     /**
-     * Add notes to `BuildOutput.logs` that list what was removed, how much smaller the executable
-     * is, and which native libraries it still includes.
+     * Add notes to `BuildOutput.logs` that list what was removed and how much smaller the executable is.
      *
      * @default false
      */

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { unsupported } from "./run-programs";
 import { tsconfig } from "./runtime-use-harness";
 
@@ -28,14 +29,11 @@ const commands: [spelling: string, cmd: string[], env?: Record<string, string>][
 describe.skipIf(!!unsupported)("the trim report", () => {
   test.concurrent.each(commands)("is printed by %s", async (_, cmd, env = {}) => {
     using dir = tempDir("trim-report", files);
-    await using child = Bun.spawn({
-      cmd: [bunExe(), ...cmd],
-      cwd: String(dir),
-      env: { ...bunEnv, NO_COLOR: "1", ...env },
-      stdout: "pipe",
-      stderr: "pipe",
+    const { stdout, stderr, exitCode } = await run([bunExe(), ...cmd], String(dir), {
+      ...bunEnv,
+      NO_COLOR: "1",
+      ...env,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     const lines = stderr
       .split("\n")
       .filter(line => line.startsWith(prefix))

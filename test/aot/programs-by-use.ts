@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { slot } from "./run-programs";
 import { test } from "./supported";
+import { run as runCommand } from "./harness/run";
 
 export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number; runsTextAsCode?: true; aheadOfTime?: string };
 
@@ -45,8 +46,7 @@ export function describePrograms(what: string, programs: Record<string, Program>
         const cwd = String(dir);
         await slot(async () => {
           const build = async (flags: string[], outfile: string) => {
-            await using proc = Bun.spawn({ cmd: [bunExe(), "build", "--compile", ...flags, name, "--outfile", outfile], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-            const [said, built] = await Promise.all([proc.stderr.text(), proc.exited]);
+            const { stderr: said, exitCode: built } = await runCommand([bunExe(), "build", "--compile", ...flags, name, "--outfile", outfile], cwd);
             expect({ title, flags, said, built }).toEqual({ title, flags, said: expect.any(String), built: 0 });
             return [outfile];
           };

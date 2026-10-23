@@ -1,8 +1,9 @@
 // `JSON.parse<T>(text)` validates, and the namespace `Schema` of "bun" is known by import and through the global `Bun`, also where
 // no types of Bun are installed: the only declarations of Bun's are those that the compiler brings along.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../harness/run";
 import { test } from "../supported";
 
 const program = `
@@ -54,29 +55,17 @@ function folder() {
 test("in an executable", async () => {
   using dir = folder();
   const outfile = join(String(dir), "program" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [said, built] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: said, exitCode: built } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", outfile],
+    String(dir),
+  );
   expect({ said: built ? said : "", built }).toEqual({ said: "", built: 0 });
-  await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+  const { stdout, exitCode } = await run([outfile], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
 }, 120_000);
 
 test("under bun run --aot", async () => {
   using dir = folder();
-  await using ran = Bun.spawn({
-    cmd: [bunExe(), "run", "--aot", "./program.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+  const { stdout, exitCode } = await run([bunExe(), "run", "--aot", "./program.ts"], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
 }, 120_000);

@@ -243,10 +243,7 @@ impl<'x, 's> Walker<'x, 's> {
         for &child in &children {
             match child {
                 TreeNode::Expr(child) => self.push_task(Task::Expression(child), context),
-                TreeNode::Stmt(_)
-                | TreeNode::Function(_)
-                | TreeNode::Class(_)
-                | TreeNode::Pattern(_) => {
+                _ => {
                     debug_assert!(false, "every child of this expression is an expression");
                 }
             }
@@ -308,29 +305,7 @@ impl<'x, 's> Walker<'x, 's> {
         for scope in scope_chain(bound, from).take_while(|&scope| scope != until) {
             match bound.scopes[scope.idx()].kind {
                 ScopeKind::With(_) => self.record_slot_use(function, scope, ScopeSlot::WithObject),
-                ScopeKind::File
-                | ScopeKind::Module(_)
-                | ScopeKind::Fn(_)
-                | ScopeKind::Block
-                | ScopeKind::Class(_)
-                | ScopeKind::Interface(_)
-                | ScopeKind::TypeAlias(_)
-                | ScopeKind::TypeParams
-                | ScopeKind::Enum(_)
-                | ScopeKind::TypeParamList(_)
-                | ScopeKind::Param(_)
-                | ScopeKind::ReturnType(_)
-                | ScopeKind::Extends
-                | ScopeKind::InferConstraint
-                | ScopeKind::StaticMember
-                | ScopeKind::ComputedName
-                | ScopeKind::BaseExpression
-                | ScopeKind::FunctionName(_)
-                | ScopeKind::PropertyDeclaration(..)
-                | ScopeKind::PropertyType(..)
-                | ScopeKind::FieldInitializer(_)
-                | ScopeKind::ClassDecorators(_)
-                | ScopeKind::ImplicitBlock(_) => {
+                _ => {
                     if self.walk.eval_variable_scopes.binary_search(&scope).is_ok() {
                         self.record_slot_use(function, scope, ScopeSlot::EvalVariables);
                     }

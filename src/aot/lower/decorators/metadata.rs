@@ -204,11 +204,7 @@ fn read_metadata_root(
 fn is_unresolvable(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: SymbolId) -> bool {
     match lowering.file.scopes.form(symbol) {
         BindingForm::NotAValue => true,
-        BindingForm::Import
-        | BindingForm::Callee { .. }
-        | BindingForm::MappedArgument { .. }
-        | BindingForm::ContainerMember { .. }
-        | BindingForm::Stored => false,
+        _ => false,
     }
 }
 

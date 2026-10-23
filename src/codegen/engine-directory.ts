@@ -1,6 +1,6 @@
 // The generators of the AoT compiler's schema and of its table of built-ins are files of the engine: Source/JavaScriptCore/aot/ir/generator and
 // aot/builtins/generator in WebKit. Where that folder `aot` lies depends on the build: a checkout, or the tarball of a prebuilt WebKit in the cache.
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -19,7 +19,7 @@ function findEngineDirectory(): string {
     ["$BUN_WEBKIT_PATH", process.env.BUN_WEBKIT_PATH && inCheckout(process.env.BUN_WEBKIT_PATH)],
     ["vendor/WebKit", inCheckout(resolve(import.meta.dirname, "..", "..", "vendor", "WebKit"))],
     // Where CI puts it for the machines that only run tests.
-    ["aot-engine beside the Bun that runs this", join(dirname(process.execPath), "aot-engine")],
+    ["aot-engine beside the Bun that runs this", join(dirname(realpathSync(process.execPath)), "aot-engine")],
   ];
   for (const [, directory] of places) {
     if (directory !== undefined && directory !== "" && existsSync(join(directory, "builtins", "generator"))) {

@@ -1,21 +1,15 @@
 import { expect } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { dirname, join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Untyped code stores what it likes into an object of a declared type. Nothing is thrown for it: `bun run --aot`, and the compiled code under `--debug-aot`, print what plain Bun prints.
 const programs = join(import.meta.dir, "programs");
 
 async function ran(file: string, ...flags: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", ...flags, file],
-    cwd: dirname(file),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout, exitCode } = await run([bunExe(), "run", ...flags, file], dirname(file));
   return { stdout, exitCode };
 }
 

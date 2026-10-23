@@ -34,42 +34,7 @@ pub fn kind_flags(kind: &ExprKind) -> ExprFlags {
         ExprKind::Dot { chain, .. } => chain_flags(chain),
         ExprKind::Index { chain, .. } => ExprFlags::BRACKET_ACCESS | chain_flags(chain),
         ExprKind::PrivateIdentifier(_) => ExprFlags::PRIVATE_NAME,
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => ExprFlags::empty(),
+        _ => ExprFlags::empty(),
     }
 }
 
@@ -149,40 +114,7 @@ impl<S: Storage> FileIn<S> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => Some(expr),
-            ExprKind::Missing
-            | ExprKind::Ident(_)
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::Template { .. }
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_)
-            | ExprKind::Dot { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Call(_)
-            | ExprKind::New(_)
-            | ExprKind::Unary { .. }
-            | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
-            | ExprKind::Cond { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => None,
+            _ => None,
         }
     }
 

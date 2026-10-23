@@ -95,6 +95,28 @@ console.log(basename("/a/b.txt"), typeof os.cpus, typeof Database, server);
     checkSays: [],
     prints: "note 1 untyped\n",
   },
+  "a file whose name has a quote in it": {
+    files: {
+      "main.ts": `import text from "./it's a note.txt";\nconsole.log(text.trim());\n`,
+      "it's a note.txt": "note\n",
+    },
+    checkSays: [],
+    prints: "note\n",
+  },
+  "members of Bun and of import.meta, by destructuring and in types": {
+    files: {
+      "main.ts": `const { version } = Bun;
+const { dir } = import.meta;
+type Directory = ImportMeta["dir"];
+const directory: Directory = dir;
+const server: Bun.Server | undefined = undefined;
+const other: import("bun").Server | undefined = undefined;
+console.log(typeof version, typeof directory, server, other);
+`,
+    },
+    checkSays: [],
+    prints: "string string undefined undefined\n",
+  },
   "callbacks for what has no declaration": {
     files: {
       "main.ts": `process.on("exit", code => console.log("exit", code));
@@ -195,6 +217,22 @@ const stillErrors: [string, string, string[]][] = [
     "a type error in what a program declares itself",
     `function twice(n: number): number { return n * 2; }\nconsole.log(twice("2"));\n`,
     ["TS2345"],
+  ],
+  [
+    "a missing member of the program's own type named ImportMeta",
+    `interface ImportMeta { own: number }\nconst meta: ImportMeta = { own: 1 };\nconsole.log(meta.dir);\nexport {};\n`,
+    ["TS2339"],
+  ],
+  ['a missing member of the string "bun"', `const name = "bun" as const;\nconsole.log(name.serve);\n`, ["TS2339"]],
+  [
+    "a global that is no class, used as a type",
+    `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n`,
+    ["TS2749"],
+  ],
+  [
+    "a missing member whose name quotes ImportMeta",
+    `type Own = { a: number };\ntype Missing = Own["'ImportMeta'"];\nconst value: Missing | undefined = undefined;\nconsole.log(value);\n`,
+    ["TS2339"],
   ],
 ];
 

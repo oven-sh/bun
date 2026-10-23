@@ -165,10 +165,6 @@ const stopped: Record<string, string[]> = {
     "a-private-name-is-stamped-onto-one-of-two-instances-of-a-class-that-a-function-made",
     "the-brand-of-a-private-method-is-stamped-onto-an-instance-of-a-class-that-a-function-made",
   ],
-  "relations-at-random": [
-    "seed-0055",
-    "seed-0071",
-  ],
   "soundness": [
     "a-fraction-in-an-enum-field-survives-a-rest-copy",
     "a-hidden-function-of-node-util-copies-a-property-onto-a-built-in-prototype",

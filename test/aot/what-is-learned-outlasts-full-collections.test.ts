@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { beforeAll, test } from "./supported";
 
 // A program that draws, waits and draws again makes the same short-lived objects in every turn, and none of them is alive when a full
@@ -72,8 +73,7 @@ let directory: ReturnType<typeof tempDir>;
 let executable: string;
 
 async function run(cmd: string[], env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd: String(directory), env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, String(directory), env);
   return { stdout, stderr, exitCode };
 }
 

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -40,12 +41,6 @@ const operations = [
   "operationAOTDefaultHasInstance",
   "operationAOTCreateThis",
 ];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("instanceof and new on a constructor function that unseen code has stop asking the run time once its class is defined", async () => {
   using dir = tempDir("aot-instanceof-on-a-constructor-function", files);

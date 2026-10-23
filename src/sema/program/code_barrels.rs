@@ -510,13 +510,7 @@ impl Summary<'_, '_> {
             ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => {
                 self.asked_by_call(index, self.names.module_exports)
             }
-            ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::GetBuiltinModule(_) => Asked::All,
+            _ => Asked::All,
         }
     }
 
@@ -558,27 +552,7 @@ impl Summary<'_, '_> {
                     false => ExportOrigin::NoValue,
                 }
             }
-            Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::Param(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::EnumMember(_)
-            | Decl::TypeParam(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => ExportOrigin::NoValue,
+            _ => ExportOrigin::NoValue,
         }
     }
 
@@ -592,15 +566,7 @@ impl Summary<'_, '_> {
                         self.uses.exported.contains(&symbol) && !self.is_evaluated(symbol)
                     })
             }
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::Require(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaRequire(_)
-            | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::GetBuiltinModule(_) => false,
+            _ => false,
         }
     }
 

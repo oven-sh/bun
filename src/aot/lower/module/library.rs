@@ -124,9 +124,7 @@ pub(super) fn collect_library_functions(
                     let written_at = hir[statement].loc;
                     Some((function, written_at.pos..written_at.end))
                 }
-                LibraryStatement::Erased
-                | LibraryStatement::Directive(_)
-                | LibraryStatement::TopLevelCode => None,
+                _ => None,
             },
         )
         .collect()
@@ -389,25 +387,7 @@ impl<'a, 's> LibrarySource<'a, 's> {
                 .flags
                 .intersects(Flags::AMBIENT | Flags::CONST),
             StmtKind::Module(declaration) => hir[declaration].flags.contains(Flags::AMBIENT),
-            StmtKind::Debugger
-            | StmtKind::Return(_)
-            | StmtKind::If { .. }
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Block(_)
-            | StmtKind::Switch { .. }
-            | StmtKind::Try { .. }
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Labeled { .. }
-            | StmtKind::ExportDefault(_)
-            | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_)
-            | StmtKind::With { .. } => false,
+            _ => false,
         };
         if is_erased {
             LibraryStatement::Erased

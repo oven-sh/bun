@@ -11,9 +11,7 @@ pub(super) fn host_reads_of(
     let contexts: &'static [HostReadContext] = match kind {
         EntryPointKind::Main => &[HostReadContext::EntryPoint],
         EntryPointKind::Additional => &[HostReadContext::EntryPoint, HostReadContext::Worker],
-        EntryPointKind::HostLoadedModule
-        | EntryPointKind::ImportedModule
-        | EntryPointKind::Library => &[],
+        _ => &[],
     };
     contexts
         .iter()
@@ -37,9 +35,7 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
     for entry_point in input.projects.application.sources.entry_points() {
         match entry_point.kind {
             EntryPointKind::Main | EntryPointKind::Additional => {}
-            EntryPointKind::HostLoadedModule
-            | EntryPointKind::ImportedModule
-            | EntryPointKind::Library => continue,
+            _ => continue,
         }
         let file = ProgramFile {
             project: ProjectId::Application,

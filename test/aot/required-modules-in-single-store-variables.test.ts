@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 const here = process.platform;
@@ -30,12 +31,6 @@ const servers: Record<string, string> = {
 };
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("a function that only an export nobody reads leads to is left out, however the variable came by the module", async () => {
   const sizes: Record<string, number> = {};

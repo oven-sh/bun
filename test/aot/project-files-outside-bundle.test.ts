@@ -1,20 +1,14 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 async function run(files: Record<string, string>, links: Record<string, string> = {}) {
   using dir = tempDir("aot-outside-the-bundle", files);
   for (const [link, target] of Object.entries(links)) symlinkSync(target, join(String(dir), link), "dir");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--debug-aot", "src/main.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), "--debug-aot", "src/main.ts"], String(dir));
   return { stdout, stderr, exitCode };
 }
 
@@ -375,24 +369,10 @@ test("a file outside the bundle that the build script writes while it bundles co
       }
     `,
   });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: buildErrors, exitCode: buildExitCode } = await runCommand([bunExe(), "build.ts"], String(dir));
   expect(buildErrors).not.toContain("Cannot find name");
   expect(buildExitCode).toBe(0);
-  await using proc = Bun.spawn({
-    cmd: [join(String(dir), "out")],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout, exitCode } = await runCommand([join(String(dir), "out")], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: "string undefined\n", exitCode: 0 });
 });
 
@@ -432,23 +412,9 @@ async function buildWithLateWrites(files: Record<string, string>, written: Recor
       }
     `,
   });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: buildErrors, exitCode: buildExitCode } = await runCommand([bunExe(), "build.ts"], String(dir));
   if (buildExitCode !== 0) return { buildErrors, buildExitCode, stdout: "", exitCode: -1 };
-  await using proc = Bun.spawn({
-    cmd: [join(String(dir), "out")],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout, exitCode } = await runCommand([join(String(dir), "out")], String(dir));
   return { buildErrors, buildExitCode, stdout, exitCode };
 }
 

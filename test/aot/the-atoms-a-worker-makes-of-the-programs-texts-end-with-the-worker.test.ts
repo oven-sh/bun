@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunExe, isLinux, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // The atom that native code makes of a string constant of compiled code is held by the atom table of its thread, so that it lives as long as the constant does for that thread.
@@ -48,14 +49,7 @@ test.skipIf(!isLinux)(
   "what a Worker's atom table holds of the program's texts goes with the Worker",
   async () => {
     using dir = tempDir("atoms-of-a-worker", { "workers.ts": program });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--debug-aot", "workers.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "run", "--debug-aot", "workers.ts"], String(dir));
     expect({
       stderr: stderr.split("\n").filter(line => line.startsWith("error") || line.startsWith("panic")),
       exitCode,

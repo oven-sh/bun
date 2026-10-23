@@ -43,28 +43,17 @@ impl UnseenCodeCause {
     pub fn lets_unseen_code_run(self) -> bool {
         match self {
             UnseenCodeCause::LoadsModuleByName => false,
-            UnseenCodeCause::ProgramNotCompiled
-            | UnseenCodeCause::ReportMissing
-            | UnseenCodeCause::FlowResultDisabled
-            | UnseenCodeCause::FlowGaveUp
-            | UnseenCodeCause::EvaluatesText
-            | UnseenCodeCause::ImportsUncompiledCode
-            | UnseenCodeCause::RunsUnseenCode
-            | UnseenCodeCause::OptionAdmitsCode => true,
+            _ => true,
         }
     }
 
     pub fn admits_library_text(self) -> bool {
         match self {
-            UnseenCodeCause::ProgramNotCompiled
-            | UnseenCodeCause::ReportMissing
-            | UnseenCodeCause::FlowResultDisabled
-            | UnseenCodeCause::ImportsUncompiledCode
-            | UnseenCodeCause::OptionAdmitsCode => true,
             UnseenCodeCause::FlowGaveUp
             | UnseenCodeCause::EvaluatesText
             | UnseenCodeCause::LoadsModuleByName
             | UnseenCodeCause::RunsUnseenCode => false,
+            _ => true,
         }
     }
 }
@@ -314,14 +303,6 @@ pub struct IcuLanguage {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Library {
-    pub name: Box<str>,
-    pub version: Box<str>,
-    pub has_retained_bytes: bool,
-    pub sets: Vec<SetIndex>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TrimTable {
     pub features_hash: u64,
     pub base_address: u64,
@@ -330,7 +311,6 @@ pub struct TrimTable {
     pub ranges: Vec<RemovableRange>,
     pub icu_packages: Vec<IcuPackage>,
     pub icu_languages: Vec<IcuLanguage>,
-    pub libraries: Vec<Library>,
     pub module_texts: Vec<ModuleText>,
 }
 
@@ -338,13 +318,6 @@ pub struct TrimTable {
 pub(crate) enum WantedLocaleGroups {
     All,
     Listed(Vec<LocaleGroup>),
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct LibraryStatus {
-    pub name: Box<str>,
-    pub version: Box<str>,
-    pub is_removed: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -368,7 +341,6 @@ pub struct TrimPlan {
     pub(crate) decision: Decision,
     pub(crate) ranges: Vec<PlannedRange>,
     pub(crate) icu_packages: Vec<PlannedIcuPackage>,
-    pub(crate) libraries: Vec<LibraryStatus>,
 }
 
 impl TrimPlan {
@@ -377,7 +349,6 @@ impl TrimPlan {
             decision: Decision::empty(),
             ranges: Vec::new(),
             icu_packages: Vec::new(),
-            libraries: Vec::new(),
         }
     }
 
@@ -405,7 +376,6 @@ pub struct TrimSummary {
     pub filled_bytes: u64,
     pub file_bytes_saved: u64,
     pub uncut: Option<Uncut>,
-    pub libraries: Vec<LibraryStatus>,
     pub format: Option<ExecutableFormat>,
 }
 

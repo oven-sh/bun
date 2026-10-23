@@ -94,10 +94,7 @@ pub(super) fn compute_enum_member_values(
             EnumMemberValue::ComputedNumber(_) | EnumMemberValue::PreviousPlusOne => {
                 NextNumber::PreviousPlusOne
             }
-            EnumMemberValue::String(_)
-            | EnumMemberValue::Computed(_)
-            | EnumMemberValue::ComputedString(_)
-            | EnumMemberValue::Missing => NextNumber::Unknown,
+            _ => NextNumber::Unknown,
         };
         members.push((member, value));
     }
@@ -186,15 +183,7 @@ fn find_known_primitive(
         ExprKind::Unary { op, .. } => match op {
             UnOp::Typeof => KnownPrimitive::String,
             UnOp::Void => KnownPrimitive::Undefined,
-            UnOp::Plus
-            | UnOp::Minus
-            | UnOp::BitNot
-            | UnOp::Not
-            | UnOp::Delete
-            | UnOp::PreInc
-            | UnOp::PreDec
-            | UnOp::PostInc
-            | UnOp::PostDec => KnownPrimitive::Other,
+            _ => KnownPrimitive::Other,
         },
         ExprKind::Binary { op, left, right } => find_binary_primitive(file, op, left, right),
         ExprKind::Assign {
@@ -262,27 +251,7 @@ fn find_binary_primitive(
             let left = find_known_primitive(file, left);
             left.coalesce(find_known_primitive(file, right))
         }
-        BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor
-        | BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::EqEq
-        | BinOp::NotEq
-        | BinOp::EqEqEq
-        | BinOp::NotEqEq
-        | BinOp::In
-        | BinOp::Instanceof => KnownPrimitive::Other,
+        _ => KnownPrimitive::Other,
     }
 }
 

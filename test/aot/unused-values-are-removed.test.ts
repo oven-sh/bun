@@ -5,9 +5,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { buildEnvironment, compileCommand } from "./harness/flags";
+import { compileCommand } from "./harness/flags";
+import { describe, printIR, test, writesProgramInto } from "./harness/printed-ir";
 import { built, slot, spawned } from "./run-programs";
-import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
@@ -104,14 +104,10 @@ async function compile(statement: string): Promise<string[]> {
   using dir = tempDir("aot-unused-values", { "main.js": `${statement}\nconsole.log(1);\n` });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
-  const build = await spawned([bunExe(), ...compileCommand, "main.js", "--outfile", executable], folder, {
-    ...env,
-    [buildEnvironment.dumpsIR]: "Selected",
-    [buildEnvironment.functionToDump]: "f0",
-  });
-  built(build);
+  const command = [bunExe(), ...compileCommand, writesProgramInto(folder), "main.js", "--outfile", executable];
+  built(await spawned(command, folder, env));
   expect(await spawned([executable], folder, env)).toEqual({ stdout: "1\n", stderr: "", exitCode: 0, signal: null });
-  return operationsOfModuleBody(build.stdout + build.stderr);
+  return operationsOfModuleBody(await printIR(folder, { until: "Select", functionName: "f0" }));
 }
 
 describe.concurrent("nothing is left of", () => {

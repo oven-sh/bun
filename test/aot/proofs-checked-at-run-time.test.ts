@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as spawned } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -41,12 +42,6 @@ console.log(values.map(value => twice(value as number)).join());
     stop: /^AOT validation: AssumedType f\d+ v\d+ string$/m,
   },
 };
-
-async function spawned(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function buildAndRun(cwd: string, name: string, flags: string[]) {
   const built = await spawned(

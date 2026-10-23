@@ -3,6 +3,7 @@ import { beforeAll, describe, test } from "../supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "../harness/run";
 
 const shipsNoBuildForThisPlatform = process.platform === "win32" && process.arch === "arm64" ? ["argon2"] : [];
 
@@ -22,14 +23,13 @@ function testEachProgram(
     .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("fake_") && !file.startsWith("lib_"))
     .map(file => file.slice(0, -".ts".length))
     .sort()
-    .filter((program, index) => (form === "in place" ? index % parts === part : program in given));
+    .filter((program, index) => (form === "in place" ? index % parts === part - 1 : program in given));
 
   const dir = tempDir(`aot-backend-${folder}`, {});
   const project = join(String(dir), "project");
 
   async function run(cmd: string[], env: Record<string, string | undefined> = bunEnv) {
-    await using ran = Bun.spawn({ cmd, cwd: project, env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+    const { stdout, stderr, exitCode } = await runCommand(cmd, project, env);
     return { stdout, stderr, exitCode };
   }
 
@@ -125,4 +125,4 @@ export const testPrograms = (part: number, parts: number, form: "in place" | "on
     form,
   );
 
-export const testMorePrograms = () => testEachProgram("more-programs", 0, 1, {}, {}, [["node_modules/prisma/build/index.js", "generate", "--schema", "prisma/schema.prisma"]]);
+export const testMorePrograms = () => testEachProgram("more-programs", 1, 1, {}, {}, [["node_modules/prisma/build/index.js", "generate", "--schema", "prisma/schema.prisma"]]);

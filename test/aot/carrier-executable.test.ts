@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { chmodSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { run as spawn } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -11,12 +12,6 @@ const files = {
   }),
   "not-a-bun": "#!/bin/sh\necho no\n",
 };
-
-async function spawn(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 function build(cwd: string, carrier: string) {
   return spawn(

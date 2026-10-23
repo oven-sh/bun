@@ -1,0 +1,27 @@
+# process.on("exit", listener)
+# The functions of the channel hang on `on` for the events "message" and "disconnect". The call spells its event out, and it is neither, so parseHandle is not entered (runtimefunction 65559)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="on"
+    v2 = String string="exit"
+    v3 = NewClosure function=f2
+    v4 = Call v1, v0, v2, v3
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f2 name="listener" results=[{type=anything}] {
+  b0():
+    Return
+}

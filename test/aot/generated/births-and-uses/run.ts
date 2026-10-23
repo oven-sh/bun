@@ -13,7 +13,9 @@ const tsconfig = JSON.stringify({
   compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, typeRoots: [join(import.meta.dir, "..", "..", "..", "..", "packages")], types: ["bun-types"] },
 });
 
-export function birthsAndUses(title: string, programs: { name: string; file: string; text: string }[], part = 1, parts = 1) {
+/** The pairs are what `programs` of ./<from>.ts returns. */
+export function birthsAndUses(title: string, from: string, isTyped?: boolean, part = 1, parts = 1) {
+  const programs: { name: string; file: string; text: string }[] = require(`./${from}`).programs(isTyped);
   const differs: Record<string, string> = (known as Record<string, Record<string, string>>)[title] ?? {};
   const wasWrong = new Set((onceWrong as Record<string, string[]>)[title]);
   generated(

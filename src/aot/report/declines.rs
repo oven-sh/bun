@@ -86,13 +86,7 @@ fn reason_of(record: &DeclineRecord) -> Reason {
             loop_decline_sentence(reason)
         }
         DeclineKind::ResultNodeInterpreted => interpreted_cause_sentence(reason),
-        DeclineKind::Unknown
-        | DeclineKind::HotCallNotInlined
-        | DeclineKind::StringBuildersNotJoined
-        | DeclineKind::AllocationNotSunk
-        | DeclineKind::IterationNotExpandedByClass
-        | DeclineKind::StretchNotGuarded
-        | DeclineKind::GenericVersionNotCreated => None,
+        _ => None,
     };
     sentence.map_or(Reason::Absent, Reason::Sentence)
 }
@@ -127,18 +121,7 @@ fn write_count_clause(out: &mut Vec<u8>, record: &DeclineRecord) {
         }
         DeclineKind::StringBuilderNotCreated => write_counted(out, count, "append", "appends"),
         DeclineKind::GenericVersionNotCreated => write_counted(out, count, "check", "checks"),
-        DeclineKind::Unknown
-        | DeclineKind::HotCallNotResolved
-        | DeclineKind::GeneratorLoopNotFused
-        | DeclineKind::ArrayChainNotFused
-        | DeclineKind::StringBuildersNotJoined
-        | DeclineKind::AllocationNotSunk
-        | DeclineKind::TypedResultNotSelected
-        | DeclineKind::IterationNotExpandedByClass
-        | DeclineKind::LoopNotVersioned
-        | DeclineKind::LoopBoundNotClamped
-        | DeclineKind::StretchNotGuarded
-        | DeclineKind::ResultNodeInterpreted => {
+        _ => {
             out.extend_from_slice(b"count ");
             write_count(out, count);
         }

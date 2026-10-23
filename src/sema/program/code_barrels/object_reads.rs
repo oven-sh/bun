@@ -423,15 +423,7 @@ impl Summary<'_, '_> {
                 let (object, parent) = self.with_type_syntax(call);
                 self.find_reads_of_object(object, parent, true)
             }
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::GetBuiltinModule(_) => None,
+            _ => None,
         }
     }
 

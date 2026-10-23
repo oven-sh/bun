@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const main = `
@@ -44,12 +45,6 @@ load {"x":{"x":1},"y":[2]}: TypeError at ["x"],["y"]
 loadAndSum {"x":{"x":1},"y":[2]}: TypeError at ["x"],["y"]
 check {"x":{"x":1},"y":[2]}: TypeError at ["x"],["y"]
 `;
-
-async function run(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const packages: Record<string, { files: Record<string, string>; warns: boolean }> = {
   "without type errors": { files: { "index.ts": index }, warns: false },

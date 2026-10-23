@@ -1,0 +1,22 @@
+# process[handedOver()] = helper
+# The key may be one of the names that native code looks up on `process`
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = NewClosure function=f1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="handedOver" [isFreeName]
+    v4 = Call v3
+    ElemSet v0, v4, v1 mode=Strict
+    Return
+}
+function f1 name="helper" results=[{type=anything}] {
+  b0():
+    Return
+}

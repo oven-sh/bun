@@ -11,11 +11,6 @@ enum Load {
 
 fn classify(kind: ImportSiteKind) -> Load {
     match kind {
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_) => Load::AheadOfTheBody,
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
         | ImportSiteKind::ImportMetaRequire(_) => Load::AtACall,
@@ -23,6 +18,7 @@ fn classify(kind: ImportSiteKind) -> Load {
         | ImportSiteKind::RequireResolve(_)
         | ImportSiteKind::ImportMetaResolve(_)
         | ImportSiteKind::GetBuiltinModule(_) => Load::NotInTime,
+        _ => Load::AheadOfTheBody,
     }
 }
 
@@ -54,10 +50,7 @@ fn collect_loads(files: &Files<'_>) -> Option<Loads> {
                 CodeAnswer::File(ref loaded) => core::slice::from_ref(loaded),
                 CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => files,
                 CodeAnswer::Computed(ComputedTargets::All { .. }) => return None,
-                CodeAnswer::HostModule(_)
-                | CodeAnswer::External { .. }
-                | CodeAnswer::Erased
-                | CodeAnswer::NotFound(_) => &[][..],
+                _ => &[][..],
             };
             for &loaded in loaded {
                 loads.targets[file.idx()].push((loaded, load));

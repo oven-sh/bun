@@ -2,18 +2,16 @@
 // 17 to 21 MB under --trim), because one row of the table of built-ins said more than the host does.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 async function report(text: string) {
   using dir = tempDirWithBunTypes("aot-trim-report-first-pages", { "main.ts": text });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.ts"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.ts"],
+    String(dir),
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   const prefix = "aot: trim: ";
   const lines = stderr
     .split("\n")

@@ -89,9 +89,10 @@ const modulesWithNativeBindings: [specifier: string, remove: string, call: strin
   ["node:crypto", "node-crypto", `imported.createHash("sha256")`],
   ["node:worker_threads", "worker", `new imported.Worker("./none.js")`],
   ["node:dns", "dns", `new imported.Resolver()`],
+  ["node:dns", "dns", `imported.lookup("localhost", () => {})`],
   ["node:dgram", "udp", ""],
-  ["node:net", "sockets", ""],
-  ["node:tls", "sockets", ""],
+  ["node:net", "sockets", `imported.connect(1)`],
+  ["node:tls", "sockets", `imported.connect(1)`],
   ["node:test", "test", ""],
 ];
 
@@ -141,7 +142,7 @@ describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
   );
 
   test.each(modulesWithNativeBindings)(
-    "importing %s works without %s",
+    "importing %s works without %s, and %s throws",
     async (specifier, remove, call) => {
       using dir = tempDirForAotBuilds("compile-trim-remove", {
         "build.mjs": buildScript,

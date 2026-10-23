@@ -210,17 +210,7 @@ impl<'h> Resolver<'h> {
             ExportsStatus::Inexact => self
                 .load_as_file_or_directory(&target, search)
                 .ok_or(CodeFailure::ModuleNotFound),
-            ExportsStatus::Undefined
-            | ExportsStatus::UndefinedNoConditionsMatch
-            | ExportsStatus::Null
-            | ExportsStatus::InvalidModuleSpecifier
-            | ExportsStatus::InvalidPackageConfiguration
-            | ExportsStatus::InvalidPackageTarget
-            | ExportsStatus::PackagePathNotExported
-            | ExportsStatus::UnsupportedDirectoryImport
-            | ExportsStatus::PackagePathDisabled
-            | ExportsStatus::PackageImportNotDefined
-            | ExportsStatus::PackageResolve => Err(resolution.status.failure()),
+            _ => Err(resolution.status.failure()),
         }
     }
 
@@ -253,10 +243,8 @@ impl<'h> Resolver<'h> {
 
 fn is_runtime_module(claim: &HostResolution) -> bool {
     match claim {
-        HostResolution::Module(_)
-        | HostResolution::ModuleSource { .. }
-        | HostResolution::External { .. } => true,
         HostResolution::Unclaimed | HostResolution::Path(_) | HostResolution::Erased => false,
+        _ => true,
     }
 }
 

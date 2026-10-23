@@ -877,28 +877,6 @@ describeLink("what the executable exports", () => {
   });
 });
 
-describeLink("libraries", () => {
-  const library = { name: "toy", version: "1", inputs: ["libtoy.a"], crates: [] };
-  const program = { objects: objectsWithoutTable, archived: ["feature_code"], libraries: [library] };
-
-  test.skipIf(archiver === null).each([
-    ["native code", {}],
-    ["bitcode", { feature_code: ["-flto=thin"] }],
-  ])("are removable with the one feature that reaches them: %s", async (_, compileFlags) => {
-    using dir = tempDir("trim-elf-libraries", { ...sources, "main.c": `${start} ${mainReturning("0")}` });
-    const { table } = await linked(String(dir), { ...program, compileFlags });
-    const set = table.sets.findIndex(members => members.join() === String(indexOf(Extra)));
-    expect(set).toBeGreaterThanOrEqual(0);
-    expect(table.libraries).toEqual([{ name: "toy", version: "1", hasRetainedBytes: false, sets: [set] }]);
-  });
-
-  test.skipIf(archiver === null)("have retained bytes when retained code calls them", async () => {
-    using dir = tempDir("trim-elf-libraries", { ...sources, "main.c": mainCallingFeatureCode5 });
-    const { table } = await linked(String(dir), program);
-    expect(table.libraries.map(({ hasRetainedBytes }) => hasRetainedBytes)).toEqual([true]);
-  });
-});
-
 describeLink("ICU's data package", () => {
   const items: [path: string, size: number][] = [
     ["icudt99l/af.res", 48],

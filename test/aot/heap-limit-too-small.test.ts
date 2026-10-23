@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // The first 16 MB of the range of address space that holds the objects of an ahead-of-time compiled program are left unused. A range that is
@@ -10,14 +11,10 @@ test.concurrent.each(["16", "1"])(
   "a compiled program whose range of address space for objects is %s MB says that it is too small",
   async size => {
     using folder = tempDir("aot-heap-limit-too-small", { "program.ts": `console.log("ran");\n` });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"],
-      cwd: String(folder),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: buildErrors, exitCode: buildExitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"],
+      String(folder),
+    );
     expect({ stderr: buildErrors, exitCode: buildExitCode }).toEqual({
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,

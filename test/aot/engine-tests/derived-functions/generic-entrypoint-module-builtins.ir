@@ -1,0 +1,19 @@
+# A parameter that flow narrowed to a built-in of a module: no test finds that object, and the entrypoint needs none. It tests nothing and takes every narrowed type from flow, a built-in of the realm and a primitive too
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="narrowed" flags=[HasThis] thisType={type=builtin(ModuleObjectExports)} parameters=[{type=builtin(ModuleRequire)}, {type=builtin(ModuleObject)}, {type=undefined|builtin(ImportMeta)}, {type=builtin(GlobalThis)}, {type=string}] results=[{type=anything}] {
+  b0(v0: builtin(ModuleObjectExports), v1: builtin(ModuleRequire), v2: builtin(ModuleObject), v3: undefined|builtin(ImportMeta), v4: builtin(GlobalThis), v5: string):
+    Return
+}
+# CHECK: name="narrowed" module=m0 role=GenericEntrypoint
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[require]]: anything, [[module]]: anything, [[meta]]: anything, [[global]]: anything, [[text]]: anything):
+# CHECK-NEXT: [[thisProven]]: builtin(ModuleObjectExports) = AssumeType [[this]] castType=builtin(ModuleObjectExports)
+# CHECK-NEXT: [[requireProven]]: builtin(ModuleRequire) = AssumeType [[require]] castType=builtin(ModuleRequire)
+# CHECK-NEXT: [[moduleProven]]: builtin(ModuleObject) = AssumeType [[module]] castType=builtin(ModuleObject)
+# CHECK-NEXT: [[metaProven]]: undefined|builtin(ImportMeta) = AssumeType [[meta]] castType=undefined|builtin(ImportMeta)
+# CHECK-NEXT: [[globalProven]]: builtin(GlobalThis) = AssumeType [[global]] castType=builtin(GlobalThis)
+# CHECK-NEXT: [[string]]: string = AssumeType [[text]] castType=string
+# CHECK-NEXT: = CallDirect [[thisProven]], [[requireProven]], [[moduleProven]], [[metaProven]], [[globalProven]], [[string]] function=f0

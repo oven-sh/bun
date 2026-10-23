@@ -296,20 +296,6 @@ fn check_jsdoc_side_tables(checker: RangeChecker<'_, '_>) -> CheckResult {
 
 fn check_expr(checker: RangeChecker<'_, '_>, expr: &Expr) -> CheckResult {
     match expr.kind {
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => Ok(()),
         ExprKind::Number(index) => checker.check_number(index),
         ExprKind::Template { exprs } => checker.check_template(exprs),
         ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
@@ -343,17 +329,12 @@ fn check_expr(checker: RangeChecker<'_, '_>, expr: &Expr) -> CheckResult {
         }
         ExprKind::Jsx(jsx) => checker.check_id(jsx),
         ExprKind::ImportCall { args } => checker.check_list(args),
+        _ => Ok(()),
     }
 }
 
 fn check_stmt(checker: RangeChecker<'_, '_>, stmt: &Stmt) -> CheckResult {
     match stmt.kind {
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::ExportStar { .. }
-        | StmtKind::ExportAsNamespace(_) => Ok(()),
         StmtKind::Expr(expr)
         | StmtKind::Throw(expr)
         | StmtKind::ExportDefault(expr)
@@ -417,17 +398,12 @@ fn check_stmt(checker: RangeChecker<'_, '_>, stmt: &Stmt) -> CheckResult {
         StmtKind::Import(import) => checker.check_id(import),
         StmtKind::ImportEquals(import) => checker.check_id(import),
         StmtKind::ExportNamed(export) => checker.check_id(export),
+        _ => Ok(()),
     }
 }
 
 fn check_type(checker: RangeChecker<'_, '_>, ty: &TypeNode) -> CheckResult {
     match ty.kind {
-        TypeNodeKind::Error
-        | TypeNodeKind::Keyword(_)
-        | TypeNodeKind::StringLit(_)
-        | TypeNodeKind::BigIntLit { .. }
-        | TypeNodeKind::BoolLit(_)
-        | TypeNodeKind::UniqueSymbol => Ok(()),
         TypeNodeKind::Heritage { expr, args } => {
             checker.check_id(expr)?;
             checker.check_list(args)
@@ -467,6 +443,7 @@ fn check_type(checker: RangeChecker<'_, '_>, ty: &TypeNode) -> CheckResult {
             checker.check_list(args)?;
             checker.check_id(expr)
         }
+        _ => Ok(()),
     }
 }
 

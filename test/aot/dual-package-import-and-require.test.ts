@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // One file that both imports and requires a package whose "exports" give `import` and `require` a different file. Each gets its own.
@@ -79,8 +80,7 @@ console.log(inc(), namespace.inc(), namespace.inc(), state.kind, state.count, na
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
   const run = async (cmd: string[], cwd: string, env: Record<string, string> = {}) => {
-    await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, ...env });
     return { stdout, stderr, exitCode };
   };
   test("bun run --aot prints what bun run prints", async () => {

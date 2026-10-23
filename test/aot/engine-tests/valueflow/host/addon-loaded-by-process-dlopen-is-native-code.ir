@@ -1,0 +1,63 @@
+# class Kept { constructor(v) { this.a = v } }  new Kept(1).a; plain = { x: 1 }; plain.x; globalThis.hook = hook; function neverHandedOut() {}
+# process.dlopen({ exports: {} }, addonPath)
+# An N-API addon is native code and no text that nobody has seen. It holds, calls and changes what it is handed: the module object and what that leads to lose what an escaped object loses.
+# It reads and calls globals by name: the function that the program has stored on the global object is entered. It defines no function of JavaScript, so no unseen code runs, no module is loaded by a name
+# nobody knows, the members of the global object stay what they are, and what it is not handed stays in the program: the class, the plain object and the other function.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Kept" {{*}}initialization=SetAtCreation{{*}}fieldCreation=OnlyAtConstruction
+# CHECK: layout L1 name="Module" {{*}}cause=ReachesUnknownJavaScript
+# CHECK: layout L2 name="Exports" {{*}}cause=ReachesUnknownJavaScript
+# CHECK: layout L3 name="Plain" {{*}}occupancy=AlwaysFilled{{*}}keys=NeverEnumerated
+# RUN(UNSEEN): valueflow-solve unseen unreached
+# UNSEEN-NOT: unreached f2
+# UNSEEN: unreached f3
+# UNSEEN-NOT: unseen RunsUnseenCode
+# UNSEEN: unseen-code no
+# UNSEEN: modules-by-name no
+# RUN(RESULTS): valueflow-results
+# RESULTS-NOT: unseen-code
+# RESULTS-NOT: builtin-location GlobalThis."Error" Unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Kept" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Module" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Exports" fields=[]
+layout L3 name="Plain" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Integer integer=1
+    v4 = Construct v2, -, v3
+    v5 = PropGet v4 key="a"
+    v6 = NewObject -, v3 layout=L3 fields=[0]
+    v7 = PropGet v6 key="x"
+    v8 = Builtin builtin=GlobalThis
+    v9 = NewClosure function=f2
+    PropSet v8, v9 key="hook" mode=Strict
+    v11 = NewClosure function=f3
+    v12 = NewObject layout=L2 fields=[]
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = PropGet v8 key="addonPath" [isFreeName]
+    v15 = Builtin builtin=Process
+    v16 = PropGet v15 key="dlopen"
+    v17 = Call v16, v15, v13, v14 calleeKey="dlopen"
+    Return
+}
+function f1 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f2 name="hook" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="neverHandedOut" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

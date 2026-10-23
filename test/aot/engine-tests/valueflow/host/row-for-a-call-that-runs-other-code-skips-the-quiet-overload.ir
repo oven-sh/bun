@@ -1,0 +1,26 @@
+# setTimeout(f, 10) takes the overload for a delay that fits a timer, which warns about nothing: the warning printer is not entered (runtimefunction 65572)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65572 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SetTimeout
+    v1 = Undefined
+    v2 = NewClosure function=f2
+    v3 = Integer integer=10
+    v4 = Call v0, v1, v2, v3
+    Return v4
+}
+function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65572 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f2 name="later" results=[{type=anything}] {
+  b0():
+    Return
+}

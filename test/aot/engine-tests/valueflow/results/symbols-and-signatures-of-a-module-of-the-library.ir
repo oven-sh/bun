@@ -1,0 +1,95 @@
+# The library is followed like the program. `const kState = Symbol("kState")` in a module of the library is created once and stored before every read, so the variable holds that one symbol and nothing else:
+# `holder[kState]` becomes an access by name, and the objects that the symbol is stored into get a field for it. A variable that the body stores behind a call of its reader keeps its dead zone.
+# A function of the library whose callers are all known gets the types of what they pass and of what it returns. Native code enters a function that stands behind a built-in, so the parameters of that one keep their types
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Holder" fields=[{key=symbol("kState")@m1:100
+# CHECK: variable g0 name="kState" module=m1 declared={type=symbol("kState")@m1:100} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+# CHECK: variable g3 name="late" module=m1 declared={type=1|absent} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+# RUN(RESULTS): valueflow-results
+# RESULTS: function f1 executions=AtMostOnce cause=ReachesNativeCode
+# RESULTS: function f2 callers=AllKnown
+# RESULTS: function f3 callers=AllKnown
+# RESULTS: function f5 cause=ReachesNativeCode
+# RUN(NAMED): pipeline FoldConstants
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=47 function=f5
+layout L0 name="Holder"
+variable g0 name="kState" module=m1 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="setState" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="getState" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="late" module=m1 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Integer integer=1
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v0, v1
+    v4 = GetModuleVariable variable=g2
+    v5 = Call v4, -, v0
+    v6 = Builtin builtin=Array
+    v7 = Builtin builtin=ArrayFrom
+    v8 = Call v7, v6, v1
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kState"
+    v2 = Call v0, -, v1 @100
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f2
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f3
+    PutModuleVariable v6 variable=g2
+    v8 = NewClosure function=f4
+    v9 = Call v8
+    v10 = Integer integer=1
+    PutModuleVariable v10 variable=g3
+    Return
+}
+# CHECK-LABEL: function f1 name="readline"
+# CHECK: = Call v0, -, v1
+# CHECK-NEXT: [[created]]: symbol("kState")@m1:100 = KeyConstant key=symbol("kState")@m1:100
+# CHECK-NEXT: PutModuleVariable [[created]] variable=g0
+function f2 name="setState" module=m1 role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="kState"
+    ElemSet v0, v3, v1 mode=Strict
+    Return v1
+}
+# CHECK-LABEL: function f2 name="setState"
+# CHECK: parameters=[{type=L0}, {type=1}] results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# CHECK: : symbol("kState")@m1:100 = GetModuleVariable variable=g0
+# NAMED-LABEL: function f2 name="setState"
+# NAMED-NOT: ElemSet
+# NAMED: PropSet {{*}}key=symbol("kState")@m1:100
+function f3 name="getState" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kState"
+    v3 = ElemGet v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="getState"
+# CHECK: parameters=[{type=L0}]
+# CHECK: : symbol("kState")@m1:100 = GetModuleVariable variable=g0
+# NAMED-LABEL: function f3 name="getState"
+# NAMED-NOT: ElemGet
+# NAMED: = PropGet {{*}}key=symbol("kState")@m1:100
+function f4 name="readsLate" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = CheckInitialized v0 name="late"
+    Return v1
+}
+function f5 name="from" module=m2 role=Library flags=[HasThis] enclosingRuntimeFunction=47 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v1
+}
+# CHECK-LABEL: function f5 name="from"
+# CHECK: parameters=[{type=anything}, {type=anything}]

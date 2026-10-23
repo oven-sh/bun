@@ -1,0 +1,28 @@
+# process.send("careful"), where parseHandle hands its operand to Array.prototype.forEach as the callback
+# parseHandle (runtimefunction 65559) stands behind no built-in: no record says what becomes of its operand. forEach calls a callback nobody knows: code that nobody compiles runs.
+# In the code behind a described built-in: built-in-applied-in-the-code-behind-a-described-built-in-calls-no-unknown-code.ir
+# LIBRARY: own
+# The call of process.send may raise the flag by itself, so the test asks for every edge into the flags.
+# RUN: valueflow-why timeline
+# CHECK: flag h6
+# CHECK: by CallGroup
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="send"
+    v2 = String string="careful"
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray v1 contents=anything
+    v3 = Builtin builtin=ArrayPrototypeForEach
+    v4 = Call v3, v2, v0
+    Return v4
+}

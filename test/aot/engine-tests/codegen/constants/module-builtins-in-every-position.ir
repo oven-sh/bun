@@ -1,0 +1,123 @@
+# import.meta in a variable, a field and the parameter of two functions called by value, and exports, require and module in the fields of an object that a closure captures: flow narrows every one of these positions to a built-in of a module, and the build succeeds
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: compile
+# RUN(TYPES): pipeline ApplyFlowResults
+# CHECK: image not empty
+# TYPES: layout L0 name="Holder" {{*}}key="meta" declared={type=builtin(ImportMeta)
+# TYPES: layout L1 name="Wrapper" {{*}}key="exports" declared={type=builtin(ModuleObjectExports)} {{*}}key="require" declared={type=builtin(ModuleRequire)} {{*}}key="module" declared={type=builtin(ModuleObject)}
+# TYPES: variable g0 name="meta" {{*}}builtin(ImportMeta)
+# TYPES: name="first" {{*}}parameters=[{type=builtin(ImportMeta)
+# TYPES: name="second" {{*}}parameters=[{type=builtin(ImportMeta)
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g4
+entry module=m0
+layout L0 name="Holder" fields=[{key="meta" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Wrapper" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}, {key="require" declared={type=anything} flags=[IsRequired]}, {key="module" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="holder" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="callback" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="received" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g1
+    v7 = PropGet v0 key="input" [isFreeName]
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    v9 = NewClosure function=f2
+    PutModuleVariable v9 variable=g2
+    Jump -> next b3()
+  b2():
+    v11 = NewClosure function=f3
+    PutModuleVariable v11 variable=g2
+    Jump -> next b3()
+  b3():
+    v13 = GetModuleVariable variable=g2
+    v14 = Call v13, -, v2
+    v15 = Integer integer=1
+    v16 = StrictEq v14, v15
+    v17 = String string="the first of two callbacks was called by value: "
+    v18 = Add v17, v16
+    v19 = Call v1, -, v18
+    v20 = GetModuleVariable variable=g3
+    v21 = StrictEq v20, v2
+    v22 = String string="its parameter was import.meta: "
+    v23 = Add v22, v21
+    v24 = Call v1, -, v23
+    v25 = GetModuleVariable variable=g1
+    v26 = PropGet v25 key="meta"
+    v27 = StrictEq v26, v2
+    v28 = String string="the field holds import.meta: "
+    v29 = Add v28, v27
+    v30 = Call v1, -, v29
+    v31 = NewClosure function=f4
+    v32 = PropGet v0 key="register" [isFreeName]
+    v33 = Call v32, -, v31
+    v34 = GetModuleVariable variable=g4
+    v35 = Call v34
+    v36 = String string="object function object function"
+    v37 = StrictEq v35, v36
+    v38 = String string="typeof exports, require, module, module.exports read from fields: "
+    v39 = Add v38, v37
+    v40 = Call v1, -, v39
+    Return
+}
+function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleObjectExports module=m1
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m1
+    v2 = ModuleBuiltin builtin=ModuleObject module=m1
+    v3 = NewObject -, v0, v1, v2 layout=L1 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    v5 = NewClosure v4 function=f5
+    PutModuleVariable v5 variable=g4
+    Return
+}
+function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g3
+    v2 = Integer integer=1
+    Return v2
+}
+function f3 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g3
+    v2 = Integer integer=2
+    Return v2
+}
+function f4 name="comparesField" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="meta"
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    v3 = StrictEq v1, v2
+    Return v3
+}
+function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="exports"
+    v2 = PropGet v0 key="require"
+    v3 = PropGet v0 key="module"
+    v4 = TypeOf v1
+    v5 = TypeOf v2
+    v6 = TypeOf v3
+    v7 = String string=" "
+    v8 = Add v4, v7
+    v9 = Add v8, v5
+    v10 = Add v9, v7
+    v11 = Add v10, v6
+    v12 = Add v11, v7
+    v13 = PropGet v3 key="exports"
+    v14 = TypeOf v13
+    v15 = Add v12, v14
+    Return v15
+}

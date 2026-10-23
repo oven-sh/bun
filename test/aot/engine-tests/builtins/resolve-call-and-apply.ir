@@ -1,0 +1,194 @@
+# A built-in method called with an explicit this resolves by the type of this, and call and apply of a built-in function resolve as methods of that function, which ResolveCalls forwards
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(BOTH): pass ResolveBuiltins ResolveCalls ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callOnBuiltin" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = PropGet v2 key="call"
+    v4 = AssumeType v3 castType=builtin(FunctionPrototypeCall)
+    v5 = Call v4, v2, v0, v1 calleeKey="call" callees=[builtin(FunctionPrototypeCall)]
+    Return v5
+}
+# CHECK-LABEL: function f0 name="callOnBuiltin"
+# CHECK-NOT: TypeTest
+# CHECK: v5: {{*}} = CallBuiltin v2, v0, v1 overload=FunctionPrototypeCall/0
+# BOTH-LABEL: function f0 name="callOnBuiltin"
+# BOTH-NOT: TypeTest
+# BOTH: v5: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+
+function f1 name="applyOnBuiltin" parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = Builtin builtin=MathMax
+    v2 = Undefined
+    v3 = PropGet v1 key="apply"
+    v4 = AssumeType v3 castType=builtin(FunctionPrototypeApply)
+    v5 = Call v4, v1, v2, v0 calleeKey="apply" callees=[builtin(FunctionPrototypeApply)]
+    Return v5
+}
+# CHECK-LABEL: function f1 name="applyOnBuiltin"
+# CHECK-NOT: TypeTest
+# CHECK: v5: {{*}} = CallBuiltin v1, v2, v0 overload=FunctionPrototypeApply/0
+# BOTH-LABEL: function f1 name="applyOnBuiltin"
+# BOTH-NOT: overload=FunctionPrototypeApply
+# BOTH: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# BOTH: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+# BOTH: frequency=Unlikely:
+# BOTH-NEXT: anything = CallList v1, v2, v0
+
+# Of a constructor of the host that does not stand on the global object the table does not say that it keeps `call`.
+function f2 name="calleeNotProven" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=BunGlob
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call" callees=[builtin(FunctionPrototypeCall), ..]
+    Return v4
+}
+# CHECK-LABEL: function f2 name="calleeNotProven"
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: anything = Call v3, v2, v0, v1 calleeKey="call"
+
+function f3 name="methodWithThis" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="methodWithThis"
+# CHECK: v3: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+
+function f4 name="methodWithPristineThis" parameters=[{type=RegExp<pristine[Names]>}, {type=string}] results=[{type=anything}] {
+  b0(v0: RegExp<pristine[Names]>, v1: string):
+    v2 = Builtin builtin=RegExpPrototypeTest
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="methodWithPristineThis"
+# CHECK: v3: boolean = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
+
+function f5 name="methodWithUnprovenThis" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+  b0(v0: RegExp, v1: string):
+    v2 = Builtin builtin=RegExpPrototypeTest
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f5 name="methodWithUnprovenThis"
+# CHECK-NOT: IsPristine
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v3: boolean = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0 builtinCallForm=AnyReceiver
+
+function f6 name="methodTakingAnyThis" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="methodTakingAnyThis"
+# CHECK: v3: boolean = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+
+function f7 name="methodWithUnknownThis" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f7 name="methodWithUnknownThis"
+# CHECK: v3: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0 builtinCallForm=AnyReceiver
+
+function f8 name="methodWithNullableThis" parameters=[{type=undefined|string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: undefined|string, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# The call is direct, and waits so for the test of its receiver, which is expected to be there: resolve-receiver-expected-to-be-present.ir
+# CHECK-LABEL: function f8 name="methodWithNullableThis"
+# CHECK-NOT: RequireObjectCoercible
+# CHECK: v3: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0 builtinCallForm=AnyReceiver
+
+function f9 name="methodWithConvertedThis" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f9 name="methodWithConvertedThis"
+# CHECK: [[text]]: string = ToString v0
+# CHECK-NEXT: v3: string = CallBuiltin [[text]], v1 overload=StringPrototypeSlice/0
+
+function f10 name="methodOnPrototypeObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=MapPrototype
+    v2 = PropGet v1 key="get"
+    v3 = Call v2, v1, v0 calleeKey="get"
+    Return v3
+}
+# CHECK-LABEL: function f10 name="methodOnPrototypeObject"
+# CHECK: v2: builtin(MapPrototypeGet) = Builtin builtin=MapPrototypeGet
+# CHECK-NEXT: v3: anything = CallBuiltin v1, v0 overload=MapPrototypeGet/0 builtinCallForm=AnyReceiver
+
+function f11 name="argumentConvertedBeforeThisIsRead" parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v4 = Call v3, v0, v1
+    v5 = Call v3, v2, v1
+    Return v5
+}
+# CHECK-LABEL: function f11 name="argumentConvertedBeforeThisIsRead"
+# CHECK: [[firstKey]]: {{*}} = ToPropertyKey v1
+# CHECK-NEXT: v4: boolean = CallBuiltin v0, [[firstKey]] overload=ObjectPrototypeHasOwnProperty/0
+# CHECK-NEXT: [[secondKey]]: {{*}} = ToPropertyKey v1
+# CHECK-NEXT: v5: boolean = CallBuiltin v2, [[secondKey]] overload=ObjectPrototypeHasOwnProperty/0
+
+function f12 name="conversionUnderHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b2():
+    v2 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v3 = Call v2, v0, v1
+    Jump -> next b1()
+  b1():
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f12 name="conversionUnderHandler"
+# CHECK: b0(v0: anything, v1: anything) handler=b2():
+# CHECK: [[keyUnderHandler]]: {{*}} = ToPropertyKey v1
+# CHECK-NEXT: v3: boolean = CallBuiltin v0, [[keyUnderHandler]] overload=ObjectPrototypeHasOwnProperty/0
+# CHECK-NEXT: Jump -> next b1()
+
+function f13 name="surplusArgument" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: anything):
+    v3 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f13 name="surplusArgument"
+# CHECK: v4: boolean = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+
+# A native function of the engine never has a `call` of its own and keeps its prototype, so the member of Function.prototype is found without a word from flow.
+function f14 name="callOnNativeFunction" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call"
+    Return v4
+}
+# BOTH-LABEL: function f14 name="callOnNativeFunction"
+# BOTH-NOT: = Call
+# BOTH: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+
+# Nor has a built-in function that the library writes in JavaScript.
+function f15 name="callOnFunctionOfLibrary" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call"
+    Return v4
+}
+# BOTH-LABEL: function f15 name="callOnFunctionOfLibrary"
+# BOTH-NOT: = Call
+# BOTH: object = CallBuiltin v0, v1 overload=ArrayPrototypeMap/1 builtinCallForm=AnyReceiver

@@ -1,0 +1,172 @@
+# A member of a built-in object that only a write replaces, where nothing rules the write out, is taken for what the realm was created with behind a test of its location.
+# The failing side reads by name. The test holds until something may write a named property
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="functionOfNamespace" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="sign"
+    Return v1
+}
+# PLAN: function f0
+# PLAN-NEXT: stretch 0: test IsBuiltinLocationUnchanged member=MathSign before v1; uses v1;
+# CHECK-LABEL: function f0 name="functionOfNamespace"
+# CHECK: [[isUnchanged0]]: boolean{{*}} = IsBuiltinLocationUnchanged member=MathSign
+# CHECK-NEXT: Branch [[isUnchanged0]] -> taken
+# CHECK-NOT: PropGet
+# CHECK: v1: builtin(MathSign) = Builtin builtin=MathSign
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="sign"
+
+function f1 name="methodOfPrimitive" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="at"
+    Return v1
+}
+# PLAN: function f1
+# PLAN-NEXT: stretch 0: test IsBuiltinLocationUnchanged member=StringPrototypeAt before v1; uses v1;
+# CHECK-LABEL: function f1 name="methodOfPrimitive"
+# CHECK-NOT: IsPristine
+# CHECK: [[isUnchanged1]]: boolean{{*}} = IsBuiltinLocationUnchanged member=StringPrototypeAt
+# CHECK-NEXT: Branch [[isUnchanged1]] -> taken
+# CHECK-NOT: IsPristine
+# CHECK: v1: builtin(StringPrototypeAt) = Builtin builtin=StringPrototypeAt
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="at"
+
+function f2 name="readAndCall" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=Math
+    v2 = PropGet v1 key="sign"
+    v3 = Call v2, v1, v0 calleeKey="sign"
+    Return v3
+}
+# PLAN: function f2
+# PLAN-NEXT: stretch 0: test IsBuiltinLocationUnchanged member=MathSign before v2;
+# CHECK-LABEL: function f2 name="readAndCall"
+# CHECK: = IsBuiltinLocationUnchanged member=MathSign
+# CHECK: builtin(MathSign) = Builtin builtin=MathSign
+# CHECK: anything = PropGet v1 key="sign"
+
+function f3 name="expectedReceiver" parameters=[{type=builtin(Math) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(Math)):
+    v1 = PropGet v0 key="sign"
+    Return v1
+}
+# PLAN: function f3
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(Math) before v1; test IsBuiltinLocationUnchanged member=MathSign before v1; uses v1;
+# CHECK-LABEL: function f3 name="expectedReceiver"
+# CHECK: = TypeTest v0 testedType=builtin(Math)
+# CHECK: v1: builtin(MathSign) = Builtin builtin=MathSign
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="sign"
+# CHECK: = IsBuiltinLocationUnchanged member=MathSign
+
+function f4 name="usesOfOneLocationShareTheTest" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="sign"
+    v2 = PropGet v0 key="sign"
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# PLAN: function f4
+# PLAN-NEXT: stretch 0: test IsBuiltinLocationUnchanged member=MathSign before v1; uses v1 v2;
+# CHECK-LABEL: function f4 name="usesOfOneLocationShareTheTest"
+# CHECK-COUNT-1: = IsBuiltinLocationUnchanged
+# CHECK-NOT: = IsBuiltinLocationUnchanged
+
+function f5 name="eachLocationHasItsTest" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="sign"
+    v2 = PropGet v0 key="sinh"
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# PLAN: function f5
+# PLAN-NEXT: stretch 0: test IsBuiltinLocationUnchanged member=MathSign before v1; test IsBuiltinLocationUnchanged member=MathSinh before v2; uses v1 v2;
+# CHECK-LABEL: function f5 name="eachLocationHasItsTest"
+# CHECK: = IsBuiltinLocationUnchanged member=MathSign
+# CHECK: = IsBuiltinLocationUnchanged member=MathSinh
+
+function f6 name="unknownCodeEndsTheProof" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Math
+    v2 = PropGet v1 key="sign"
+    v3 = Call v0
+    v4 = PropGet v1 key="sign"
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f6 name="unknownCodeEndsTheProof"
+# CHECK: = IsBuiltinLocationUnchanged member=MathSign
+# CHECK: v2: builtin(MathSign) = Builtin builtin=MathSign
+# CHECK: v3: anything = Call v0
+# CHECK: = IsBuiltinLocationUnchanged member=MathSign
+
+function f7 name="lockedMemberNeedsNoTest" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="min"
+    Return v1
+}
+# PLAN: function f7
+# PLAN-NEXT: function f8
+# CHECK-LABEL: function f7 name="lockedMemberNeedsNoTest"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+
+function f8 name="memberThatChangesOnItsOwn" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="title"
+    Return v1
+}
+# PLAN-NEXT: function f9
+# CHECK-LABEL: function f8 name="memberThatChangesOnItsOwn"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(Process) = Builtin builtin=Process
+# CHECK-NEXT: v1: anything = PropGet v0 key="title"
+# CHECK-NEXT: Return v1
+
+# The engine reports an object that the host makes, and a primitive it does not: nobody would know it again. builtin-use-guarded-location-made-by-the-host.ir has the objects
+function f9 name="primitiveCreatedAtFirstRead" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="pid"
+    Return v1
+}
+# PLAN-NEXT: function f10
+# CHECK-LABEL: function f9 name="primitiveCreatedAtFirstRead"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(Process) = Builtin builtin=Process
+# CHECK-NEXT: v1: anything = PropGet v0 key="pid"
+# CHECK-NEXT: Return v1
+
+# No test of a class whose prototypes may change says that the lookup gets as far as the member
+function f10 name="methodOfInstanceThatIsNeverPristine" parameters=[{type=WeakRef}] results=[{type=anything}] {
+  b0(v0: WeakRef):
+    v1 = PropGet v0 key="deref"
+    Return v1
+}
+# PLAN-NEXT: function f11
+# CHECK-LABEL: function f10 name="methodOfInstanceThatIsNeverPristine"
+# CHECK-NEXT: b0(v0: WeakRef):
+# CHECK-NEXT: v1: anything = PropGet v0 key="deref"
+# CHECK-NEXT: Return v1
+
+# The store is itself the write
+function f11 name="storeToTheLocation" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Builtin builtin=Math
+    PropSet v1, v0 key="cbrt" mode=Strict
+    Return
+}
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f11 name="storeToTheLocation"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+# CHECK: PropSet v1, v0 key="cbrt"

@@ -1,19 +1,16 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function build(files: Record<string, string>) {
   const dir = tempDir("aot-no-tsconfig", files);
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [said, built] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: said, exitCode: built } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    String(dir),
+  );
   if (built) return { dir, said, built, stdout: "" };
   await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   return { dir, said, built, stdout: await ran.stdout.text() };

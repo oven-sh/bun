@@ -1,4 +1,0 @@
-export * from "./probe-a";
-export * from "./probe-b";
-export { probeValue } from "./probe-c";
-export const probeOwn = 1;

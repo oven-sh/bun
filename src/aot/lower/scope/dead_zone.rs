@@ -39,29 +39,7 @@ pub(super) fn has_dead_zone(file: &FileLowering<'_, '_, '_, '_>, binding: Bindin
 fn is_derived_constructor_scope(file: &FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> bool {
     match file.bound.scopes[scope.idx()].kind {
         ScopeKind::Fn(function) => function::is_derived_constructor(file, function),
-        ScopeKind::File
-        | ScopeKind::Module(_)
-        | ScopeKind::Block
-        | ScopeKind::Class(_)
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::FieldInitializer(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => false,
+        _ => false,
     }
 }
 

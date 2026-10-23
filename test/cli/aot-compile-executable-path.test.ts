@@ -2,6 +2,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { run as runCommand } from "../aot/harness/run";
 
 setDefaultTimeout(120_000);
 
@@ -9,8 +10,8 @@ const isUnsupportedHere = (stderr: string) =>
   /^error: (--aot |ahead-of-time compilation )(only supports|isn't available)/m.test(stderr);
 
 async function build(dir: string, executablePath: string) {
-  await using proc = Bun.spawn({
-    cmd: [
+  const { stderr, exitCode } = await runCommand(
+    [
       bunExe(),
       "build",
       "--compile",
@@ -21,12 +22,9 @@ async function build(dir: string, executablePath: string) {
       "--outfile",
       "out",
     ],
-    cwd: dir,
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    dir,
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   return { stderr, exitCode };
 }
 
@@ -43,15 +41,13 @@ test("--compile-executable-path with --aot takes another path to this Bun", asyn
   if (isUnsupportedHere(stderr)) return;
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
-  await using run = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, runStderr, runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  const { stdout, stderr: runStderr, exitCode: runExitCode } = await runCommand([join(String(dir), "out")]);
   expect({ stdout, stderr: runStderr }).toEqual({ stdout: "answer 2\n", stderr: "" });
   expect(runExitCode).toBe(0);
 });
 
 async function expectAnswer(dir: string) {
-  await using run = Bun.spawn({ cmd: [join(dir, "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([join(dir, "out")]);
   expect({ stdout, stderr }).toEqual({ stdout: "answer 2\n", stderr: "" });
   expect(exitCode).toBe(0);
 }

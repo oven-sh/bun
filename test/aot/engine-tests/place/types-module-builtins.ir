@@ -1,0 +1,77 @@
+# import.meta, module, exports and require are one object per module, so the record of a type that names one tests for an object or a function, wherever the type is kept: a variable, a field, a parameter of a function called by value. A built-in of the realm keeps the test for its cell
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables
+# RUN(META): tables types
+# RUN(MODULE): tables types
+# RUN(EXPORTS): tables types
+# RUN(REQUIRE): tables types
+# RUN(REALM): tables types
+# RUN(CELLS): tables constants
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+layout L0 name="Holder" fields=[{key="meta" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Wrapper" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}, {key="require" declared={type=anything} flags=[IsRequired]}, {key="module" declared={type=anything} flags=[IsRequired]}]
+# The tables name the type of a variable only where it is a static field of a class.
+layout L2 kind=Instance name="Kept" constructor=f4 staticFields=[{key="push" variable=g2}]
+variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="holder" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="push" module=m0 declared={type=anything} owner=L2
+variable g3 name="callback" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewClass v0 layout=L2
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g1
+    v7 = Builtin builtin=ArrayPrototypePush
+    PutModuleVariable v7 variable=g2
+    v9 = NewClosure function=f2
+    PutModuleVariable v9 variable=g3
+    v11 = NewClosure function=f3
+    PutModuleVariable v11 variable=g3
+    v13 = GetModuleVariable variable=g3
+    v14 = Call v13, -, v2
+    v15 = GetModuleVariable variable=g0
+    v16 = GetModuleVariable variable=g1
+    v17 = GetModuleVariable variable=g2
+    v18 = FinishClass v1 layout=L2
+    Return
+}
+function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleObjectExports module=m1
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m1
+    v2 = ModuleBuiltin builtin=ModuleObject module=m1
+    v3 = NewObject -, v0, v1, v2 layout=L1 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    Return
+}
+function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+# CHECK: types {{*}}
+# META: type builtin(ImportMeta) {{*}}primitives=0x0 tests=[IsObject()]
+# MODULE: type builtin(ModuleObject) {{*}}primitives=0x0 tests=[IsObject()]
+# EXPORTS: type builtin(ModuleObjectExports) {{*}}primitives=0x0 tests=[IsObject()]
+# REQUIRE: type builtin(ModuleRequire) {{*}}primitives=0x0 tests=[IsCallable()]
+# REALM: type builtin(ArrayPrototypePush) {{*}}primitives=0x0 tests=[IsBuiltinCell(ArrayPrototypePush)]
+# CELLS: cell=ArrayPrototypePush
+# CELLS-NOT: cell=ImportMeta
+# CELLS-NOT: cell=Module

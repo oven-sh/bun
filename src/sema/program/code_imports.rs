@@ -100,9 +100,7 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
                     host_module: Some(module),
                 }),
                 HostResolution::Module(module) => CodeResolution::HostModule(module),
-                HostResolution::Unclaimed
-                | HostResolution::External { .. }
-                | HostResolution::Erased => continue,
+                _ => continue,
             };
             self.implied.push(resolution);
             if let Some(file) = file_of(resolution) {
@@ -159,17 +157,7 @@ fn resolve_site<'r>(
 fn is_get_builtin_module(kind: ImportSiteKind) -> bool {
     match kind {
         ImportSiteKind::GetBuiltinModule(_) => true,
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_) => false,
+        _ => false,
     }
 }
 
@@ -244,15 +232,7 @@ fn is_macro_import(hir: &hir::File<'_>, site: &ImportSite) -> bool {
         ImportSiteKind::Import(_)
         | ImportSiteKind::ExportFrom(_)
         | ImportSiteKind::ExportStar(_) => type_attribute(hir, site) == Some(known::r#macro),
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => false,
+        _ => false,
     }
 }
 
@@ -276,18 +256,7 @@ fn loader_kind(site: &ImportSite) -> CodeImportKind {
         {
             CodeImportKind::Require
         }
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => CodeImportKind::Import,
+        _ => CodeImportKind::Import,
     }
 }
 
@@ -344,10 +313,7 @@ fn add_target<'r>(
 fn file_of(resolution: CodeResolution<'_>) -> Option<CodeFile<'_>> {
     match resolution {
         CodeResolution::File(file) => Some(file),
-        CodeResolution::HostModule(_)
-        | CodeResolution::External { .. }
-        | CodeResolution::Erased
-        | CodeResolution::NotFound(_) => None,
+        _ => None,
     }
 }
 

@@ -33,15 +33,53 @@ export type Generator = {
   };
 };
 
+const besidePrograms = /\.(json|expected\.txt|erased\.txt|build-errors\.txt|todo\.txt)$/;
+
+/**
+ * Files, by their paths below a folder of programs, as programs, by the rules at the top of run-programs.ts: a folder with a main.<extension> is one program,
+ * and so is any other source file, with the files that bear its name.
+ */
+export function programsOf(files: Record<string, string>): WrittenProgram[] {
+  const names = Object.keys(files);
+  const mainOf = new Map(names.filter(name => /\/main\.([cm]?[jt]s|tsx)$/.test(name)).map(main => [dirname(main), main]));
+  const mainAbove = (name: string) => {
+    const parts = name.split("/");
+    for (let depth = 1; depth < parts.length; depth++) if (mainOf.has(parts.slice(0, depth).join("/"))) return mainOf.get(parts.slice(0, depth).join("/"))!;
+  };
+  const programs = new Map<string, WrittenProgram>();
+  const byName = new Map<string, WrittenProgram[]>();
+  for (const name of names) {
+    const entry = mainAbove(name) ?? name;
+    if (entry === name && besidePrograms.test(name)) continue;
+    if (!programs.has(entry)) {
+      programs.set(entry, { entry, files: {} });
+      const bare = entry.replace(/(\/main)?\.[a-z]+$/, "");
+      byName.set(bare, [...(byName.get(bare) ?? []), programs.get(entry)!]);
+    }
+    programs.get(entry)!.files[name] = files[name];
+  }
+  for (const name of names) if (!mainAbove(name) && besidePrograms.test(name)) for (const program of byName.get(name.replace(besidePrograms, "")) ?? []) program.files[name] = files[name];
+  return [...programs.values()];
+}
+
 /** By the folder of ./programs. A script is loaded when somebody asks for its folder. */
 export const generators: Record<string, () => Generator> = {
+  "awaited-objects": () => require("./generate/awaited-objects"),
   "built-ins-alone": () => require("./generate-built-ins-alone"),
   "built-ins-asked-in-place": () => require("./generate-built-ins-asked-in-place"),
   "built-ins-on-written-structure": () => require("./programs/generate-replaced-iteration"),
+  "classes-below-built-in-classes": () => require("./generate/classes-below-built-in-classes"),
   "copies-born-in-their-holders": () => require("./programs/generate-copies-born-in-their-holders"),
+  "native-callbacks": () => ({
+    programs: () =>
+      ["one-for-each-caller", "one-for-each-caller-2", "one-for-each-caller-3", "one-for-each-caller-4", "models", "array-likes", "members"].flatMap(
+        part => (require(`./generate/native-callbacks-${part}`) as Generator).programs(),
+      ),
+  }),
   "nothing-throws-because-of-a-type": () => require("./programs/generate-nothing-throws-because-of-a-type"),
-  "relations-at-random": () => require("./generate-relations-at-random"),
   "type-predicates": () => require("./programs/generate-type-predicates"),
+  "ways-into-library-modules": () => require("./generate/ways-into-library-modules"),
+  "writes-to-host-objects": () => require("./generate/writes-to-host-objects"),
 };
 
 /**
@@ -149,9 +187,10 @@ if (import.meta.main && process.argv[2] === "--write-groups") {
   for (const each of topics) {
     const generator = generators[each]();
     const kept = join(import.meta.dir, "programs", each);
-    if (existsSync(kept)) cpSync(kept, join(where, each), { recursive: true });
-    const programs = generator.programs();
+    // What is kept under the name of a program that the script writes takes its place.
+    const programs = generator.programs().filter(program => !existsSync(join(kept, program.entry)));
     for (const program of programs) writeProgram(join(where, each), program);
+    if (existsSync(kept)) cpSync(kept, join(where, each), { recursive: true });
     const entries = programs.map(program => program.entry);
     if (generator.fromTable && (tablePath === undefined || !existsSync(tablePath))) {
       console.error(`${each}: the programs that follow from the table of built-ins are not written: there is no aot_builtin_table.json in $AOT_BUILTIN_TABLE, beside ${process.execPath} or in the folder codegen beside it. --table <file> names it`);

@@ -2,29 +2,16 @@ use core::mem::offset_of;
 use core::num::NonZeroU32;
 
 use bun_options_types::aot_options::BuildReportRequest;
+use bun_removable_features::{Feature, TrimFeature};
 
 use super::ResultSection as Section;
-use super::sections::{MalformedReason as Reason, MalformedSection, SectionLengths, check_section};
-use super::testing::{Sections, bytes_of, to_words, with_result};
+use super::testing::{Sections, bytes_of, with_result};
 use super::*;
-use crate::ir::generated::{
-    AccessCost, AccessKind, AllocationEscapeReason, AllocationKind, AllocationOutcome,
-    Architecture, ArrivalFieldFlags, ArrivalLayoutFlags, ArrivalStamp, BuiltinUse, CheckCause,
-    CheckSet, DeclineKind, IllTypedCause, InternalErrorKind, KnowledgeLevel, LocaleUseKind, PassId,
-    Stage, StatisticId, TypeSiteKind, TypeTestFailure, UnprovenCause, UnseenCodeCause,
-    UserDiagnosticKind,
-};
+use crate::ir::generated::{Architecture, CheckSet, StatisticId};
 
 const IDENTITY: ExecutableIdentity = ExecutableIdentity(*b"0123456789abcdef");
 const THREAD_COUNT: NonZeroUsize = NonZeroUsize::new(7).unwrap();
 const TEXT: &[u8] = b"text";
-const ONLY_TEXT: SectionLengths = SectionLengths {
-    text: TEXT.len(),
-    operation_counts: 0,
-    arrival_site_layouts: 0,
-    arrival_layout_fields: 0,
-};
-
 fn with_record(record: CompileOptions) -> EngineOptions {
     EngineOptions {
         record,
@@ -74,24 +61,6 @@ fn reports(explain: ExplainSet, detail: Option<ReportDetail>) -> ReportSet {
     })
 }
 
-fn check_shifted(
-    section: Section,
-    bytes: &[u8],
-    shift: usize,
-    lengths: &SectionLengths,
-) -> Option<Reason> {
-    let words = to_words(&[&vec![0; shift][..], bytes].concat());
-    check_section(section, &bytes_of(&words)[shift..][..bytes.len()], lengths).err()
-}
-
-fn check(section: Section, bytes: &[u8]) -> Option<Reason> {
-    check_shifted(section, bytes, 0, &ONLY_TEXT)
-}
-
-fn check_zeros(section: Section, length: usize) -> Option<Reason> {
-    check(section, &vec![0; length])
-}
-
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..][..4].copy_from_slice(&value.to_ne_bytes());
 }
@@ -104,23 +73,8 @@ fn patched_record<T: ResultRecord>(patches: &[(usize, u32)]) -> Vec<u8> {
     bytes
 }
 
-fn check_patched_record<T: ResultRecord>(patches: &[(usize, u32)]) -> Option<Reason> {
-    check(T::SECTION, &patched_record::<T>(patches))
-}
-
-fn check_member_of_each_record<T: ResultRecord>(member: usize, values: &[u32]) -> Option<Reason> {
-    let records = values
-        .iter()
-        .flat_map(|&value| patched_record::<T>(&[(member, value)]));
-    check(T::SECTION, &records.collect::<Vec<u8>>())
-}
-
 fn range(offset: u32, length: u32) -> TextRange {
     TextRange { offset, length }
-}
-
-fn malformed(section: Section, reason: Reason) -> Result<(), MalformedSection> {
-    Err(MalformedSection { section, reason })
 }
 
 #[test]
@@ -154,6 +108,22 @@ fn options_fill_record() {
         filled_record(|options| options.obfuscates = true),
         expected_record(|record| record.output = OutputOptions::OBFUSCATE)
     );
+}
+
+#[test]
+fn features_removed_by_request_fill_bits() {
+    let sqlite = TrimFeature::from_name(b"sqlite").unwrap();
+    let filled = filled_record(|options| {
+        options.trim.remove = vec![sqlite];
+        options.trim.remove_internal = vec![Feature::Dns];
+    });
+    let expected = expected_record(|record| {
+        for feature in [Feature::Sqlite, Feature::SqliteExtensions, Feature::Dns] {
+            record.removed_features[usize::from(feature.index()) / 64] |=
+                1 << (feature.index() % 64);
+        }
+    });
+    assert_eq!(filled, expected);
 }
 
 #[test]
@@ -251,12 +221,6 @@ fn default_options_ask_for_no_report() {
 #[test]
 fn reports_follow_explain_and_detail() {
     let no_report = ReportSet::default();
-    let every_site_report = ReportSet::FLOW
-        | ReportSet::DECLINES
-        | ReportSet::ALLOCATIONS
-        | ReportSet::FUNCTIONS
-        | ReportSet::ARRIVALS
-        | ReportSet::PASS_CODE_BYTES;
     let cases = [
         (ExplainSet::TEXT, None, ReportSet::FLOW),
         (ExplainSet::JSON, None, ReportSet::FLOW),
@@ -284,7 +248,7 @@ fn reports_follow_explain_and_detail() {
         (
             ExplainSet::empty(),
             Some(ReportDetail::Sites),
-            every_site_report,
+            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::FUNCTIONS,
         ),
         (
             ExplainSet::TEXT | ExplainSet::ALLOCATIONS,
@@ -369,405 +333,6 @@ fn limit_values_follow_target_architecture() {
             "{architecture:?}"
         );
     }
-}
-
-#[test]
-fn lengths_must_fit_elements() {
-    let statistics_size = 8 * StatisticId::COUNT;
-    let limit_values_size = 8 * LimitId::COUNT;
-    for (section, length) in [
-        (
-            Section::UserDiagnostics,
-            size_of::<UserDiagnosticRecord>() - 1,
-        ),
-        (Section::EntryModuleIds, 7),
-        (Section::ArrivalSiteLayouts, 7),
-        (Section::Accesses, size_of::<AccessRecord>() + 4),
-        (
-            Section::RemainingChecks,
-            size_of::<RemainingCheckRecord>() - 8,
-        ),
-        (Section::Statistics, 0),
-        (Section::Statistics, statistics_size - 8),
-        (Section::Statistics, statistics_size + 8),
-        (Section::LimitValues, 0),
-        (Section::LimitValues, limit_values_size - 8),
-        (Section::LimitValues, limit_values_size + 8),
-    ] {
-        assert_eq!(
-            check_zeros(section, length),
-            Some(Reason::Length),
-            "{section:?} {length}"
-        );
-    }
-    for (section, length) in [
-        (Section::UserDiagnostics, 0),
-        (
-            Section::UserDiagnostics,
-            2 * size_of::<UserDiagnosticRecord>(),
-        ),
-        (Section::EntryModuleIds, 8),
-        (Section::ArrivalSiteLayouts, 8),
-        (Section::Statistics, statistics_size),
-        (Section::LimitValues, limit_values_size),
-        (Section::Image, 7),
-    ] {
-        assert_eq!(check_zeros(section, length), None, "{section:?} {length}");
-    }
-}
-
-#[test]
-fn sections_must_be_aligned() {
-    let check_at =
-        |section, length, shift| check_shifted(section, &vec![0; length], shift, &ONLY_TEXT);
-    for (section, length, shift) in [
-        (
-            Section::UserDiagnostics,
-            size_of::<UserDiagnosticRecord>(),
-            4,
-        ),
-        (Section::EntryModuleIds, 4, 2),
-        (Section::ArrivalSiteLayouts, 4, 2),
-        (
-            Section::RemainingChecks,
-            size_of::<RemainingCheckRecord>(),
-            4,
-        ),
-        (Section::PassTimes, size_of::<PassTimeRecord>(), 4),
-        (Section::Statistics, 8 * StatisticId::COUNT, 4),
-        (Section::LimitValues, 8 * LimitId::COUNT, 1),
-    ] {
-        let reason = check_at(section, length, shift);
-        assert_eq!(reason, Some(Reason::Alignment), "{section:?}");
-    }
-    for (section, length, shift) in [
-        (
-            Section::UserDiagnostics,
-            size_of::<UserDiagnosticRecord>(),
-            8,
-        ),
-        (Section::UserDiagnostics, 0, 1),
-        (Section::EntryModuleIds, 4, 4),
-        (Section::Image, 3, 1),
-        (Section::Text, 3, 1),
-        (Section::Symbols, 3, 1),
-    ] {
-        assert_eq!(check_at(section, length, shift), None, "{section:?}");
-    }
-}
-
-#[test]
-fn enumerators_must_be_declared() {
-    macro_rules! assert_bounded {
-        ($record:ty, $member:ident, $enumeration:ty) => {{
-            let offset = offset_of!($record, $member);
-            let check_value = |value| check_patched_record::<$record>(&[(offset, value)]);
-            let count = <$enumeration>::COUNT as u32;
-            assert_eq!(check_value(count - 1), None);
-            assert_eq!(check_value(count), Some(Reason::Enumerator));
-            assert_eq!(check_value(u32::MAX), Some(Reason::Enumerator));
-        }};
-    }
-    assert_bounded!(UserDiagnosticRecord, kind, UserDiagnosticKind);
-    assert_bounded!(UserDiagnosticRecord, limit, LimitId);
-    assert_bounded!(InternalErrorRecord, kind, InternalErrorKind);
-    assert_bounded!(InternalErrorRecord, limit, LimitId);
-    assert_bounded!(InternalErrorRecord, pass, PassId);
-    assert_bounded!(UnseenCodeRecord, cause, UnseenCodeCause);
-    assert_bounded!(LocaleUseRecord, kind, LocaleUseKind);
-    assert_bounded!(AccessRecord, kind, AccessKind);
-    assert_bounded!(AccessRecord, level, KnowledgeLevel);
-    assert_bounded!(AccessRecord, cause, UnprovenCause);
-    assert_bounded!(AccessRecord, limit, LimitId);
-    assert_bounded!(AccessRecord, ill_typed_cause, IllTypedCause);
-    assert_bounded!(AccessRecord, cost, AccessCost);
-    assert_bounded!(TypeTestRecord, failure, TypeTestFailure);
-    assert_bounded!(RemainingCheckRecord, cause, CheckCause);
-    assert_bounded!(RemainingCheckRecord, site_kind, TypeSiteKind);
-    assert_bounded!(DeclineRecord, kind, DeclineKind);
-    assert_bounded!(DeclineRecord, limit, LimitId);
-    assert_bounded!(AllocationRemarkRecord, outcome, AllocationOutcome);
-    assert_bounded!(AllocationRemarkRecord, limit, LimitId);
-    assert_bounded!(AllocationRemarkRecord, kind, AllocationKind);
-    assert_bounded!(LossRecord, limit, LimitId);
-    assert_bounded!(LossRecord, stage, Stage);
-    assert_bounded!(PassTimeRecord, pass, PassId);
-    assert_bounded!(ArrivalSiteRecord, kind, AccessKind);
-    assert_bounded!(ArrivalSiteRecord, level, KnowledgeLevel);
-    assert_bounded!(ArrivalSiteRecord, cause, UnprovenCause);
-    assert_bounded!(ArrivalSiteRecord, stamp, ArrivalStamp);
-}
-
-#[test]
-fn every_record_is_checked() {
-    for section in Section::ALL {
-        let expected = match section {
-            Section::Image | Section::Text | Section::Symbols => None,
-            _ => Some(Reason::Length),
-        };
-        assert_eq!(check(section, &[0]), expected, "{section:?}");
-    }
-}
-
-#[test]
-fn later_records_are_checked() {
-    let kind = offset_of!(DeclineRecord, kind);
-    let undeclared = DeclineKind::COUNT as u32;
-    let check_kinds = |kinds: &[u32]| check_member_of_each_record::<DeclineRecord>(kind, kinds);
-    assert_eq!(check_kinds(&[0, 1, 0]), None);
-    assert_eq!(check_kinds(&[0, 1, undeclared]), Some(Reason::Enumerator));
-}
-
-#[test]
-fn escape_reasons_must_be_declared() {
-    let offset = offset_of!(AllocationRemarkRecord, reasons);
-    let check_value = |value| check_patched_record::<AllocationRemarkRecord>(&[(offset, value)]);
-    let declared = AllocationEscapeReason::ALL.0;
-    assert_eq!(check_value(declared), None);
-    assert_eq!(check_value(declared + 1), Some(Reason::Enumerator));
-    assert_eq!(check_value(u32::MAX), Some(Reason::Enumerator));
-}
-
-#[test]
-fn builtin_uses_must_be_declared() {
-    let offset = offset_of!(BuiltinUseRecord, uses);
-    let check_value = |value| check_patched_record::<BuiltinUseRecord>(&[(offset, value)]);
-    let declared = BuiltinUse::ALL.0;
-    assert_eq!(check_value(declared), None);
-    assert_eq!(check_value(declared + 1), Some(Reason::Enumerator));
-    assert_eq!(check_value(u32::MAX), Some(Reason::Enumerator));
-}
-
-#[test]
-fn arrival_flags_must_be_declared() {
-    fn assert_bounded<T: ResultRecord>(member: usize, declared: u32) {
-        let check_value = |value| check_patched_record::<T>(&[(member, value)]);
-        assert_eq!(check_value(declared), None);
-        assert_eq!(check_value(declared + 1), Some(Reason::Enumerator));
-        assert_eq!(check_value(u32::MAX), Some(Reason::Enumerator));
-    }
-    let layout_flags = offset_of!(ArrivalLayoutRecord, flags);
-    assert_bounded::<ArrivalLayoutRecord>(layout_flags, ArrivalLayoutFlags::ALL.0);
-    let field_flags = offset_of!(ArrivalLayoutFieldRecord, flags);
-    assert_bounded::<ArrivalLayoutFieldRecord>(field_flags, ArrivalFieldFlags::ALL.0);
-}
-
-#[test]
-fn text_ranges_must_lie_inside_text() {
-    fn assert_bounded<T: ResultRecord>(members: &[usize]) {
-        assert_eq!(T::TEXT_MEMBERS, members);
-        for &member in members {
-            let check_range = |offset, length| {
-                let length_member = member + offset_of!(TextRange, length);
-                check_patched_record::<T>(&[(member, offset), (length_member, length)])
-            };
-            assert_eq!(check_range(0, 4), None);
-            assert_eq!(check_range(4, 0), None);
-            assert_eq!(check_range(1, 4), Some(Reason::TextRange));
-            assert_eq!(check_range(5, 0), Some(Reason::TextRange));
-            assert_eq!(check_range(u32::MAX, 2), Some(Reason::TextRange));
-        }
-    }
-    assert_bounded::<UserDiagnosticRecord>(&[offset_of!(UserDiagnosticRecord, message)]);
-    assert_bounded::<InternalErrorRecord>(&[offset_of!(InternalErrorRecord, message)]);
-    assert_bounded::<LocaleUseRecord>(&[offset_of!(LocaleUseRecord, tag)]);
-    let operation = offset_of!(AllocationRemarkRecord, forcing_operation);
-    assert_bounded::<AllocationRemarkRecord>(&[operation]);
-    assert_bounded::<FunctionReportRecord>(&[offset_of!(FunctionReportRecord, role)]);
-    assert_bounded::<OperationCountRecord>(&[offset_of!(OperationCountRecord, name)]);
-    assert_bounded::<ObfuscatedSiteRecord>(&[offset_of!(ObfuscatedSiteRecord, name)]);
-    assert_bounded::<ArrivalSiteRecord>(&[offset_of!(ArrivalSiteRecord, operation)]);
-    assert_bounded::<ArrivalLayoutRecord>(&[
-        offset_of!(ArrivalLayoutRecord, kind),
-        offset_of!(ArrivalLayoutRecord, name),
-    ]);
-    assert_bounded::<ArrivalLayoutFieldRecord>(&[offset_of!(ArrivalLayoutFieldRecord, name)]);
-}
-
-#[test]
-fn access_counts_must_ascend() {
-    let module = offset_of!(AccessCountRecord, module);
-    let check_modules =
-        |modules: &[u32]| check_member_of_each_record::<AccessCountRecord>(module, modules);
-    assert_eq!(check_modules(&[]), None);
-    assert_eq!(check_modules(&[0, 1, 5]), None);
-    assert_eq!(check_modules(&[1, 1]), Some(Reason::Order));
-    assert_eq!(check_modules(&[0, 2, 1]), Some(Reason::Order));
-}
-
-#[test]
-fn features_must_not_descend() {
-    let feature = offset_of!(FeatureUseRecord, feature);
-    let check_features =
-        |features: &[u32]| check_member_of_each_record::<FeatureUseRecord>(feature, features);
-    assert_eq!(check_features(&[3, 3, 4]), None);
-    assert_eq!(check_features(&[3, 4, 3]), Some(Reason::Order));
-}
-
-#[test]
-fn check_ids_must_ascend() {
-    let check_ids = |ids: &[u64]| {
-        let size = size_of::<RemainingCheckRecord>();
-        let mut bytes = vec![0; ids.len() * size];
-        for (record, id) in bytes.chunks_exact_mut(size).zip(ids) {
-            let member = &mut record[offset_of!(RemainingCheckRecord, id)..][..8];
-            member.copy_from_slice(&id.to_ne_bytes());
-        }
-        check(Section::RemainingChecks, &bytes)
-    };
-    assert_eq!(check_ids(&[0, 1, 1 << 40]), None);
-    assert_eq!(check_ids(&[2, 2]), Some(Reason::Order));
-    assert_eq!(check_ids(&[3, 2]), Some(Reason::Order));
-    assert_eq!(check_ids(&[1 << 32, 1]), Some(Reason::Order));
-}
-
-#[test]
-fn arrival_site_numbers_must_ascend() {
-    let number = offset_of!(ArrivalSiteRecord, number);
-    let check_numbers =
-        |numbers: &[u32]| check_member_of_each_record::<ArrivalSiteRecord>(number, numbers);
-    assert_eq!(check_numbers(&[]), None);
-    assert_eq!(check_numbers(&[0, 1, 5]), None);
-    assert_eq!(check_numbers(&[1, 1]), Some(Reason::Order));
-    assert_eq!(check_numbers(&[0, 2, 1]), Some(Reason::Order));
-}
-
-#[test]
-fn arrival_layouts_must_ascend() {
-    let layout = offset_of!(ArrivalLayoutRecord, layout);
-    let check_layouts =
-        |layouts: &[u32]| check_member_of_each_record::<ArrivalLayoutRecord>(layout, layouts);
-    assert_eq!(check_layouts(&[]), None);
-    assert_eq!(check_layouts(&[0, 1, 5]), None);
-    assert_eq!(check_layouts(&[1, 1]), Some(Reason::Order));
-    assert_eq!(check_layouts(&[0, 2, 1]), Some(Reason::Order));
-}
-
-fn assert_range_lies_inside_three_elements<T: ResultRecord>(
-    first_member: usize,
-    count_member: usize,
-    lengths: &SectionLengths,
-) {
-    let check_range = |first, count| {
-        let record = patched_record::<T>(&[(first_member, first), (count_member, count)]);
-        check_shifted(T::SECTION, &record, 0, lengths)
-    };
-    assert_eq!(check_range(0, 3), None);
-    assert_eq!(check_range(3, 0), None);
-    assert_eq!(check_range(1, 3), Some(Reason::Range));
-    assert_eq!(check_range(4, 0), Some(Reason::Range));
-    assert_eq!(check_range(u32::MAX, u32::MAX), Some(Reason::Range));
-}
-
-#[test]
-fn operation_ranges_must_lie_inside_section() {
-    assert_range_lies_inside_three_elements::<FunctionReportRecord>(
-        offset_of!(FunctionReportRecord, first_operation),
-        offset_of!(FunctionReportRecord, operation_count),
-        &SectionLengths {
-            operation_counts: 3,
-            ..ONLY_TEXT
-        },
-    );
-}
-
-#[test]
-fn expected_layout_ranges_must_lie_inside_section() {
-    assert_range_lies_inside_three_elements::<ArrivalSiteRecord>(
-        offset_of!(ArrivalSiteRecord, first_expected_layout),
-        offset_of!(ArrivalSiteRecord, expected_layout_count),
-        &SectionLengths {
-            arrival_site_layouts: 3,
-            ..ONLY_TEXT
-        },
-    );
-}
-
-#[test]
-fn layout_field_ranges_must_lie_inside_section() {
-    assert_range_lies_inside_three_elements::<ArrivalLayoutRecord>(
-        offset_of!(ArrivalLayoutRecord, first_field),
-        offset_of!(ArrivalLayoutRecord, field_count),
-        &SectionLengths {
-            arrival_layout_fields: 3,
-            ..ONLY_TEXT
-        },
-    );
-}
-
-#[test]
-fn first_malformed_section_is_reported() {
-    let sections = Sections::new()
-        .with(Section::Statistics, &[0; 8])
-        .with(Section::EntryModuleIds, &[0; 7]);
-    assert_eq!(
-        sections.check(),
-        malformed(Section::EntryModuleIds, Reason::Length)
-    );
-}
-
-#[test]
-fn result_without_records_is_well_formed() {
-    assert_eq!(Sections::new().check(), Ok(()));
-}
-
-#[test]
-fn text_length_comes_from_text_section() {
-    let length = offset_of!(UserDiagnosticRecord, message) + offset_of!(TextRange, length);
-    let diagnostic = patched_record::<UserDiagnosticRecord>(&[(length, TEXT.len() as u32)]);
-    let sections = Sections::new().with(Section::UserDiagnostics, &diagnostic);
-    assert_eq!(
-        sections.check(),
-        malformed(Section::UserDiagnostics, Reason::TextRange)
-    );
-    assert_eq!(sections.with(Section::Text, TEXT).check(), Ok(()));
-}
-
-#[test]
-fn operation_count_comes_from_operation_section() {
-    let count = offset_of!(FunctionReportRecord, operation_count);
-    let function = patched_record::<FunctionReportRecord>(&[(count, 2)]);
-    let operations = vec![0; 2 * size_of::<OperationCountRecord>()];
-    let sections = Sections::new().with(Section::Functions, &function);
-    assert_eq!(
-        sections.check(),
-        malformed(Section::Functions, Reason::Range)
-    );
-    assert_eq!(
-        sections.with(Section::OperationCounts, &operations).check(),
-        Ok(())
-    );
-}
-
-#[test]
-fn expected_layout_count_comes_from_site_layout_section() {
-    let count = offset_of!(ArrivalSiteRecord, expected_layout_count);
-    let site = patched_record::<ArrivalSiteRecord>(&[(count, 2)]);
-    let sections = Sections::new().with(Section::ArrivalSites, &site);
-    assert_eq!(
-        sections.check(),
-        malformed(Section::ArrivalSites, Reason::Range)
-    );
-    assert_eq!(
-        sections.with(Section::ArrivalSiteLayouts, &[0; 8]).check(),
-        Ok(())
-    );
-}
-
-#[test]
-fn layout_field_count_comes_from_field_section() {
-    let count = offset_of!(ArrivalLayoutRecord, field_count);
-    let layout = patched_record::<ArrivalLayoutRecord>(&[(count, 2)]);
-    let fields = vec![0; 2 * size_of::<ArrivalLayoutFieldRecord>()];
-    let sections = Sections::new().with(Section::ArrivalLayouts, &layout);
-    assert_eq!(
-        sections.check(),
-        malformed(Section::ArrivalLayouts, Reason::Range)
-    );
-    assert_eq!(
-        sections.with(Section::ArrivalLayoutFields, &fields).check(),
-        Ok(())
-    );
 }
 
 #[test]

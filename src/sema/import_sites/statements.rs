@@ -104,16 +104,7 @@ fn macro_export_error(kind: ImportSiteKind) -> Option<FoldErrorKind> {
     match kind {
         ImportSiteKind::ExportStar(_) => Some(FoldErrorKind::MacroInExportStar),
         ImportSiteKind::ExportFrom(_) => Some(FoldErrorKind::MacroInExportFrom),
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => None,
+        _ => None,
     }
 }
 
@@ -144,35 +135,7 @@ fn statement_site(
             is_site.then_some((ImportSiteKind::ExportStar(stmt), spec))
         }
         StmtKind::ImportEquals(id) => import_equals_site(hir, id),
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Var(_)
-        | StmtKind::Fn(_)
-        | StmtKind::Class(_)
-        | StmtKind::Interface(_)
-        | StmtKind::TypeAlias(_)
-        | StmtKind::Enum(_)
-        | StmtKind::Module(_)
-        | StmtKind::Expr(_)
-        | StmtKind::Return(_)
-        | StmtKind::If { .. }
-        | StmtKind::For { .. }
-        | StmtKind::ForIn { .. }
-        | StmtKind::ForOf { .. }
-        | StmtKind::While { .. }
-        | StmtKind::DoWhile { .. }
-        | StmtKind::Block(_)
-        | StmtKind::Switch { .. }
-        | StmtKind::Try { .. }
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::Labeled { .. }
-        | StmtKind::ExportDefault(_)
-        | StmtKind::ExportAssign(_)
-        | StmtKind::ExportAsNamespace(_)
-        | StmtKind::With { .. }
-        | StmtKind::Directive { .. } => None,
+        _ => None,
     }
 }
 

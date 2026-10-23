@@ -17,62 +17,16 @@ export type AllocationOutcome = (typeof allocationOutcomes)[number];
 
 export type AccessKind = "read" | "store" | "define" | "has" | "delete" | "call" | "construct";
 
-export type AllocationKind =
-  | "object"
-  | "array"
-  | "closure"
-  | "environment"
-  | "arguments"
-  | "rest"
-  | "iteratorResult"
-  | "generator"
-  | "promise"
-  | "boundFunction"
-  | "stringRange"
-  | "collection"
-  | "other";
-
-export type SubjectKind =
-  | "value"
-  | "allocationSite"
-  | "callSite"
-  | "binding"
-  | "object"
-  | "holderAndName"
-  | "field"
-  | "function"
-  | "file"
-  | "module"
-  | "build";
-
 export interface SourcePosition {
   file: string;
   line: number;
   column: number;
 }
 
-export interface LossRecord {
-  stage: string;
-  reason: string;
-  limit: string | null;
-  subjectKind: SubjectKind;
-  subject: SourcePosition | null;
-  witness: SourcePosition | null;
-  count: number;
-}
-
 export interface AccessSite extends SourcePosition {
   kind: AccessKind;
   level: Level;
   cost: AccessCost;
-  loss: number | null;
-  function: number | null;
-}
-
-export interface AllocationSite extends SourcePosition {
-  kind: AllocationKind;
-  outcome: AllocationOutcome;
-  loss: number | null;
   function: number | null;
 }
 
@@ -139,14 +93,12 @@ export interface BuildReport {
   summary: ReportSummary;
   statistics: Record<string, number>;
   limits: LimitRecord[];
-  losses: LossRecord[];
   passes: PassRecord[];
   stages: StageRecord[];
   retainedFeatures: string[] | null;
   unseenCode: UnseenCodeRecord[];
   functions: FunctionRecord[] | null;
   accessSites: AccessSite[] | null;
-  allocationSites: AllocationSite[] | null;
   typeTestSites: TypeTestSite[] | null;
 }
 

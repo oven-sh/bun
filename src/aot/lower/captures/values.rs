@@ -173,18 +173,7 @@ fn is_entry_capture(
             let top_scope = file.bound.fns[source.function.idx()].scope;
             binding == BindingRef::Slot(top_scope, ScopeSlot::HomeObject)
         }
-        FunctionKey::ModuleBody(_)
-        | FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Signature(_)
-        | FunctionKey::ClassSignature(_)
-        | FunctionKey::ImplicitConstructor(_)
-        | FunctionKey::InstanceInitializer(_)
-        | FunctionKey::StaticInitializer(_)
-        | FunctionKey::AccessorGetter { .. }
-        | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => false,
+        _ => false,
     }
 }
 

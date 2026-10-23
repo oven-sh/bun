@@ -5,14 +5,13 @@ use crate::diagnostics::SourcePosition;
 use crate::engine::{
     FunctionReportRecord, OperationCountRecord, Position, SourceLocation, position_of,
 };
-use crate::ir::generated::{AllocationOutcome, TypeTestFailure};
+use crate::ir::generated::TypeTestFailure;
 use crate::ir::ids::FunctionId;
 use crate::link::{ModuleOrigin, ProgramNames};
 use crate::report::ReportInput;
 use crate::report::format::lower_camel_case;
 use crate::report::json::JsonWriter;
 use crate::report::levels::{CostCounts, LevelCounts, SiteTotals};
-use crate::report::model::LossList;
 use crate::report::positions::{Positions, is_listed_site, resolve_ascending};
 use crate::report::summary::{write_access_counts, write_level_counts};
 use crate::report::wording::level_label;
@@ -66,12 +65,10 @@ pub(super) fn write_access_sites(
     json: &mut JsonWriter,
     input: &ReportInput<'_>,
     positions: &mut Positions<'_>,
-    losses: &LossList,
     functions: &FunctionIndex,
 ) {
-    let records = input.engine.accesses();
     json.begin_array("accessSites");
-    for (record, &loss) in records.iter().zip(&losses.loss_of_access) {
+    for record in input.engine.accesses() {
         let Some(position) = resolve_listed_position(input.names, positions, record.location)
         else {
             continue;
@@ -81,40 +78,6 @@ pub(super) fn write_access_sites(
         json.string("kind", &lower_camel_case(record.kind.name()));
         json.string("level", level_label(record.level).as_bytes());
         json.string("cost", &lower_camel_case(record.cost.name()));
-        json.optional_number("loss", loss.map(u64::from));
-        json.optional_number("function", functions.get(record.function_id()));
-        json.end_object();
-    }
-    json.end_array();
-}
-
-pub(super) fn write_allocation_sites(
-    json: &mut JsonWriter,
-    input: &ReportInput<'_>,
-    positions: &mut Positions<'_>,
-    losses: &LossList,
-    functions: &FunctionIndex,
-) {
-    let records = input.engine.allocation_remarks();
-    let wanted: Vec<Option<Position>> = records
-        .iter()
-        .map(|record| listed_position(input.names, record.location))
-        .collect();
-    let resolved = resolve_ascending(&wanted, |position| positions.resolve(position));
-    let sites = records
-        .iter()
-        .zip(&resolved)
-        .zip(&losses.loss_of_allocation);
-    json.begin_array("allocationSites");
-    for ((record, position), &loss) in sites {
-        let Some(position) = position else {
-            continue;
-        };
-        json.begin_element();
-        write_position_members(json, position);
-        json.string("kind", &lower_camel_case(record.kind.name()));
-        json.string("outcome", outcome_name(record.outcome).as_bytes());
-        json.optional_number("loss", loss.map(u64::from));
         json.optional_number("function", functions.get(record.function_id()));
         json.end_object();
     }
@@ -140,16 +103,6 @@ pub(super) fn write_type_test_sites(
         json.end_object();
     }
     json.end_array();
-}
-
-fn outcome_name(outcome: AllocationOutcome) -> &'static str {
-    match outcome {
-        AllocationOutcome::Heap | AllocationOutcome::Unknown => "heap",
-        AllocationOutcome::Slim => "slim",
-        AllocationOutcome::Deferred => "deferred",
-        AllocationOutcome::Frame | AllocationOutcome::FrameUntilMaterialized => "frame",
-        AllocationOutcome::Removed => "removed",
-    }
 }
 
 fn write_function(
@@ -282,18 +235,5 @@ mod tests {
         assert_eq!(index_of(&functions, 0), None);
         assert_eq!(index_of(&functions, 2), None);
         assert_eq!(index_of(&index_functions(&[]), 1), None);
-    }
-
-    #[test]
-    fn outcomes_map_to_five_names() {
-        let mut names = AllocationOutcome::ALL.map(outcome_name).to_vec();
-        names.shared_sort_unstable();
-        names.dedup();
-        assert_eq!(names, ["deferred", "frame", "heap", "removed", "slim"]);
-        assert_eq!(outcome_name(AllocationOutcome::Unknown), "heap");
-        assert_eq!(
-            outcome_name(AllocationOutcome::FrameUntilMaterialized),
-            "frame"
-        );
     }
 }

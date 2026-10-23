@@ -1,0 +1,29 @@
+# export function traverseArray(start: number, end: number | undefined): the compiler's own helper (runtimefunction 131090). A row of the table brings it into the image with slice,
+# and a pass calls it in code that it makes behind the analysis: `list.slice(0, 2).join()` becomes one call that passes 2 as `end`.
+# The analysis has seen no number arrive there. That does not say that none does: the callers are not all known, and the parameter keeps its type.
+# LIBRARY: own
+# RUN: valueflow-why reached=f1
+# CHECK: f1 <- UsedBuiltins
+# RUN(RESULTS): valueflow-results
+# RESULTS: function f1 cause=ReachesNativeCode
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="traverseArray" {{*}}parameters=[{type=number {{*}}}, {type=undefined|number {{*}}}]
+
+typesite w0 module=m0 position=1 kind=Parameter
+typesite w1 module=m0 position=2 kind=Parameter
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131090 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0
+    v2 = Builtin builtin=ArrayPrototypeSlice
+    v3 = Call v2, v1, v0
+    Return
+}
+function f1 name="traverseArray" role=Library flags=[IsChecked] enclosingRuntimeFunction=131090 parameters=[{type=number site=w0}, {type=undefined|number site=w1}] results=[{type=anything}] {
+  b0(v0: number, v1: undefined|number):
+    v2 = TypeTest v1 testedType=undefined
+    Return v2
+}

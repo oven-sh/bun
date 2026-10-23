@@ -1,5 +1,5 @@
 // Each program under ./idioms runs one everyday JavaScript idiom in a loop. The test measures how many instructions one iteration takes when the
-// program is compiled ahead of time, once as TypeScript and once as the same program without type annotations, and holds both against
+// program is compiled ahead of time, once as TypeScript and once as JavaScript, and holds both against
 // ./pins.<os>-<arch>.json, which only goes down. Where a pin was once lower than it is today the file keeps that number as `best`, and the idiom is listed as a todo
 // until it is back there.
 //
@@ -12,6 +12,7 @@
 // Instructions are counted in user mode around the whole process (perf_event_open, or /usr/bin/time -l on macOS): no clock, the same at any load. Where
 // they cannot be counted, and for a platform without pins, everything is skipped. The cost of one iteration is the difference between a run of n
 // iterations and a run of n / 4, divided by 3n / 4, so that start-up and warm-up cancel out. turns.json has n for each idiom.
+// ./untyped-idioms.ts makes the JavaScript.
 import { afterAll, expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
@@ -20,6 +21,7 @@ import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
 import { slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
+import { writeUntypedIdioms } from "./untyped-idioms";
 
 const root = join(import.meta.dir, "idioms");
 const pinsPath = join(import.meta.dir, `pins.${process.platform}-${process.arch}.json`);
@@ -72,6 +74,8 @@ if (skipped) console.error(`SKIPPED: test/aot/perf/idioms.test.ts: ${skipped}`);
 describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
   const folder = String(tempDir("aot-perf", {}));
   const carrier = skipped ? [] : withoutDebugInformation();
+  const untypedRoot = join(folder, "idioms");
+  if (!skipped) writeUntypedIdioms(untypedRoot);
   afterAll(() => {
     rmSync(folder, { recursive: true, force: true });
     if (mode === "update" || mode === "lower") writeFileSync(pinsPath, JSON.stringify(pins, null, 2) + "\n");
@@ -98,7 +102,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
       printed: long.printed,
     };
   }
-  async function compiled(source: string, n: number) {
+  async function compiled(root: string, source: string, n: number) {
     const executable = join(folder, source.replaceAll(/[^a-z0-9]+/gi, "-"));
     const build = await spawned(
       [bunExe(), "build", "--compile", "--aot", ...carrier, join(root, source), "--outfile", executable],
@@ -130,12 +134,12 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
       () =>
         slot(async () => {
           const n = turns[name];
-          const typed = await compiled(name + ".ts", n);
-          const untyped = await compiled(name + ".js", n);
+          const typed = await compiled(root, name + ".ts", n);
+          const untyped = await compiled(untypedRoot, name + ".js", n);
           const plain =
             mode === "update"
-              ? await aTurn([bunExe(), "run", join(root, name + ".js")], n)
-              : await instructions([bunExe(), "run", join(root, name + ".js")], n);
+              ? await aTurn([bunExe(), "run", join(untypedRoot, name + ".js")], n)
+              : await instructions([bunExe(), "run", join(untypedRoot, name + ".js")], n);
           // All three forms did the same work.
           expect([typed.printed, untyped.printed]).toEqual([plain.printed, plain.printed]);
           if (typed.instructions === undefined || untyped.instructions === undefined)

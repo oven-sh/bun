@@ -811,7 +811,6 @@ describe("the items of ICU's data package", () => {
       trimFeatures: [],
       icuData,
       icuLanguageGroups,
-      profiles: [],
       hash: 0n,
     });
     const graphOf = (format: ObjectFormat, size = data.length) =>

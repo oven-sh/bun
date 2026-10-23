@@ -1,0 +1,108 @@
+# Each module record has an entry, and one more ends the table. Only modules with a unique path are listed by path, so External and Runtime records are left out. A RuntimeSource record is also listed by its registry id
+# LIBRARY: own
+# RUN: tables
+# RUN(ROWS): tables modules
+
+variable g0 name="a" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="c" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="z" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}] exports=[{name="a" variable=g0}] requiredNames=[{module=m3 name="r"}]
+module m1 path="/b.ts" displayPath="b.ts" body=f1 requests=[{target=m2 completes=true}] exports=[{name="b" variable=g1}, {name="c" variable=g2}]
+module m2 path="/c.ts" displayPath="c.ts" body=f2 requests=[{target=m0 completes=true}] exports=[{name="n" kind=Namespace module=m1}]
+module m3 path="/d.cjs" displayPath="d.cjs" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="z" variable=g3 isKnownMember=true}]
+module m4 path="x" displayPath="x" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+module m5 path="bun:sql" displayPath="bun:sql" kind=Runtime exportRule=RuntimeModule runtimeModule=BunSql
+module m6 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f4
+modulefailure q0 importer=m0 specifier=""
+modulefailure q1 importer=m0 specifier="missing"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ModuleNamespace module=m0
+    v3 = ElemGet v2, v1
+    v4 = ModuleNamespace module=m1
+    v5 = ElemGet v4, v1
+    v6 = ModuleNamespace module=m2
+    v7 = ElemGet v6, v1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="second" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    Return
+}
+function f2 name="third" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="fourth" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: modules 8 320
+# CHECK-NEXT: moduleDirectories 0 0
+# CHECK-NEXT: moduleDisplayPaths 0 0
+# CHECK-NEXT: moduleRequests 7 21
+# CHECK-NEXT: linkRequests 7 14
+# CHECK-NEXT: evaluationRequests 3 6
+# CHECK-NEXT: entryPointLinkPlan 5 20
+# CHECK-NEXT: linkPlanRoots 0 0
+# CHECK-NEXT: linkPlanStepsOfRoots 0 0
+# CHECK-NEXT: moduleExports 4 32
+# CHECK-NEXT: indirectExports 0 0
+# CHECK-NEXT: syntheticExports 1 8
+# CHECK-NEXT: requiredNames 1 8
+# CHECK-NEXT: moduleFailures 2 16
+# CHECK-NEXT: modulesByPath 5 10
+# CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: compiledRuntimeModules 1 8
+
+# ROWS: module m0 kind=SourceText path="/a.ts" displayPath="a.ts" {{*}}requests=0 exports=0 syntheticExports=0 requiredNames=0 linkRequests=0 evaluationRequests=0
+# ROWS-NEXT: module m1 kind=SourceText path="/b.ts" {{*}}requests=5 exports=1 syntheticExports=0 requiredNames=1 linkRequests=5 evaluationRequests=1
+# ROWS-NEXT: module m2 kind=SourceText path="/c.ts" {{*}}requests=6 exports=3 syntheticExports=0 requiredNames=1 linkRequests=6 evaluationRequests=2
+# ROWS-NEXT: module m3 kind=CommonJs path="/d.cjs" {{*}}exportRule=CommonJs requireResult=ModuleExports {{*}}requests=7 exports=4 syntheticExports=0 requiredNames=1 linkRequests=7 evaluationRequests=3
+# ROWS-NEXT: module m4 kind=External path="x" {{*}}externalKind=HostValue {{*}}body=- referrer=m0 {{*}}syntheticExports=1
+# ROWS-NEXT: module m5 kind=Runtime path="bun:sql" {{*}}body=- referrer=- runtimeModule=BunSql
+# ROWS-NEXT: module m6 kind=RuntimeSource path="bun:sqlite" {{*}}runtimeModule=BunSqlite
+# ROWS-NEXT: endOfModules requests=7 exports=4 syntheticExports=1 requiredNames=1 linkRequests=7 evaluationRequests=3
+# ROWS-NEXT: request 0 target=m1
+# ROWS: request 6 target=m0
+# The lists that the loader walks in place of the requests, one for the link and one for the evaluation, then the plan of the entry point's link.
+# ROWS-NEXT: linkRequest 0 target=m1
+# ROWS-NEXT: linkRequest 1 target=m3
+# ROWS-NEXT: linkRequest 2 target=m4
+# ROWS-NEXT: linkRequest 3 target=m5
+# ROWS-NEXT: linkRequest 4 target=m6
+# ROWS-NEXT: linkRequest 5 target=m2
+# ROWS-NEXT: linkRequest 6 target=m0
+# ROWS-NEXT: evaluationRequest 0 target=m1
+# ROWS-NEXT: evaluationRequest 1 target=m2
+# ROWS-NEXT: evaluationRequest 2 target=m0
+# ROWS-NEXT: linkPlanStep module=m3
+# ROWS-NEXT: linkPlanStep module=m4
+# ROWS-NEXT: linkPlanStep module=m5
+# ROWS-NEXT: linkPlanStep module=m6
+# ROWS-NEXT: linkPlanStep module=m0 resolvesNames
+# ROWS-NEXT: export 0 name="a" kind=Variable variable=JSValue@
+# ROWS-NEXT: export 1 name="b" kind=Variable variable=JSValue@
+# ROWS-NEXT: export 2 name="c" kind=Variable variable=JSValue@
+# ROWS-NEXT: export 3 name="n" kind=Namespace module=m1
+# ROWS-NEXT: syntheticExport 0 name="z" variable=JSValue@{{*}} absentIsUndefined
+# ROWS-NEXT: requiredName 0 exporter=m3 name="r"
+# ROWS-NEXT: failure importer=m0 specifier=""
+# ROWS-NEXT: failure importer=m0 specifier="missing"
+# ROWS-NEXT: modulesByPath modules=[m0 m1 m2 m3 m6]
+# ROWS-NEXT: runtimeModule id=BunSqlite module=m6

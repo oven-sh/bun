@@ -96,17 +96,7 @@ fn rule_kind(rule: &ValidationRule) -> RuleKind {
         | ValidationRule::DefaultBoolean { .. }
         | ValidationRule::DefaultNumber { .. }
         | ValidationRule::DefaultString { .. } => RuleKind::Default,
-        ValidationRule::Integer
-        | ValidationRule::Minimum { .. }
-        | ValidationRule::Maximum { .. }
-        | ValidationRule::ExclusiveMinimum { .. }
-        | ValidationRule::ExclusiveMaximum { .. }
-        | ValidationRule::MultipleOf { .. }
-        | ValidationRule::MinimumLength { .. }
-        | ValidationRule::MaximumLength { .. }
-        | ValidationRule::Pattern { .. }
-        | ValidationRule::Format { .. }
-        | ValidationRule::Template { .. } => RuleKind::Test,
+        _ => RuleKind::Test,
     }
 }
 

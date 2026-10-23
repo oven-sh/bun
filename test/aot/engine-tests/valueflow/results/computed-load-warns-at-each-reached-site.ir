@@ -1,0 +1,30 @@
+# The build warns once at each reached require(x) and import(x) under a computed name in the program's own code: not in a function that nothing calls, and not in a module of the library that has run
+# RUN: valueflow-results
+# DIAGNOSTIC: CodeOutsideImageIsRefused 3
+# CHECK: function f1 reachability=Unreached
+# CHECK-NOT: function f2 reachability
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f2
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = RequireDynamic v1 referrer=m0
+    v3 = ImportDynamic v1 referrer=m0
+    v4 = RequireDynamic v1 referrer=m0
+    v5 = RequireModule module=m1 referrer=m0 specifier="node:path"
+    Return
+}
+function f1 name="uncalled" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = RequireDynamic v0 referrer=m0
+    Return
+}
+function f2 name="loader" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = String string="x"
+    v1 = RequireDynamic v0 referrer=m1
+    Return
+}

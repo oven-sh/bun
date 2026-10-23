@@ -49,11 +49,7 @@ pub(super) fn classify_constant(constant: Constant) -> CaseKey {
             CaseKey::Integer(number as i64)
         }
         Constant::String(text) => CaseKey::String(text),
-        Constant::Undefined
-        | Constant::Null
-        | Constant::Boolean(_)
-        | Constant::Number(_)
-        | Constant::BigInt(_) => CaseKey::Other(constant),
+        _ => CaseKey::Other(constant),
     }
 }
 

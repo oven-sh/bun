@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // What --preload names runs in the same process as the program, so `bun run --aot` and `bun test --aot` look at it as they look at the program.
@@ -10,14 +11,7 @@ const log = `declare const console: { log(...values: unknown[]): void };\n`;
 
 async function ran(files: Record<string, string>, ...args: string[]) {
   using dir = tempDir("run-aot-analyzes-preloads", { ...settings, ...files });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], String(dir));
   return { stdout, stderr, exitCode };
 }
 

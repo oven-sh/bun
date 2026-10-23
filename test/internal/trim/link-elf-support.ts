@@ -5,7 +5,6 @@ import { closeSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { readFeatureModel, type FeatureName } from "../../../scripts/build/trim/features.ts";
-import type { Library } from "../../../scripts/build/trim/libraries.ts";
 import { createLinker, parseArguments } from "../../../scripts/build/trim/link.ts";
 import { elf } from "../../../scripts/build/trim/linker-elf.ts";
 import type { Link } from "../../../scripts/build/trim/linker.ts";
@@ -79,8 +78,6 @@ export interface Program {
   inputs?: string[];
   minimums?: Record<FeatureName, number>;
   builtins?: BuiltinEntry[];
-  libraries?: Library[];
-  validatesRelocations?: boolean | "report";
   removed?: FeatureName[];
 }
 
@@ -137,7 +134,7 @@ export async function compileObjects(
 
 export async function wrapped(folder: string, program: Program = {}) {
   const { objects = defaultObjects, compileFlags = {}, linkFlags = [], archived = [], inputs = [] } = program;
-  const { minimums, builtins, libraries, validatesRelocations } = program;
+  const { minimums, builtins } = program;
   const compilesFeatureCode = program.compilesFeatureCode ?? compileFlags.feature_code !== undefined;
   const pathOf = (name: string) => objectPath(folder, name, compilesFeatureCode);
   await compileObjects(folder, objects, compileFlags, compilesFeatureCode);
@@ -147,9 +144,9 @@ export async function wrapped(folder: string, program: Program = {}) {
   const linkedObjects = objects.filter(name => !archived.includes(name)).map(pathOf);
   const archives = archived.length > 0 ? ["libtoy.a"] : [];
   writeFileSync(join(folder, "in.rsp"), [...linkedObjects, ...archives, ...inputs].join("\n") + "\n");
-  const linkInputs = writeLinkInputs(folder, { minimums, builtins, libraries, nm: tools["llvm-nm"]! });
+  const linkInputs = writeLinkInputs(folder, { minimums, builtins });
   const command = [tools.clang!, "@in.rsp", ...baseLinkFlags("program.map"), ...linkFlags, "-o", "program"];
-  const options = { demangler: tools["llvm-cxxfilt"]!, validatesRelocations };
+  const options = { demangler: tools["llvm-cxxfilt"]! };
   return await run(linkArguments(linkInputs, command, options), folder);
 }
 
@@ -239,6 +236,6 @@ export function createElfFormat(folder: string, output: string) {
   const inputs = writeLinkInputs(folder);
   const features = readFeatureModel(inputs.features);
   const command = [tools.clang!, `-Wl,-Map=${join(folder, `${output}.map`)}`, "-o", join(folder, output)];
-  const words = ["bun", "link.ts", join(folder, "work"), inputs.features, inputs.builtinUses, inputs.libraries, "--", ...command];
+  const words = ["bun", "link.ts", join(folder, "work"), inputs.features, inputs.builtinUses, "--", ...command];
   return { features, format: elf(createLinker(parseArguments(words)).linker) };
 }

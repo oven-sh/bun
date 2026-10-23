@@ -1,6 +1,6 @@
 // Tables of small programs that are written by the scripts in ./made: `python3 <topic>.py <folder>` writes one folder a case (its entry
 // point is the file named main) or one file a case, and the top of each script says what its cases are about. Three of the scripts write one random program for a seed. Each case is run three ways, as ./run-three-ways.ts says, and
-// ./made/<topic>.json holds the verdict of each. A verdict that changes fails the test, for better or for worse.
+// ./made/<topic>.json holds the verdict of each case in which the three do not all agree. A verdict that changes fails the test, for better or for worse.
 // AOT_PROGRAMS_UPDATE=1 rewrites the file.
 //
 //   bun test test/aot/made-cases-three-ways                      the cases in which --aot is alone, and one in ten of the others
@@ -8,7 +8,7 @@
 //   AOT_GENERATED=<text> bun test test/aot/made-cases-three-ways those whose name contains the text
 import { spawnSync } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join, relative } from "path";
 import { wanted as programsWanted, slot, unsupported } from "../run-programs";
@@ -39,14 +39,15 @@ function whereItDeparts(aot: string, plain: string) {
  * `without`: cases that do not end, in plain Bun or in the executable of `bun build --compile`, or whose build depends on which type declarations lie above the temporary folder.
  * `seeds`: the script writes one random program, `<topic>.py <seed> <folder>`, and the cases are those of the seeds from 1 up to this.
  */
-export function madeCases(topic: string, { without = [], seeds = 0 }: { without?: string[]; seeds?: number } = {}) {
+function madeCases(topic: string, { without = [], seeds = 0 }: { without?: string[]; seeds?: number } = {}) {
   const recorded = join(import.meta.dir, "made", `${topic}.json`);
-  const verdicts: Record<string, string> = JSON.parse(readFileSync(recorded, "utf8"));
+  const verdicts: Record<string, string> = existsSync(recorded) ? JSON.parse(readFileSync(recorded, "utf8")) : {};
   const found: Record<string, string> = {};
   const root = String(tempDir("aot-made-cases", {}));
   afterAll(() => {
     rmSync(root, { recursive: true, force: true });
-    if (updates) writeFileSync(recorded, JSON.stringify({ ...verdicts, ...found }, Object.keys({ ...verdicts, ...found }).sort(), 1) + "\n");
+    const departing = Object.entries({ ...verdicts, ...found }).filter(([, verdict]) => verdict !== "all agree");
+    if (updates) writeFileSync(recorded, JSON.stringify(Object.fromEntries(departing.sort(([a], [b]) => (a < b ? -1 : 1))), null, 1) + "\n");
   }, 300_000);
   describe.concurrent(`compile/aot/made cases/${topic.replaceAll("-", " ")}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -89,10 +90,24 @@ export function madeCases(topic: string, { without = [], seeds = 0 }: { without?
             const fails = seeds > 0 && /(^|\n)exit code \d+/.test(plain);
             const verdict = fails ? "it fails in plain Bun" : whole.verdict.startsWith("alone: ") ? "alone: " + whereItDeparts(aot, plain) : whole.verdict;
             if (updates) found[name] = verdict;
-            expect({ verdict, plain, bundle }).toEqual({ verdict: updates ? verdict : verdicts[name], plain, bundle });
+            expect({ verdict, plain, bundle }).toEqual({ verdict: updates ? verdict : (verdicts[name] ?? "all agree"), plain, bundle });
           }),
         600_000,
       );
     }
   });
+}
+
+const options: Record<string, Parameters<typeof madeCases>[1]> = {
+  "buffer-statics-partial-objects-host-records": { without: ["response-json-of-records"] },
+  "random-commonjs-and-esm": { seeds: 30 },
+  "random-commonjs-and-esm-with-hooks": { seeds: 30 },
+  "random-esm-namespace-as-value": { seeds: 30 },
+  "top-level-symbols": { without: ["a-worker-has-its-own"] },
+  "values-of-another-realm": { without: ["a-promise-of-another-realm"] },
+};
+
+export function madeCasesOfAllTopics(part: number, parts: number) {
+  const topics = readdirSync(join(import.meta.dir, "made")).flatMap(file => (file.endsWith(".py") ? file.slice(0, -3) : []));
+  for (const [index, topic] of topics.sort().entries()) if (index % parts === part - 1) madeCases(topic, options[topic]);
 }

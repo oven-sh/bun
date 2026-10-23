@@ -4,8 +4,8 @@
 // through process.nextTick.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, printIR, test, writesProgramInto } from "./harness/printed-ir";
 import { built, spawned } from "./run-programs";
-import { describe, test } from "./supported";
 
 const program = `
   import { Readable } from "node:stream";
@@ -27,14 +27,15 @@ describe("the ticks of the library", () => {
   for (const shortcut of ["queueTick1", "queueTick2"]) {
     test(`${shortcut} asks whether process.nextTick is the library's own`, async () => {
       using dir = tempDir("aot-library-ticks", { "main.mjs": program });
-      const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "Selected", BUN_JSC_aotFunctionToDump: shortcut };
-      const build = await spawned(
-        [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "main"],
-        String(dir),
-        env,
+      const folder = String(dir);
+      built(
+        await spawned(
+          [bunExe(), "build", "--compile", "--aot", writesProgramInto(folder), "main.mjs", "--outfile", "main"],
+          folder,
+          { ...bunEnv, NO_COLOR: "1" },
+        ),
       );
-      built(build);
-      const body = bodyOf(build.stdout + build.stderr, shortcut);
+      const body = bodyOf(await printIR(folder, { until: "Select", functionName: shortcut }), shortcut);
       expect(body.some(line => line.includes(" = StrictEq "))).toBe(true);
       expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
     }, 240_000);

@@ -1,0 +1,278 @@
+# The plan of an access under a computed key: a constant key is a name, a typed array needs no test, an array needs the tests its type does not prove
+# FORM: Prepared
+# RUN: element-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+layout L1 name="Named" fields=[{key="x" declared={type=number}}]
+
+function f0 name="constant-keys" parameters=[{type=object}, {type="x"}, {type=@@iterator}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: "x", v2: @@iterator, v3: number):
+    v4 = ElemGet v0, v1
+    ElemSet v0, v1, v3
+    ElemDefine v0, v1, v3
+    v7 = ElemHas v0, v1
+    v8 = ElemDelete v0, v1
+    v9 = ElemGet v0, v2
+    Return v4
+}
+# CHECK: F0 v4 ElemGet: form=NamedKey level=Proven operation=PropGet
+# CHECK-NEXT: F0 v5 ElemSet: form=NamedKey level=Proven operation=PropSet
+# CHECK-NEXT: F0 v6 ElemDefine: form=NamedKey level=Proven operation=PropDefine
+# CHECK-NEXT: F0 v7 ElemHas: form=NamedKey level=Proven operation=PropHas
+# CHECK-NEXT: F0 v8 ElemDelete: form=NamedKey level=Proven operation=PropDelete
+# CHECK-NEXT: F0 v9 ElemGet: form=NamedKey level=Proven operation=PropGet
+function f1 name="keys-without-a-constant-name" parameters=[{type=object}, {type="0"}, {type="1.5"}, {type="x"|"y"}, {type=string}, {type=symbol}] results=[{type=anything}] {
+  b0(v0: object, v1: "0", v2: "1.5", v3: "x"|"y", v4: string, v5: symbol):
+    v6 = ElemGet v0, v1
+    v7 = ElemGet v0, v2
+    v8 = ElemGet v0, v3
+    v9 = ElemGet v0, v4
+    v10 = ElemGet v0, v5
+    v11 = ElemDelete v0, v1
+    Return v6
+}
+# CHECK-NEXT: F1 v6 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F1 v7 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F1 v8 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F1 v9 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F1 v10 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F1 v11 ElemDelete: form=ByKey level=Unknown
+function f2 name="typed-arrays" parameters=[{type=Uint8Array}, {type=number}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number, v2: int[0, 9]):
+    v3 = ElemGet v0, v1
+    ElemSet v0, v1, v1
+    v5 = ElemGet v0, v2
+    Return v3
+}
+# CHECK-NEXT: F2 v3 ElemGet: form=TypedArray level=Proven operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8
+# CHECK-NOT: tests=
+# CHECK: F2 v4 ElemSet: form=TypedArray level=Proven operation=PutTypedArrayElement class=[[uint8]] typedArray=TypeUint8
+# CHECK-NOT: tests=
+# CHECK: F2 v5 ElemGet: form=TypedArray level=Proven operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8 integralKey
+# CHECK-NOT: tests=
+function f3 name="typed-array-accesses-by-key-and-a-nullable-typed-array" parameters=[{type=Uint8Array}, {type=number}, {type=anything}, {type=bigint}, {type=string}, {type=undefined|Uint8Array}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number, v2: anything, v3: bigint, v4: string, v5: undefined|Uint8Array):
+    ElemSet v0, v1, v2
+    ElemSet v0, v1, v3
+    v8 = ElemHas v0, v1
+    ElemDefine v0, v1, v1
+    v10 = ElemGet v0, v4
+    v11 = ElemGet v5, v1
+    Return v8
+}
+# CHECK: F3 v6 ElemSet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v7 ElemSet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v8 ElemHas: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v9 ElemDefine: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v10 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v11 ElemGet: form=TypedArray level=Expected operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8 tests=[nullish]
+function f4 name="typed-array-of-big-integers" parameters=[{type=BigInt64Array}, {type=number}, {type=bigint}] results=[{type=anything}] {
+  b0(v0: BigInt64Array, v1: number, v2: bigint):
+    ElemSet v0, v1, v2
+    ElemSet v0, v1, v1
+    Return
+}
+# CHECK-NEXT: F4 v3 ElemSet: form=TypedArray level=Proven operation=PutTypedArrayElement class=[[bigint64]] typedArray=TypeBigInt64
+# CHECK-NEXT: F4 v4 ElemSet: form=ByKey level=Unknown
+function f5 name="buffer-is-a-typed-array" parameters=[{type=Buffer}, {type=number}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-NEXT: F5 v2 ElemGet: form=TypedArray level=Proven operation=GetTypedArrayElement class=[[buffer]] typedArray=TypeUint8
+function f6 name="expected-typed-array" parameters=[{type=Uint8Array flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ Uint8Array, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-NEXT: F6 v2 ElemGet: form=TypedArray level=Expected operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8 tests=[class]
+function f7 name="arrays" parameters=[{type=Array<number>}, {type=int[0, 9]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: int[0, 9], v2: number):
+    v3 = ElemGet v0, v1
+    ElemSet v0, v1, v2
+    ElemDefine v0, v1, v2
+    v6 = ElemHas v0, v1
+    Return v3
+}
+# CHECK-NEXT: F7 v3 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
+# CHECK-NEXT: F7 v4 ElemSet: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
+# CHECK-NEXT: F7 v5 ElemDefine: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
+# CHECK-NEXT: F7 v6 ElemHas: form=Array level=Expected operation=HasArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
+function f8 name="array-key-may-name-a-property" parameters=[{type=Array<number>}, {type=number}, {type=int[-1, 9]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number, v2: int[-1, 9]):
+    v3 = ElemGet v0, v1
+    v4 = ElemGet v0, v2
+    Return v3
+}
+# CHECK-NEXT: F8 v3 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double tests=[pristine(Storage+Names), storage]
+# CHECK-NEXT: F8 v4 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage+Names), storage]
+function f9 name="expected-array" parameters=[{type=object}, {type=Array<number> flags=[IsExpected]}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: object ~ Array<number>, v1: anything ~ Array<number>, v2: int[0, 9]):
+    v3 = ElemGet v0, v2
+    v4 = ElemGet v1, v2
+    Return v3
+}
+# CHECK-NEXT: F9 v3 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+# CHECK-NEXT: F9 v4 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+function f10 name="expected-key" parameters=[{type=Array<number>}, {type=number flags=[IsExpected]}, {type=int[0, 9] flags=[IsExpected]}, {type=string flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: anything ~ number, v2: anything ~ int[0, 9], v3: anything ~ string, v4: string ~ "a"|"b"):
+    v5 = ElemGet v0, v1
+    v6 = ElemGet v0, v2
+    v7 = ElemGet v0, v3
+    v8 = ElemGet v0, v4
+    Return v5
+}
+# CHECK-NEXT: F10 v5 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double tests=[key, pristine(Storage+Names), storage]
+# CHECK-NEXT: F10 v6 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[key, pristine(Storage+Names), storage]
+# CHECK-NEXT: F10 v7 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F10 v8 ElemGet: form=ByKey level=Unknown
+function f11 name="array-storage" parameters=[{type=Array<number, proven, Double>}, {type=Array<number>}, {type=Array<number, Double> flags=[IsExpected]}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double>, v1: Array<number> ~ Array<number, Double>, v2: anything ~ Array<number, Double>, v3: int[0, 9]):
+    v4 = ElemGet v0, v3
+    v5 = ElemGet v1, v3
+    v6 = ElemGet v2, v3
+    Return v4
+}
+# CHECK-NEXT: F11 v4 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage)]
+# CHECK-NEXT: F11 v5 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
+# CHECK-NEXT: F11 v6 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+function f12 name="array-proven-pristine" parameters=[{type=Array<number, pristine[Storage]>}, {type=Array<number, pristine[Storage, Names]>}, {type=int[0, 9]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: Array<number, pristine[Storage, Names]>, v2: int[0, 9], v3: number):
+    v4 = ElemGet v0, v2
+    v5 = ElemGet v0, v3
+    v6 = ElemGet v1, v3
+    Return v4
+}
+# CHECK-NEXT: F12 v4 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[storage]
+# CHECK-NEXT: F12 v5 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double tests=[pristine(Names), storage]
+# CHECK-NEXT: F12 v6 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double tests=[storage]
+function f13 name="nullable-array" parameters=[{type=undefined|Array<number>}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: undefined|Array<number>, v1: int[0, 9]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-NEXT: F13 v2 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[nullish, pristine(Storage), storage]
+function f14 name="integral-key-on-an-access-by-key" parameters=[{type=object}, {type=int[0, 9]}, {type=number}, {type=Map<number, number>}] results=[{type=anything}] {
+  b0(v0: object, v1: int[0, 9], v2: number, v3: Map<number, number>):
+    v4 = ElemGet v0, v1
+    v5 = ElemGet v0, v2
+    v6 = ElemGet v3, v1
+    v7 = ElemDelete v0, v1
+    v8 = ElemDelete v0, v2
+    Return v4
+}
+# CHECK-NEXT: F14 v4 ElemGet: form=ByKey level=Unknown integralKey cause=UnknownObject
+# CHECK-NEXT: F14 v5 ElemGet: form=ByKey level=Unknown cause=UnknownObject
+# CHECK-NEXT: F14 v6 ElemGet: form=ByKey level=Unknown integralKey
+# CHECK-NEXT: F14 v7 ElemDelete: form=ByKey level=Unknown integralKey
+# CHECK-NEXT: F14 v8 ElemDelete: form=ByKey level=Unknown
+# CHECK-NOT: integralKey
+function f15 name="strings" parameters=[{type=string}, {type=number}, {type="abc"}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: "abc"):
+    v3 = ElemGet v0, v1
+    v4 = ElemGet v2, v1
+    ElemSet v0, v1, v1
+    v6 = ElemHas v0, v1
+    Return v3
+}
+# CHECK: F15 v3 ElemGet: form=String level=Proven
+# CHECK-NEXT: F15 v4 ElemGet: form=String level=Proven
+# CHECK-NEXT: F15 v5 ElemSet: form=ByKey level=Unknown
+# CHECK-NEXT: F15 v6 ElemHas: form=ByKey level=Unknown
+function f16 name="string-or-key-only-expected" parameters=[{type=string flags=[IsExpected]}, {type=string}, {type=number}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ string, v1: string, v2: number, v3: anything ~ number):
+    v4 = ElemGet v0, v2
+    v5 = ElemGet v1, v3
+    Return v4
+}
+# CHECK-NEXT: F16 v4 ElemGet: form=ByKey level=Expected tests=[string]
+# CHECK-NEXT: F16 v5 ElemGet: form=ByKey level=Expected tests=[key]
+function f17 name="unions" parameters=[{type=Array<number>|Uint8Array}, {type=string|Array<number>}, {type=L0|Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>|Uint8Array, v1: string|Array<number>, v2: L0|Array<number>, v3: number):
+    v4 = ElemGet v0, v3
+    v5 = ElemGet v1, v3
+    v6 = ElemGet v2, v3
+    Return v4
+}
+# CHECK-NEXT: F17 v4 ElemGet: form=Split level=Proven
+# CHECK-NEXT: F17 v5 ElemGet: form=Split level=Proven
+# CHECK-NEXT: F17 v6 ElemGet: form=Split level=Proven
+function f18 name="unions-left-whole" parameters=[{type=L0|L1}, {type=boolean|L0}, {type=function|Array<number>}, {type=undefined|Array<number>|Uint8Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: boolean|L0, v2: function|Array<number>, v3: undefined|Array<number>|Uint8Array, v4: number):
+    v5 = ElemGet v0, v4
+    v6 = ElemGet v1, v4
+    v7 = ElemGet v2, v4
+    v8 = ElemGet v3, v4
+    Return v5
+}
+# CHECK-NEXT: F18 v5 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F18 v6 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F18 v7 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F18 v8 ElemGet: form=ByKey level=Unknown
+function f19 name="key-is-an-index-once-tested" parameters=[{type=Array<number, pristine[Storage]>}, {type=undefined|int[0, 9]}, {type=undefined|int[-1, 9]}, {type=undefined|number}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: undefined|int[0, 9] ~ int[0, 9], v2: undefined|int[-1, 9] ~ int[-1, 9], v3: undefined|number ~ number):
+    v4 = ElemGet v0, v1
+    ElemSet v0, v1, v1
+    v6 = ElemGet v0, v2
+    v7 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-NEXT: F19 v4 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[key, storage]
+# CHECK-NEXT: F19 v5 ElemSet: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[key, storage]
+# CHECK-NEXT: F19 v6 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[key, pristine(Names), storage]
+# CHECK-NEXT: F19 v7 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double tests=[key, pristine(Names), storage]
+function f20 name="keys-with-one-text" parameters=[{type=object}, {type=undefined}, {type=null}, {type=true}, {type=false}, {type=boolean}, {type=undefined|null}] results=[{type=anything}] {
+  b0(v0: object, v1: undefined, v2: null, v3: true, v4: false, v5: boolean, v6: undefined|null):
+    v7 = ElemGet v0, v1
+    ElemSet v0, v2, v1
+    v9 = ElemHas v0, v3
+    v10 = ElemDelete v0, v4
+    v11 = ElemGet v0, v5
+    v12 = ElemGet v0, v6
+    Return v7
+}
+# CHECK-NEXT: F20 v7 ElemGet: form=NamedKey level=Proven operation=PropGet
+# CHECK-NEXT: F20 v8 ElemSet: form=NamedKey level=Proven operation=PropSet
+# CHECK-NEXT: F20 v9 ElemHas: form=NamedKey level=Proven operation=PropHas
+# CHECK-NEXT: F20 v10 ElemDelete: form=NamedKey level=Proven operation=PropDelete
+# CHECK-NEXT: F20 v11 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F20 v12 ElemGet: form=ByKey level=Unknown
+function f21 name="expected-type-with-other-parts" parameters=[{type=object}, {type=object}, {type=object}, {type=object}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: object ~ Array<number>|Boolean|Number|String, v1: object ~ L0|Array<number>, v2: object ~ Array<number>|Uint8Array, v3: object ~ Boolean|Map<number, number>, v4: int[0, 9]):
+    v5 = ElemGet v0, v4
+    ElemDefine v1, v4, v4
+    v7 = ElemGet v2, v4
+    v8 = ElemGet v3, v4
+    Return v5
+}
+# CHECK-NEXT: F21 v5 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+# CHECK-NEXT: F21 v6 ElemDefine: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+# CHECK-NEXT: F21 v7 ElemGet: form=ByKey level=Unknown integralKey cause=UnknownObject
+# CHECK-NEXT: F21 v8 ElemGet: form=ByKey level=Unknown integralKey cause=UnknownObject
+function f22 name="stored-value-once-tested" parameters=[{type=Uint8Array}, {type=BigInt64Array}, {type=int[0, 9]}, {type=undefined|null|number}, {type=anything}, {type=string flags=[IsExpected]}, {type=bigint flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: BigInt64Array, v2: int[0, 9], v3: undefined|null|number ~ number, v4: anything, v5: anything ~ string, v6: anything ~ bigint):
+    ElemSet v0, v2, v3
+    ElemSet v0, v2, v4
+    ElemSet v0, v2, v5
+    ElemSet v0, v2, v6
+    ElemSet v1, v2, v6
+    ElemSet v1, v2, v3
+    Return
+}
+# CHECK-NEXT: F22 v7 ElemSet: form=TypedArray level=Expected operation=PutTypedArrayElement class=[[uint8]] typedArray=TypeUint8 integralKey tests=[stored]
+# CHECK-NEXT: F22 v8 ElemSet: form=ByKey level=Unknown integralKey
+# CHECK-NEXT: F22 v9 ElemSet: form=ByKey level=Unknown integralKey
+# CHECK-NEXT: F22 v10 ElemSet: form=ByKey level=Unknown integralKey
+# CHECK-NEXT: F22 v11 ElemSet: form=TypedArray level=Expected operation=PutTypedArrayElement class=[[bigint64]] typedArray=TypeBigInt64 integralKey tests=[stored]
+# CHECK-NEXT: F22 v12 ElemSet: form=ByKey level=Unknown integralKey
+function f23 name="array-with-everything-proven" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=int[0, 9]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: Array<number, proven, Double, pristine[Storage, Names]>, v2: int[0, 9], v3: number):
+    v4 = ElemGet v0, v2
+    v5 = ElemGet v1, v3
+    Return v4
+}
+# CHECK-NEXT: F23 v4 ElemGet: form=Array level=Proven operation=GetArrayElement class=[[array]] storage=Double integralKey
+# CHECK-NOT: tests=
+# CHECK: F23 v5 ElemGet: form=Array level=Proven operation=GetArrayElement class=[[array]] storage=Double
+# CHECK-NOT: tests=

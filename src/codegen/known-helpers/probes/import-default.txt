@@ -1,4 +1,0 @@
-import probeDefault from "./probe-a";
-import probeOther, { probeValue } from "./probe-b";
-import probeThird, * as probeNamespace from "./probe-c";
-export const probeResult = [probeDefault(), probeOther, probeValue, probeThird, probeNamespace];

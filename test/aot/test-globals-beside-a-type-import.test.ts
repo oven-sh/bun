@@ -1,6 +1,7 @@
 // A test file that imports only a type from the test package still gets `describe`, `it` and `expect` as globals: TypeScript erases the import.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 const files = {
@@ -32,14 +33,7 @@ describe("test globals beside an import that TypeScript erases", () => {
         `bun test ${mode.join(" ")} ${file}`.replace("  ", " "),
         async () => {
           using dir = tempDir("aot-test-globals", files);
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "test", ...mode, "./" + file],
-            cwd: String(dir),
-            env: bunEnv,
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...mode, "./" + file], String(dir));
           expect(stdout + stderr).not.toContain("is not defined");
           expect(stdout + stderr).toContain(" 1 pass");
           expect(exitCode).toBe(0);

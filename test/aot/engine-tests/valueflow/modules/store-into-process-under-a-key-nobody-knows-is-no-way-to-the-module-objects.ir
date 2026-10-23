@@ -1,0 +1,32 @@
+# main.cjs: exports.kept = function () {}; process[globalThis.name] = 1; eval(globalThis.text)
+# A store under a key nobody knows names no member, so it is no use of process.mainModule, and what the module exports stays in the program beside evaluated text.
+# main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has the read that names it
+# RUN: valueflow-why used-builtin=ProcessMainModule escaped=f1
+# CHECK: used-builtin=ProcessMainModule
+# CHECK-NEXT: not held
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    PropSet v0, v2 key="kept"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="name" [isFreeName]
+    v6 = Builtin builtin=Process
+    v7 = Integer integer=1
+    ElemSet v6, v5, v7
+    v9 = PropGet v4 key="text" [isFreeName]
+    v10 = Builtin builtin=Eval
+    v11 = Call v10, -, v9
+    Return
+}
+function f1 name="kept" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,18 +1,11 @@
 // What `bun check --aot` and `bun build --compile --aot` say about their own flags, and about a store that replaces a member of a built-in object.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd,
-    env: bunEnv,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd);
   return { stdout, stderr, exitCode };
 }
 const tsconfig = JSON.stringify({

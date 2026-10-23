@@ -56,11 +56,7 @@ fn name_initialized_holders(
 fn is_stored_form(form: BindingForm) -> bool {
     match form {
         BindingForm::Stored => true,
-        BindingForm::NotAValue
-        | BindingForm::Import
-        | BindingForm::Callee { .. }
-        | BindingForm::MappedArgument { .. }
-        | BindingForm::ContainerMember { .. } => false,
+        _ => false,
     }
 }
 
@@ -270,11 +266,7 @@ fn compute_entry_flags(
             unreachable!("a signature has no scopes")
         }
         FunctionKey::ImplicitConstructor(_) => FunctionFlags::HAS_NEW_TARGET,
-        FunctionKey::InstanceInitializer(_)
-        | FunctionKey::StaticInitializer(_)
-        | FunctionKey::AccessorGetter { .. }
-        | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => FunctionFlags::HAS_THIS,
+        _ => FunctionFlags::HAS_THIS,
     }
 }
 

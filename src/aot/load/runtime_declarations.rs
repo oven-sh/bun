@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 
 use bun_sema::util::SharedSort;
 
+use crate::builtins::table::BuiltinKind;
 use crate::builtins::{BuiltinName, table};
 use crate::load::runtime_modules::RuntimeModules;
 
@@ -100,12 +101,19 @@ fn collect_global_names(runs_tests: bool) -> Vec<&'static [u8]> {
     names
 }
 
+fn is_class(name: &[u8]) -> bool {
+    let global = table::find_name(name).and_then(table::global);
+    global.is_some_and(|global| {
+        table::entry(table::canonical_id(global)).kind == BuiltinKind::Constructor
+    })
+}
+
 // Where a library of TypeScript, a package of types or the program declares a name, that declaration counts and the one here does not: `Options::declarations_of_last_resort`.
 fn write_declarations(runtime_modules: &RuntimeModules, runs_tests: bool) -> Vec<u8> {
     let mut text = Vec::new();
     for name in collect_global_names(runs_tests) {
         text.extend_from_slice(&[b"declare var ", name, b": any;\n"].concat());
-        if name[0].is_ascii_uppercase() {
+        if is_class(name) {
             text.extend_from_slice(&[b"type ", name, b" = any;\n"].concat());
         }
     }
@@ -151,6 +159,12 @@ mod tests {
         }
         assert!(!contains(text, b"declare module \"bun\";"));
         assert!(!contains(text, b"type console"));
+        for namespace in ["WebAssembly", "Temporal", "Math", "NaN"] {
+            let variable = format!("declare var {namespace}: any;\n");
+            assert!(contains(text, variable.as_bytes()), "{namespace}");
+            let alias = format!("type {namespace} = any;");
+            assert!(!contains(text, alias.as_bytes()), "{namespace}");
+        }
         assert!(!contains(text, b"declare var describe"));
         assert!(!contains(text, b"declare var document"));
     }

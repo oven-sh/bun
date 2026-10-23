@@ -225,18 +225,7 @@ fn class_field_text(file: &FileLowering<'_, '_, '_, '_>, member: MemberId) -> Op
 fn result_text(file: &FileLowering<'_, '_, '_, '_>, function: FunctionKey) -> Vec<u8> {
     let name = match function {
         FunctionKey::Source(function) => function_name(file, function),
-        FunctionKey::ModuleBody(_)
-        | FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Signature(_)
-        | FunctionKey::ClassSignature(_)
-        | FunctionKey::ImplicitConstructor(_)
-        | FunctionKey::InstanceInitializer(_)
-        | FunctionKey::StaticInitializer(_)
-        | FunctionKey::AccessorGetter { .. }
-        | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => None,
+        _ => None,
     };
     match name {
         Some(name) => concat(&[b"The return value of ", &quoted(name)]),
@@ -431,12 +420,7 @@ fn target_text(file: &FileLowering<'_, '_, '_, '_>, subject: Subject) -> Option<
     match subject {
         Subject::Binding(symbol) => Some(name_text(file, file.bound.symbol(symbol).name).to_vec()),
         Subject::Member(access) => Some(text_of(file, access).to_vec()),
-        Subject::Parameter(_)
-        | Subject::Argument { .. }
-        | Subject::LiteralProperty
-        | Subject::ClassField(_)
-        | Subject::Result
-        | Subject::Assertion => None,
+        _ => None,
     }
 }
 

@@ -23,11 +23,7 @@ impl Function {
         match kind {
             EntryParameter::Capture => self.captures.len(),
             EntryParameter::Parameter => self.parameters.len(),
-            EntryParameter::This
-            | EntryParameter::Callee
-            | EntryParameter::NewTarget
-            | EntryParameter::ArgumentCount
-            | EntryParameter::HiddenRest => usize::from(self.flags.contains(kind.present_with())),
+            _ => usize::from(self.flags.contains(kind.present_with())),
         }
     }
 

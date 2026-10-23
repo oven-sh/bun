@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs test262, the conformance suite of ECMAScript, through the ahead-of-time compiler.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> python3 test/aot/shell/test262.py <test262> [options] <folder under test262/test>...
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> python3 test/aot/shell/test262.py <test262> [options] <folder under test262/test>...
     python3 test/aot/shell/test262.py <test262> --bun <bun> [options] built-ins language
 
     <test262>       a checkout of https://github.com/tc39/test262 (WebKit has one in JSTests/test262)
@@ -11,7 +11,7 @@
     --batch <n>     tests in a batch (default 40)
     --limit <n>     take only n tests, spread evenly
     --out <file>    write the result of every test that does not pass as JSON: { <test>: [<status>, <detail>] }
-    --known <file>  what --out wrote in an earlier run (test262-known.json beside this script): print only what has changed, and exit with 1
+    --known <file>  what --out wrote in an earlier run, as that of the Bun from before a change: print only what has changed, and exit with 1
                     if a test that passed no longer does
 
 toolchain.py's docstring says how to build the tools. All of built-ins and language takes three minutes on four cores in the shell.

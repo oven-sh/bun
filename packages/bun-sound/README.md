@@ -111,23 +111,14 @@ count. So what is compiled is the code that `bun run` would load.
 | not erased | TypeScript syntax that emits code: an `enum`, a `namespace` that is not `declare`d, a parameter property, a decorator, an `accessor` field, JSX, `import x = require()`, `export =`. In a CommonJS file also an `export` of a type, which would make it an ES module |
 | has to be the same | everything else: each statement, name, literal and operator, in the same order |
 
-Most typed versions in this folder are older than this rule and change more than types. A package that says `no` here stops the
-build with the error above, until its typed version is written again: at npm's own paths, with nothing but types added.
-
-| package | `sound` | used today | why not |
-|---|---|---|---|
-| react | 2 | yes | |
-| react-reconciler | 2 | yes | |
-| @anthropic-ai/sdk | 2 | yes | |
-| react-dom 19.3.0, 19.3.1 | 2 | yes | |
-| seroval | 2 | yes | |
-| react-dom, the other versions | 2 | no | variables are split into roles (`x$asRole`), and the shapes are in a `namespace FZ` that is not `declare`d |
-| fuse.js | 1 | no | the typed file is a new file, `x.sound.ts`, and the installed file is replaced by one line that re-exports it |
+A typed version that changes more than types stops the build with the error above, until it is written again: at npm's own paths, with
+nothing but types added. The typed versions in this folder keep to the rule: react, react-reconciler, @anthropic-ai/sdk, react-dom 19.3.0
+and 19.3.1, seroval.
 
 `one_name.py` makes `lay/` of react-reconciler, react-dom 19.3.0 and 19.3.1, seroval and @anthropic-ai/sdk from the same `src/`:
 see [A variable that the bundle reuses](#a-variable-that-the-bundle-reuses). `check.py` and `run.py` still generate and measure all of them in the old form. `check.py` writes the format `1` files into its copy of the packages,
 `<out>/node_modules`, where they are ordinary TypeScript files of the package, so those trees say nothing about `.sound/`.
-[What the compiler no longer accepts](#what-the-compiler-no-longer-accepts) has the rules that these versions were written by.
+[What the compiler no longer accepts](#what-the-compiler-no-longer-accepts) has the rules that every `src/` was written by.
 
 ## What is in this folder
 
@@ -146,7 +137,7 @@ publish.py    writes the tarballs to publish, from this folder alone
 carry.py      moves the types to another version of the same file, line by line
 sabotage.py   breaks the text in one way per gate and checks that the gate notices
 tools/        the steps check.py and one_name.py call, the tools for writing a new typed version, and those that say where a typed build spends its time
-trees/        test programs: client (reconciler), server (react-dom/server), seroval, fuse, sdk, entries, lie
+trees/        test programs: client (reconciler), server (react-dom/server), seroval, sdk, entries, lie
 ```
 
 Environment for all of them:
@@ -160,7 +151,7 @@ export BUN_SEMA_TS_LIB=/path/to/typescript/lib
 The gates work on packages as npm installs them. `trees/installs/<set>/package.json` pins what each tree was last run with:
 
 ```sh
-cd trees/installs/client && bun install      # client, server-19.3.1 .. server-19.0.0, seroval, fuse, sdk-0.112.1, sdk-0.128.0
+cd trees/installs/client && bun install      # client, server-19.3.1, server-19.3.0, seroval, sdk-0.112.1, sdk-0.128.0
 ```
 
 ```sh
@@ -228,7 +219,7 @@ that the reconciler's own small records have (`{ current }`, `{ pending }`, `{ t
 To see which types are not closed, and why:
 
 ```sh
-cd out/projects/fuse.internal/typed && bun compile wide.ts --explain
+cd out/projects/seroval.internal/typed && bun compile wide.ts --explain
 bun check --aot wide.ts --explain=unknown-code --explain=unproven-type --explain=mutation 2>&1 | grep '^aot: '   # one line per type and reason
 ```
 
@@ -339,8 +330,8 @@ of the ES form.
 
 **Mind what your test tree does to the subject.** The compiler analyzes the entire program. One
 `fromJSON(JSON.parse(text))` in seroval's tree opened the layout of every node, so the tree tested a
-program with no closed layout at all. `trees/seroval/wide.ts` and `trees/fuse/wide.ts` are therefore built as three programs each: as
-they are, `.internal` (the package only sees objects that it allocated) and `.boundary` (parsed JSON reaches the package only through an
+program with no closed layout at all. `trees/seroval/wide.ts` is therefore built as three programs: as
+it is, `.internal` (the package only sees objects that it allocated) and `.boundary` (parsed JSON reaches the package only through an
 untyped file). `run.py` says how.
 
 ### A variable that the bundle reuses
@@ -411,7 +402,7 @@ bash tools/this_programs.sh path/to/bun work/                               # bu
 
 ### What the compiler no longer accepts
 
-Every typed version here that says `no` above relies on one of these, and so does every `src/`. `check.py` still generates and checks them: that is what its gates
+Every `src/` here relies on one of these. `check.py` still generates and checks them: that is what its gates
 `splits`, `counts`, `form` and `entry` are for. Do not use them in a new typed version.
 
 **A variable for each role.** Minified bundles reuse variables: Closure-compiled code stores a fiber, then a number, then a queue in the
@@ -438,7 +429,7 @@ returns. The manifest has a `when` for `NODE_ENV`, since the rewritten entry alw
 
 **A new file.** In format `1`, `"lay"` has `"new"` for a path that the installed package must not have. Such a file is never `x.ts` beside
 `x.js` when there is an `x.d.ts`: the checker prefers `x.ts`, and the package's public types vanish for its users. It is
-`x.sound.ts` (fuse.js: `dist/fuse.sound.ts`, and `dist/fuse.mjs` becomes `export { default } from "./fuse.sound.ts";`).
+`x.sound.ts`.
 
 ## Carrying a typed version to another version
 
@@ -461,9 +452,9 @@ Patch releases often differ only in their own version string. Those share one ty
 ## Publishing
 
 ```sh
-python3 publish.py pack out/                        # every typed version; or name some: react-dom@19.2.4
-# sound-react-dom-19.2.4.tgz    9 files   412345 B  5f0c...
-npm publish out/sound-react-dom-19.2.4.tgz --access public
+python3 publish.py pack out/                        # every typed version; or name some: react-dom@19.3.1
+# sound-react-dom-19.3.1.tgz    9 files   412345 B  5f0c...
+npm publish out/sound-react-dom-19.3.1.tgz --access public
 ```
 
 `pack` needs Python 3 and this folder, nothing else: no network, no `node_modules`, no compiler. It sends nothing. It writes no
@@ -489,7 +480,6 @@ file as installed and a `NOTICE` that says whose code it is and what was changed
 | react, react-dom, react-reconciler | MIT | Meta Platforms, Inc. and affiliates | keep the copyright and permission notice | `LICENSE`; the `@license` header stays in each file |
 | seroval | MIT | 2025 Alexis Munsayac | the same | `LICENSE` |
 | @anthropic-ai/sdk | MIT | 2023 Anthropic, PBC | the same | `LICENSE` |
-| fuse.js | Apache-2.0 | 2023 Kiro Risk | a copy of the licence; keep the notices; changed files say that they were changed; pass on `NOTICE` if there is one (there is none) | `LICENSE`; the header stays; the first line of `lay/dist/fuse.sound.ts`; `NOTICE` |
 
 `pack.py` stops on a package without a `LICENSE` file or a copyright line. For a licence that is not in this table, read it first.
 

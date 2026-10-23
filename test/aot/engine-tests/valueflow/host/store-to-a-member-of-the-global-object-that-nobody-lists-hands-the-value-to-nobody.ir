@@ -1,0 +1,24 @@
+# globalThis.__hookOfSomeTool = function hook() {}
+# Under a name that the table does not list lies no setter of the engine or the host, and neither looks there: they look up the names that they have put on the global object.
+# So the value goes into the heap and to nobody else, the function is not entered, and no native code answers a value nobody knows.
+# RUN: valueflow-why used-builtin=BufferPrototype escaped=f1
+# CHECK: used-builtin=BufferPrototype
+# CHECK-NEXT: not held
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+# RUN(REACHED): valueflow-solve unreached
+# REACHED: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="__hookOfSomeTool" mode=Strict
+    Return
+}
+function f1 name="hook" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

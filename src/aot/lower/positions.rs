@@ -130,25 +130,7 @@ fn find_listed_nullish(
             listed
         }
         ShapeKind::Constrained { base, .. } => find_listed_nullish(file, base, depth + 1),
-        ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object => Primitives::default(),
+        _ => Primitives::default(),
     }
 }
 
@@ -354,16 +336,7 @@ pub(crate) fn binding_position(
     }
     let variable = match file.inputs.modules.import_binding(file.file, symbol) {
         ImportBinding::Variable(exported) => exported,
-        ImportBinding::Local
-        | ImportBinding::Unused
-        | ImportBinding::Unbound
-        | ImportBinding::Namespace { .. }
-        | ImportBinding::Builtin(_)
-        | ImportBinding::CapturedBuiltin { .. }
-        | ImportBinding::BuiltinMember { .. }
-        | ImportBinding::Synthetic(_)
-        | ImportBinding::NamespaceRead { .. }
-        | ImportBinding::Exports { .. } => file.queries.canonical_symbol(file.file, symbol),
+        _ => file.queries.canonical_symbol(file.file, symbol),
     };
     file.types
         .positions

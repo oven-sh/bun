@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "../harness/run";
 import { test } from "../supported";
 
 const options = {
@@ -15,14 +16,7 @@ const passing = (name: string, imports = "", body = "expect(1).toBe(1);") =>
   `import { expect, test } from "bun:test";\n${imports}\ntest(${JSON.stringify(name)}, () => { ${body} });\n`;
 
 async function passed(dir: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot", ...args],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr } = await run([bunExe(), "test", "--aot", ...args], dir);
   return [...(stdout + stderr).matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 }
 

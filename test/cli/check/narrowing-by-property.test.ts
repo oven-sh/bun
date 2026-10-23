@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "../../aot/harness/run";
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -139,13 +140,6 @@ export function neverAfterTestOnObject(x: { p: number }) {
 
 test("a test on a property narrows exactly the references TypeScript narrows", async () => {
   using dir = tempDir("check-narrowing-by-property", { "tsconfig.json": tsconfig, "narrowing.ts": source });
-  await using checked = Bun.spawn({
-    cmd: [bunExe(), "check", "./narrowing.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "check", "./narrowing.ts"], String(dir));
   expect({ output: exitCode ? stdout + stderr : "", exitCode }).toEqual({ output: "", exitCode: 0 });
 });

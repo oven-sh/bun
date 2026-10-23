@@ -163,13 +163,7 @@ fn computed_value<'s>(values: &[Option<DataValue<'s>>], expr: ExprId) -> Option<
 fn negate(value: Option<DataValue<'_>>) -> Option<DataValue<'_>> {
     match value? {
         DataValue::Number(number) => Some(DataValue::Number(-number)),
-        DataValue::Undefined
-        | DataValue::Null
-        | DataValue::Boolean(_)
-        | DataValue::String(_)
-        | DataValue::BigInt(_)
-        | DataValue::Array(_)
-        | DataValue::Object(_) => None,
+        _ => None,
     }
 }
 

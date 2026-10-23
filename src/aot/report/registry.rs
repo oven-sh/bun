@@ -1,6 +1,5 @@
-use super::format::{code_of, lower_camel_case};
+use super::format::lower_camel_case;
 use super::json::JsonWriter;
-use super::losses::loss_reasons;
 use crate::builtins::id::Feature;
 use crate::engine::{is_optional_pass, operation_names};
 use crate::ir::generated::{FlowResultKind, PassId, RuntimeCounterId, SCHEMA_HASH, Sabotage};
@@ -13,7 +12,6 @@ pub fn write() -> Vec<u8> {
     let runtime_counters = RuntimeCounterId::ALL
         .into_iter()
         .filter(|&counter| counter != RuntimeCounterId::None);
-    let reason_codes: Vec<Vec<u8>> = loss_reasons().into_iter().map(code_of).collect();
     let features = Feature::ALL.iter().map(|&feature| feature.name());
 
     let mut json = JsonWriter::object();
@@ -27,7 +25,6 @@ pub fn write() -> Vec<u8> {
     );
     write_names(&mut json, "flowResults", FlowResultKind::NAMES.into_iter());
     write_passes(&mut json);
-    json.strings("lossReasons", reason_codes.iter().map(Vec::as_slice));
     json.strings("operations", operation_names().into_iter());
     write_names(&mut json, "features", features);
     let sabotages = Sabotage::ALL

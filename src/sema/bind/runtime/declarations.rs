@@ -95,26 +95,7 @@ pub(super) fn scope_boundary(hir: &File<'_>, kind: ScopeKind) -> (Option<CodeUni
         ScopeKind::Fn(f) => (Some(CodeUnit::Function(f)), Some(hir[f].is_strict)),
         ScopeKind::FieldInitializer(m) => (Some(CodeUnit::FieldInitializer(m)), None),
         ScopeKind::Class(_) => (None, Some(true)),
-        ScopeKind::Module(_)
-        | ScopeKind::Block
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => (None, None),
+        _ => (None, None),
     }
 }
 
@@ -266,29 +247,7 @@ impl Declarations<'_, '_> {
             }
             StmtKind::ExportDefault(_) => StatementEntry::ExportExpression(known::default),
             StmtKind::ExportAssign(_) => StatementEntry::ExportExpression(known::export_equals),
-            StmtKind::Empty
-            | StmtKind::Debugger
-            | StmtKind::Expr(_)
-            | StmtKind::Var(_)
-            | StmtKind::Class(_)
-            | StmtKind::Interface(_)
-            | StmtKind::TypeAlias(_)
-            | StmtKind::Enum(_)
-            | StmtKind::Module(_)
-            | StmtKind::Return(_)
-            | StmtKind::If { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Labeled { .. }
-            | StmtKind::Import(_)
-            | StmtKind::ImportEquals(_)
-            | StmtKind::ExportNamed(_)
-            | StmtKind::ExportStar { .. }
-            | StmtKind::ExportAsNamespace(_)
-            | StmtKind::Directive { .. } => StatementEntry::None,
+            _ => StatementEntry::None,
         }
     }
 

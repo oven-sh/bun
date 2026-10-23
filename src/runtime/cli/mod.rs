@@ -2060,9 +2060,6 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Remove the Bun and Node.js APIs your code never calls<r>
   <b><green>bun compile<r> <cyan>--trim<r> <blue>./server.ts<r>
 
-  <d>Build a package to publish: JavaScript, .d.ts files and a package.json in ./dist<r>
-  <b><green>bun compile<r> <cyan>--library<r> <blue>./src/index.ts<r>
-
 Full documentation is available at <magenta>https://bun.com/docs/bundler/aot<r>
 "
                 );

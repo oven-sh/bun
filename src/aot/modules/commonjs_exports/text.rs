@@ -107,11 +107,7 @@ impl<'a, 's> Text<'a, 's> {
     pub(super) fn constant_name(&self, key: ExprId) -> Option<Atom> {
         match self.constant(key)? {
             Constant::String(name) => Some(name),
-            Constant::Undefined
-            | Constant::Null
-            | Constant::Boolean(_)
-            | Constant::Number(_)
-            | Constant::BigInt(_) => None,
+            _ => None,
         }
     }
 
@@ -360,10 +356,7 @@ impl<'a, 's> Text<'a, 's> {
                     return Some(CodeUnit::Function(bound.param_fn[parameter.idx()]));
                 }
                 Parent::MemberInit(member) => return Some(CodeUnit::FieldInitializer(member)),
-                Parent::None
-                | Parent::EnumInit(_)
-                | Parent::ParamDecorator(_)
-                | Parent::Module(_) => return None,
+                _ => return None,
             };
             let scope = bound.scope_of_stmt(statement);
             return scope.is_some().then(|| bound.code_unit(scope));

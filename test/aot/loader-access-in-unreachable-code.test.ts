@@ -2,15 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const wire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function built(entry: string, files: Record<string, string>) {
   using dir = tempDir("doors-and-reach", files);

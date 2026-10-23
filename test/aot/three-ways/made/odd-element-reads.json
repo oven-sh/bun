@@ -1,21 +1,3 @@
 {
- "bad_time": "alone: the build fails",
- "odd_big": "all agree",
- "odd_either": "all agree",
- "odd_flag": "all agree",
- "odd_fun": "all agree",
- "odd_pt": "all agree",
- "odd_rec": "all agree",
- "odd_row": "all agree",
- "odd_str": "all agree",
- "odd_sym": "all agree",
- "wrong_big": "all agree",
- "wrong_either": "all agree",
- "wrong_flag": "all agree",
- "wrong_fun": "all agree",
- "wrong_pt": "all agree",
- "wrong_rec": "all agree",
- "wrong_row": "all agree",
- "wrong_str": "all agree",
- "wrong_sym": "all agree"
+ "bad_time": "alone: the build fails"
 }

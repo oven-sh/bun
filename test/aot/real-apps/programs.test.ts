@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { cpSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run } from "../harness/run";
 import { describe, test } from "../supported";
 
 const programs: { file: string; shapeOf: string; expected: string }[] = [
@@ -23,12 +24,6 @@ const programs: { file: string; shapeOf: string; expected: string }[] = [
   { file: "conditional-bound-read-with-a-default.ts", shapeOf: "the MCP SDK", expected: '{"a":1}\n' },
   { file: "object-from-entries-returned-as-a-mapped-type.ts", shapeOf: "MikroORM", expected: "14 0 13\n" },
 ];
-
-async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 function copy() {
   const dir = tempDir("aot-real-apps-programs", {});

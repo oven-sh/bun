@@ -153,22 +153,7 @@ impl<'a, 's> PendingResultFlow<'a, 's> {
                     self.add_dependent_variable(declaration);
                     return;
                 }
-                Parent::None
-                | Parent::ParamDefault(_)
-                | Parent::PatPropDefault(_)
-                | Parent::PatElemDefault(_)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MemberInit(_)
-                | Parent::FnBody(_)
-                | Parent::EnumInit(_)
-                | Parent::Case(_)
-                | Parent::ClassExtends(_)
-                | Parent::ClassDecorator(_)
-                | Parent::MemberDecorator(_)
-                | Parent::ParamDecorator(_)
-                | Parent::Module(_)
-                | Parent::File => return,
+                _ => return,
             };
             let Some(enclosing) = enclosing.some() else {
                 return;

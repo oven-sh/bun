@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -41,12 +42,6 @@ const files = {
 };
 
 const operations = ["operationAOTGetPropertyEnumerator"];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("a for-in over one object that has, or once had, a property its class or literal does not declare stops asking the run time", async () => {
   using dir = tempDir("aot-for-in-over-objects-with-extra-properties", files);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
@@ -22,6 +22,7 @@ import {
   removableFeatures,
   tableEntryRecord,
 } from "../../../src/codegen/removable-entry-points.ts";
+import { run } from "../../aot/harness/run";
 
 type Files = Partial<Record<(typeof featureFiles)[number], string>>;
 
@@ -63,8 +64,7 @@ function buildErrorOf(action: () => unknown): BuildError {
 const captures = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].map(match => match.slice(1));
 
 async function runGenerator(args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), script, ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), script, ...args]);
   return { stdout, stderr, exitCode };
 }
 

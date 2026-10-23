@@ -40,7 +40,6 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
             filled_bytes: 0,
             file_bytes_saved: 0,
             uncut: None,
-            libraries: Vec::new(),
             format: None,
         });
     }
@@ -65,7 +64,6 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
         filled_bytes: cut_plan.filled_bytes(),
         file_bytes_saved,
         uncut: cut_plan.uncut,
-        libraries: plan.libraries.clone(),
         format: Some(format),
     })
 }
@@ -700,7 +698,6 @@ mod tests {
             },
             ranges,
             icu_packages: Vec::new(),
-            libraries: Vec::new(),
         }
     }
 

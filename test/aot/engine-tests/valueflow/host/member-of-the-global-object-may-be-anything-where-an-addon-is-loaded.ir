@@ -1,0 +1,30 @@
+# process.dlopen({ exports: {} }, addonPath);        keep(globalThis.__definedByTheAddon)
+# An N-API addon is handed the global object for the asking and defines on it what it likes.
+# RUN: valueflow-why values=f0:v8 flag=h5
+# CHECK: values=f0:v8
+# CHECK: result {{*}} unknown
+# CHECK: flag=h5
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Module" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Exports" fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="dlopen"
+    v3 = NewObject layout=L1 fields=[]
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = PropGet v0 key="addonPath" [isFreeName]
+    v6 = Call v2, v1, v4, v5 calleeKey="dlopen"
+    v7 = NewClosure function=f1
+    v8 = PropGet v0 key="__definedByTheAddon"
+    v9 = Call v7, -, v8
+    Return
+}
+function f1 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

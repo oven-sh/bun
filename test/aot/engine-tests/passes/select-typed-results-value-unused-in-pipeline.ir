@@ -1,0 +1,57 @@
+# validate<T>(v) checks its argument where nobody reads the result and in a block that runs rarely: the call is not dead, because it throws on a value outside T. A call that expects nothing is a call of the function of the library and gets no validator. Here that function is the stand-in, which does nothing and answers undefined. Nobody has read its body yet where this pass runs first, so the call is still there
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ValidatorsCreated = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    Return
+}
+function f1 name="statement" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0 expectedResult=x0
+    Return
+}
+# CHECK-LABEL: function f1 name="statement"
+# CHECK-NOT: BunBundleValidate
+# CHECK: = CallDirect v0 function=[[validator]]
+# CHECK: = CallBuiltin -, v0, {{*}} overload=CompilerHelpersValidateByPlan/0
+# CHECK-NOT: BunBundleValidate
+
+function f2 name="rareBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0 expectedResult=x0
+    Throw v2
+}
+# CHECK-LABEL: function f2 name="rareBlock"
+# CHECK-NOT: BunBundleValidate
+# CHECK: = CallDirect v0 function=[[validator]]
+# CHECK-NOT: BunBundleValidate
+
+function f3 name="expectsNothing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="expectsNothing"
+# CHECK-NOT: BunBundleValidate
+# CHECK-NOT: function=[[validator]]
+# CHECK: [[nothing]]: undefined = CallDirect function=[[library]]{{*}}
+# CHECK-NEXT: Return [[nothing]]
+# CHECK-NOT: BunBundleValidate
+# CHECK: function [[validator]] {{*}}role=Validator

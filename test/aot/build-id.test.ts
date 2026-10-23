@@ -4,21 +4,14 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = {}) {
-  await using proc = Bun.spawn({
-    cmd: withoutCoreDump(cmd),
-    cwd,
-    env: { ...bunEnv, ...env },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump(cmd), cwd, { ...bunEnv, ...env });
   return { stdout, stderr, exitCode };
 }
 const named = (name: string) => (isWindows ? name + ".exe" : name);

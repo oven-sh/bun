@@ -487,11 +487,7 @@ fn is_unit_optional(projects: &PerProject<LinkProject<'_, '_>>, file: ProgramFil
     }
     match project.sources.kind(file.file) {
         SourceKind::EvaluatedText => true,
-        SourceKind::Program
-        | SourceKind::Data
-        | SourceKind::RuntimeModule(_)
-        | SourceKind::RuntimeFunctions
-        | SourceKind::TypesOnly => false,
+        _ => false,
     }
 }
 
@@ -572,9 +568,7 @@ fn count_module_forms(
                 faces += 1;
                 continue;
             }
-            ProgramModule::Check(_)
-            | ProgramModule::Runtime(_)
-            | ProgramModule::External { .. } => continue,
+            _ => continue,
         };
         match projects.get(project).graph.shape(own) {
             Shape::Names => with_names += 1,

@@ -135,16 +135,7 @@ pub(in crate::lower) fn source_key(file: FileId, function: FnId) -> FunctionKey 
 fn is_value_binding(kind: BindingKind) -> bool {
     match kind {
         BindingKind::NoBinding | BindingKind::ClassInnerName => false,
-        BindingKind::Import
-        | BindingKind::TypeScriptContainer
-        | BindingKind::Var
-        | BindingKind::Let
-        | BindingKind::Const
-        | BindingKind::SimpleCatchParameter
-        | BindingKind::Class
-        | BindingKind::Function
-        | BindingKind::FunctionName
-        | BindingKind::Parameter => true,
+        _ => true,
     }
 }
 

@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function closedPort(): Promise<number> {
@@ -31,32 +32,24 @@ test("a refused connection rejects the query with the error class of its adapter
     `,
   });
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", executable],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: buildErrors, exitCode: buildExitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", executable],
+    String(dir),
+  );
   expect({ errors: buildExitCode === 0 ? "" : buildErrors, exitCode: buildExitCode }).toEqual({
     errors: "",
     exitCode: 0,
   });
 
   const port = await closedPort();
-  await using ran = Bun.spawn({
-    cmd: [
+  const { stdout, stderr, exitCode } = await run(
+    [
       executable,
       `postgres://user:password@127.0.0.1:${port}/database`,
       `mysql://user:password@127.0.0.1:${port}/database`,
     ],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+    String(dir),
+  );
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout:
       "PostgresError ERR_POSTGRES_CONNECTION_REFUSED true true true\nMySQLError ERR_MYSQL_CONNECTION_REFUSED true true true\n",

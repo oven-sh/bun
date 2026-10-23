@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { run as said } from "../harness/run";
 
 export const programs = {
   hello: `console.log("hello world");`,
@@ -102,12 +103,6 @@ export type Ran = { stdout: string; stderr: string; exit: string; answers: strin
 
 const everyProgram = Object.keys(programs) as Program[];
 export const programsOf = (it: Case) => it.programs ?? (it.signal ? (["serve"] as Program[]) : everyProgram.filter(program => program !== "reads" && program !== "fetches"));
-
-async function said(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 export class Bench {
   #built = new Map<string, Promise<string>>();

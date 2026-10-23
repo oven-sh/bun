@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { slot, unsupported } from "./run-programs";
 
 // `f` is a function and `d` a property descriptor. Before the first `|`: the object that the write is about. After a second `|`: the extension of
@@ -446,14 +447,7 @@ const table = cases
   .join("");
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd,
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], cwd, { ...bunEnv, NO_COLOR: "1" });
   return { stdout, stderr, exitCode };
 }
 

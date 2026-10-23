@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Bun resolves a promise with what the main file exports, so a `then` among the exports is called, once.
@@ -11,12 +12,6 @@ const mains: Record<string, string> = {
   "an-export.mjs": `export function then(resolve) { console.log("then is called"); resolve(); }\nconsole.log("ran");\n`,
   "no-then.mjs": `export function than() { console.log("nobody calls it"); }\nqueueMicrotask(() => console.log("a microtask"));\nsetTimeout(() => console.log("a timer"));\nconsole.log("ran");\n`,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function isAsPlain(main: string, text: string) {
   using dir = tempDir("then-of-the-main-file", { [main]: text });

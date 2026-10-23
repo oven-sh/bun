@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 // Under LeakSanitizer the build and the executable both end without a leak record, and without a list of suppressions: a record
@@ -83,19 +84,15 @@ test.skipIf(!isASAN).each(Object.keys(programs))(
   async name => {
     using dir = tempDir("no-leak-records", programs[name]);
     const executable = join(String(dir), "program");
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable],
-      cwd: String(dir),
+    const { stderr: buildErrors, exitCode: buildExitCode } = await runCommand(
+      [bunExe(), "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable],
+      String(dir),
       env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, buildErrors, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    );
     expect(buildErrors).not.toContain("LeakSanitizer");
     expect(buildExitCode).toBe(0);
 
-    await using run = Bun.spawn({ cmd: [executable], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    const { stdout, stderr, exitCode } = await runCommand([executable], String(dir), env);
     expect(stderr).toBe("");
     expect(stdout).toBe(expected[name]);
     expect(exitCode).toBe(0);

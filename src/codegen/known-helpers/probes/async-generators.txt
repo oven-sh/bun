@@ -1,6 +1,0 @@
-export async function* probeStream(probeSource) {
-  for await (const probeItem of probeSource) yield probeItem;
-  yield* probeStream([]);
-  const probeValue = await probeSource;
-  return probeValue;
-}

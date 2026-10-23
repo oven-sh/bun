@@ -1,6 +1,7 @@
 // Two messages whose rule a build changes. `bun check` follows TypeScript.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "../../aot/harness/run";
 
 async function check(compilerOptions: object, text: string) {
   using dir = tempDir("check-messages-outside-a-build", {
@@ -10,14 +11,7 @@ async function check(compilerOptions: object, text: string) {
     }),
     "a.ts": text,
   });
-  await using checked = Bun.spawn({
-    cmd: [bunExe(), "check"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([checked.stdout.text(), checked.exited]);
+  const { stdout, exitCode } = await run([bunExe(), "check"], String(dir), { ...bunEnv, NO_COLOR: "1" });
   return { codes: [...stdout.matchAll(/\bTS\d+\b/g)].map(found => found[0]), exitCode };
 }
 

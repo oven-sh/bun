@@ -1,0 +1,59 @@
+# function Shape() { this.a = 1 }  function plain() {}  class Base {}  class Derived extends Base {}
+# process.emitWarning(Shape); process.emitWarning(plain); process.emitWarning(Derived); new handedIn(); shape = new Shape()
+# Native code enters Derived with a new.target nobody knows, which super() hands on as an operand, and the program constructs a callee nobody knows.
+# Neither hands a function of the program the instance of another one. The group of the unknown object enters no function of the program: native code enters what has escaped, with the unknown object as `this`.
+# For a new.target nobody knows the rule hands over the unknown object. So what `new Shape()` makes is made for Shape and has its layout, although Shape is in other hands.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="shape" {{*}}declared={type={{*}}L0}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shape" constructor=f1 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Base" constructor=f3
+layout L2 kind=Instance name="Derived" base=L1 constructor=f4 flags=[HasHeritage]
+variable g0 name="shape" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f4
+    v8 = NewClass v7, v5, v6 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = Builtin builtin=Process
+    v11 = PropGet v10 key="emitWarning"
+    v12 = Call v11, v10, v1 calleeKey="emitWarning"
+    v13 = Call v11, v10, v2 calleeKey="emitWarning"
+    v14 = Call v11, v10, v9 calleeKey="emitWarning"
+    v15 = PropGet v0 key="handedIn" [isFreeName]
+    v16 = Construct v15
+    v17 = Construct v1
+    PutModuleVariable v17 variable=g0
+    Return
+}
+function f1 name="Shape" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a" mode=Strict
+    Return
+}
+function f2 name="plain" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

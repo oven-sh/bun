@@ -1,0 +1,16 @@
+# export default { port: 0 }
+# The host looks for a function under `fetch` and for anything under `app`, finds neither and leaves the object alone: no use of Bun.serve.
+# RUN: valueflow-solve used
+# CHECK-NOT: BunServe
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}]
+layout L0 name="Options" fields=[{key="port" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    Return
+}

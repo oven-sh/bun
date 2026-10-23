@@ -67,7 +67,9 @@ const tsconfig = {
 let executables = 0;
 
 /** Defines one test per importer. A large topic is split into `parts` by a hash of the name. */
-export function packages(topic: string, cases: Case[], part = 1, parts = 1, root: Record<string, unknown> = {}) {
+/** The cases of ./<topic>.ts, which may also say what else stands in the package.json of the program. */
+export function packages(topic: string, part = 1, parts = 1) {
+  const { cases, root = {} }: { cases: Case[]; root?: Record<string, unknown> } = require(`./${topic}`);
   const stored = join(import.meta.dir, topic + ".answers.json");
   const answers: Record<string, Answer> = existsSync(stored) ? JSON.parse(readFileSync(stored, "utf8")) : {};
   const hash = (name: string) => BigInt(Bun.hash(topic + "/" + name));

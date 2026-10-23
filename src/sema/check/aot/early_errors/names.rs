@@ -47,25 +47,7 @@ fn is_class_or_import_name(hir: &File<'_>, name: Node) -> bool {
             matches!(hir.data(import), NodeData::Stmt(s)
                 if matches!(hir[s].kind, StmtKind::Import(i) if !hir[i].type_only))
         }
-        NodeData::None
-        | NodeData::File
-        | NodeData::Type(_)
-        | NodeData::Pat(_)
-        | NodeData::PatProp(_)
-        | NodeData::PatElem(_)
-        | NodeData::Param(_)
-        | NodeData::TypeParam(_)
-        | NodeData::Member(_)
-        | NodeData::Prop(_)
-        | NodeData::VarDecl(_)
-        | NodeData::Case(_)
-        | NodeData::EnumMember(_)
-        | NodeData::ExportSpec(_)
-        | NodeData::TupleElem(_)
-        | NodeData::Modifier(_)
-        | NodeData::Name(_)
-        | NodeData::Paren(_)
-        | NodeData::Part(..) => false,
+        _ => false,
     }
 }
 

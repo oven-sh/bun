@@ -4,7 +4,7 @@
 // The table is about executables, and an executable describes a value that a native function rejects without running code of the
 // program (docs/bundler/aot-compatibility.mdx). So do the processes that make the calls here: executableEnv.
 //
-//   AOT_BUILTINS_UPDATE=1   checks every hand-written overload and writes the two lists: the hashes of those that pass, the others with the reason
+//   AOT_BUILTINS_UPDATE=1   checks every hand-written overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
 import { aotBuiltinEntries } from "bun:internal-for-testing";
@@ -12,14 +12,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import {
-  formatVerifiedList,
-  needsDifferentialTest,
-  parseUnverifiedList,
-  parseVerifiedList,
-  verifiedListPaths,
-} from "../../../src/codegen/builtins/dump.ts";
+import { join } from "node:path";
+import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";
 import { Realm } from "./differential/members";
@@ -34,13 +28,8 @@ import {
 } from "./differential/table-description";
 import type { WorkerReport, WorkerRequest } from "./differential/worker";
 
-const repositoryRoot = resolve(import.meta.dir, "../../..");
-const webKitRoot = resolve(repositoryRoot, process.env.BUN_WEBKIT_PATH || "vendor/WebKit");
-const listPaths = verifiedListPaths(repositoryRoot, join(webKitRoot, "Source/JavaScriptCore"));
+const notCheckedPath = join(import.meta.dir, "differential/not-checked.txt");
 const isUpdate = !!process.env.AOT_BUILTINS_UPDATE;
-const remedy =
-  "Write the lines of the changed entries anew, on Linux x64: " +
-  "AOT_BUILTINS_UPDATE=1 AOT_BUILTINS_FILTER=<regular expression> bun test test/aot/builtins/differential.test.ts";
 const tablePath = process.env.AOT_BUILTINS_TABLE ?? null;
 const filter = new RegExp(process.env.AOT_BUILTINS_FILTER ?? ".");
 const secondsPerAttempt = 600;
@@ -50,30 +39,27 @@ const maxAttemptsPerWorker = 40;
 const dump: TableDump = tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8"));
 const table = new Table(dump);
 const origins: Origin[] = ["Engine", "Host"];
-const packedEngineList = join(dirname(bunExe()), "verified-overloads.txt");
-const engineList = isUpdate || existsSync(listPaths.engine) ? listPaths.engine : packedEngineList;
-const pathOfList = (origin: Origin) => (origin === "Engine" ? engineList : listPaths.host);
-// The lists say what the calls do where they are written.
-const callsListedOverloads = isGlibc && !isASAN && !isDebug;
+// The list says what the calls do where it is written.
+const callsOverloads = isGlibc && !isASAN && !isDebug;
+const notCheckedHeader =
+  "# The hand-written overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.\n" +
+  "# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts\n";
 
-function readList(origin: Origin): string {
-  const path = pathOfList(origin);
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
-}
-
-const listedHashes = new Map(origins.map(origin => [origin, parseVerifiedList(readList(origin))]));
-const unverifiedReasons = new Map(origins.map(origin => [origin, parseUnverifiedList(readList(origin))]));
-const isListed = (entry: DumpedEntry, overload: DumpedOverload) =>
-  listedHashes.get(entry.origin)!.has(overload.textHash);
-const isChecked = (entry: DumpedEntry, overload: DumpedOverload) =>
-  needsDifferentialTest(overload) && (isUpdate || (callsListedOverloads && isListed(entry, overload)));
+const notChecked = new Map(
+  readFileSync(notCheckedPath, "utf8")
+    .split("\n")
+    .filter(line => line !== "" && !line.startsWith("#"))
+    .map((line): [string, string] => [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)]),
+);
+const isChecked = (overload: DumpedOverload) =>
+  needsDifferentialTest(overload) && (isUpdate || (callsOverloads && !notChecked.has(overload.token)));
 
 type CheckedCall = { entry: DumpedEntry; mode: CallMode; overloads: DumpedOverload[] };
 
 const checkedCalls = dump.entries
   .filter(entry => filter.test(entry.path))
   .flatMap((entry): CheckedCall[] => {
-    const overloads = entry.overloads.filter(overload => isChecked(entry, overload));
+    const overloads = entry.overloads.filter(isChecked);
     return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({
       entry,
       mode,
@@ -148,10 +134,9 @@ function findProblems({ entry, mode }: CheckedCall, overload: DumpedOverload): s
   return checked.differences.map(difference => formatDifference(overload, difference));
 }
 
-const handWrittenOverloadsOf = (origin: Origin) =>
-  dump.entries
-    .filter(entry => entry.origin === origin)
-    .flatMap(entry => entry.overloads.filter(needsDifferentialTest).map(overload => ({ entry, overload })));
+const handWrittenOverloads = dump.entries.flatMap(entry =>
+  entry.overloads.filter(needsDifferentialTest).map(overload => ({ entry, overload })),
+);
 
 function findReason({ entry, mode }: CheckedCall, overload: DumpedOverload): string | null {
   const checked = reports.get(keyOf(entry.token, mode))?.overloads.find(({ token }) => token === overload.token);
@@ -165,24 +150,14 @@ function findReason({ entry, mode }: CheckedCall, overload: DumpedOverload): str
   return `it differs in ${[...new Set(checked.differences.map(({ column }) => column))].sort().join(", ")}`;
 }
 
-function writeLists(): void {
-  for (const origin of origins) {
-    const reasons = handWrittenOverloadsOf(origin).map(({ entry, overload }) => {
-      // A filter leaves entries out of the run: nothing was learned about them, so their lines stay.
-      const call = checkedCalls.find(other => other.entry === entry && other.mode === overload.mode);
-      if (call) return { overload, reason: findReason(call, overload) };
-      const reason = unverifiedReasons.get(origin)!.get(overload.token) ?? "it has not been checked";
-      return { overload, reason: isListed(entry, overload) ? null : reason };
-    });
-    writeFileSync(
-      pathOfList(origin),
-      formatVerifiedList(
-        origin,
-        reasons.filter(({ reason }) => reason === null).map(({ overload }) => overload),
-        reasons.flatMap(({ overload, reason }) => (reason === null ? [] : [{ token: overload.token, reason }])),
-      ),
-    );
-  }
+function writeList(): void {
+  const lines = handWrittenOverloads.flatMap(({ entry, overload }) => {
+    // A filter leaves entries out of the run: nothing was learned about them, so their lines stay.
+    const call = checkedCalls.find(other => other.entry === entry && other.mode === overload.mode);
+    const reason = call ? findReason(call, overload) : (notChecked.get(overload.token) ?? null);
+    return reason === null ? [] : [`${overload.token}: ${reason}\n`];
+  });
+  writeFileSync(notCheckedPath, notCheckedHeader + lines.sort().join(""));
 }
 
 type WrongEntry = {
@@ -438,17 +413,17 @@ function defineDescriptionTests(): void {
 if (dump.entries.length === 0) {
   test.skip("this build of Bun has no ahead-of-time compiler", () => {});
 } else {
-  if (isUpdate && !existsSync(join(webKitRoot, "Source/JavaScriptCore/aot/builtins"))) {
-    throw new Error("AOT_BUILTINS_UPDATE needs a WebKit checkout: set BUN_WEBKIT_PATH or clone it to vendor/WebKit");
-  }
-
   beforeAll(runWorkers, maxAttemptsPerWorker * secondsPerAttempt * 1000);
-  if (isUpdate) afterAll(writeLists);
+  if (isUpdate) afterAll(writeList);
 
-  test("the tokens and the hashes of the overloads are unique", () => {
+  test("the tokens of the overloads are unique", () => {
     const overloads = dump.entries.flatMap(entry => entry.overloads);
     expect(new Set(overloads.map(({ token }) => token)).size).toBe(overloads.length);
-    expect(overloads.filter(({ textHash }) => !/^[0-9a-f]{16}$/.test(textHash)).map(({ token }) => token)).toEqual([]);
+  });
+
+  test("the list of what is not checked names only hand-written overloads of this table", () => {
+    const tokens = new Set(handWrittenOverloads.map(({ overload }) => overload.token));
+    expect([...notChecked.keys()].filter(token => !tokens.has(token))).toEqual([]);
   });
 
   for (const origin of origins) {
@@ -461,21 +436,6 @@ if (dump.entries.length === 0) {
         }
       }
     });
-
-    test(`the list of checked ${origin} overloads names only overloads of this table`, () => {
-      const hashes = new Set(dump.entries.flatMap(entry => entry.overloads.map(({ textHash }) => textHash)));
-      expect([...listedHashes.get(origin)!].filter(hash => !hashes.has(hash))).toEqual([]);
-    });
-
-    test.skipIf(isUpdate || listedHashes.get(origin)!.size === 0)(
-      `every hand-written ${origin} overload has passed as it is written now or is listed as unverified`,
-      () => {
-        const unlisted = handWrittenOverloadsOf(origin)
-          .filter(({ entry, overload }) => !isListed(entry, overload))
-          .map(({ overload }) => overload.token);
-        expect(unlisted.sort(), remedy).toEqual([...unverifiedReasons.get(origin)!.keys()].sort());
-      },
-    );
   }
 
   defineWrongEntryTests();

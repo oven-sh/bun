@@ -1338,7 +1338,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(name) = name
             {
                 let printed = self.apparent_type_of_intersection(object);
-                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
+                let subject = self.member_container_of_type(printed);
+                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)])
+                    .subject = subject;
             } else if index == TypeId::STRING || index == TypeId::NUMBER {
                 let printed = self.apparent_type_of_intersection(object);
                 self.error_at(index_node, 2537, &[Arg::Type(printed), Arg::Type(index)]);

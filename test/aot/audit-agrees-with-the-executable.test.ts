@@ -3,15 +3,15 @@
 // executable, and all three must print the same.
 import { expect } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 const folder = join(import.meta.dir, "audit-and-executable");
 
 async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout, exitCode } = await runCommand(cmd, cwd);
   return { stdout, exitCode };
 }
 

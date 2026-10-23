@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { test } from "./supported";
 
@@ -24,12 +25,6 @@ for (const row of rows) for (const item of row) { sum += item.n; if (item.far !=
 for (let item: Item | null = before; item !== null; item = item.before) chain++;
 console.log(sum, fars, letters, chain);
 `;
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("a program that outgrows the range of 32-bit references says which option lifts the limit, and built with it runs on", async () => {
   using dir = tempDir("aot-wide-references", { "main.ts": program });

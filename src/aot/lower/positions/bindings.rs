@@ -33,33 +33,7 @@ pub(super) fn compute_variable_position(
     let (kind, pattern) = match declaration {
         Decl::Var(pattern) | Decl::Require(pattern) => (TypeSiteKind::Variable, pattern),
         Decl::Param(pattern) => (TypeSiteKind::Parameter, pattern),
-        Decl::Fn(_)
-        | Decl::Class(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => return DeclaredType::untyped(),
+        _ => return DeclaredType::untyped(),
     };
     let written = file.queries.written_variable_type(symbol);
     let (checked, origin) = match declaring_file == file.file {
@@ -209,35 +183,7 @@ fn is_function_binding(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> bool
         let function = match declaration {
             Decl::Fn(function) => function,
             _ if declares_type_alone(declaration) => continue,
-            Decl::Var(_)
-            | Decl::Param(_)
-            | Decl::Class(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::Enum(_)
-            | Decl::EnumMember(_)
-            | Decl::Module(_)
-            | Decl::TypeParam(_)
-            | Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::ImportEquals(_)
-            | Decl::ExportSpec(_)
-            | Decl::ExportStarAs(_)
-            | Decl::ExportExpr(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => return false,
+            _ => return false,
         };
         let bound = files.bound(declaring_file);
         if !bound.is_stable_binding(bound.declared_symbol(declaration)) {

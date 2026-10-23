@@ -206,25 +206,7 @@ impl SourceProvider for WithoutServices {
                     exports_keys: false,
                 })
             }
-            Loader::Jsx
-            | Loader::Js
-            | Loader::Ts
-            | Loader::Tsx
-            | Loader::Css
-            | Loader::File
-            | Loader::Toml
-            | Loader::Wasm
-            | Loader::Napi
-            | Loader::Base64
-            | Loader::Dataurl
-            | Loader::Bunsh
-            | Loader::Sqlite
-            | Loader::SqliteEmbedded
-            | Loader::Html
-            | Loader::Yaml
-            | Loader::Json5
-            | Loader::Md
-            | Loader::Xml => {
+            _ => {
                 let name = loader_name(file.loader);
                 let feature = format!("the \"{name}\" loader without the bundler");
                 Err(report_unsupported(log, feature.as_bytes()))

@@ -160,38 +160,7 @@ fn loop_head(file: &File<'_>, left: StmtId) -> Subtree {
     };
     match kind {
         StmtKind::Expr(target) => Subtree::AssignmentTarget(target),
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Var(_)
-        | StmtKind::Fn(_)
-        | StmtKind::Class(_)
-        | StmtKind::Interface(_)
-        | StmtKind::TypeAlias(_)
-        | StmtKind::Enum(_)
-        | StmtKind::Module(_)
-        | StmtKind::Return(_)
-        | StmtKind::If { .. }
-        | StmtKind::For { .. }
-        | StmtKind::ForIn { .. }
-        | StmtKind::ForOf { .. }
-        | StmtKind::While { .. }
-        | StmtKind::DoWhile { .. }
-        | StmtKind::Block(_)
-        | StmtKind::Switch { .. }
-        | StmtKind::Try { .. }
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::Labeled { .. }
-        | StmtKind::Import(_)
-        | StmtKind::ImportEquals(_)
-        | StmtKind::ExportNamed(_)
-        | StmtKind::ExportStar { .. }
-        | StmtKind::ExportDefault(_)
-        | StmtKind::ExportAssign(_)
-        | StmtKind::ExportAsNamespace(_)
-        | StmtKind::With { .. }
-        | StmtKind::Directive { .. } => Subtree::Stmt(left),
+        _ => Subtree::Stmt(left),
     }
 }
 
@@ -300,10 +269,6 @@ impl<'a, 's> Side<'a, 's> {
             StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::ExportAsNamespace(_) => {
                 return NodeShape::NotComparable;
             }
-            StmtKind::Enum(_)
-            | StmtKind::Module(_)
-            | StmtKind::ImportEquals(_)
-            | StmtKind::ExportAssign(_) => return NodeShape::EmitsCode,
             StmtKind::If { test, yes, no } => {
                 draft.with_children([Expr(test), Stmt(yes), Stmt(no)])
             }
@@ -360,6 +325,7 @@ impl<'a, 's> Side<'a, 's> {
             StmtKind::Directive { expr, raw } => {
                 draft.with_literal(Literal::Text(raw)).with_exprs([expr])
             }
+            _ => return NodeShape::EmitsCode,
         };
         draft.finish()
     }
@@ -405,13 +371,6 @@ impl<'a, 's> Side<'a, 's> {
         };
         let draft = self.draft(NodeTag::Expr(kind.tag()));
         let draft = match kind {
-            ExprKind::Missing
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::ImportMeta => draft,
             ExprKind::Ident(name)
             | ExprKind::PrivateIdentifier(name)
             | ExprKind::NewTarget(name) => draft.with_names([name]),
@@ -475,6 +434,7 @@ impl<'a, 's> Side<'a, 's> {
             ExprKind::ImportCall { args } => draft
                 .with_mark(Marks::DEFERRED, is_deferred_import(file, args))
                 .with_exprs(file.ids(args)),
+            _ => draft,
         };
         draft.finish()
     }

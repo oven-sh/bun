@@ -1,0 +1,61 @@
+# A method that an object literal holds in a field, called on a receiver that is only expected to have the layout. That the field is filled may become true again, so a test of the receiver in front of the call says nothing about the read:
+# the function that was read is tested, whatever is expected of it, and under the tests of the read that test is about a closure just made
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Codec" fields=[{key="encode" declared={type=f0} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f0}}}, {key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="encode" kind=Method flags=[HasThis, IsChecked] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+
+function f1 name="somethingElseIsExpectedOfTheMethod" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="encode"
+    v3: anything ~ builtin(Function) = Upcast v2 castType=anything
+    v4 = Call v3, v0, v1 calleeKey="encode"
+    Return v4
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v2; {{*}}test IsSlotFilled v0 key="encode" receivers=[L0] level=Expected before v2; uses v2; cloned 0
+# PLAN-NEXT: stretch 1: test IsClosureOf v2 function=f0 before v4; uses v4; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f1 name="somethingElseIsExpectedOfTheMethod"
+# IR: [[closure1]]: f0 = NewClosure function=f0
+# IR: = IsClosureOf {{*}} function=f0
+# IR: = CallDirect {{*}}, v1 function=f0
+# IR: = PropGet {{*}} key="encode"
+# IR: = Call {{*}}, v1 calleeKey="encode"
+# IR: frequency=Unlikely:
+
+function f2 name="unknownCodeBetweenReadAndCall" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="encode"
+    v3: anything ~ builtin(Function) = Upcast v2 castType=anything
+    v4 = Call v1
+    v5 = Call v3, v0, v4 calleeKey="encode"
+    Return v5
+}
+# PLAN-LABEL: function f2
+# PLAN: test IsClosureOf v2 function=f0 before v5; uses v5
+# PLAN-NOT: IsSlotFilled {{*}} before v5
+# IR-LABEL: function f2 name="unknownCodeBetweenReadAndCall"
+# IR: = Call v1
+# IR: = CallDirect {{*}} function=f0
+
+function f3 name="nothingIsExpectedOfTheReceiver" flags=[IsChecked] parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = PropGet v0 key="encode"
+    v3: anything ~ builtin(Function) = Upcast v2 castType=anything
+    v4 = Call v3, v0, v1 calleeKey="encode"
+    Return v4
+}
+# PLAN-LABEL: function f3
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="nothingIsExpectedOfTheReceiver"
+# IR-NOT: IsClosureOf
+# IR-NOT: CallDirect

@@ -45,18 +45,11 @@ export interface IcuDataLine {
   features: FeatureName[];
 }
 
-export interface Profile {
-  name: string;
-  features: FeatureName[];
-  minimumCutRatio: Partial<Record<ObjectFormat, number>>;
-}
-
 export interface FeatureModel {
   features: Feature[];
   trimFeatures: TrimFeature[];
   icuData: IcuDataLine[];
   icuLanguageGroups: string[][];
-  profiles: Profile[];
   hash: bigint;
 }
 
@@ -207,13 +200,6 @@ export interface IcuLanguage {
   group: number;
 }
 
-export interface LibraryUse {
-  name: string;
-  version: string;
-  hasRetainedBytes: boolean;
-  sets: number[];
-}
-
 export interface ModuleTextRange {
   start: number;
   end: number;
@@ -242,13 +228,5 @@ export interface TrimTable {
   ranges: RemovableRange[];
   icuPackages: IcuPackage[];
   icuLanguages: IcuLanguage[];
-  libraries: LibraryUse[];
   moduleTexts: ModuleText[];
-}
-
-export interface ProfileMeasurement {
-  profile: string;
-  removedBytes: number;
-  fileBytesSaved: number;
-  uncutReason: string | undefined;
 }

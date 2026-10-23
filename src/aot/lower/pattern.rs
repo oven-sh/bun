@@ -131,10 +131,7 @@ fn prepare_target(
             let reference = member::lower_reference(lowering, expression, KeyConversion::AtAccess);
             PreparedTarget::Reference(reference)
         }
-        AssignmentTarget::Elision
-        | AssignmentTarget::Identifier { .. }
-        | AssignmentTarget::ArrayPattern(_)
-        | AssignmentTarget::ObjectPattern(_) => PreparedTarget::AtStore,
+        _ => PreparedTarget::AtStore,
     }
 }
 

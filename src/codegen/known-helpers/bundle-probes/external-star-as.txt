@@ -1,5 +1,0 @@
-//// entry.js
-export * as probeStar from "probe-external-a";
-export * from "probe-external-b";
-export * from "probe-external-c";
-export default 1;

@@ -1,0 +1,161 @@
+# a Builtin value names an object of the table, and the operands of a built-in call lie in the parameters of its overload
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 19
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+function f0 name="badAccessorAsValue" results=[{type=undefined}] {
+  b0():
+    v0 = Builtin builtin=MapPrototypeSize
+    Return
+}
+function f1 name="badNumberAsValue" results=[{type=undefined}] {
+  b0():
+    v0 = Builtin builtin=MathPI
+    Return
+}
+function f2 name="badAccessorAsModuleValue" results=[{type=undefined}] {
+  b0():
+    v0 = ModuleBuiltin builtin=MapPrototypeSize module=m0
+    Return
+}
+function f3 name="goodValues" results=[{type=undefined}] {
+  b0():
+    v0 = Builtin builtin=MathMax
+    v1 = Builtin builtin=GlobalThis
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    Return
+}
+function f4 name="goodReceiverNotProvenPristine" parameters=[{type=Array<number>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0
+    Return
+}
+function f5 name="badReceiverOfOtherClass" parameters=[{type=Map}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Map, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0
+    Return
+}
+function f6 name="badLayoutReceiver" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0
+    Return
+}
+function f7 name="badReceiverMayBeOtherPrimitive" parameters=[{type=number|string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number|string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+    Return
+}
+function f8 name="badObjectAsFunction" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
+  b0(v0: object, v1: number):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
+    Return
+}
+function f9 name="goodFunctions" parameters=[{type=function}, {type=f28}, {type=string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: function, v1: f28, v2: string, v3: number):
+    v4 = CallBuiltin v0, v3 overload=FunctionPrototypeCall/0
+    v5 = CallBuiltin v1, v3 overload=FunctionPrototypeCall/0
+    v6 = Builtin builtin=StringPrototypeSlice
+    v7 = CallBuiltin v6, v2, v3 overload=FunctionPrototypeCall/0
+    Return
+}
+function f10 name="goodReceiverOfAnyType" parameters=[{type=Array<number>}, {type=string}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: string):
+    v2 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+    Return
+}
+function f11 name="badMethodWithoutReceiver" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=ArrayPrototypePush/0
+    Return
+}
+function f12 name="badFunctionWithReceiver" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallBuiltin v0, v0 overload=MathMax/0
+    Return
+}
+function f13 name="goodFunctionWithoutReceiver" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathMax/0
+    Return
+}
+function f14 name="badArgumentType" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeSlice/0
+    Return
+}
+function f15 name="goodArgumentTypes" parameters=[{type=string}, {type=number}, {type=undefined}] results=[{type=undefined}] {
+  b0(v0: string, v1: number, v2: undefined):
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
+    v4 = CallBuiltin v0 overload=StringPrototypeSlice/0
+    Return
+}
+function f16 name="badSurplusArgument" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeTrim/0
+    Return
+}
+function f17 name="badRequiredArgumentMissing" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = CallBuiltin v0 overload=ObjectPrototypeHasOwnProperty/0
+    Return
+}
+function f18 name="badArgumentPositions" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 overload=MathMax/0
+    Return
+}
+function f19 name="goodArgumentPositions" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 overload=MathMax/0
+    Return
+}
+function f20 name="goodAnyReceiver" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSlice/0 builtinCallForm=AnyReceiver
+    Return
+}
+function f21 name="badListIsNoArray" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    Return
+}
+function f22 name="badTwoLists" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+  b0(v0: Array<number>):
+    v1 = CallBuiltin -, v0, v0 overload=MathMax/0 builtinCallForm=List
+    Return
+}
+function f23 name="badListWithReceiver" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+  b0(v0: Array<number>):
+    v1 = CallBuiltin v0, v0 overload=MathMax/0 builtinCallForm=List
+    Return
+}
+function f24 name="goodList" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+  b0(v0: Array<number>):
+    v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    Return
+}
+function f25 name="badPrefixWithoutLength" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeSplit/0 builtinCallForm=Prefix
+    Return
+}
+function f26 name="badLengthWithoutPrefix" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeSplit/0 prefixLength=2
+    Return
+}
+function f27 name="goodPrefix" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+    Return
+}
+function f28 name="callee" results=[{type=undefined}]
+function f29 name="badAppendWithoutHostFunction" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: number):
+    v2 = StringBuilderBegin
+    StringBuilderAppendBuiltin v2, v0, v1 overload=StringPrototypeSlice/0
+    v4 = StringBuilderFinish v2
+    Return
+}

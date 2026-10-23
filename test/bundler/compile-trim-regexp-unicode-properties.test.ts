@@ -1,15 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 import { canTrim, featureNamed, textOf, withoutFeatures } from "./compile-trim-features";
-
-async function run(cmd: string[], cwd: string) {
-  await using child = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const files = {
   "no-property.ts": `

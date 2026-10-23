@@ -137,9 +137,7 @@ pub(super) fn emit_name_value(
                 .expect("a well-known symbol key names its symbol");
             expression::emit_locked_builtin(lowering, table::symbol_constant(symbol))
         }
-        PropertyKeyKind::EnginePrivateName
-        | PropertyKeyKind::PrivateName
-        | PropertyKeyKind::CreatedSymbol => {
+        _ => {
             debug_assert!(false, "no constant is the value of a key of this kind");
             lowering.builder.undefined()
         }
@@ -153,10 +151,7 @@ pub(super) fn find_element_index(
     let key = file.fragment.property_keys.get(key);
     let text = match key.kind {
         PropertyKeyKind::Text => key.text?,
-        PropertyKeyKind::EnginePrivateName
-        | PropertyKeyKind::PrivateName
-        | PropertyKeyKind::WellKnownSymbol
-        | PropertyKeyKind::CreatedSymbol => return None,
+        _ => return None,
     };
     let strings = &file.fragment.strings;
     if strings.name_class(text) != NameClass::Index {
@@ -180,10 +175,8 @@ pub(in crate::lower) fn find_function_name(
 ) -> Option<StringId> {
     let key = file.fragment.property_keys.get(key);
     match key.kind {
-        PropertyKeyKind::Text
-        | PropertyKeyKind::EnginePrivateName
-        | PropertyKeyKind::PrivateName => key.string_name(),
         PropertyKeyKind::WellKnownSymbol | PropertyKeyKind::CreatedSymbol => None,
+        _ => key.string_name(),
     }
 }
 

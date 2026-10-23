@@ -1,0 +1,36 @@
+# [1].map(double)
+# traverseArray(array, start, end, shape, operands, operand) is the compiler's own helper (runtimefunction 131090). A row of the table brings it into the image with map, with operands nobody knows,
+# and FuseArrayChains calls it in the place of the calls of a chain. The records of those calls have said what they do with their callbacks, so the helper's call of a callback nobody knows
+# is no sign of code that nobody compiles
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 escaped=f2
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# RUN(REACHED): valueflow-solve unreached
+# REACHED-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131090 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = PropGet v1 key="map"
+    v4 = Call v3, v1, v2 calleeKey="map"
+    Return
+}
+function f1 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Integer integer=0
+    v7 = ElemGet v4, v6
+    v8 = Call v7, -, v5, v0
+    Return v8
+}
+function f2 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

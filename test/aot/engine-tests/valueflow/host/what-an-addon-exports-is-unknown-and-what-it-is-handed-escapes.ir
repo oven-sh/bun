@@ -1,0 +1,46 @@
+# module = { exports: {} }; process.dlopen(module, addonPath); handed = { x: 1 }; kept = { y: 1 }; kept.y; module.exports.run(handed, callback)
+# The addon fills the object that it is handed, so nobody knows what the program finds there afterwards. A call of that is a call of a function nobody knows: its operands escape,
+# the callback is entered, and its result is unknown. What is not handed over stays in the program, and no unseen code runs.
+# RUN: valueflow-solve calls unseen unreached
+# CHECK: f0 v15 -> unknown
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# CHECK: unseen-code no
+# RUN(APPLY): valueflow-apply
+# APPLY: layout L2 name="Handed" {{*}}cause=ReachesUnknownJavaScript
+# APPLY: layout L3 name="Kept" {{*}}occupancy=AlwaysFilled{{*}}keys=NeverEnumerated
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Module" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Exports" fields=[]
+layout L2 name="Handed" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Kept" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="addonPath" [isFreeName]
+    v4 = Builtin builtin=Process
+    v5 = PropGet v4 key="dlopen"
+    v6 = Call v5, v4, v1, v3 calleeKey="dlopen"
+    v7 = Integer integer=1
+    v8 = NewObject -, v7 layout=L2 fields=[0]
+    v9 = NewObject -, v7 layout=L3 fields=[0]
+    v10 = PropGet v9 key="y"
+    v11 = NewClosure function=f1
+    v12 = NewClosure function=f2
+    v13 = PropGet v1 key="exports"
+    v14 = PropGet v13 key="run"
+    v15 = Call v14, v13, v8, v11 calleeKey="run"
+    Return
+}
+function f1 name="callback" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="neverHandedOut" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

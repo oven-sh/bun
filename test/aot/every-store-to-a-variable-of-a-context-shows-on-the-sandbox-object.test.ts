@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // A `var` or a function that a script declares at its top is a variable of the context's global object, and the object that was made the context shows it: after the declaration's own store and
@@ -49,14 +50,10 @@ var made = seed; delete this.made: undefined | seed | seed
 
 test("every store to a variable of a context shows on the sandbox object", async () => {
   using dir = tempDir("variables-of-a-context", { "program.js": program });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: buildErrors, exitCode: buildExitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+    String(dir),
+  );
   expect({ buildErrors: buildExitCode ? buildErrors : "", buildExitCode }).toEqual({
     buildErrors: "",
     buildExitCode: 0,

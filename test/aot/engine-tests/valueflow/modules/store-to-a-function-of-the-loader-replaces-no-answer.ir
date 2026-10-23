@@ -1,0 +1,63 @@
+# Module._resolveFilename = resolve; require("./first.cjs"); require("./second.cjs")()
+# The run time refuses whoever puts a function of its own in the place of the loader's, also where the build has seen the store. So every require with a constant name goes on answering its own module,
+# and nothing is loaded by name
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen LoadsModuleByName
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v7 -> {{*}}f6
+# CALLS-NOT: f0 v7 -> {{*}}unknown
+# CALLS-NOT: f0 v7 -> {{*}}f4
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m2 path="/app/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
+module m3 path="/app/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g3
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeModule
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="_resolveFilename" mode=Strict
+    EvaluateModule module=m2 referrer=m0
+    v4 = GetModuleVariable variable=g2
+    EvaluateModule module=m3 referrer=m0
+    v6 = GetModuleVariable variable=g3
+    v7 = Call v6
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="resolve" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="first" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f4 name="exportedByFirst" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="second" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f6 name="exportedBySecond" module=m3 results=[{type=anything}] {
+  b0():
+    Return
+}

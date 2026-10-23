@@ -506,36 +506,6 @@ describeEachMachine("Mach-O $name", machine => {
     });
   });
 
-  describe("a library", () => {
-    const library = { name: "toy", version: "1", inputs: ["lib.a"], crates: [] };
-    const libraryFunction = `int feature_code(int); __attribute__((noinline)) int library_function(int x) { return feature_code(x) + 1; }`;
-    const usedFunction = `__attribute__((used, noinline)) int library_used(int x) { return x * 7 + 3; }`;
-
-    test.each([
-      ["that only a feature reaches has no retained bytes", "", false],
-      ["with a function marked used that nothing refers to has retained bytes", usedFunction, true],
-    ])("%s", async (_, unreferenced, hasRetainedBytes) => {
-      using dir = tempDir("trim-macho-library", {
-        ...sources,
-        "entry.c": entryCalling("library_function"),
-        "library.c": `${libraryFunction} ${unreferenced}`,
-        "main.c": `${start} int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : 0; }`,
-      });
-      const objects = ["feature_code", "entry", "library", "embedder", "main"];
-      const { table, featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), {
-        objects,
-        archived: ["library"],
-        libraries: [library],
-      });
-      expect(featuresOf("library_function")).toEqual([Extra]);
-      if (hasRetainedBytes) expect(featuresOf("library_used")).toBeUndefined();
-      const set = table.sets.findIndex(members => members.join() === String(indexOf(Extra)));
-      expect(set).toBeGreaterThanOrEqual(0);
-      expect(table.libraries).toEqual([{ name: "toy", version: "1", hasRetainedBytes, sets: [set] }]);
-      expectCleanRuns({ programResult, trimmedResult });
-    });
-  });
-
   describe("two features", () => {
     const longFunction = (name: string) => `
       __attribute__((noinline)) int ${name}(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); for (int i = 0; i < 5; i++) x += feature_code(x + i) * 3 + feature_code(x ^ i); return x; }

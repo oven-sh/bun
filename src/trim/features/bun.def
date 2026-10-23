@@ -167,7 +167,7 @@ feature Http3 "HTTP/3 in Bun.serve and fetch"
   cxx-function H3 (^|\s)uWS::H3\w*::
 
 feature TlsSockets "TLS sockets and servers"
-  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<true[,>]
+  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<(?:true|1)[,>]
 
 feature X509 "crypto.X509Certificate and crypto.KeyObject"
 

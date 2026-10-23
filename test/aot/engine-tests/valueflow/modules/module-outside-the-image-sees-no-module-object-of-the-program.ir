@@ -1,0 +1,39 @@
+# main.cjs: require("./inner.cjs"); require("package") with --external package        inner.cjs: exports.kept = function () {}
+# The package is interpreted. The host gives it a stand-in for the file that has required it, and the module cache lists no module of the image.
+# So it sees no module object of the program, as in an executable that `bun build --compile` makes without --aot, and what an inner file exports stays
+# in the program. An entry point answers to its name, whoever asks. main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has a program that names a way
+# RUN: valueflow-why flag=h29 escaped-builtin=ModuleObject used-builtin=ProcessMainModule escaped=f2
+# CHECK: flag=h29
+# CHECK-NEXT: by RequireModule f0 v2
+# CHECK: escaped-builtin=ModuleObject
+# CHECK-NEXT: not held
+# CHECK: used-builtin=ProcessMainModule
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="package" displayPath="package" kind=External referrer=m0
+module m2 path="/app/inner.cjs" displayPath="inner.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m0
+    v1 = GetModuleVariable variable=g1
+    v2 = RequireModule module=m1 referrer=m0 specifier="package"
+    Return
+}
+function f1 name="inner" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f2
+    PropSet v0, v2 key="kept"
+    Return
+}
+function f2 name="kept" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,43 @@
+# A handler that native code holds is entered only with the declared arguments, and its callers are all known. A built-in that runs code of no operand may still be what calls it: close() of the socket writes what the close handler writes. It does not write a variable that nothing writes
+# FORM: AsRead
+# RUN(W): write-overlap flow summaries f2
+
+module m0 path="main.js" displayPath="main.js" body=f3
+entry module=m0
+layout L0 name="Options" fields=[{key="websocket" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handlers" fields=[{key="message" declared={type=anything} flags=[IsRequired]}, {key="close" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="nothingWrites" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+variable g1 name="closeHandlerWrites" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+function f0 name="calledByCompiledCode" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="close" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    PutModuleVariable v1 variable=g1
+    Return
+}
+function f2 name="message" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v0 key="close"
+    v5 = Call v4, v0 calleeKey="close"
+    v6 = GetModuleVariable variable=g1
+    Return v6
+}
+function f3 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f0
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Builtin builtin=BunServe
+    v6 = Builtin builtin=Bun
+    v7 = Call v5, v6, v4
+    Return
+}
+# W: v5 on v2: None
+# W: v5 on v3: May
+# W: v5 on v6: May

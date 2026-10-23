@@ -98,28 +98,7 @@ fn binary_form(op: BinOp) -> BinaryForm {
     match op {
         BinOp::And | BinOp::Or | BinOp::Nullish => BinaryForm::Logical,
         BinOp::Comma => BinaryForm::Comma,
-        BinOp::Add
-        | BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor
-        | BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::EqEq
-        | BinOp::NotEq
-        | BinOp::EqEqEq
-        | BinOp::NotEqEq
-        | BinOp::In
-        | BinOp::Instanceof => BinaryForm::Operator,
+        _ => BinaryForm::Operator,
     }
 }
 
@@ -534,13 +513,7 @@ fn lower_unary_kind(
         UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
             assignment::lower_update(lowering, expression, ResultUsage::Value)
         }
-        UnOp::Plus
-        | UnOp::Minus
-        | UnOp::BitNot
-        | UnOp::Not
-        | UnOp::Typeof
-        | UnOp::Void
-        | UnOp::Delete => lower_unless_constant(lowering, expression, operator::lower_unary),
+        _ => lower_unless_constant(lowering, expression, operator::lower_unary),
     }
 }
 
@@ -645,30 +618,7 @@ fn lower_for_effect_by_kind(
         | ExprKind::String(_)
         | ExprKind::BigInt(_)
         | ExprKind::JsxText(_) => {}
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_) => {
+        _ => {
             lower_by_decision(lowering, expression, Evaluation::PLAIN);
         }
     }

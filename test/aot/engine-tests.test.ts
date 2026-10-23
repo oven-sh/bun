@@ -2,6 +2,12 @@
 // Bun was linked against. `testaot all` runs them in one go, which takes longer than one test may: here the IR text tests
 // are one test and the native tests four, each a part of the list, at the same time.
 //
+// This `testaot` is WebKit's objects linked with Bun's table of built-ins (scripts/build/deps/webkit.ts jscPrograms).
+// engine-tests/ has the IR text tests of the engine that name entries, classes, modules or function numbers of that table:
+// they lie here and not in WebKit so that whoever changes an entry can change its tests with it. The native tests of Bun's
+// entries are WebKit's. Its own `testaot` has the table of a stand-in host, leaves those out and ends its last line with how
+// many: here that line has no such end.
+//
 // Needs `testaot`, the `aot-tests` folder for two of the tests, and `jsc` for two: the engine's own tests want it in the
 // folder of `testaot`. shell/tools.ts says where each is looked for. A test whose tool is missing is skipped, and stderr
 // says which tool.
@@ -11,6 +17,7 @@ import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { isCI, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
+import { run as runCommand } from "./harness/run";
 import { engineTests, jsc, scriptSkipReason, testaot, toolEnv } from "./shell/tools";
 
 const program = join(engineTests ?? "", "driver", "check-next.ir");
@@ -39,14 +46,13 @@ for (const why of new Set([whySkipped, whyEngineTestsSkipped, whyNativeTestsSkip
 }
 
 // 89 test files of this folder skip themselves where a tool is missing: collector-stress/, heat/, bad-time/, generated-code,
-// relations-who-keeps and this one. CI packs the tools beside Bun; AOT_TOOLS=required says the same of any other place.
+// and this one. CI packs the tools beside Bun; AOT_TOOLS=required says the same of any other place.
 test.skipIf(isWindows || (!isCI && process.env.AOT_TOOLS !== "required"))("no tool is missing", () => {
   expect([whyNativeTestsSkipped, whyShellSkipped, scriptSkipReason].filter(why => why !== undefined)).toEqual([]);
 });
 
 async function runTool(cmd: string[]) {
-  await using tool = Bun.spawn({ cmd, env: toolEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([tool.stdout.text(), tool.stderr.text(), tool.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, undefined, toolEnv);
   return { lines: stdout.split(/\r?\n/).filter(line => line !== ""), stderr, exitCode };
 }
 
@@ -66,6 +72,14 @@ function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<t
   "the engine's IR text tests pass",
   async () => {
     expectEveryTestPassed(await run("run", engineTests!));
+  },
+  290_000,
+);
+
+(whySkipped ? test.skip : test.concurrent)(
+  "the engine's IR text tests of Bun's entries pass",
+  async () => {
+    expectEveryTestPassed(await run("run", join(import.meta.dir, "engine-tests")));
   },
   290_000,
 );

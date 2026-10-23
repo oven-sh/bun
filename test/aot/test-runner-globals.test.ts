@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = (types: string[]) =>
@@ -49,14 +50,7 @@ const usesWhatBunLacks = `
 `;
 
 async function run(dir: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot", ...args],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), "test", "--aot", ...args], dir);
   return { said: stdout + stderr, exitCode };
 }
 

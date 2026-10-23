@@ -1,0 +1,62 @@
+# validate<T>(v) calls the validator of node 0 in place of the host function, and asks the general validator with the plan on the rare path
+# FORM: Prepared optimizing
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ValidatorsCreated = 1
+# STATISTIC: ParsersCreated = 0
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=L0 layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="validated" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="validated"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[results0]]:{{*}}= CallDirect v0 function=[[validator]]
+# CHECK-NEXT: [[outcome0]]: int[0, 2] = ResultAt [[results0]]
+# CHECK-NEXT: [[copy0]]:{{*}}= ResultAt [[results0]] index=1
+# CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case [[accepted0]](), otherwise [[general0]]()
+# CHECK: [[done0]](v1:{{*}}):
+# CHECK-NEXT: Return v1
+# CHECK: [[accepted0]]():
+# CHECK-NEXT: Jump -> next [[merge0]]([[copy0]])
+# CHECK: [[general0]]() frequency=Rare:
+# CHECK-NEXT: [[plan0]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"id\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
+# CHECK-NEXT: [[byPlan0]]: anything = CallBuiltin -, v0, [[plan0]] overload=CompilerHelpersValidateByPlan/0
+# CHECK: Jump -> next [[merge0]](
+# CHECK: [[merge0]]([[validated0]]:{{*}}):
+# CHECK: Jump -> next [[done0]](
+# CHECK-NOT: BunBundleValidate
+
+function f1 name="noCallOfTheHostFunctionIsLeft" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    v2 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="noCallOfTheHostFunctionIsLeft"
+# CHECK-NOT: BunBundleValidate
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: = CallDirect v0 function=[[validator]]
+# CHECK-NOT: BunBundleValidate
+
+function f2 name="withoutValidationNodes" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
+    Return v1
+}
+# CHECK-LABEL: function f2 name="withoutValidationNodes"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
+# CHECK-NEXT: Return v1
+# CHECK: function [[validator]] {{*}}role=Validator {{*}}parameters=[{type=anything}] results=[{type=int[0, 2]}, {type=undefined|L0}] {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}

@@ -301,9 +301,7 @@ pub(in crate::lower) fn emit_name_test(
             PrivateMembers::AutoAccessor(member) if !binding.is_decorated => {
                 emit_static_field_test(lowering, name, binding.class, member, object)
             }
-            PrivateMembers::Method(_)
-            | PrivateMembers::Accessor { .. }
-            | PrivateMembers::AutoAccessor(_) => {
+            _ => {
                 let error = RuntimeErrorKind::PrivateStaticTestOfNonObject;
                 let checked = lowering.builder.require_object(object, error);
                 emit_class_object_comparison(lowering, binding.class, checked)
@@ -422,9 +420,7 @@ fn fails_at_first_private_field(file: &FileLowering<'_, '_, '_, '_>, class: Clas
             !name.is_static
                 && match name.members {
                     PrivateMembers::Field(_) => false,
-                    PrivateMembers::Method(_)
-                    | PrivateMembers::Accessor { .. }
-                    | PrivateMembers::AutoAccessor(_) => true,
+                    _ => true,
                 }
         })
 }

@@ -1,18 +1,16 @@
 // The page docs/bundler/aot-explain.mdx says what counts as a property access, and what an entry says of an object that JSON.parse has made.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 async function explain(text: string, ...flags: string[]) {
   using dir = tempDirWithBunTypes("aot-explain-counts", { "main.ts": text });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"],
+    String(dir),
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   const lines = (stdout + stderr).split("\n");
   return { lines, exitCode, count: lines.find(line => line.includes("of property accesses are one load")) };
 }

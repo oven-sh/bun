@@ -333,14 +333,7 @@ fn resolve_import(input: &ResolveInput<'_, '_>, binding: ImportBinding) -> Optio
             predict_member(input, export.module, export.name)
         }
         ImportBinding::NamespaceRead { module, name } => predict_member(input, module, name),
-        ImportBinding::Local
-        | ImportBinding::Unused
-        | ImportBinding::Unbound
-        | ImportBinding::Namespace { .. }
-        | ImportBinding::Exports { .. }
-        | ImportBinding::Builtin(_)
-        | ImportBinding::CapturedBuiltin { .. }
-        | ImportBinding::BuiltinMember { .. } => None,
+        _ => None,
     }
 }
 
@@ -376,11 +369,7 @@ fn predict_member(
 ) -> Option<KnownCallee> {
     let file = match module {
         ModuleRef::File(file) => file,
-        ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => return None,
+        _ => return None,
     };
     if !input.helpers.is_binding_name(name) {
         return None;

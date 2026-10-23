@@ -93,11 +93,7 @@ fn check_entry_points(graph: &ModuleGraph, input: &BindInput<'_, '_>) {
     for &file in graph.record_files() {
         let module = match input.sources.kind(file) {
             SourceKind::RuntimeModule(module) => Some(module),
-            SourceKind::Program
-            | SourceKind::Data
-            | SourceKind::EvaluatedText
-            | SourceKind::RuntimeFunctions
-            | SourceKind::TypesOnly => None,
+            _ => None,
         };
         assert_eq!(graph.runtime_module(file), module);
         assert_eq!(

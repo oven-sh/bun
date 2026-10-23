@@ -28,14 +28,7 @@ const EMPTY_TEMPLATE_PART: TemplatePart = TemplatePart {
 pub(super) fn class_in_comment(kind: DiagnosticKind) -> DiagnosticClass {
     match kind {
         DiagnosticKind::Checker => DiagnosticClass::Semantic,
-        DiagnosticKind::Parse
-        | DiagnosticKind::Js
-        | DiagnosticKind::JsDoc
-        | DiagnosticKind::Grammar
-        | DiagnosticKind::Oxc
-        | DiagnosticKind::OxcFatal
-        | DiagnosticKind::OxcSemantic
-        | DiagnosticKind::OxcSecondReading => DiagnosticClass::TypeScriptGrammar,
+        _ => DiagnosticClass::TypeScriptGrammar,
     }
 }
 

@@ -58,7 +58,6 @@ const needNoCompiler = [
   "aot/plain-bun-is-unchanged.test.ts",
   "aot/shell-completions-list-flags.test.ts",
   "aot/test-files-self-skip.test.ts",
-  "aot/every-program-folder-has-a-runner.test.ts",
   "cli/aot-compile-executable-path.test.ts",
   "cli/aot-unknown-flags.test.ts",
   "cli/compile/compile-library.test.ts",

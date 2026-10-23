@@ -7,7 +7,6 @@
 // KNOWN hints1 do+llar$&-aa-$-b
 // KNOWN hints1 repea+t ab ab ab 3
 // KNOWN hints1 fro+mobject7
-// KNOWN hints1 metho+d:x:y
 // KNOWN hints1 ^ {0,2}facto+ry
 // KNOWN hints1 sla+sh</?x
 // KNOWN hints1 reu+sed:sla+sh<\/?x[/]

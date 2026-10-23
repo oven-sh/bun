@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const moduleCount = 1000;
@@ -77,12 +78,6 @@ function createFailingCycle() {
       console.log("bodies", bodies.join());
     `,
   };
-}
-
-async function run(cmd: string[], cwd: string) {
-  await using spawned = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([spawned.stdout.text(), spawned.stderr.text(), spawned.exited]);
-  return { stdout, stderr, exitCode };
 }
 
 async function compileAndRun(folder: string) {

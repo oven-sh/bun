@@ -540,16 +540,9 @@ fn is_bundler_helper(source: SourceKind, kind: ModuleKind) -> bool {
     match source {
         SourceKind::RuntimeModule(_) => match kind {
             ModuleKind::SourceText | ModuleKind::CommonJs => true,
-            ModuleKind::Data
-            | ModuleKind::RuntimeSource
-            | ModuleKind::Runtime
-            | ModuleKind::External => false,
+            _ => false,
         },
-        SourceKind::Program
-        | SourceKind::Data
-        | SourceKind::EvaluatedText
-        | SourceKind::RuntimeFunctions
-        | SourceKind::TypesOnly => false,
+        _ => false,
     }
 }
 

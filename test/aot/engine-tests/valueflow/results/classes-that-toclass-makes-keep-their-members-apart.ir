@@ -1,0 +1,68 @@
+# In a module of the library: function Base() {}; Base.prototype = {}; Base.prototype.on = first; Base.prototype.emit = first; function Heir() {}; $toClass(Heir, "Heir", Base); Heir.prototype.on = second
+# $toClass puts the function below the base and gives it a prototype object of its own below that of the base. A store to `Heir.prototype` is none to `Base.prototype`:
+# a name that both classes define is known of both. The model of the table is one function for all calls, with one new object, and is not entered.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Base" {{*}}namedMembers=[{key="on" function=f3}, {key="emit" function=f3}]
+# CHECK: layout L1 kind=Instance name="Heir" {{*}}namedMembers=[{key="on" function=f4}]
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f5
+module m2 path="/$bun/js/engine/models/Objects.ts" displayPath="/$bun/js/engine/models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Base" module=m1 constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Heir" module=m1 base=L0 constructor=f2 flags=[IsConstructorFunction]
+variable g0 name="Base" module=m1 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Heir" module=m1 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="Base" module=m1 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Heir" module=m1 flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="first" module=m1 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="second" module=m1 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="library" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = NewDictionary
+    PropSet v0, v1 key="prototype" mode=Strict
+    v3 = NewClosure function=f3
+    v4 = PropGet v0 key="prototype"
+    PropSet v4, v3 key="on" mode=Strict
+    PropSet v4, v3 key="emit" mode=Strict
+    v7 = GetModuleVariable variable=g1
+    v8 = Undefined
+    v9 = Builtin builtin=PrivateGlobalsToClass
+    v10 = String string="Heir"
+    v11 = Call v9, -, v7, v10, v0
+    v12 = PropGet v7 key="prototype"
+    v13 = NewClosure function=f4
+    PropSet v12, v13 key="on" mode=Strict
+    v15 = Construct v0
+    v16 = Construct v7
+    Return
+}
+function f6 name="toClass" module=m2 kind=Method role=Model length=3 enclosingRuntimeFunction=131084 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectCreate
+    v5 = PropGet v2 key="prototype"
+    v6 = Call v4, v3, v5
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = Call v7, v3, v0, v2
+    PropSet v0, v6 key="prototype" mode=Strict
+    Return
+}
+runtimefunction id=131084 function=f6

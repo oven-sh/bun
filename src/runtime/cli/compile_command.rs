@@ -3,13 +3,9 @@ mod command;
 mod configuration;
 mod entry_points;
 mod failure;
-mod library;
 mod printing;
 mod reports;
 mod trimming;
-
-#[cfg(test)]
-mod tests;
 
 use core::ptr::NonNull;
 use core::time::Duration;
@@ -32,10 +28,6 @@ use bun_trim::TrimError;
 
 pub(crate) use self::build::compile_to_executable;
 pub(crate) use self::command::compile_from_context;
-pub(crate) use self::configuration::DEFAULT_LIBRARY_OUTDIR;
-pub(crate) use self::library::{
-    add_declaration_files, add_package_files, configure_library, is_declaration_file,
-};
 pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
     write_trimmed_size,

@@ -229,12 +229,7 @@ fn erasure_mismatch_sentence(kind: ErasureMismatchKind, typed: &[u8], installed:
             "in {0}, TypeScript syntax that emits code can't be erased",
             &[typed],
         ),
-        ErasureMismatchKind::NodeKind
-        | ErasureMismatchKind::Name
-        | ErasureMismatchKind::Literal
-        | ErasureMismatchKind::Operator
-        | ErasureMismatchKind::Flags
-        | ErasureMismatchKind::ChildCount => format_sentence(
+        _ => format_sentence(
             "{0} without its types doesn't match {1}. Was the package patched?",
             &[typed, installed],
         ),

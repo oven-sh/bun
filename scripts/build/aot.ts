@@ -126,7 +126,9 @@ export function hashTableInputs(ctx: Pick<Ctx, "cfg" | "engine">): string[] {
  * two of the scripts look for it there.
  */
 export function builtinUsesArguments({ cfg, engine }: Pick<Ctx, "cfg" | "engine">): string[] {
-  return engine === undefined ? [] : [`--engine-directory=${engine.directory}`, `--builtin-uses=${builtinUsesJson(cfg)}`];
+  return engine === undefined
+    ? []
+    : [`--engine-directory=${engine.directory}`, `--builtin-uses=${builtinUsesJson(cfg)}`];
 }
 
 export function emitRemovableFeatures({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -356,39 +358,4 @@ export function emitAotCodegen(ctx: Ctx): void {
 
 export function executableFormat(cfg: Pick<Config, "darwin" | "windows">): ObjectFormat {
   return cfg.darwin ? "macho" : cfg.windows ? "coff" : "elf";
-}
-
-export function cutProfilesStamp(cfg: Config, exeName: string): string | undefined {
-  return cfg.canRunOnHost && cfg.trimmable ? resolve(cfg.buildDir, `${exeName}.cut-profiles-passed`) : undefined;
-}
-
-export interface CutProfileCheck {
-  exe: string;
-  exeName: string;
-  strippedExe: string | undefined;
-  warnOnly: boolean;
-}
-
-export function emitCutProfileCheck(n: Ninja, cfg: Config, check: CutProfileCheck): string[] {
-  const stamp = cutProfilesStamp(cfg, check.exeName);
-  if (stamp === undefined) return [];
-  const q = (path: string) => quote(path, cfg.host.os === "windows");
-  const script = trimScript(cfg, "profiles.ts");
-  n.rule("cut_profiles", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${check.exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(script)}${check.warnOnly ? " --warn-only" : ""} $in ${q(removableFeaturesJson(cfg))} ${executableFormat(cfg)}`,
-    description: `check ${check.exeName} trims by as much as its table says`,
-  });
-  n.build({
-    outputs: [stamp],
-    rule: "cut_profiles",
-    inputs: [check.exe],
-    implicitInputs: [
-      script,
-      trimScript(cfg, "profile-runner.ts"),
-      trimScript(cfg, "types.ts"),
-      removableFeaturesJson(cfg),
-    ],
-    ...(check.strippedExe !== undefined ? { orderOnlyInputs: [check.strippedExe] } : {}),
-  });
-  return [stamp];
 }

@@ -1,7 +1,8 @@
 // `bun test` hands every file `test`, `expect`, `describe` and the other names of the runner, unless the file loads "bun:test", "@jest/globals"
 // or "vitest" itself. `bun test --aot` reports what `bun test` reports, file by file.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 const files = {
@@ -77,14 +78,7 @@ runner.test("a file that imports the runner by a call gets nothing more", () => 
 };
 
 async function report(mode: string[], directory: string, file: string) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...mode, "./" + file],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...mode, "./" + file], directory);
   const lines = (stdout + "\n" + stderr)
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)|^row: |^ *\d+ (pass|fail|skip)$|Error: |error: /.test(line));

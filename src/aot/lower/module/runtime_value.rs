@@ -104,28 +104,7 @@ impl ExportScan<'_, '_> {
                 let has_value = symbol.is_some() && self.bound.has_runtime_value(symbol);
                 has_value.then_some(ExportedValue::Declaration(Binding::Symbol(symbol)))
             }
-            Decl::Param(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::EnumMember(_)
-            | Decl::TypeParam(_)
-            | Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::ExportStarAs(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => None,
+            _ => None,
         }
     }
 

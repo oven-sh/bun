@@ -32,24 +32,12 @@ enum OperatorClass {
 
 fn classify_operator(op: BinOp) -> OperatorClass {
     match op {
-        BinOp::Add
-        | BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor
-        | BinOp::Instanceof => OperatorClass::Plain,
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => OperatorClass::Ordering,
         BinOp::EqEq | BinOp::EqEqEq => OperatorClass::Equality { is_negated: false },
         BinOp::NotEq | BinOp::NotEqEq => OperatorClass::Equality { is_negated: true },
         BinOp::In => OperatorClass::In,
         BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => OperatorClass::ControlFlow,
+        _ => OperatorClass::Plain,
     }
 }
 
@@ -141,27 +129,20 @@ pub(in crate::lower) fn emit_binary(
         BinOp::BitXor => lowering.builder.bit_xor(left, right),
         BinOp::Instanceof => lowering.builder.instance_of(left, right),
         BinOp::In => lowering.builder.elem_has(right, left),
-        BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::EqEq
-        | BinOp::NotEq
-        | BinOp::EqEqEq
-        | BinOp::NotEqEq => {
-            let comparison = emit_comparison(lowering, op, left, right);
-            if comparison.is_negated {
-                lowering.builder.logical_not(comparison.test)
-            } else {
-                comparison.test
-            }
-        }
         BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => {
             debug_assert!(
                 false,
                 "the caller evaluates logical operators and the comma"
             );
             right
+        }
+        _ => {
+            let comparison = emit_comparison(lowering, op, left, right);
+            if comparison.is_negated {
+                lowering.builder.logical_not(comparison.test)
+            } else {
+                comparison.test
+            }
         }
     }
 }
@@ -187,34 +168,14 @@ pub(in crate::lower) fn emit_comparison(
         BinOp::Ge => builder.greater_eq(left, right),
         BinOp::EqEq | BinOp::NotEq => builder.eq(left, right),
         BinOp::EqEqEq | BinOp::NotEqEq => builder.strict_eq(left, right),
-        BinOp::Add
-        | BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor
-        | BinOp::In
-        | BinOp::Instanceof
-        | BinOp::And
-        | BinOp::Or
-        | BinOp::Nullish
-        | BinOp::Comma => {
+        _ => {
             debug_assert!(false, "emit_comparison takes a comparison operator");
             builder.strict_eq(left, right)
         }
     };
     let is_negated = match classify_operator(op) {
         OperatorClass::Equality { is_negated } => is_negated,
-        OperatorClass::Plain
-        | OperatorClass::Ordering
-        | OperatorClass::In
-        | OperatorClass::ControlFlow => false,
+        _ => false,
     };
     Comparison { test, is_negated }
 }
@@ -244,10 +205,7 @@ fn lower_main_module_comparison(
             let boolean = lowering.builder.to_boolean(is_main);
             lowering.builder.logical_not(boolean)
         }
-        OperatorClass::Plain
-        | OperatorClass::Ordering
-        | OperatorClass::In
-        | OperatorClass::ControlFlow => {
+        _ => {
             debug_assert!(false, "the caller passes an equality operator");
             is_main
         }

@@ -173,11 +173,7 @@ impl FileBinder<'_, '_> {
     fn what_require_answers(&self, target: ModuleRef) -> StandsFor {
         match self.context.modules.interop(target).kind {
             ModuleKind::SourceText => StandsFor::RequiredNamespace(target),
-            ModuleKind::CommonJs
-            | ModuleKind::Data
-            | ModuleKind::RuntimeSource
-            | ModuleKind::Runtime
-            | ModuleKind::External => StandsFor::Exports(target),
+            _ => StandsFor::Exports(target),
         }
     }
 
@@ -186,10 +182,7 @@ impl FileBinder<'_, '_> {
             // From the first `require` on.
             ModuleKind::SourceText => Some(true),
             ModuleKind::CommonJs => (self.context.marker)(module),
-            ModuleKind::Data
-            | ModuleKind::RuntimeSource
-            | ModuleKind::Runtime
-            | ModuleKind::External => None,
+            _ => None,
         }
     }
 

@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { mutatedTypesFlags, parseOpenTypes } from "./open-types";
 import { test } from "./supported";
 
@@ -11,14 +12,10 @@ console.log(points.map(point => point.x + point.y).join());
 
 async function findPointMutations(source: string) {
   using dir = tempDir("aot-builtin-modules-keep-layouts", { "main.ts": source });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", ...mutatedTypesFlags, "main.ts", "--outfile", "main"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", ...mutatedTypesFlags, "main.ts", "--outfile", "main"],
+    String(dir),
+  );
   const reasons = parseOpenTypes(stdout + stderr)
     .filter(type => type.name === "Point")
     .map(type => type.reason);

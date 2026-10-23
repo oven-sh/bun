@@ -415,12 +415,7 @@ impl Build<'_> {
             FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
             | FileOrigin::ProjectTypedVersion => true,
-            FileOrigin::NoFile
-            | FileOrigin::ProgramSource
-            | FileOrigin::ProgramJavaScript
-            | FileOrigin::Declarations
-            | FileOrigin::Runtime
-            | FileOrigin::EvaluatedText => false,
+            _ => false,
         };
         let mut files_of_dependencies: Vec<FileId> = files
             .compiled_files()

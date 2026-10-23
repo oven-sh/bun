@@ -58,14 +58,7 @@ fn find_default_export_initializer(file: &FileLowering<'_, '_, '_, '_>) -> Optio
     }
     match file.bound.binding_initializer(file.hir, symbol.id) {
         BindingInitializer::Expression(expression) => Some(expression),
-        BindingInitializer::Class(_)
-        | BindingInitializer::Function(_)
-        | BindingInitializer::Namespace(_)
-        | BindingInitializer::Enum(_)
-        | BindingInitializer::PatternProperty { .. }
-        | BindingInitializer::EntityName(_)
-        | BindingInitializer::Import
-        | BindingInitializer::Opaque => None,
+        _ => None,
     }
 }
 

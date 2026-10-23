@@ -1,4 +1,0 @@
-function probeDecorator(...probeArguments) {}
-export const ProbeAnonymous = @probeDecorator class {};
-export const probeHolder = { ProbeNamed: @probeDecorator class {} };
-export default @probeDecorator class {}

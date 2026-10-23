@@ -91,28 +91,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             ShapeKind::BooleanLiteral(value) => flattened.add_boolean_literal(member, value),
             ShapeKind::Boolean => flattened.add_boolean(),
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable { .. }
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::AnyObject
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Array { .. }
-            | ShapeKind::Tuple { .. }
-            | ShapeKind::Builtin { .. }
-            | ShapeKind::Class(_)
-            | ShapeKind::Object
-            | ShapeKind::Constrained { .. } => flattened.members.push(member),
+            _ => flattened.members.push(member),
         }
         Ok(())
     }

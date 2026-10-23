@@ -1,0 +1,19 @@
+# Bun.serve({ fetch })
+# RUN: valueflow-results
+# CHECK: -> f1 BuiltinCallback PerEvent
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Server" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=BunServe
+    v3 = Call v2, -, v1
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

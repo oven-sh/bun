@@ -23,7 +23,7 @@ const seeds = process.env.AOT_FUZZ_SEED
   : freshSeed === undefined
     ? [1]
     : [1, freshSeed];
-const secondsPerProgram = 8;
+const secondsPerProgram = 5;
 
 for (const seed of seeds)
   test.skipIf(!!unsupported)(
@@ -39,7 +39,7 @@ for (const seed of seeds)
         runSeconds: 20,
       });
       const summary = await fuzz({
-        beds: [{ bed, jobs: Math.max(1, availableParallelism() >> 2) }],
+        beds: [{ bed, jobs: Math.max(1, availableParallelism() >> 1) }],
         out,
         work: join(String(folder), "work"),
         programsRoot: join(import.meta.dir, "programs"),

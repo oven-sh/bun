@@ -1,0 +1,70 @@
+# A Buffer is also a Uint8Array, and the result lists an object of both classes under the subclass. Against t4, which lists both classes, a Buffer in t3 is listed as a Buffer and the rest takes the proof of t4's part.
+# FORM: Prepared
+# RUN: intersect
+# CHECK: t0 & t1 = string
+# CHECK-NEXT: t0 - t1 = int[0, 9]
+# CHECK-NOT: |
+# CHECK: t0 & t2 = "a"
+# CHECK-NEXT: t0 - t2 = int[0, 9]|string
+# CHECK-NEXT: t0 & t3 = never
+# CHECK-NEXT: t0 - t3 = int[0, 9]|string
+# CHECK-NEXT: t0 & t4 = never
+# CHECK-NEXT: t0 - t4 = int[0, 9]|string
+# CHECK-NEXT: t0 & t5 = never
+# CHECK-NEXT: t0 - t5 = int[0, 9]|string
+# CHECK-NEXT: t1 & t0 = string
+# CHECK-NEXT: t1 - t0 = never
+# CHECK-NEXT: t1 & t2 = "a"
+# CHECK-NEXT: t1 - t2 = string
+# CHECK-NEXT: t1 & t3 = never
+# CHECK-NEXT: t1 - t3 = string
+# CHECK-NEXT: t1 & t4 = never
+# CHECK-NEXT: t1 - t4 = string
+# CHECK-NEXT: t1 & t5 = never
+# CHECK-NEXT: t1 - t5 = string
+# CHECK-NEXT: t2 & t0 = "a"
+# CHECK-NEXT: t2 - t0 = never
+# CHECK-NEXT: t2 & t1 = "a"
+# CHECK-NEXT: t2 - t1 = never
+# CHECK-NEXT: t2 & t3 = never
+# CHECK-NEXT: t2 - t3 = "a"
+# CHECK-NEXT: t2 & t4 = never
+# CHECK-NEXT: t2 - t4 = "a"
+# CHECK-NEXT: t2 & t5 = never
+# CHECK-NEXT: t2 - t5 = "a"
+# CHECK-NEXT: t3 & t0 = never
+# CHECK-NEXT: t3 - t0 = Uint8Array<int[0, 255], proven>
+# CHECK-NEXT: t3 & t1 = never
+# CHECK-NEXT: t3 - t1 = Uint8Array<int[0, 255], proven>
+# CHECK-NEXT: t3 & t2 = never
+# CHECK-NEXT: t3 - t2 = Uint8Array<int[0, 255], proven>
+# CHECK-NEXT: t3 & t4 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t3 - t4 = Uint8Array<int[0, 255], proven>
+# CHECK-NEXT: t3 & t5 = Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t3 - t5 = Uint8Array<int[0, 255], proven>
+# CHECK-NEXT: t4 & t0 = never
+# CHECK-NEXT: t4 - t0 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t4 & t1 = never
+# CHECK-NEXT: t4 - t1 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t4 & t2 = never
+# CHECK-NEXT: t4 - t2 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t4 & t3 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t4 - t3 = Buffer
+# CHECK-NOT: |
+# CHECK: t4 & t5 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t4 - t5 = Buffer
+# CHECK-NOT: |
+# CHECK: t5 & t0 = never
+# CHECK-NEXT: t5 - t0 = Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t5 & t1 = never
+# CHECK-NEXT: t5 - t1 = Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t5 & t2 = never
+# CHECK-NEXT: t5 - t2 = Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t5 & t3 = Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t5 - t3 = never
+# CHECK-NEXT: t5 & t4 = Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>
+# CHECK-NEXT: t5 - t4 = never
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=int[0, 9]|string}, {type=string}, {type="a"}, {type=Uint8Array<int[0, 255], proven>}, {type=Buffer|Uint8Array<int[0, 255], proven, pristine[Storage, Names]>}, {type=Uint8Array<int[0, 255], proven, pristine[Storage, Names]>}] results=[{type=undefined}]

@@ -16,11 +16,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { dirname, join } from "path";
-import { unsupported } from "./run-programs";
+import { unsupported, withoutDebugInformation } from "./run-programs";
 import known from "./typescript-cases.known.json";
 
 const selection = process.env.AOT_TYPESCRIPT_CASES ?? "";
 const shardCount = 8;
+const carrier = unsupported ? [] : withoutDebugInformation();
 const casesRoot = "/_submodules/TypeScript/tests/cases/";
 
 // Directives that need a different module system, extra inputs or a non-default library.
@@ -125,7 +126,17 @@ async function judge(folder: string, source: string): Promise<string> {
   const entryPoint = writeCase(folder, source);
   if (!entryPoint) return "skipped";
   const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "./" + entryPoint, "--outfile", "./compiled"],
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--aot-threads=1",
+      ...carrier,
+      "./" + entryPoint,
+      "--outfile",
+      "./compiled",
+    ],
     folder,
     120_000,
   );
@@ -183,7 +194,7 @@ for (let shard = 0; shard < shardCount; shard++) {
           if (outcome !== "skipped" && expected !== "any" && outcome !== expected) unexpected[name] = outcome;
         }
       };
-      await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) }, worker));
+      await Promise.all(Array.from({ length: availableParallelism() }, worker));
       const report = process.env.AOT_TYPESCRIPT_CASES_REPORT;
       if (report) writeFileSync(`${report}.${shard + 1}.json`, JSON.stringify(unexpected, null, 1));
       expect(unexpected).toEqual({});

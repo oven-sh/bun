@@ -11,6 +11,7 @@ import { availableParallelism } from "os";
 import { join } from "path";
 import { partInShare, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
+import { run } from "../harness/run";
 
 export function heat(heatOverride: "hot" | "cold" | "neither", part: number, parts: number) {
   if (scriptSkipReason && !unsupported) console.error(`SKIPPED: test/aot/heat/${heatOverride}-${part}.test.ts: ${scriptSkipReason}`);
@@ -21,14 +22,7 @@ export function heat(heatOverride: "hot" | "cold" | "neither", part: number, par
   test.skipIf(!!scriptSkipReason)(
     `the programs answer the same with every function ${heatOverride} (part ${part} of ${parts})`,
     async () => {
-      await using script = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "heat.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, heatOverride, "all"],
-        env: { ...scriptEnvironment(), WRITTEN: written },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
+      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "heat.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, heatOverride, "all"], undefined, { ...scriptEnvironment(), WRITTEN: written });
       const lines = stdout.split("\n").filter(line => line !== "");
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs answer the same with every function (hot|cold|neither), [0-9]+ do not$/);

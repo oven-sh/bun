@@ -23,7 +23,6 @@ import {
   baseRelocationDirectory,
   bigObjectMagic,
   byIndex,
-  canLink,
   canRun,
   defaultObjects,
   describeLink,
@@ -40,7 +39,6 @@ import {
   mainCallingFeatureCode5,
   mainSource,
   moreObjects,
-  nm,
   objcopy,
   output,
   plainLink,
@@ -736,14 +734,13 @@ describeLink("the reader of lld-link's maps", () => {
     using dir = tempDir("trim-coff-no-section", sources);
     const folder = String(dir);
     const command = await plainLink(folder);
-    const { features, builtinUses, libraries } = writeLinkInputs(folder);
+    const { features, builtinUses } = writeLinkInputs(folder);
     const arguments_ = parseArguments([
       "bun",
       "link.ts",
       join(folder, "work"),
       features,
       builtinUses,
-      libraries,
       "--",
       ...command,
     ]);
@@ -845,31 +842,6 @@ describeLink("what the executable exports", () => {
       byIndex(Other, ...exportFeatures),
     ]);
     expectCleanRuns(program);
-  });
-});
-
-describeLink("libraries", () => {
-  const optionsIn = (folder: string): LinkOptions => ({
-    objects: guardObjects,
-    archives: { "shelf.lib": ["feature_code"] },
-    libraries: [{ name: "toy", version: "1", inputs: [join(folder, "shelf.lib")], crates: [] }],
-  });
-  if (canLink && nm === null) skipNotice(testFile, "llvm-nm is not on PATH: the cases with libraries do not run");
-
-  test.skipIf(nm === null)("are removable with the one feature that reaches them", async () => {
-    using dir = tempDir("trim-coff-libraries", { ...sources, "main.cpp": mainSource("", "0") });
-    const folder = String(dir);
-    const { table } = await linked(folder, optionsIn(folder));
-    const set = table.sets.findIndex(members => members.join() === String(indexOf(Extra)));
-    expect(set).toBeGreaterThanOrEqual(0);
-    expect(table.libraries).toEqual([{ name: "toy", version: "1", hasRetainedBytes: false, sets: [set] }]);
-  });
-
-  test.skipIf(nm === null)("have retained bytes when retained code calls them", async () => {
-    using dir = tempDir("trim-coff-libraries", { ...sources, "main.cpp": mainCallingFeatureCode5 });
-    const folder = String(dir);
-    const { table } = await linked(folder, optionsIn(folder));
-    expect(table.libraries.map(({ hasRetainedBytes }) => hasRetainedBytes)).toEqual([true]);
   });
 });
 

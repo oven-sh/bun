@@ -1,0 +1,39 @@
+# other = require("./other.cjs"); entry = require.cache[k]; other()
+# A read of `require.cache` finds no module of the image: module-cache-lists-no-module-of-the-image.ir. It is no event. Nothing is loaded by name, no code runs that the build has not seen,
+# and a require with a constant name answers what the module exports and no object nobody knows.
+# entry-that-the-program-puts-into-the-module-cache-answers-no-constant-name.ir has a store
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen LoadsModuleByName
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v7 -> f2
+# CALLS-NOT: unknown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    EvaluateModule module=m1 referrer=m0
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v0 key="cache"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="k" [isFreeName]
+    v6 = ElemGet v3, v5
+    v7 = Call v2
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

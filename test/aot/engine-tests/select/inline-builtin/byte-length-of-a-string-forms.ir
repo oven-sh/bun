@@ -1,0 +1,38 @@
+# Buffer.byteLength(string, encoding): only a string names an encoding. Without an encoding, with "utf8" or "utf-8", and with a value that cannot be a string, the code in line is the whole call. With a value that may be a string the code in line asks, and has a miss edge.
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="noStringNamesAnEncoding" parameters=[{type=string}, {type=undefined|null|number|object}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|null|number|object):
+    v2 = CallBuiltin -, v0 overload=BufferByteLength/0
+    v3 = CallBuiltin -, v0, v1 overload=BufferByteLength/0
+    v4 = String string="utf8"
+    v5 = CallBuiltin -, v0, v4 overload=BufferByteLength/0
+    v6 = String string="utf-8"
+    v7 = CallBuiltin -, v0, v6 overload=BufferByteLength/0
+    v8 = NewArray v2, v3, v5, v7 contents=anything
+    Return v8
+}
+# FORMS: function f0
+# FORMS-COUNT-4: Whole
+# FORMS-NOT: TwoWay
+# FORMS-NOT: Call
+# CHECK-LABEL: function f0 name="noStringNamesAnEncoding"
+# CHECK-NOT: TryCallInline
+# CHECK-COUNT-4: = CallInline {{*}}inlineBuiltin=StringUTF8ByteLength
+
+function f1 name="encodingMayBeAString" parameters=[{type=string}, {type=undefined|string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|string, v2: anything):
+    v3 = CallBuiltin -, v0, v1 overload=BufferByteLength/0
+    v4 = CallBuiltin -, v0, v2 overload=BufferByteLength/0
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# FORMS: function f1
+# FORMS-COUNT-2: TwoWay
+# FORMS-NOT: Whole
+# CHECK-LABEL: function f1 name="encodingMayBeAString"
+# CHECK: TryCallInline -, v0, v1 inlineBuiltin=StringUTF8ByteLength
+# CHECK: TryCallInline -, v0, v2 inlineBuiltin=StringUTF8ByteLength

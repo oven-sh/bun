@@ -532,11 +532,7 @@ fn is_filled_by_loader(binding: PendingBinding) -> bool {
 fn imported_namespace_binding(module: ModuleRef, phase: ImportPhase) -> ImportBinding {
     let replacement = match module {
         ModuleRef::Runtime(runtime_module) => table::object_replacing_namespace(runtime_module),
-        ModuleRef::File(_)
-        | ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::External { .. } => None,
+        _ => None,
     };
     match replacement {
         Some(object) => ImportBinding::Builtin(object),
@@ -556,12 +552,7 @@ fn compute_required_name(
     };
     match exporter {
         ModuleRef::File(module) if !is_own_name(module) => RequiredName::new(exporter, name),
-        ModuleRef::File(_)
-        | ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => resolved_name,
+        _ => resolved_name,
     }
 }
 

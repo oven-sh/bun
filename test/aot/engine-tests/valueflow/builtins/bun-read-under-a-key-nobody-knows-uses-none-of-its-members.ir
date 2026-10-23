@@ -1,0 +1,20 @@
+# Bun[key](); for (name in Bun) ..
+# A key nobody knows names no member of Bun, and an enumeration makes none: what comes out is a value nobody knows
+# RUN: valueflow-solve used
+# CHECK-NOT: BunGlob
+# CHECK-NOT: BunArchive
+# CHECK-NOT: BunSql
+# CHECK-NOT: BunDollar
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="key" [isFreeName]
+    v3 = ElemGet v0, v2
+    v4 = Call v3, v0
+    v5 = ForInOpen v0
+    Return v4
+}

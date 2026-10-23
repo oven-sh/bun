@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `const require = createRequire(import.meta.url); require("./lib.cjs")`. The name is written in the program, so an ahead-of-time
@@ -85,12 +86,6 @@ try { require("./not-there.cjs"); } catch (error) { console.log(error.code); }
 console.log(require("./lib.cjs").name);
 `,
 };
-
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 

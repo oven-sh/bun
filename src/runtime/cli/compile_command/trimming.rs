@@ -153,9 +153,7 @@ pub(super) fn decide_trimming(
 
     let plan = match request.product {
         CompileProduct::Executable { .. } => plan_trimming(used, &settings, trim, &template)?,
-        CompileProduct::GraphBytes
-        | CompileProduct::GraphBytesIfSourceCannotRun
-        | CompileProduct::ReportsOnly => None,
+        _ => None,
     };
     match plan {
         Some(plan) if trim.is_enabled() => Ok(Trimming::Planned(plan)),

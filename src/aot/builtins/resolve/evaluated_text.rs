@@ -34,11 +34,7 @@ impl Resolver<'_, '_> {
         };
         match constant {
             Constant::String(text) => Some(text),
-            Constant::Undefined
-            | Constant::Null
-            | Constant::Boolean(_)
-            | Constant::Number(_)
-            | Constant::BigInt(_) => None,
+            _ => None,
         }
     }
 

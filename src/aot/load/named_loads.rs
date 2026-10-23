@@ -145,15 +145,7 @@ impl Scan<'_, '_> {
                 ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::Require(_)
                 | ImportSiteKind::ImportMetaRequire(_) => true,
-                ImportSiteKind::JsxRuntime
-                | ImportSiteKind::JsxPackage
-                | ImportSiteKind::Import(_)
-                | ImportSiteKind::ExportFrom(_)
-                | ImportSiteKind::ExportStar(_)
-                | ImportSiteKind::ImportEquals(_)
-                | ImportSiteKind::RequireResolve(_)
-                | ImportSiteKind::ImportMetaResolve(_)
-                | ImportSiteKind::GetBuiltinModule(_) => false,
+                _ => false,
             };
             let is_one_name = match site.specifier {
                 ImportSpecifier::Constant(_) => true,

@@ -237,12 +237,7 @@ impl Declarations<'_, '_> {
             {
                 Some((decl, pat))
             }
-            SymbolColumn::Pattern(_)
-            | SymbolColumn::Function(_)
-            | SymbolColumn::Class(_)
-            | SymbolColumn::Enum(_)
-            | SymbolColumn::Module(_)
-            | SymbolColumn::None => None,
+            _ => None,
         });
         vars.collect()
     }

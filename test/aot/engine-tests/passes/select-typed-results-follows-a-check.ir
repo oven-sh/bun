@@ -1,0 +1,233 @@
+# JSON.parse and an awaited x.json() build their result as the type of the check that stands in front of the typed position the result enters: a variable, an assertion, a field, a return.
+# AddGenericVersion makes a test and a branch of a check, and they name the type as the check did. Of several checks of one value the narrowest decides
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 9
+# STATISTIC: ParsersCreated = 2
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f1 v3 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f7 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f8 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f12 v3 None [0] reason=NoTarget
+# CHECK-NOT: decline
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Variable
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Field
+typesite w3 module=m0 position=40 kind=Result
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+layout L1 name="Other" fields=[{key="z" declared={type=number}}]
+layout L2 name="Holder" fields=[{key="user" declared={type=undefined|null|L0 site=w2}}]
+
+# The check stays, behind the join: what the parser built passes it, the plain object of the rare path does not
+function f0 name="intoVariable" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 castType=undefined|null|L0 site=w0
+    v4 = PropGet v3 key="id"
+    Return v4
+}
+# CHECK-LABEL: function f0 name="intoVariable"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen v0
+# CHECK-NEXT: Branch [[open0]] -> taken [[opened0]](| 0), notTaken
+# CHECK: [[done0]](v2:{{*}}):
+# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0 site=w0
+# CHECK-NEXT: v4:{{*}}= PropGet v3 key="id"
+# CHECK-NEXT: Return v4
+# CHECK: [[generic0]]() frequency=Rare:
+# CHECK-NEXT: [[original0]]:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK: Jump -> next [[done0]]([[original0]])
+# CHECK: [[opened0]]([[source0]]: guard):
+# CHECK-NEXT: [[start0]]: cursor = JSONSourceStart [[source0]]
+# CHECK-NEXT: [[first0]]: cursor = JSONSkipWhitespace [[start0]]
+# CHECK-NEXT: = CallDirect [[first0]] function=[[parserOfUser]]
+
+function f1 name="checkOfAnotherValue" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = Undefined
+    v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
+    v4 = Check v1 castType=undefined|null|L0 site=w0
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f1 name="checkOfAnotherValue"
+# CHECK: v2: undefined = Undefined
+# CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
+# CHECK-NEXT: v4:{{*}}= Check v1 castType=undefined|null|L0 site=w0
+
+function f2 name="asserted" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 castType=undefined|null|L0 site=w1
+    Return v3
+}
+# CHECK-LABEL: function f2 name="asserted"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = Check v2 castType=undefined|null|L0 site=w1
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f3 name="intoField" parameters=[{type=string}, {type=L2}] results=[{type=undefined}] {
+  b0(v0: string, v1: L2):
+    v2 = Undefined
+    v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
+    v4 = Check v3 castType=undefined|null|L0 site=w2
+    PropSet v1, v4 key="user"
+    Return
+}
+# CHECK-LABEL: function f3 name="intoField"
+# CHECK: = JSONSourceOpen v0
+# CHECK: v4:{{*}}= Check v3 castType=undefined|null|L0 site=w2
+# CHECK-NEXT: PropSet v1, v4 key="user"
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+# ResolveBuiltins has taken the call out of the tail position, and the cast of the tail call is a check behind it
+function f4 name="returned" parameters=[{type=string}] results=[{type=undefined|null|L0 site=w3}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 castType=undefined|null|L0 site=w3
+    Return v3
+}
+# CHECK-LABEL: function f4 name="returned"
+# CHECK: = JSONSourceOpen v0
+# CHECK: v3:{{*}}= Check v2 castType=undefined|null|L0 site=w3
+# CHECK-NEXT: Return v3
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f5 name="awaitedBody" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Await v1
+    v3 = Check v2 castType=undefined|null|L0 site=w0
+    Return v3
+}
+# CHECK-LABEL: function f5 name="awaitedBody"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: [[bytes5]]:{{*}}= Await v1
+# CHECK-NEXT: = JSONSourceOpen [[bytes5]]
+# CHECK: = Check v2 castType=undefined|null|L0 site=w0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+# Where the test fails the generic version goes on with the value as it came
+function f6 name="checkBecameATestAndABranch" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = TypeTest v2 testedType=undefined|null|L0
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = PropGet v4 key="id"
+    Return v5
+  b2(v6) frequency=Unlikely:
+    v7 = PropGet v6 key="id"
+    Return v7
+}
+# CHECK-LABEL: function f6 name="checkBecameATestAndABranch"
+# CHECK: = JSONSourceOpen v0
+# CHECK: (v2:{{*}}):
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=undefined|null|L0
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f7 name="testForAPrimitive" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = TypeTest v2 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v4
+  b2(v5) frequency=Unlikely:
+    Return v5
+}
+# CHECK-LABEL: function f7 name="testForAPrimitive"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=string
+
+# Neither type lies inside the other, so neither says what to build
+function f8 name="testsForTwoUnrelatedTypes" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = TypeTest v2 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    Return v4
+  b2():
+    v5 = TypeTest v2 testedType=L1
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f8 name="testsForTwoUnrelatedTypes"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L0
+
+function f9 name="awaitedBodyIsTested" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Await v1
+    v3 = TypeTest v2 testedType=undefined|null|L0
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v4
+  b2(v5) frequency=Unlikely:
+    Return v5
+}
+# CHECK-LABEL: function f9 name="awaitedBodyIsTested"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: [[bytes9]]:{{*}}= Await v1
+# CHECK-NEXT: = JSONSourceOpen [[bytes9]]
+# CHECK: (v2:{{*}}):
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=undefined|null|L0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+# A variable of a union, and a reference to it that the checker has narrowed
+function f10 name="narrowerCheckBehindAWiderOne" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 castType=undefined|null|L0|L1 site=w0
+    v4 = Check v3 castType=undefined|null|L0
+    Return v4
+}
+# CHECK-LABEL: function f10 name="narrowerCheckBehindAWiderOne"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+# What is expected of any cast counts like the type of a check. JSON.parse never returns undefined, so this is another type and has another parser
+function f11 name="expectedTypeOfTheCheckedValue" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 ~ null|L0 = Check v2 castType=undefined|null|L0|L1 site=w0
+    Return v3
+}
+# CHECK-LABEL: function f11 name="expectedTypeOfTheCheckedValue"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect {{*}} function=[[parserOfExpectedUser]]
+
+# NarrowByField hands on its first operand. The second is only looked at, so what is checked behind the cast is not the parsed value
+function f12 name="readOperandOfANarrowing" parameters=[{type=string}, {type=undefined|null|L0|L1}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|null|L0|L1):
+    v2 = Undefined
+    v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
+    v4 = NarrowByField v1, v3 key="id"
+    v5 = Check v4 castType=undefined|null|L0
+    Return v5
+}
+# CHECK-LABEL: function f12 name="readOperandOfANarrowing"
+# CHECK: v2: undefined = Undefined
+# CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
+# CHECK-NEXT: v4:{{*}}= NarrowByField v1, v3 key="id"
+# CHECK: function [[parserOfUser]] {{*}}role=Parser {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|null|L0}, {type=cursor}]

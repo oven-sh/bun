@@ -7,14 +7,12 @@ import {
   firstEmbedderFeatureIndex,
   objectFormats,
   trimFeatureLimit,
-  type CxxFunctionPattern,
   type EnteredFrom,
   type Feature,
   type FeatureModel,
   type FeatureName,
   type IcuDataLine,
   type ObjectFormat,
-  type Profile,
   type TrimFeature,
 } from "./types.ts";
 
@@ -30,14 +28,12 @@ export const featureFiles = [
   "process.def",
   "trim-features.def",
   "icu-data.def",
-  "profiles.def",
 ] as const;
 
 type FeatureFile = (typeof featureFiles)[number];
 type FeatureLists = Omit<FeatureModel, "hash">;
 type NumberByFormat = Partial<Record<ObjectFormat, number>>;
 
-const featureModelVersion = 2;
 const featureNamePattern = /^[A-Z][A-Za-z0-9]*$/;
 const trimFeatureNamePattern = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const languagePattern = /^[a-z]{2,3}$/;
@@ -77,8 +73,7 @@ type Declaration =
   | { kind: "feature"; feature: Feature; seen: Set<string> }
   | { kind: "trim-feature"; trimFeature: TrimFeature; seen: Set<string> }
   | { kind: "icu-data" }
-  | { kind: "icu-language-group" }
-  | { kind: "profile"; profile: Profile };
+  | { kind: "icu-language-group" };
 
 interface ParseState extends FeatureLists {
   sites: Map<string, string[]>;
@@ -241,15 +236,6 @@ function parseTrimFeatureAttribute(trimFeature: TrimFeature, seen: Set<string>, 
   }
 }
 
-function parseProfileAttribute(profile: Profile, line: Line) {
-  const keyword = line.words[0];
-  if (keyword !== "minimum-cut-ratio") fail(`unknown profile attribute: ${keyword ?? line.text}`, line.site);
-  const [percent, format] = argumentsOf(line, 1, 2);
-  if (!/^\d+$/.test(percent!) || Number(percent) > 100)
-    fail(`minimum-cut-ratio is not a percentage: ${percent}`, line.site);
-  setForFormats(profile.minimumCutRatio, Number(percent), format, line);
-}
-
 function parseAttribute(state: ParseState, line: Line) {
   const declaration = state.declaration;
   if (declaration === undefined) fail("indented line outside a declaration", line.site);
@@ -258,8 +244,6 @@ function parseAttribute(state: ParseState, line: Line) {
       return parseFeatureAttribute(declaration.feature, declaration.seen, line);
     case "trim-feature":
       return parseTrimFeatureAttribute(declaration.trimFeature, declaration.seen, line);
-    case "profile":
-      return parseProfileAttribute(declaration.profile, line);
     case "icu-data":
     case "icu-language-group":
       fail(`${declaration.kind} takes no indented lines`, line.site);
@@ -274,9 +258,7 @@ function nextFeatureIndex(state: ParseState, file: FeatureFile, line: Line): num
 }
 
 function parseFeatureDeclaration(state: ParseState, file: FeatureFile, line: Line) {
-  if (file === "trim-features.def" || file === "icu-data.def" || file === "profiles.def") {
-    fail(`feature is not allowed in ${file}`, line.site);
-  }
+  if (file === "trim-features.def" || file === "icu-data.def") fail(`feature is not allowed in ${file}`, line.site);
   const name = line.words[1]!;
   const text = parseText(line, 2);
   checkName(name, featureNamePattern, line);
@@ -343,18 +325,6 @@ function parseIcuLanguageGroup(state: ParseState, file: FeatureFile, line: Line)
   state.declaration = { kind: "icu-language-group" };
 }
 
-function parseProfileDeclaration(state: ParseState, file: FeatureFile, line: Line) {
-  if (file !== "profiles.def") fail(`profile is not allowed in ${file}`, line.site);
-  const [name, colon, ...members] = argumentsOf(line, 2);
-  checkName(name, trimFeatureNamePattern, line);
-  if (colon !== ":") fail("profile needs a colon after its name", line.site);
-  const profile: Profile = { name: name!, features: [], minimumCutRatio: {} };
-  addMembers(state, profile.features, "profile", profile.name, members, line.site);
-  state.profiles.push(profile);
-  recordSite(state, `profile\0${profile.name}`, line.site);
-  state.declaration = { kind: "profile", profile };
-}
-
 function parseDeclaration(state: ParseState, file: FeatureFile, line: Line) {
   const keyword = line.words[0];
   switch (keyword) {
@@ -366,8 +336,6 @@ function parseDeclaration(state: ParseState, file: FeatureFile, line: Line) {
       return parseIcuDataDeclaration(state, file, line);
     case "icu-language-group":
       return parseIcuLanguageGroup(state, file, line);
-    case "profile":
-      return parseProfileDeclaration(state, file, line);
     default:
       fail(`unknown declaration: ${keyword ?? line.text}`, line.site);
   }
@@ -390,7 +358,6 @@ export function parseFeatures(files: { name: FeatureFile; text: string }[]): Fea
     trimFeatures: [],
     icuData: [],
     icuLanguageGroups: [],
-    profiles: [],
     sites: new Map(),
     declaration: undefined,
     engineFeatureCount: 0,
@@ -417,15 +384,9 @@ export function loadFeatures(repositoryRoot: string): FeatureModel {
 }
 
 function checkLimits(features: Feature[], trimFeatures: TrimFeature[], origin: Origin) {
-  const indexes = new Set<number>();
-  for (const { name, index, isEngine } of features) {
-    const site = siteOf(origin, `feature\0${name}`);
-    if (index < 0 || index >= featureIndexLimit)
-      fail(`feature ${name} has index ${index}, limit ${featureIndexLimit}`, site);
-    if (indexes.has(index)) fail(`two features have index ${index}`, site);
-    if (isEngine !== index < firstEmbedderFeatureIndex)
-      fail(`isEngine of feature ${name} disagrees with index ${index}`, site);
-    indexes.add(index);
+  for (const { name, index } of features) {
+    if (index >= featureIndexLimit)
+      fail(`feature ${name} has index ${index}, limit ${featureIndexLimit}`, siteOf(origin, `feature\0${name}`));
   }
   if (trimFeatures.length > trimFeatureLimit) {
     fail(
@@ -435,7 +396,7 @@ function checkLimits(features: Feature[], trimFeatures: TrimFeature[], origin: O
   }
 }
 
-function checkDeclaredOnce({ features, trimFeatures, icuData, profiles }: FeatureLists, origin: Origin) {
+function checkDeclaredOnce({ features, trimFeatures, icuData }: FeatureLists, origin: Origin) {
   const firstSites = new Map<string, string>();
   const claim = (kind: string, name: string) => {
     const key = `${kind}\0${name}`;
@@ -446,7 +407,6 @@ function checkDeclaredOnce({ features, trimFeatures, icuData, profiles }: Featur
   for (const { name } of features) claim("feature", name);
   for (const { name } of trimFeatures) claim("trim-feature", name);
   for (const { itemClass } of icuData) claim("icu-data", itemClass);
-  for (const { name } of profiles) claim("profile", name);
 }
 
 function checkLanguageGroups(groups: string[][], origin: Origin) {
@@ -487,7 +447,6 @@ function checkMembers(
 function checkReferences(lists: FeatureLists, known: Map<FeatureName, number>, origin: Origin) {
   for (const { name, features } of lists.trimFeatures) checkMembers(features, "trim-feature", name, known, origin);
   for (const { itemClass, features } of lists.icuData) checkMembers(features, "icu-data", itemClass, known, origin);
-  for (const { name, features } of lists.profiles) checkMembers(features, "profile", name, known, origin);
 }
 
 function computeHash({ features, trimFeatures, icuData, icuLanguageGroups }: FeatureLists): bigint {
@@ -503,10 +462,10 @@ function computeHash({ features, trimFeatures, icuData, icuLanguageGroups }: Fea
 }
 
 function finishModel(
-  { features, trimFeatures, icuData, icuLanguageGroups, profiles }: FeatureLists,
+  { features, trimFeatures, icuData, icuLanguageGroups }: FeatureLists,
   origin: Origin,
 ): FeatureModel {
-  const lists: FeatureLists = { features, trimFeatures, icuData, icuLanguageGroups, profiles };
+  const lists: FeatureLists = { features, trimFeatures, icuData, icuLanguageGroups };
   features.sort((a, b) => a.index - b.index);
   checkLimits(features, trimFeatures, origin);
   checkDeclaredOnce(lists, origin);
@@ -516,7 +475,7 @@ function finishModel(
   const known = new Map(features.map(({ name, index }) => [name, index]));
   checkReferences(lists, known, origin);
   const byIndex = (a: FeatureName, b: FeatureName) => known.get(a)! - known.get(b)!;
-  for (const { features: members } of [...trimFeatures, ...icuData, ...profiles]) members.sort(byIndex);
+  for (const { features: members } of [...trimFeatures, ...icuData]) members.sort(byIndex);
   return { ...lists, hash: computeHash(lists) };
 }
 
@@ -554,149 +513,11 @@ export function narrowestTrimFeature(model: FeatureModel, feature: FeatureName):
   return narrowest;
 }
 
-const hashText = (hash: bigint) => "0x" + hash.toString(16).padStart(16, "0");
-
-export function serializeFeatureModel(model: FeatureModel): string {
-  const { features, icuData, icuLanguageGroups, profiles } = model;
-  const trimFeatures = model.trimFeatures.map(({ name, features, about, also, saves, rustName }) => {
-    return { name, features, about, also, saves, rustName };
-  });
-  const lists = { features, trimFeatures, icuData, icuLanguageGroups, profiles };
-  return JSON.stringify({ version: featureModelVersion, hash: hashText(model.hash), ...lists }, null, 2) + "\n";
-}
-
-type JsonRecord = Record<string, unknown>;
-
-interface JsonContext {
-  path: string;
-  owner: string;
-}
-
-const isRecord = (value: unknown): value is JsonRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
-const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
-const isInteger = (value: unknown): value is number => Number.isInteger(value);
-const isArray = (value: unknown): value is unknown[] => Array.isArray(value);
-const isStringList = (value: unknown): value is string[] => isArray(value) && value.every(isString);
-const isCxxFunctionList = (value: unknown): value is CxxFunctionPattern[] =>
-  isArray(value) && value.every(each => isRecord(each) && isString(each.hint) && isString(each.pattern));
-const isLanguageGroupList = (value: unknown): value is string[][] => isArray(value) && value.every(isStringList);
-const isNumberByFormat = (value: unknown, limit: number): value is NumberByFormat =>
-  isRecord(value) &&
-  Object.entries(value).every(
-    ([format, number]) => isObjectFormat(format) && isInteger(number) && number >= 0 && number <= limit,
-  );
-const isMinimumBytes = (value: unknown): value is Feature["minimumBytes"] =>
-  isNumberByFormat(value, Number.MAX_SAFE_INTEGER);
-const isMinimumCutRatio = (value: unknown): value is Profile["minimumCutRatio"] => isNumberByFormat(value, 100);
-const isSaves = (value: unknown): value is NonNullable<TrimFeature["saves"]> =>
-  isRecord(value) && typeof value.linux === "number" && typeof value.macos === "number";
-
-function readMember<T>(
-  record: JsonRecord,
-  member: string,
-  context: JsonContext,
-  isValid: (value: unknown) => value is T,
-  fallback?: T,
-): T {
-  const value = record[member];
-  if (value === undefined && fallback !== undefined) return fallback;
-  if (!isValid(value)) fail(`${context.owner}.${member} is missing or has the wrong type`, context.path);
-  return value;
-}
-
-function readRecord(value: unknown, context: JsonContext): JsonRecord {
-  if (!isRecord(value)) fail(`${context.owner} is not an object`, context.path);
-  return value;
-}
-
-function readFeature(value: unknown, context: JsonContext): Feature {
-  const record = readRecord(value, context);
-  const name = readMember(record, "name", context, isString);
-  const index = readMember(record, "index", context, isInteger);
-  return {
-    name,
-    rustName: readMember(record, "rustName", context, isString, featureRustName(name)),
-    index,
-    text: readMember(record, "text", context, isString, name),
-    enteredFrom: readMember(record, "enteredFrom", context, isEnteredFrom, "program"),
-    isEngine: readMember(record, "isEngine", context, isBoolean, index < firstEmbedderFeatureIndex),
-    minimumBytes: readMember(record, "minimumBytes", context, isMinimumBytes, {}),
-    exports: readMember(record, "exports", context, isBoolean, false),
-    ...(record.cFunctions === undefined ? {} : { cFunctions: readMember(record, "cFunctions", context, isStringList) }),
-    ...(record.cxxFunctions === undefined
-      ? {}
-      : { cxxFunctions: readMember(record, "cxxFunctions", context, isCxxFunctionList) }),
-  };
-}
-
-function readTrimFeature(value: unknown, context: JsonContext): TrimFeature {
-  const record = readRecord(value, context);
-  const name = readMember(record, "name", context, isString);
-  return {
-    name,
-    features: readMember(record, "features", context, isStringList, []),
-    about: readMember(record, "about", context, isString, ""),
-    also: readMember(record, "also", context, isStringList, []),
-    ...(record.saves === undefined ? {} : { saves: readMember(record, "saves", context, isSaves) }),
-    rustName: readMember(record, "rustName", context, isString, trimFeatureRustName(name)),
-  };
-}
-
-function readIcuDataLine(value: unknown, context: JsonContext): IcuDataLine {
-  const record = readRecord(value, context);
-  return {
-    itemClass: readMember(record, "itemClass", context, isString),
-    exceptWindows: readMember(record, "exceptWindows", context, isBoolean, false),
-    byLocale: readMember(record, "byLocale", context, isBoolean, false),
-    features: readMember(record, "features", context, isStringList, []),
-  };
-}
-
-function readProfile(value: unknown, context: JsonContext): Profile {
-  const record = readRecord(value, context);
-  return {
-    name: readMember(record, "name", context, isString),
-    features: readMember(record, "features", context, isStringList, []),
-    minimumCutRatio: readMember(record, "minimumCutRatio", context, isMinimumCutRatio, {}),
-  };
-}
-
-function readList<T>(
-  json: JsonRecord,
-  member: string,
-  path: string,
-  readItem: (value: unknown, context: JsonContext) => T,
-): T[] {
-  const items = readMember(json, member, { path, owner: "model" }, isArray, []);
-  return items.map((item, index) => readItem(item, { path, owner: `${member}[${index}]` }));
-}
-
-function parseJson(path: string): unknown {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch (cause) {
-    throw new BuildError("cannot read the feature model", { file: path, cause });
-  }
+export function serializeFeatureModel({ hash, ...lists }: FeatureModel): string {
+  return JSON.stringify({ hash: hash.toString(), ...lists }, null, 2) + "\n";
 }
 
 export function readFeatureModel(path: string): FeatureModel {
-  const context = { path, owner: "model" };
-  const json = readRecord(parseJson(path), context);
-  if (json.version !== featureModelVersion) fail(`unknown feature model version: ${json.version}`, path);
-  const lists: FeatureLists = {
-    features: readList(json, "features", path, readFeature),
-    trimFeatures: readList(json, "trimFeatures", path, readTrimFeature),
-    icuData: readList(json, "icuData", path, readIcuDataLine),
-    icuLanguageGroups: readMember(json, "icuLanguageGroups", context, isLanguageGroupList, []),
-    profiles: readList(json, "profiles", path, readProfile),
-  };
-  const model = finishModel(lists, { path, sites: new Map() });
-  if (json.hash !== undefined) {
-    const written = readMember(json, "hash", context, isString);
-    if (written !== hashText(model.hash))
-      fail(`hash ${written} does not match the model, ${hashText(model.hash)}`, path);
-  }
-  return model;
+  const { hash, ...lists } = JSON.parse(readFileSync(path, "utf8")) as FeatureLists & { hash: string };
+  return { ...lists, hash: BigInt(hash) };
 }

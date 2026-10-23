@@ -115,12 +115,7 @@ fn demotion_cause_of(reported: &BuildDiagnostic) -> Option<DemotionCause> {
     }
     Some(match reported.diagnostic.class {
         DiagnosticClass::EarlyError => DemotionCause::EarlyError,
-        DiagnosticClass::TypeScriptGrammar
-        | DiagnosticClass::Semantic
-        | DiagnosticClass::MissingDeclaration
-        | DiagnosticClass::Style
-        | DiagnosticClass::DeclarationFile
-        | DiagnosticClass::EmittedOutput => DemotionCause::TypeError,
+        _ => DemotionCause::TypeError,
     })
 }
 

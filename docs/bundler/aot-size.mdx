@@ -343,13 +343,11 @@ The CLI prints how many megabytes it removed. With `log: true` in `trim`, `Bun.b
 
 ```txt
 compile.trim: removed 105.0 MB of the runtime, 98.3 MB of it from the file: cli, process-kill, process-report, dialogs, ipc, native-code, jit, bundler, test, inspector, source-maps, image, archive, sqlite, sql, redis, s3, html-rewriter, webassembly, shell, webview, fetch, sockets, dns, http2, http3, websocket, udp, node-vm, node-crypto, web-crypto, password, brotli, intl, temporal, bun-jsc, plugin, fs-router, terminal, cron, secrets, markdown, yaml, toml, json5, jsonc, jsonl, xml, glob, semver, color, csrf, hash, crypto-hasher, url-pattern
-compile.trim: native libraries removed: Brotli 1.2.0, HdrHistogram_c 18c7a324, libarchive 27cbc782, libjpeg-turbo 3.2.0, libspng 0.7.4, libwebp 1.6.0, lol-html 725ce499, ls-hpack cf0f70dd, ls-qpack 91567706, lsquic f812ceb9, picohttpparser f4d94b48, rust-argon2 3.0.0, SQLite 3.53.4, TinyCC 05f0fafa
-compile.trim: native libraries included: BoringSSL 41bf9b59, c-ares c7a3138d, Highway 2607d3b5, libdeflate 92e6a0db, mimalloc 92ef6587, zlib-ng 2.3.3, zstd f8745da6
 ```
 
 Some names include several others. `cli` is the whole command line, so `lint`, `fmt`, `check`, `install` and the rest aren't listed again. `native-code` includes `ffi` and `native-addons`.
 
-The last two lines list native libraries, each with its version: the ones that were removed along with those features, and the ones that are still in the executable. The error messages of a removed library are gone from the file too. `strings server | grep -c "malformed database schema"`, a message of SQLite, prints `0`.
+The error messages of a removed native library are gone from the file too. `strings server | grep -c "malformed database schema"`, a message of SQLite, prints `0`.
 
 The first line has two numbers: what Bun removed, and how much of that made the file shorter. Bun cuts whole pages out of the file, and the format of the executable allows a limited number of cuts. What it can't cut it overwrites in place, so the file keeps its length there. What Bun overwrites compresses to almost nothing.
 

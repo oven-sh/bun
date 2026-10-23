@@ -2,8 +2,9 @@
 // `Box<[[[number]]]>` out, another makes the same type by instantiation, and which of the two threads comes first differs from
 // run to run. How far the family is followed does not: same bytes, whatever the number of threads.
 import { expect, setDefaultTimeout } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 setDefaultTimeout(240_000);
@@ -41,8 +42,8 @@ const files = {
 
 async function build(directory: string, threads: number, round: number) {
   const name = `threads-${threads}-${round}`;
-  await using proc = Bun.spawn({
-    cmd: [
+  const { stderr, exitCode } = await run(
+    [
       bunExe(),
       "build",
       "--compile",
@@ -53,12 +54,8 @@ async function build(directory: string, threads: number, round: number) {
       "--outfile",
       "app",
     ],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    directory,
+  );
   expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
     errors: [],
     exitCode: 0,

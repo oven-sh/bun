@@ -19,12 +19,6 @@ use core::time::Duration;
 
 #[path = "check_command/compile_check.rs"]
 mod compile_check;
-#[path = "check_command/declarations.rs"]
-mod declarations;
-
-pub(crate) use declarations::{
-    DeclarationFile, check_and_emit_declarations, take_declaration_files,
-};
 
 pub(crate) struct CheckCommand;
 

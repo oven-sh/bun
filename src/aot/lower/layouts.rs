@@ -209,13 +209,7 @@ fn find_fields_without_types(
     }
     match file.fragment.layout_key(layout) {
         LayoutKey::ObjectType { .. } => Some(object_types::list_fields(file, layout)),
-        LayoutKey::Class(_)
-        | LayoutKey::ConstructorFunction(_)
-        | LayoutKey::Library(_)
-        | LayoutKey::UntypedLiteral { .. }
-        | LayoutKey::Container(_)
-        | LayoutKey::TypeParameter(_)
-        | LayoutKey::Environment { .. } => None,
+        _ => None,
     }
 }
 
@@ -360,10 +354,7 @@ pub(in crate::lower) fn own_fields(
         LayoutKey::ObjectType { .. } => object_types::compute_object_type_fields(file, layout),
         LayoutKey::Container(symbol) => containers::compute_container_fields(file, symbol),
         // The checker of this project has not read the text that stores them.
-        LayoutKey::Library(_)
-        | LayoutKey::UntypedLiteral { .. }
-        | LayoutKey::TypeParameter(_)
-        | LayoutKey::Environment { .. } => OwnFields::default(),
+        _ => OwnFields::default(),
     };
     file.layouts.store_fields(layout, fields)
 }

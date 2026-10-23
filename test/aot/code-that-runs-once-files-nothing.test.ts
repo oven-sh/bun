@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const names = Array.from({ length: 40 }, (_, index) => "name" + index);
@@ -29,12 +30,6 @@ const files = {
 
 const filing = ["operationAOTGetByIdAndCache", "operationAOTPutByIdAndCache"];
 const plain = ["operationAOTGetById", "operationAOTPutById"];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("reads and stores by name in code that runs once fill no caches", async () => {
   using dir = tempDir("aot-code-that-runs-once-files-nothing", files);

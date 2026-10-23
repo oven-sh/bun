@@ -14,7 +14,6 @@ use super::generated::{
     visit_terminator_fields, visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId};
-use super::relations::{Operations, RelationsScratch, WalkedFunction, relate};
 
 #[derive(Default)]
 pub(super) struct FinishScratch {
@@ -23,8 +22,6 @@ pub(super) struct FinishScratch {
     value_numbers: Vec<Option<ValueId>>,
     order: Vec<BlockId>,
     stack: Vec<(BlockId, u32)>,
-    operations: Operations,
-    relations: RelationsScratch,
 }
 
 struct BodySize {
@@ -49,23 +46,9 @@ pub(super) fn finish(builder: FunctionBuilder) -> (Function, BuilderScratch) {
     close_open_blocks(&mut blocks);
     scratch.order_blocks(&blocks);
     let size = scratch.number_values(&blocks, &values);
-    let walked = WalkedFunction {
-        flags: function.flags,
-        result_count: function.results.len(),
-        blocks: &blocks,
-        values: &values,
-        field_words: &field_words,
-        order: &scratch.order,
-        block_numbers: &scratch.block_numbers,
-        value_numbers: &scratch.value_numbers,
-    };
-    let operations = Operations::decode(&walked, core::mem::take(&mut scratch.operations));
-    function.relations = relate(&walked, &operations, &mut scratch.relations);
-
     let mut encoder = Encoder {
         values: &values,
         field_words: &field_words,
-        operations: &operations,
         blocks: &blocks,
         block_numbers: &scratch.block_numbers,
         value_numbers: &scratch.value_numbers,
@@ -77,7 +60,6 @@ pub(super) fn finish(builder: FunctionBuilder) -> (Function, BuilderScratch) {
     }
     let words = encoder.words;
     debug_assert_eq!(words.len(), size.word_count);
-    scratch.operations = operations.into_scratch();
 
     function.body = Body {
         code: words,
@@ -179,16 +161,6 @@ fn block_length(block: &PendingBlock, values: &[PendingValue]) -> usize {
         + terminator_length(terminator_of(block))
 }
 
-// `None`: the fields do not have their wire form.
-fn find_operand_places(opcode: Opcode, fields: &[u32]) -> Option<Vec<usize>> {
-    let mut places = Vec::new();
-    let end = visit_value_fields(opcode, fields, 0, &mut |field, at| match field {
-        FieldWord::Operand => places.push(at),
-        FieldWord::Reference(_) => {}
-    });
-    (end == Some(fields.len())).then_some(places)
-}
-
 fn number_of(value_numbers: &[Option<ValueId>], value_count: u32, pending: ValueId) -> u32 {
     let number = value_numbers.get(pending.index()).copied().flatten();
     debug_assert!(
@@ -251,8 +223,6 @@ impl FinishScratch {
             value_numbers: recycle_vector(self.value_numbers, MAX_SPARE_VALUES),
             order: recycle_vector(self.order, MAX_SPARE_BLOCKS),
             stack: recycle_vector(self.stack, MAX_SPARE_BLOCKS),
-            operations: self.operations,
-            relations: self.relations,
         }
     }
 }
@@ -260,7 +230,6 @@ impl FinishScratch {
 struct Encoder<'a> {
     values: &'a [PendingValue],
     field_words: &'a [u32],
-    operations: &'a Operations,
     blocks: &'a [PendingBlock],
     block_numbers: &'a [Option<BlockId>],
     value_numbers: &'a [Option<ValueId>],
@@ -297,30 +266,16 @@ impl Encoder<'_> {
     }
 
     fn encode_value(&mut self, id: ValueId) {
-        let (operations, values, field_words) = (self.operations, self.values, self.field_words);
-        let value = &values[id.index()];
+        let value = &self.values[id.index()];
         let (opcode, fields) = operation_of(value);
         let head = ValueHead {
             opcode: opcode.to_wire(),
             position: value.position,
         };
         head.append_to(&mut self.words);
-        let fields = &field_words[fields.start as usize..fields.end as usize];
-        debug_assert_eq!(
-            find_operand_places(opcode, fields),
-            Some(
-                operations
-                    .operand_words(id)
-                    .map(|(place, _)| place)
-                    .collect::<Vec<usize>>()
-            ),
-            "the fields have their wire form, and what was taken apart names its operands"
-        );
-        let start = self.words.len();
-        self.words.extend_from_slice(fields);
-        for (place, operand) in operations.operand_words(id) {
-            self.words[start + place] = number_of(self.value_numbers, self.value_count, operand);
-        }
+        self.encode_fields(fields, |words, visit| {
+            visit_value_fields(opcode, words, 0, visit)
+        });
     }
 
     fn encode_terminator(&mut self, terminator: &PendingTerminator) {

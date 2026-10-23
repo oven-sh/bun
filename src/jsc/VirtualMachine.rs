@@ -511,8 +511,6 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
-    safe fn Bun__AOT__dumpObjectCensusIfRequested(global: &JSGlobalObject);
-    safe fn Bun__AOT__answerObjectCensusRequest(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
 
@@ -2422,10 +2420,6 @@ impl VirtualMachine {
         }
     }
 
-    pub(crate) fn answer_object_census_request(&self) {
-        Bun__AOT__answerObjectCensusRequest(self.global());
-    }
-
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
         // FIXME: we should be doing this, but we're not, but unfortunately
@@ -2436,7 +2430,6 @@ impl VirtualMachine {
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
         } else {
-            Bun__AOT__dumpObjectCensusIfRequested(self.global());
             self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))

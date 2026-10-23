@@ -113,11 +113,7 @@ fn find_binding_named_by_text(
     {
         return match file.scopes.form(symbol) {
             BindingForm::Stored => Some((Binding::Symbol(symbol), name)),
-            BindingForm::Import
-            | BindingForm::NotAValue
-            | BindingForm::Callee { .. }
-            | BindingForm::MappedArgument { .. }
-            | BindingForm::ContainerMember { .. } => None,
+            _ => None,
         };
     }
     if !commonjs::is_commonjs_module(file) {
@@ -226,11 +222,7 @@ fn compute_eval_context(file: &FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> 
 fn compute_module_flags(kind: ModuleKind) -> EvalScopeFlags {
     match kind {
         ModuleKind::CommonJs => compute_function_flags(FnKind::Expr, false),
-        ModuleKind::SourceText
-        | ModuleKind::Data
-        | ModuleKind::RuntimeSource
-        | ModuleKind::Runtime
-        | ModuleKind::External => EvalScopeFlags::default(),
+        _ => EvalScopeFlags::default(),
     }
 }
 
@@ -245,12 +237,7 @@ fn compute_function_flags(kind: FnKind, is_derived: bool) -> EvalScopeFlags {
         }
         FnKind::Constructor => method,
         FnKind::StaticBlock => compute_initializer_flags(),
-        FnKind::Arrow
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => {
+        _ => {
             debug_assert!(false, "this function kind is not a lexical owner");
             EvalScopeFlags::default()
         }

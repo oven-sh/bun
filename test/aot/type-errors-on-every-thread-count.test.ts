@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // The base types of an interface are resolved once for all its declarations, so one evaluation finds the TS2312 of every file
@@ -25,14 +26,10 @@ const options = { strict: true, typeRoots: ["./no-types-here"], skipLibCheck: tr
 
 async function build(directory: string, threads: number) {
   const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, "./main.ts", "--outfile", outfile],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: said, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, "./main.ts", "--outfile", outfile],
+    directory,
+  );
   return { said, exitCode };
 }
 

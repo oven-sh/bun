@@ -3,13 +3,13 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
 async function outputOf(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr } = await run(cmd, cwd, env);
   // Plain Bun shows the line of the source above an error, and the two name the file differently.
   return (stdout + stderr)
     .split("\n")

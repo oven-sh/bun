@@ -308,16 +308,7 @@ fn names_field(file: &FileLowering<'_, '_, '_, '_>, name: MemberName) -> bool {
     };
     match classify_name(file.queries.atom_bytes(name)) {
         NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto => false,
-        NameClass::Ordinary
-        | NameClass::Constructor
-        | NameClass::ObjectPrototypeMember
-        | NameClass::Length
-        | NameClass::Prototype
-        | NameClass::CallOrApply
-        | NameClass::Bind
-        | NameClass::LastIndex
-        | NameClass::Then
-        | NameClass::ToJSON => true,
+        _ => true,
     }
 }
 
@@ -417,9 +408,7 @@ fn is_seen_alike_in_every_file(
                 }
                 Err(_) => false,
             },
-            ObjectOrigin::TypeLiteral { .. }
-            | ObjectOrigin::MappedType { .. }
-            | ObjectOrigin::Computed => true,
+            _ => true,
         },
         ShapeKind::AnyObject
         | ShapeKind::ClassConstructor(_)
@@ -543,30 +532,7 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
                     .iter()
                     .any(|&member| holds_every_number(file, member))
         }
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object => false,
+        _ => false,
     }
 }
 

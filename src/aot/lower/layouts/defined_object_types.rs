@@ -44,14 +44,7 @@ impl DefinedObjectType {
                 names: instantiation,
                 ty,
             }),
-            LayoutKey::ObjectType { .. }
-            | LayoutKey::Class(_)
-            | LayoutKey::ConstructorFunction(_)
-            | LayoutKey::Library(_)
-            | LayoutKey::UntypedLiteral { .. }
-            | LayoutKey::Container(_)
-            | LayoutKey::TypeParameter(_)
-            | LayoutKey::Environment { .. } => None,
+            _ => None,
         }
     }
 }

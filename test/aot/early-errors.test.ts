@@ -1,13 +1,13 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // An early error of the language stops bun run before the first statement runs. Bun's parser reports some. These are reported by JavaScriptCore's, when it is
 // handed the transpiled module. A compiled program is never handed to it, so the build reports them: the type checker finds them in every file, typed or
 // not, and names the file and the line of the source. The words are the checker's, not those of bun run.
 async function run(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], cwd);
   return { stdout, stderr, exitCode };
 }
 
@@ -208,8 +208,7 @@ describe.concurrent("a name that --minify-identifiers hands out may be a name of
           errors: null,
           exitCode: 0,
         });
-        await using proc = Bun.spawn({ cmd: [`${cwd}/app`], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const { stdout, exitCode } = await runCommand([`${cwd}/app`], cwd);
         expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
       });
     }

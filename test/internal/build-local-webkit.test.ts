@@ -5,16 +5,18 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import {
   jscPrograms,
+  prebuiltHasProgramObjects,
   webkit,
   webkitAotFile,
   webkitEngineSources,
+  webkitJSCPath,
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
@@ -84,7 +86,42 @@ describe("which builds compile WebKit", () => {
     expect(linux({}).webkit).toBe("prebuilt");
     expect(webkit.source(linux({})).kind).toBe("prebuilt");
     expect(webkit.build(linux({}))).toEqual({ kind: "none" });
-    expect(jscPrograms(linux({}))).toEqual([]);
+  });
+
+  test("with the prebuilt, jsc and testaot are the tarball's objects linked here, where the tarball has them", () => {
+    using dir = tempDir("build-prebuilt-programs", {});
+    const buildDir = join(String(dir), "build");
+    const cfg = linux({ buildDir, cacheDir: join(String(dir), "cache"), buildType: "Release" });
+    const source = webkit.source(cfg);
+    if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
+    const objects = (name: string) => join("lib", `lib${name}-objects.a`);
+
+    // Not fetched yet, or a tarball that only has the programs linked. What it holds decides, so configure reads it.
+    expect(webkit.provides(cfg).contentsDecideGraph).toBe(true);
+    expect(prebuiltHasProgramObjects(cfg)).toBe(false);
+    expect(jscPrograms(cfg)).toEqual([]);
+    expect(webkit.provides(cfg).files).not.toContain(objects("testaot"));
+    expect([webkitJSCPath(cfg), webkitTestAotPath(cfg)]).toEqual(
+      ["jsc", "testaot"].map(name => join(source.destDir!, "bin", name)),
+    );
+
+    mkdirSync(join(source.destDir!, "lib"), { recursive: true });
+    writeFileSync(join(source.destDir!, objects("jsc")), "");
+    expect(prebuiltHasProgramObjects(cfg)).toBe(false);
+    writeFileSync(join(source.destDir!, objects("testaot")), "");
+    expect(prebuiltHasProgramObjects(cfg)).toBe(true);
+    expect(
+      jscPrograms(cfg).map(({ name, sources, libs }) => [name, sources.map(s => relative(buildDir, s)), libs]),
+    ).toEqual(
+      ["jsc", "testaot"].map(name => [
+        name,
+        [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
+        [join(source.destDir!, objects(name))],
+      ]),
+    );
+    // The fetch makes them.
+    expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
+    expect([webkitJSCPath(cfg), webkitTestAotPath(cfg)]).toEqual([join(buildDir, "jsc"), join(buildDir, "testaot")]);
   });
 
   test("--webkit=local is a --local-deps entry: $BUN_WEBKIT_PATH, else vendor/WebKit", () => {
@@ -169,10 +206,13 @@ for path in [a for a in args if a.endswith(".txt")]:
     for line in open(path):
         parts = line.split()
         if parts:
-            (alone if "@no-unify" in parts else bundled).append(parts[0])
-bundle = os.path.join(out, "UnifiedSource-1.cpp")
-open(bundle, "w").write("".join('#include "%s"\\n' % s for s in bundled))
-sys.stdout.write(";".join([bundle] + alone) + ";")
+            (alone if "@no-unify" in parts or "--print-all-sources" in args else bundled).append(parts[0])
+prefix = args[args.index("--bundle-filename-prefix") + 1] if "--bundle-filename-prefix" in args else ""
+size = "-of-" + args[args.index("--max-bundle-size") + 1] if "--max-bundle-size" in args else ""
+bundle = os.path.join(out, prefix + "UnifiedSource" + size + "-1.cpp")
+if bundled:
+    open(bundle, "w").write("".join('#include "%s"\\n' % s for s in bundled))
+sys.stdout.write(";".join(([bundle] if bundled else []) + alone) + ";")
 `;
 
 const checkout = {
@@ -253,7 +293,10 @@ const checkout = {
     set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS aot/builtins/array.builtins.ts)
     set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinIDs.h")
     set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableEngineBindings.cpp")
-    list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
+    set(JavaScriptCoreAOT_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
+    set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_LIST_FILES "aot/SourcesCompiledForSize.txt")
+    set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForSize")
+    set(JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnumNames.cpp")
     list(APPEND JavaScriptCore_SOURCES \${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES} \${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES})
     list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES "\${JavaScriptCore_AOT_GENERATED_DIR}")
     list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
@@ -268,7 +311,9 @@ const checkout = {
         endif ()
     endfunction()
     AOT_CHECK_SOURCE_LISTS()`,
-  "Source/JavaScriptCore/aot/Sources.txt": `aot/ir/AOTValue.cpp @no-unify\n`,
+  "Source/JavaScriptCore/aot/Sources.txt": `aot/ir/AOTValue.cpp\n`,
+  "Source/JavaScriptCore/aot/SourcesCompiledForSize.txt": `aot/ir/AOTVerifier.cpp\n`,
+  "Source/JavaScriptCore/aot/ir/AOTVerifier.cpp": "",
   "Source/JavaScriptCore/aot/ir/AOTSchema.def": "",
   "Source/JavaScriptCore/aot/ir/generator/index.ts": "",
   "Source/JavaScriptCore/aot/builtins/generator/engine.ts": "",
@@ -373,7 +418,8 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "JSC/jit/Alone.cpp",
       // A bare name that is not in the tree is a generated source.
       "B/JavaScriptCore/DerivedSources/Generated.cpp",
-      "JSC/aot/ir/AOTValue.cpp",
+      "B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-of-8-1.cpp",
+      "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForSizeUnifiedSource-of-8-1.cpp",
       "B/JavaScriptCore/DerivedSources/JSCBuiltins.cpp",
       "JSC/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
       // What the generators of aot/ write.
@@ -390,6 +436,29 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "WTF/",
       "B/bmalloc/Headers",
       "B/bmalloc/Headers/bmalloc",
+    ]);
+  });
+
+  test("a bundle of aot/ names the sources that it includes", () => {
+    const { spec, short } = describeBuild({ asan: false });
+    const sources = spec.groups!.find(g => g.name === "JavaScriptCore")!.sources;
+    expect(
+      sources.flatMap(s => (typeof s !== "string" && s.bundled ? [[short(s.path), ...s.bundled.map(short)]] : [])),
+    ).toEqual([
+      ["B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-of-8-1.cpp", "JSC/aot/ir/AOTValue.cpp"],
+      [
+        "B/JavaScriptCore/DerivedSources/unified-sources/CompiledForSizeUnifiedSource-of-8-1.cpp",
+        "JSC/aot/ir/AOTVerifier.cpp",
+      ],
+    ]);
+  });
+
+  test("--unified-sources=off compiles each source of aot/ by itself", () => {
+    const { sources } = describeBuild({ asan: false, unifiedSources: false }).group("JavaScriptCore");
+    expect(sources).toContain("JSC/aot/ir/AOTValue.cpp");
+    expect(sources).toContain("JSC/aot/ir/AOTVerifier.cpp");
+    expect(sources.filter(source => source.includes("UnifiedSource"))).toEqual([
+      "B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-1.cpp",
     ]);
   });
 
@@ -513,26 +582,39 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       ],
       [
         "a path in a list where it does not belong",
-        { "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/tests/testaot.cpp @no-unify\n" },
+        { "aot/Sources.txt": "aot/ir/AOTValue.cpp\naot/tests/testaot.cpp\n" },
         "aot/tests/testaot.cpp: in aot/Sources.txt, and does not belong there",
       ],
       [
-        "a line without @no-unify",
-        { "aot/Sources.txt": "aot/ir/AOTValue.cpp\n" },
-        "aot/Sources.txt: a line is a path, a space and @no-unify",
+        "a line with more than a path",
+        { "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\n" },
+        "aot/ir/AOTValue.cpp @no-unify: in aot/Sources.txt, and does not belong there\naot/ir/AOTValue.cpp: not in aot/Sources.txt",
       ],
       [
         "lines out of order",
         {
           "aot/ir/AOTType.cpp": "",
-          "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/ir/AOTType.cpp @no-unify\n",
+          "aot/Sources.txt": "aot/ir/AOTValue.cpp\naot/ir/AOTType.cpp\n",
         },
         "aot/Sources.txt: not in ascending order",
       ],
       [
         "a line twice",
-        { "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/ir/AOTValue.cpp @no-unify\n" },
+        { "aot/Sources.txt": "aot/ir/AOTValue.cpp\naot/ir/AOTValue.cpp\n" },
         "aot/Sources.txt: an entry is listed more than once",
+      ],
+      [
+        "a source compiled for size that does not exist",
+        { "aot/ir/AOTVerifier.cpp": undefined },
+        "aot/ir/AOTVerifier.cpp: listed, and there is no such file",
+      ],
+      [
+        "sources compiled for size out of order",
+        {
+          "aot/ir/AOTPrinter.cpp": "",
+          "aot/SourcesCompiledForSize.txt": "aot/ir/AOTVerifier.cpp\naot/ir/AOTPrinter.cpp\n",
+        },
+        "aot/SourcesCompiledForSize.txt: not in ascending order",
       ],
       [
         "a folder of headers that is no include directory",

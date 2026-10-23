@@ -1,13 +1,6 @@
 {
- "a-loop-below-its-length": "all agree",
- "array-length-stored": "all agree",
- "array-negative-index-read": "all agree",
  "constructors-that-meet-setters": "as bun run",
- "engine-iterators-stepped-by-hand": "all agree",
  "functions-got-at-by-side-roads": "alone: by the stack: \"undefined,undefined\"",
- "has-an-index": "all agree",
- "regexp-groups-that-may-match-nothing": "all agree",
- "sixteen-bit-strings": "all agree",
  "sloppy-assigning-undeclared-names": "as bun run",
  "sloppy-caller-and-arguments-of-functions": "alone: caller: THROWS TypeError | null | null | \"length,name,prototype\" | \"length,name,prototype\" | THROWS TypeError | null",
  "sloppy-delete-of-a-name": "as bun run",

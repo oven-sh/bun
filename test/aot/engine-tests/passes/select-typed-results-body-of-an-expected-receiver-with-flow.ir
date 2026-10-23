@@ -1,0 +1,54 @@
+# `await response.json()` as lowering writes it in a function whose parameter is only expected to be a Response, as the parameter of every handler of a server is: the call is resolved behind a test of the receiver, flow has put the typed result into the promise, and the arm of the test parses the bytes into the layout
+# FORM: AsRead
+# OPTIONS: report=Declines
+# RUN: pipeline FinishBirths
+# STATISTIC: TypedResultsSelected = 1
+# STATISTIC: ParsersCreated = 1
+# CHECK-NOT: decline TypedResultNotSelected
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Order" module=m0 position=10 fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Response" [isFreeName]
+    v2 = String string="{\"id\":1,\"name\":\"a\"}"
+    v3 = Construct v1, -, v2 calleeName="Response"
+    v4 = CallDirect v3 function=f1
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v4
+    v7 = PropGet v0 key="other" [isFreeName]
+    v8 = CallDirect v7 function=f1
+    v9 = Call v5, -, v8
+    Return
+}
+
+function f1 name="ofResponse" flags=[IsAsync] parameters=[{type=undefined|null|Response flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Response):
+    v1 = PropGet v0 key="json"
+    v2 = Call v1, v0 calleeKey="json" calleeName="json"
+    v3 = Convert v2 declared={type=undefined|null|Promise flags=[IsExpected]}
+    v4 = Await v3
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v7 = PropGet v6 key="id"
+    Return v7
+}
+# CHECK: function {{*}}name="ofResponse" {{*}}role=CoroutineBody
+# CHECK: = TypeTest v0 testedType=Response
+# CHECK: [[promise]]:{{*}}= CallBuiltin {{*}} overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: [[yes]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next [[merge]]([[promise]], [[yes]])
+# CHECK: = Call {{*}} calleeKey="json"
+# CHECK-NEXT: [[no]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[merge]]({{*}}, [[no]])
+# CHECK: [[merge]]([[awaitedPromise]]:{{*}}, [[holdsBytes]]: boolean{{*}}):
+# CHECK-NEXT: [[awaited]]:{{*}}= AwaitBySavingFrame [[awaitedPromise]],
+# CHECK-NEXT: Branch [[holdsBytes]] -> taken
+# CHECK: = JSONSourceOpen [[awaited]]
+# CHECK: = CallDirect {{*}} function=[[parserOfOrder]]
+# CHECK-NOT: ResponsePrototypeJson/0
+# CHECK: function [[parserOfOrder]] {{*}}role=Parser
+# CHECK: = NewObject {{*}} layout=L0

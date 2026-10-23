@@ -231,10 +231,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         self.try_specifier(&[name, b"/package.json"].concat())?;
         let map = match *exports {
             ExportsEntry::Map(map) => map,
-            ExportsEntry::Invalid
-            | ExportsEntry::Null
-            | ExportsEntry::Target(_)
-            | ExportsEntry::Array(_) => return Ok(()),
+            _ => return Ok(()),
         };
         let subpath_entries = map.entries.iter().filter(|it| it.0.starts_with(b"./"));
         for &(key, entry) in subpath_entries {

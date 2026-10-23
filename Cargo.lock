@@ -161,6 +161,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_aot",
  "bun_aot_builtins",
  "bun_aot_interface",
  "bun_ast",
@@ -212,20 +213,6 @@ dependencies = [
  "bun_sema",
  "bun_sema_driver",
  "bun_trim",
-]
-
-[[package]]
-name = "bun_aot_standalone"
-version = "0.0.0"
-dependencies = [
- "bun_aot",
- "bun_ast",
- "bun_core",
- "bun_options_types",
- "bun_sema",
- "bun_sema_driver",
- "bun_sema_standalone",
- "bun_sys",
 ]
 
 [[package]]
@@ -1337,7 +1324,6 @@ name = "bun_node_path"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_highway",
  "bun_paths",
  "bun_sys",
  "bytemuck",
@@ -1351,6 +1337,7 @@ version = "0.0.0"
 name = "bun_options_types"
 version = "0.0.0"
 dependencies = [
+ "bitflags",
  "bstr",
  "bun_ast",
  "bun_collections",

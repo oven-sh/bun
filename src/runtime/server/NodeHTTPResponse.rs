@@ -1138,7 +1138,9 @@ impl NodeHTTPResponse {
             auto_header_bits.as_int32(),
             keep_alive_timeout_secs.as_int32(),
         );
-        if !(100..=999).contains(&status_code) || auto_header_bits < 0 || keep_alive_timeout_secs < 0
+        if !(100..=999).contains(&status_code)
+            || auto_header_bits < 0
+            || keep_alive_timeout_secs < 0
         {
             return Ok(JSValue::UNDEFINED);
         }

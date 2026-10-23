@@ -1,0 +1,40 @@
+# handedOver(require("node:module")); other = require("./other.cjs"); unknown._resolveFilename = f; other()
+# `Module` is in unknown hands, and the program stores under `_resolveFilename` into an object nobody knows: a field of its own, for all that the build can tell. That is no store to Module._resolveFilename,
+# so a require with a constant name keeps its answer. Should the store hit the function of the loader at run time, the run time refuses it.
+# store-to-a-function-of-the-loader-replaces-no-answer.ir has a store that the build sees
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen LoadsModuleByName
+# CHECK-NOT: unseen ReplacesLoaderAnswers
+# CHECK: modules-by-name no
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v8 -> f2
+# CALLS-NOT: unknown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Builtin builtin=NodeModule
+    v3 = Call v1, -, v2
+    EvaluateModule module=m1 referrer=m0
+    v5 = GetModuleVariable variable=g1
+    v6 = NewClosure function=f2
+    PropSet v3, v6 key="_resolveFilename"
+    v8 = Call v5
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

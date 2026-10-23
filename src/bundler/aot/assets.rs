@@ -222,25 +222,7 @@ fn same_name_order(file: &OutputFile) -> (bool, u8, &[u8]) {
 fn is_runtime_require_loader(loader: Loader) -> bool {
     match loader {
         Loader::Napi | Loader::Sqlite | Loader::SqliteEmbedded => true,
-        Loader::Jsx
-        | Loader::Js
-        | Loader::Ts
-        | Loader::Tsx
-        | Loader::Css
-        | Loader::File
-        | Loader::Json
-        | Loader::Jsonc
-        | Loader::Toml
-        | Loader::Wasm
-        | Loader::Base64
-        | Loader::Dataurl
-        | Loader::Text
-        | Loader::Bunsh
-        | Loader::Html
-        | Loader::Yaml
-        | Loader::Json5
-        | Loader::Md
-        | Loader::Xml => false,
+        _ => false,
     }
 }
 

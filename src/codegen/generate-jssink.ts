@@ -6,7 +6,6 @@ import type { FeatureName } from "../../scripts/build/trim/types.ts";
 import { parseHashTable } from "./builtins/collect-static-tables.ts";
 import { Guards, textOfClassMember } from "./builtins/guards.ts";
 import { createHashTable } from "./create-hash-table.ts";
-import { checkOfDeclaredType } from "./declared-type-checks.ts";
 import { guardedCall, recordedPointer, removableFeatures, tableEntryRecord } from "./removable-entry-points.ts";
 
 export const classes = [
@@ -37,7 +36,7 @@ interface PrototypeMember {
   /** The function behind the member is `${sink}__${native}`. */
   native: string;
   length: number;
-  /** What the member returns. The function that the prototype's table points to checks it in every build. */
+  /** What the member returns. */
   returns: string;
 }
 
@@ -52,26 +51,6 @@ export const prototypeMembersOf = (name: string): Record<string, PrototypeMember
   unref: { native: "unref", length: 0, returns: "undefined" },
   _getFd: { native: "getFd", length: 0, returns: "number | null | undefined" },
 });
-
-const checkedSymbol = (name: string, member: string) => `${name}__${member}Checked`;
-
-const checkedPrototypeFunctions = (name: string) =>
-  Object.entries(prototypeMembersOf(name))
-    .map(
-      ([member, { native, returns }]) => `
-JSC_DECLARE_HOST_FUNCTION(${checkedSymbol(name, member)});
-JSC_DEFINE_HOST_FUNCTION(${checkedSymbol(name, member)}, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    JSC::EncodedJSValue result = ${name}__${native}(lexicalGlobalObject, callFrame);
-    if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {
-        auto& vm = JSC::getVM(lexicalGlobalObject);
-        ${checkOfDeclaredType({ className: name, member, type: returns, value: "JSC::JSValue::decode(result)", receiver: "callFrame->thisValue()", mayBeEmpty: true })}
-    }
-    return result;
-}
-`,
-    )
-    .join("");
 
 interface EntryGuard {
   feature: FeatureName;
@@ -391,7 +370,6 @@ async function implementation(guards: Guards) {
 
 #include "JSSink.h"
 #include "AsyncContextFrame.h"
-#include "DeclaredTypeChecks.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -691,7 +669,6 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
-${checkedPrototypeFunctions(name)}
 
 `;
   }
@@ -1442,7 +1419,7 @@ function lutInput() {
     const { controller, controllerPrototypeName } = names(name);
     const protopad = `${controller}__close`.length;
     const rows = Object.entries(prototypeMembersOf(name)).map(
-      ([member, { length }]) => `    ${member}  ${checkedSymbol(name, member)}  ReadOnly|DontDelete|Function ${length}`,
+      ([member, { native, length }]) => `    ${member}  ${name}__${native}  ReadOnly|DontDelete|Function ${length}`,
     );
     templ += `
 /* Source for JS${name}PrototypeTableValues.lut.h

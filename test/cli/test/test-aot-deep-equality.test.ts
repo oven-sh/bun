@@ -1,7 +1,8 @@
 import { expect, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { run } from "../../aot/harness/run";
 import { test } from "../../aot/supported";
 
 setDefaultTimeout(60_000);
@@ -38,15 +39,10 @@ test("asymmetric matchers against typed objects", () => {
 };
 
 async function rowsOf(cwd: string, aot: boolean) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
-    env: bunEnv,
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
     cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  );
   return { rows: stdout.split("\n").filter(line => line.startsWith("ROW ")), stderr: exitCode ? stderr : "", exitCode };
 }
 

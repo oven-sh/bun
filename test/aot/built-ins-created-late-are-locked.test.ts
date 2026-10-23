@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 // A compiled program takes the members of built-in objects that it uses for constants. Most of those objects are created at their first read, not at start-up,
@@ -91,24 +92,14 @@ const openBecauseTheProgramWritesThem = [
 test("a write is refused before the program's first use of a built-in object as it is after it", async () => {
   using dir = tempDir("built-ins-created-late", { "main.mjs": program });
   const cwd = String(dir);
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"],
+  const { stderr, exitCode: buildExitCode } = await runCommand(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"],
     cwd,
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   expect({ stderr, exitCode: buildExitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   const run = async (...args: string[]) => {
-    await using proc = Bun.spawn({
-      cmd: [join(cwd, "program"), ...args],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { stdout, exitCode } = await runCommand([join(cwd, "program"), ...args], cwd);
     expect(exitCode).toBe(0);
     return stdout.trim().split("\n");
   };

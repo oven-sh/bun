@@ -29,7 +29,6 @@ export const withCarrier = (path: string) => ["--compile-executable-path", path]
 export const buildEnvironment = {
   mapFilePath: "BUN_JSC_aotMapFilePath",
   logsPhaseTimes: "BUN_JSC_logAOTPhaseTimes",
-  dumpsIR: "BUN_JSC_dumpAOTIR",
   dumpsB3Graph: "BUN_JSC_dumpAOTB3Graph",
   dumpsDisassembly: "BUN_JSC_dumpAOTDisassembly",
   functionToDump: "BUN_JSC_aotFunctionToDump",

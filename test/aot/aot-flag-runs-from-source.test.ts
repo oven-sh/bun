@@ -2,6 +2,7 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
@@ -19,8 +20,7 @@ const tsconfig = JSON.stringify({
 const declarations = `declare const console: { log(...values: unknown[]): void };\ndeclare const process: { execArgv: string[]; argv: string[] };\n`;
 
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(cmd, cwd, { ...bunEnv, ...env });
   return { stdout, stderr, exitCode };
 }
 const bun = (cwd: string, ...args: string[]) => spawned([bunExe(), ...args], cwd, { BUN_AOT_VERBOSE: "1" });

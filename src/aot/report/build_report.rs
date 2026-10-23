@@ -1,20 +1,16 @@
-mod arrivals;
 mod sites;
 
 use bun_options_types::aot_options::ReportDetail;
 
 use super::ReportInput;
-use super::format::code_of;
 use super::json::JsonWriter;
 use super::levels::compute_totals;
-use super::losses::collect_losses;
-use super::model::ReportedLoss;
 use super::positions::{PathStyle, Positions};
 use super::summary::{write_access_counts, write_level_counts};
 use crate::builtins::table;
 use crate::diagnostics::SourcePosition;
 use crate::engine::{AccessRecord, PassTimeRecord, builtin_of};
-use crate::ir::generated::{IllTypedCause, KnowledgeLevel, PassId, SCHEMA_HASH};
+use crate::ir::generated::{KnowledgeLevel, PassId, SCHEMA_HASH};
 use crate::statistics::{LimitId, Stage, StatisticId, Statistics};
 
 const CLOSURE_OUTCOMES: [(&str, StatisticId); 5] = [
@@ -45,7 +41,6 @@ struct PassTime {
 
 pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8> {
     let mut positions = Positions::new(input, PathStyle::Posix);
-    let losses = collect_losses(input, &mut positions);
 
     let mut json = JsonWriter::object();
     json.string("schemaHash", format!("{SCHEMA_HASH:016x}").as_bytes());
@@ -56,7 +51,6 @@ pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u
     write_summary(&mut json, input);
     write_statistics(&mut json, input.statistics);
     write_limits(&mut json, input);
-    write_losses(&mut json, &losses.losses);
     write_passes(&mut json, input);
     write_stages(&mut json, input.statistics);
     write_retained_features(&mut json, input);
@@ -68,17 +62,11 @@ pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u
     }
     if detail >= ReportDetail::Sites {
         let functions = sites::index_functions(input.engine.functions());
-        sites::write_access_sites(&mut json, input, &mut positions, &losses, &functions);
-        sites::write_allocation_sites(&mut json, input, &mut positions, &losses, &functions);
+        sites::write_access_sites(&mut json, input, &mut positions, &functions);
         sites::write_type_test_sites(&mut json, input, &mut positions, &functions);
-        arrivals::write_arrival_sites(&mut json, input, &mut positions, &functions);
-        arrivals::write_layouts_of_arrival_sites(&mut json, input, &mut positions);
     } else {
         json.null("accessSites");
-        json.null("allocationSites");
         json.null("typeTestSites");
-        json.null("arrivalSites");
-        json.null("layouts");
     }
 
     let mut document = json.finish();
@@ -150,26 +138,6 @@ fn write_limit_list(
         json.string("name", limit.name().as_bytes());
         json.number("value", value_of(limit));
         json.number("hits", statistics.get(limit.hits()));
-        json.end_object();
-    }
-    json.end_array();
-}
-
-fn write_losses(json: &mut JsonWriter, losses: &[ReportedLoss]) {
-    json.begin_array("losses");
-    for loss in losses {
-        let limit = (loss.limit != LimitId::None).then(|| loss.limit.name().as_bytes());
-        let ill_typed_cause = (loss.ill_typed_cause != IllTypedCause::None)
-            .then(|| code_of(loss.ill_typed_cause.name()));
-        json.begin_element();
-        json.string("stage", loss.stage.name().as_bytes());
-        json.string("reason", &code_of(loss.reason));
-        json.optional_string("illTypedCause", ill_typed_cause.as_deref());
-        json.optional_string("limit", limit);
-        json.string("subjectKind", loss.subject_kind.name().as_bytes());
-        write_position(json, "subject", loss.subject.as_ref());
-        write_position(json, "witness", loss.witness.as_ref());
-        json.number("count", loss.count);
         json.end_object();
     }
     json.end_array();

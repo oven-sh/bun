@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const count = 400;
@@ -14,12 +15,6 @@ const files = {
     console.log(Object.keys(table).length, table.name0, table["name${count - 1}"]);
   `,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 // A literal of constants is read out of the executable. Where it is not, its properties are defined sixteen at a time. Either way no call is made for each name.
 test("the properties of a large literal of constants that is a dictionary are not defined one by one", async () => {

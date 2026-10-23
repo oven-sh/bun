@@ -1,0 +1,210 @@
+# x.json() of a receiver that is only expected stands behind a test, and its promise meets what the call by name answers in front of the one await. The arm of the test calls x.bytes(), each jump says whether it brings bytes, and only those are parsed behind the await
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 3
+# STATISTIC: ParsersCreated = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f3 v3 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f4 v4 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f5 v4 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f6 v4 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f7 v3 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=undefined|null|L0 layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="behindTestOfReceiver" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Response
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: Response):
+    v3 = CallBuiltin v2 overload=ResponsePrototypeJson/0 expectedResult=x0
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="json"
+    v5 = Call v4, v0
+    Jump -> next b3(v5)
+  b3(v6: anything):
+    v7 = Await v6
+    Return v7
+}
+# CHECK-LABEL: function f0 name="behindTestOfReceiver"
+# CHECK: b1(v2: Response):
+# CHECK-NEXT: v3:{{*}}= CallBuiltin v2 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b3(v3, [[yes0]])
+# CHECK: v5:{{*}}= Call v4, v0
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next b3(v5, [[no0]])
+# CHECK: b3(v6:{{*}}, [[holdsBytes0]]: boolean):
+# CHECK-NEXT: [[awaited0]]:{{*}}= Await v6
+# CHECK-NEXT: Branch [[holdsBytes0]] -> taken [[parse0]](), notTaken [[parsedByCallee0]]()
+# CHECK: [[done0]](v7:{{*}}):
+# CHECK-NEXT: Return v7
+# CHECK: [[text0]]:{{*}}= JSONDecodeBytes [[awaited0]]
+# CHECK-NEXT: [[plain0]]:{{*}}= CallBuiltin -, [[text0]] overload=JSONParse/0
+# CHECK-NEXT: Jump -> next [[done0]]([[plain0]])
+# CHECK: [[parse0]]():
+# CHECK-NEXT: = JSONSourceOpen [[awaited0]]
+# CHECK: [[parsedByCallee0]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[done0]]([[awaited0]])
+# CHECK: = CallDirect {{*}} function=[[parser]]
+# CHECK-NOT: ResponsePrototypeJson
+
+function f1 name="castsOnBothSidesOfTheJump" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Request
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: Request):
+    v3 = CallBuiltin v2 overload=RequestPrototypeJson/0 expectedResult=x0
+    v4 = Upcast v3 castType=anything
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = PropGet v0 key="json"
+    v6 = Call v5, v0
+    Jump -> next b3(v6)
+  b3(v7: anything):
+    v8 ~ Promise = Upcast v7 castType=anything
+    v9 = Await v8
+    Return v9
+}
+# CHECK-LABEL: function f1 name="castsOnBothSidesOfTheJump"
+# CHECK: v3:{{*}}= CallBuiltin v2 overload=RequestPrototypeBytes/0
+# CHECK-NEXT: [[yes1]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b3(v3, [[yes1]])
+# CHECK: b3(v7:{{*}}, [[holdsBytes1]]: boolean):
+# CHECK-NEXT: [[awaited1]]:{{*}}= Await v7
+# CHECK-NEXT: Branch [[holdsBytes1]] -> taken
+# CHECK: = JSONSourceOpen [[awaited1]]
+# CHECK: = CallDirect {{*}} function=[[parser]]
+
+function f2 name="valuesWithoutEffectsOnTheWay" flags=[IsAsync] parameters=[{type=anything}, {type=number}] results=[{type=Promise}] {
+  b0(v0: anything, v1: number):
+    v2 = TypeTest v0 testedType=Blob
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: Blob):
+    v4 = CallBuiltin v3 overload=BlobPrototypeJson/0 expectedResult=x0
+    v5 = Add v1, v1
+    Jump -> next b3(v4, v5)
+  b2() frequency=Unlikely:
+    v6 = PropGet v0 key="json"
+    v7 = Call v6, v0
+    Jump -> next b3(v7, v1)
+  b3(v8: anything, v9: number):
+    v10 = Add v9, v9
+    v11 = Await v8
+    v12 = NewArray v10, v11 contents=anything
+    Return v12
+}
+# CHECK-LABEL: function f2 name="valuesWithoutEffectsOnTheWay"
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=BlobPrototypeBytes/0
+# CHECK: b3(v8:{{*}}, v9: number, [[holdsBytes2]]: boolean):
+# CHECK-NEXT: v10: number = Add v9, v9
+# CHECK-NEXT: [[awaited2]]:{{*}}= Await v8
+# CHECK-NEXT: Branch [[holdsBytes2]] -> taken
+# CHECK: = JSONSourceOpen [[awaited2]]
+
+function f3 name="promiseHasAnotherUseBehindTheJump" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Response
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: Response):
+    v3 = CallBuiltin v2 overload=ResponsePrototypeJson/0 expectedResult=x0
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="json"
+    v5 = Call v4, v0
+    Jump -> next b3(v5)
+  b3(v6: anything):
+    v7 = Await v6
+    v8 = NewArray v6, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f3 name="promiseHasAnotherUseBehindTheJump"
+# CHECK: v3:{{*}}= CallBuiltin v2 overload=ResponsePrototypeJson/0 expectedResult=x0
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK: b3(v6:{{*}}):
+# CHECK-NEXT: v7:{{*}}= Await v6
+
+function f4 name="unknownCodeBetweenCallAndJump" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=Response
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: Response):
+    v4 = CallBuiltin v3 overload=ResponsePrototypeJson/0 expectedResult=x0
+    v5 = Call v1
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v6 = PropGet v0 key="json"
+    v7 = Call v6, v0
+    Jump -> next b3(v7)
+  b3(v8: anything):
+    v9 = Await v8
+    Return v9
+}
+# CHECK-LABEL: function f4 name="unknownCodeBetweenCallAndJump"
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=ResponsePrototypeJson/0 expectedResult=x0
+# CHECK: b3(v8:{{*}}):
+
+function f5 name="unknownCodeBetweenJumpAndAwait" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=Response
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: Response):
+    v4 = CallBuiltin v3 overload=ResponsePrototypeJson/0 expectedResult=x0
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = PropGet v0 key="json"
+    v6 = Call v5, v0
+    Jump -> next b3(v6)
+  b3(v7: anything):
+    v8 = Call v1
+    v9 = Await v7
+    Return v9
+}
+# CHECK-LABEL: function f5 name="unknownCodeBetweenJumpAndAwait"
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=ResponsePrototypeJson/0 expectedResult=x0
+# CHECK: b3(v7:{{*}}):
+
+function f6 name="oneWayInIsTheArmOfABranch" flags=[IsAsync] parameters=[{type=anything}, {type=boolean}] results=[{type=Promise}] {
+  b0(v0: anything, v1: boolean):
+    v2 = TypeTest v0 testedType=Response
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: Response):
+    v4 = CallBuiltin v3 overload=ResponsePrototypeJson/0 expectedResult=x0
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = PropGet v0 key="json"
+    v6 = Call v5, v0
+    Branch v1 -> taken b3(v6), notTaken b4()
+  b3(v7: anything):
+    v8 = Await v7
+    Return v8
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f6 name="oneWayInIsTheArmOfABranch"
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=ResponsePrototypeJson/0 expectedResult=x0
+# CHECK: b3(v7:{{*}}):
+
+function f7 name="notAwaitedBehindTheJump" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Response
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: Response):
+    v3 = CallBuiltin v2 overload=ResponsePrototypeJson/0 expectedResult=x0
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="json"
+    v5 = Call v4, v0
+    Jump -> next b3(v5)
+  b3(v6: anything):
+    Return v6
+}
+# CHECK-LABEL: function f7 name="notAwaitedBehindTheJump"
+# CHECK: v3:{{*}}= CallBuiltin v2 overload=ResponsePrototypeJson/0 expectedResult=x0
+# CHECK-NEXT: Jump -> next b3(v3)

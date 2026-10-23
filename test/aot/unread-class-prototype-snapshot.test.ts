@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -35,15 +36,11 @@ const files = {
 };
 
 async function runTests(cwd: string, flags: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...flags, "--update-snapshots", "./prototype.test.ts"],
-    env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "test", ...flags, "--update-snapshots", "./prototype.test.ts"],
     cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+  );
   return {
     printed: stdout.slice(stdout.indexOf("Inspected {")),
     snapshots: exitCode === 0 ? readFileSync(join(cwd, "__snapshots__", "prototype.test.ts.snap"), "utf8") : stderr,

@@ -4,7 +4,6 @@ import { isLinux, isMacOS, tempDir } from "harness";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FeatureName } from "../../../scripts/build/trim/features.ts";
-import type { Library } from "../../../scripts/build/trim/libraries.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
 import {
@@ -221,7 +220,6 @@ export interface Program {
   inputs?: string[];
   minimums?: Record<FeatureName, number>;
   builtins?: BuiltinEntry[];
-  libraries?: Library[];
   removed?: FeatureName[];
 }
 
@@ -256,14 +254,14 @@ async function compileObjects(machine: Machine, folder: string, objects: string[
 }
 
 export async function wrapped(machine: Machine, folder: string, program: Program) {
-  const { objects = ["feature_code", "entry", "table", "embedder", "main"], compileFlags, linkFlags = [], archived = [], inputs = [], minimums, builtins, libraries } = program;
+  const { objects = ["feature_code", "entry", "table", "embedder", "main"], compileFlags, linkFlags = [], archived = [], inputs = [], minimums, builtins } = program;
   await compileObjects(machine, folder, objects, compileFlags);
   if (archived.length > 0) expect((await run([tools["llvm-ar"]!, "rcs", "lib.a", ...archived.map(name => `${name}.o`)], folder)).exitCode).toBe(0);
   const linkedObjects = objects.filter(name => !archived.includes(name)).map(name => (isSharedObject(name) ? featureCodeObjects.get(machine.name)! : `${name}.o`));
   const linkInputs = [...linkedObjects, ...(archived.length > 0 ? ["lib.a"] : []), ...inputs];
   writeFileSync(join(folder, "in.rsp"), linkInputs.map(path => `${path}\n`).join(""));
   const command = [tools.clang!, "@in.rsp", ...baseLinkFlags(machine, "program.map"), ...linkFlags, "-o", "program"];
-  return await run(linkArguments(writeLinkInputs(folder, { minimums, builtins, libraries, nm: nm! }), command, { demangler: tools["llvm-cxxfilt"]! }), folder);
+  return await run(linkArguments(writeLinkInputs(folder, { minimums, builtins }), command, { demangler: tools["llvm-cxxfilt"]! }), folder);
 }
 
 export async function linkByHand(machine: Machine, folder: string, objects: string[]) {

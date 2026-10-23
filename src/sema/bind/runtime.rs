@@ -108,14 +108,7 @@ impl BindingKind {
             | BindingKind::Const
             | BindingKind::ClassInnerName
             | BindingKind::FunctionName => true,
-            BindingKind::NoBinding
-            | BindingKind::TypeScriptContainer
-            | BindingKind::Var
-            | BindingKind::Let
-            | BindingKind::SimpleCatchParameter
-            | BindingKind::Class
-            | BindingKind::Function
-            | BindingKind::Parameter => false,
+            _ => false,
         }
     }
 }

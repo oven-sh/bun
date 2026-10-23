@@ -5,6 +5,7 @@
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 setDefaultTimeout(240_000);
@@ -226,14 +227,7 @@ export function make(size: number): Shape {
 };
 
 async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({
-    cmd,
-    cwd,
-    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
 }
 

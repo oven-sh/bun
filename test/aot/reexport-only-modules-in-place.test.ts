@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -30,8 +31,7 @@ const files = {
 };
 
 async function run(cwd: string, args: string[], env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], cwd, env);
   return { stdout, stderr, exitCode };
 }
 

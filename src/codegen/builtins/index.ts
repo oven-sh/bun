@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import { loadFeatures } from "../../../scripts/build/trim/features.ts";
@@ -23,7 +23,7 @@ import { collectRuntimeFunctions } from "./collect-runtime-functions.ts";
 import { collectStaticTables } from "./collect-static-tables.ts";
 import { collectSyntaxUses } from "./collect-syntax-uses.ts";
 import { GeneratorError, leftOutOf, Problems, symbolsNaming, type SourcedDeclaration } from "./declarations.ts";
-import { verifiedListPaths, type TableDump } from "./dump.ts";
+import type { TableDump } from "./dump.ts";
 import { emitHostBindings } from "./emit-cpp-bindings.ts";
 import { dumpOf } from "./emit-dump.ts";
 import { emitRustIds } from "./emit-rust-ids.ts";
@@ -47,7 +47,6 @@ import { hostDeclarationFiles, loadDeclarationFiles, registerLibraryModule } fro
 import type { TableModel } from "./model.ts";
 import { collectOwnProperties } from "./own-properties.ts";
 import { compareBytes } from "./paths.ts";
-import { readVerifiedHashes, reportStaleEntries } from "./verification.ts";
 import { targetPlatforms, type BuiltinPath, type TargetPlatform } from "./vocabulary.ts";
 
 const { loadSchema }: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/ir/generator/load.ts") =
@@ -99,9 +98,6 @@ const usage =
   "[--engine-directory=<Source/JavaScriptCore/aot>] [--types-only=<b.bind.ts>,..] [--check]";
 
 const singleRoot = (root: string): { Engine: string; Host: string } => ({ Engine: root, Host: root });
-
-const verifiedHashesOf = (options: GenerateOptions): Set<string> =>
-  readVerifiedHashes(verifiedListPaths(options.bunRoot, dirname(engineDirectory)));
 
 function findPlacements(staticTableMembers: readonly SourcedDeclaration[]): Map<string, BuiltinPath> {
   const placements = new Map<string, BuiltinPath>();
@@ -356,12 +352,11 @@ function readCommandLine(): CommandLine {
 
 async function main(): Promise<void> {
   const { options, codegenPath, engineOut, isCheck } = readCommandLine();
-  const { engine, codegen, dump, undescribedResultsSummary } = await generate(options);
+  const { engine, codegen, undescribedResultsSummary } = await generate(options);
   if (options.prebuiltGenerated !== null) checkFilesAreCurrent(options.prebuiltGenerated, engine, remedyForPrebuilt);
   else if (engineOut !== null && !isCheck) writeFiles(engineOut, engine);
   if (!isCheck) writeFiles(codegenPath, codegen);
   console.error(`builtins table: ${undescribedResultsSummary}`);
-  reportStaleEntries(dump, verifiedHashesOf(options));
 }
 
 function exitWithError(error: unknown): never {

@@ -19,11 +19,7 @@ fn declared_members(node: &Member, member: MemberId) -> Option<PrivateMembers> {
             getter: None,
             setter: Some(member),
         }),
-        MemberKind::Constructor
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature
-        | MemberKind::StaticBlock => None,
+        _ => None,
     }
 }
 

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const head = `
@@ -18,8 +19,7 @@ const warned = "warned DeprecationWarning\nwarned DeprecationWarning\ndone\n";
 const env = { ...bunEnv, NODE_NO_WARNINGS: "1" };
 
 async function run(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, env);
   return { stdout, stderr, exitCode };
 }
 

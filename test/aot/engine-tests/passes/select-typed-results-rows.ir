@@ -1,0 +1,69 @@
+# A query whose awaited result is checked for, or expected to be, an array of one head layout is marked with that layout right after the call
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 3
+# STATISTIC: ParsersCreated = 0
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f3 v2 None [0] reason=NoTarget
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+layout L1 name="UserLiteral" fields=[{key="id" declared={type=number}}] supertypes=[L0]
+
+function f0 name="checkedAsArrayOfUser" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = CallBuiltin v1, v0 overload=Bun_sql/0
+    v3 = Await v2
+    v4 = Check v3 castType=undefined|null|Array<L0>
+    Return v4
+}
+# CHECK-LABEL: function f0 name="checkedAsArrayOfUser"
+# CHECK: v2:{{*}}= CallBuiltin v1, v0 overload=Bun_sql/0
+# CHECK-NEXT: ExpectRows v2 layout=L0
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NEXT: v4:{{*}}= Check v3 castType=undefined|null|Array<L0>
+# CHECK-NEXT: Return v4
+# CHECK-NOT: ExpectRows
+
+function f1 name="declaredSetHasLiteralMember" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = CallBuiltin v1, v0 overload=Bun_sql/0
+    v3 = Await v2
+    v4 = Check v3 castType=undefined|null|Array<L0|L1>
+    Return v4
+}
+# CHECK-LABEL: function f1 name="declaredSetHasLiteralMember"
+# CHECK: v2:{{*}}= CallBuiltin v1, v0 overload=Bun_sql/0
+# CHECK-NEXT: ExpectRows v2 layout=L0
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NOT: ExpectRows
+
+function f2 name="otherQueryFunction" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = CallBuiltin v1, v0 overload=Bun_sql/0
+    v3 = Await v2
+    v4 ~ Array<L0> = Upcast v3 castType=anything
+    Return v4
+}
+# CHECK-LABEL: function f2 name="otherQueryFunction"
+# CHECK: v2:{{*}}= CallBuiltin v1, v0 overload=Bun_sql/0
+# CHECK-NEXT: ExpectRows v2 layout=L0
+# CHECK-NEXT: v3:{{*}}= Await v2
+
+function f3 name="notChecked" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = CallBuiltin v1, v0 overload=Bun_sql/0
+    v3 = Await v2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="notChecked"
+# CHECK: v2:{{*}}= CallBuiltin v1, v0 overload=Bun_sql/0
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NEXT: Return v3

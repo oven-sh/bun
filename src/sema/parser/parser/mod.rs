@@ -556,6 +556,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.has_top_level_await {
             self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
         }
+        if self.lx.has_legacy_octal {
+            self.f.rare_syntax |= rare::LEGACY_OCTAL;
+        }
         self.note_odd_exports();
         *file = self.f;
         Harvest {

@@ -1,5 +1,4 @@
 {
- "a-name-computed-at-run-time": "all agree",
  "a-new-extension": "alone: the build fails",
  "a-plugin-of-bun": "alone: THROWS Error: A runtime plugin can't load \"/$bunfs/root/dep.js\" because it was alrea",
  "a-virtual-module-of-bun": "alone: THROWS ResolveMessage: Cannot find module 'virtual:thing'",
@@ -13,9 +12,7 @@
  "an-extension-handler-that-wraps-compile": "alone: \nexit code 1: error",
  "compile-by-hand": "alone: THROWS Error: Cannot load '<path>",
  "create-require": "alone: \nexit code 1: error",
- "load-is-replaced": "all agree",
  "module-require-and-call": "alone: \nexit code 1: error",
- "register-hooks": "all agree",
  "resolve-and-its-options": "alone: lib.js lib.js THROWS ResolveMessage: Cannot find module './missing.js' THROWS ResolveMessage: Cannot find module './inner.js' true node:fs fs",
  "resolve-filename-replaced": "as the bundle",
  "the-cache-is-emptied": "as the bundle",
@@ -25,6 +22,5 @@
  "the-hook-is-set-by-a-required-file": "alone: THROWS ResolveMessage: Cannot find module '@alias/lib.js' THROWS ResolveMessage: Cannot find module '@alias/lib.js'",
  "the-main-module": "as bun run",
  "the-prototypes-require-is-replaced": "as the bundle",
- "what-the-cache-lists": "as the bundle",
- "wrap-and-wrapper": "all agree"
+ "what-the-cache-lists": "as the bundle"
 }

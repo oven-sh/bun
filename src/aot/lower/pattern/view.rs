@@ -218,10 +218,7 @@ pub(super) fn nullish_error_name(
     let first = properties.first().filter(|property| !property.is_rest)?;
     match first.name_kind {
         NameKind::ComputedString | NameKind::ComputedNumber => None,
-        NameKind::Identifier
-        | NameKind::StringLiteral
-        | NameKind::NumericLiteral
-        | NameKind::Jsx => property_name(file, first),
+        _ => property_name(file, first),
     }
 }
 
@@ -254,9 +251,6 @@ fn identifier_target(
 ) -> Option<(ExprId, Atom)> {
     match expression::classify_assignment_target(file, target) {
         AssignmentTarget::Identifier { identifier, name } => Some((identifier, name)),
-        AssignmentTarget::Elision
-        | AssignmentTarget::ArrayPattern(_)
-        | AssignmentTarget::ObjectPattern(_)
-        | AssignmentTarget::Expression => None,
+        _ => None,
     }
 }

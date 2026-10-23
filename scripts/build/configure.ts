@@ -177,8 +177,6 @@ function configureInputs(cwd: string): string[] {
   // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
   // only, but one glob keeps the rule simple).
   const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
-  // trim/: libraries.ts writes libraries.json at configure time (the rest is build-time only; one glob, as for rust/).
-  const trim = globSync("trim/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
   // Versions the build uses (LLVM, Node.js, the sysroots) are written here.
   const pins = resolve(buildDir, "ci-images", "spec.ts");
@@ -187,7 +185,6 @@ function configureInputs(cwd: string): string[] {
     ...scripts,
     ...deps,
     ...rust,
-    ...trim,
     pins,
     resolve(cwd, "scripts", "glob-sources.ts"),
     resolve(cwd, "package.json"),
@@ -543,6 +540,8 @@ async function generate<N extends string | undefined>(
   // auto-trigger).
   const targets = [output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun"];
   if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
+  // CI packs them beside bun (ci.ts packageAndUpload): test/aot runs the engine's tests and compiled images with them.
+  if (cfg.ci) targets.push("engine-test-programs");
   n.default(targets);
 
   const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, mark);

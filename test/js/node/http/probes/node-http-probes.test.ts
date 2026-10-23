@@ -1,14 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunExe, isASAN, isCI, isDebug } from "harness";
+import { createHash } from "node:crypto";
 import path from "node:path";
+import recorded from "./expected.json";
+import { run as runCommand } from "../../../../aot/harness/run";
 
 // Each fixture drives a node:http server through many small cases and prints what every case did: return values,
 // thrown errors, events, the state of req and res, and the bytes on the wire. Cases with the same log share one entry.
-// The output must match the file in ./expected.
+// ./expected.json holds eight hexadecimal digits for each case, of its name and its log. A failure names the cases and shows
+// what they did; what they did before is what a Bun from before the change prints.
 //
-//   NODE_HTTP_PROBES_UPDATE=1          rewrite ./expected from this build's output
-//   NODE_HTTP_PROBES_REFERENCE=<exe>   also run every variant and NODE_HTTP_PROBES_SEEDS (default 20) seeds of the
-//                                      seeded fixtures, and compare with the output of another bun or node executable
+//   NODE_HTTP_PROBES_UPDATE=1          rewrite ./expected.json from this build's output
+//   NODE_HTTP_PROBES_REFERENCE=<exe>   compare with the output of another bun or node executable, case by case, and also run
+//                                      every variant and NODE_HTTP_PROBES_SEEDS (default 20) seeds of the seeded fixtures
 //   bun <fixture> <arguments> <text>   field-stores, odd-values and inside-listeners run only the cases whose name
 //                                      contains the text
 
@@ -17,13 +21,7 @@ const reference = process.env.NODE_HTTP_PROBES_REFERENCE;
 const seedCount = Number(process.env.NODE_HTTP_PROBES_SEEDS ?? 20);
 
 async function run(executable: string, fixture: string, args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [executable, path.join(import.meta.dir, fixture + "-fixture.ts"), ...args],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([executable, path.join(import.meta.dir, fixture + "-fixture.ts"), ...args]);
   return { stdout, stderr, exitCode };
 }
 
@@ -134,18 +132,34 @@ const probes: Probe[] = [
   ),
 ];
 
+const digests: Record<string, string> = recorded;
+const digestOf = (name: string, log: string) => createHash("sha1").update(`${name}\n${log}`).digest("hex").slice(0, 8);
+afterAll(async () => {
+  if (process.env.NODE_HTTP_PROBES_UPDATE)
+    await Bun.write(
+      path.join(import.meta.dir, "expected.json"),
+      JSON.stringify(digests, Object.keys(digests).sort(), 1) + "\n",
+    );
+});
+
 describe.concurrent("node:http behaves as recorded", () => {
   test.each(probes)(
     "%s %j",
     async (fixture, args, expectedName) => {
-      const expectedFile = Bun.file(path.join(import.meta.dir, "expected", expectedName + ".txt"));
       const { stdout, stderr, exitCode } = await run(bunExe(), fixture, args);
       if (fixture !== "process-state" && fixture !== "listener-lists") expect(stderr).toBe("");
-      if (process.env.NODE_HTTP_PROBES_UPDATE) await Bun.write(expectedFile, stdout);
-      const found = differences(stdout, await expectedFile.text());
-      const isNewMethod = (difference: { expected?: string }) =>
-        fixture === "replaced-methods" && difference.expected === undefined;
-      expect(found.filter(difference => !isNewMethod(difference))).toEqual([]);
+      const cases = [...parseCases(stdout)].map(([name, log]) => ({ name, log, digest: digestOf(name, log) }));
+      if (process.env.NODE_HTTP_PROBES_UPDATE)
+        digests[expectedName] = cases
+          .map(each => each.digest)
+          .sort()
+          .join("");
+      const expected = new Set(digests[expectedName]!.match(/.{8}/g));
+      const changedOrGone = expected.difference(new Set(cases.map(each => each.digest))).size;
+      const changedOrNew = cases.filter(each => !expected.has(each.digest)).map(({ name, log }) => ({ name, log }));
+      // A method that is new has a case that is new.
+      if (fixture !== "replaced-methods" || changedOrGone)
+        expect({ changedOrNew, changedOrGone }).toEqual({ changedOrNew: [], changedOrGone: 0 });
       expect(exitCode).toBe(0);
     },
     timeout,
@@ -154,6 +168,7 @@ describe.concurrent("node:http behaves as recorded", () => {
 
 const seeds = Array.from({ length: seedCount }, (_, index) => String(index + 1));
 const referenceProbes: [fixture: string, args: string[]][] = [
+  ...probes.map(([fixture, args]): [string, string[]] => [fixture, args]),
   ...["all", "response", "none"].flatMap(observers =>
     ["none", "data", "removed", "resume", "await"].map((body): [string, string[]] => [
       "inside-listeners",

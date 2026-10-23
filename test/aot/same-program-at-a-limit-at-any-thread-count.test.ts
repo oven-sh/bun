@@ -7,8 +7,9 @@
 // round. Each also asks for four types that are within the limit only for a checker that knows what the file in front of it has
 // asked for: ten elements more of the same tuple.
 import { expect, setDefaultTimeout } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 setDefaultTimeout(240_000);
@@ -79,8 +80,8 @@ function program(limitComesFirst: boolean): Record<string, string> {
 
 async function build(directory: string, threads: number, round: number) {
   const name = `threads-${threads}-${round}`;
-  await using proc = Bun.spawn({
-    cmd: [
+  const { stderr, exitCode } = await run(
+    [
       bunExe(),
       "build",
       "--compile",
@@ -91,12 +92,8 @@ async function build(directory: string, threads: number, round: number) {
       "--outfile",
       "app",
     ],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    directory,
+  );
   expect({ errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
     errors: [],
     exitCode: 0,

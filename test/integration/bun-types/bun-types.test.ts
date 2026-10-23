@@ -355,7 +355,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "bindgen_test.bind.ts": null,
   "cron.bind.ts": null,
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
-  "declared_types_testing.bind.ts": null,
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
   "expect.bind.ts": null,

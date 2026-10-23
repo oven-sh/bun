@@ -8,7 +8,17 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
@@ -246,11 +256,10 @@ const TIMINGS_META_DATA = "timings:";
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
-//           ├── jsc[.exe]                (WebKit's shell, when shipped)
-//           ├── testaot[.exe]            (the engine's AoT test program, when shipped)
+//           ├── jsc[.exe]                (WebKit's shell, with this bun's table of built-ins where the tarball has its objects)
+//           ├── testaot[.exe]            (the engine's AoT test program, likewise)
 //           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
 //           ├── aot-engine/              (the engine's generators and its schema, for the tests that import them)
-//           ├── verified-overloads.txt   (the engine's list for test/aot/builtins/differential.test.ts)
 //           ├── aot_builtin_table.json   (the table of built-ins this Bun was built with: test/aot/generate.ts writes programs from it)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
@@ -364,10 +373,13 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     ]) {
       cpSync(join(engineDirectory, ...part), join(staged, ...part), { recursive: true });
     }
+    // What the engine was compiled with, where a prebuilt WebKit has it.
+    const compiledWith = webkitAotFile(cfg, "builtins-generated");
+    for (const name of readdirSync(compiledWith).filter(name => name.startsWith("AOTBuiltin"))) {
+      cpSync(join(compiledWith, name), join(staged, "builtins", "generated", name));
+    }
     files.push("aot-engine");
   }
-  const verifiedOverloads = webkitAotFile(cfg, "verified-overloads.txt");
-  if (existsSync(verifiedOverloads)) files.push(verifiedOverloads);
   const builtinTable = resolve(cfg.codegenDir, "aot_builtin_table.json");
   if (existsSync(builtinTable)) files.push(builtinTable);
   // Debug symbols / linker map — platform-specific extras.

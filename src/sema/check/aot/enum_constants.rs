@@ -271,37 +271,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                     inputs = inputs.merge(self.entity_inputs(file, expression, used_at));
                 }
-                ExprKind::Missing
-                | ExprKind::PrivateIdentifier(_)
-                | ExprKind::This
-                | ExprKind::Super
-                | ExprKind::Null
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex { .. }
-                | ExprKind::TaggedTemplate(_)
-                | ExprKind::Array(_)
-                | ExprKind::Object(_)
-                | ExprKind::Fn(_)
-                | ExprKind::Class(_)
-                | ExprKind::Call(_)
-                | ExprKind::New(_)
-                | ExprKind::Assign { .. }
-                | ExprKind::Cond { .. }
-                | ExprKind::Spread(_)
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. }
-                | ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::NonNull(_)
-                | ExprKind::Instantiation { .. }
-                | ExprKind::Jsx(_)
-                | ExprKind::ImportCall { .. }
-                | ExprKind::ImportMeta
-                | ExprKind::NewTarget(_)
-                | ExprKind::JsxText(_) => return ConstantInputs::UNKNOWN,
+                _ => return ConstantInputs::UNKNOWN,
             }
             if inputs == ConstantInputs::UNKNOWN {
                 break;
@@ -351,34 +321,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     .with_other_file_or_variable(has_no_own_value)
             }
             Decl::Var(_) => self.constant_variable_inputs(symbol, used_at),
-            Decl::Param(_)
-            | Decl::Fn(_)
-            | Decl::Class(_)
-            | Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::Enum(_)
-            | Decl::Module(_)
-            | Decl::TypeParam(_)
-            | Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::ImportEquals(_)
-            | Decl::ExportSpec(_)
-            | Decl::ExportStarAs(_)
-            | Decl::ExportExpr(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::Require(_)
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => ConstantInputs::UNKNOWN,
+            _ => ConstantInputs::UNKNOWN,
         };
         inputs.with_other_file_or_variable(of != used_at.file())
     }

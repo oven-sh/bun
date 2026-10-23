@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 test("the typed version of a package defines its fields, as the JavaScript it stands for does", async () => {
@@ -41,18 +42,14 @@ test("the typed version of a package defines its fields, as the JavaScript it st
     ".sound/fields/lay/index.sound.ts": `class Base { declare seen: number | undefined; set z(v: number) { this.seen = v; } }\nexport class A extends Base { x: number | undefined; y: number = 1; }\nexport class B extends Base { // @ts-expect-error\n  z: number = 2; }\nexport function keys(): string { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`,
   });
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [printed, errors, built] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  const {
+    stdout: printed,
+    stderr: errors,
+    exitCode: built,
+  } = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], String(dir));
   expect({ errors: built ? errors : "", built }).toEqual({ errors: "", built: 0 });
   expect(printed + errors).toContain("typed version");
-  await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+  const { stdout, exitCode } = await run([outfile], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: "x,y z\n", exitCode: 0 });
 }, 120_000);
 
@@ -86,17 +83,12 @@ test("a dependency without a tsconfig.json makes its fields as the application's
   const answers = [];
   for (const flags of [[], ["--aot"]]) {
     const outfile = join(String(dir), "out" + flags.length + (isWindows ? ".exe" : ""));
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", ...flags, "./main.ts", "--outfile", outfile],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [said, built] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: said, exitCode: built } = await run(
+      [bunExe(), "build", "--compile", ...flags, "./main.ts", "--outfile", outfile],
+      String(dir),
+    );
     expect({ said: built ? said : "", built }).toEqual({ said: "", built: 0 });
-    await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+    const { stdout, exitCode } = await run([outfile], String(dir));
     answers.push({ stdout, exitCode });
   }
   expect(answers).toEqual([

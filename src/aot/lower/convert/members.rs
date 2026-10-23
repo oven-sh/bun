@@ -33,9 +33,7 @@ fn classify_lookup(lookup: Result<MemberLookup, GaveUp>) -> Option<FoundMember> 
         Ok(MemberLookup::Member(member)) => Some(FoundMember {
             kind: match member.kind {
                 ObjectMemberKind::Field | ObjectMemberKind::Method => FoundKind::Field,
-                ObjectMemberKind::Getter
-                | ObjectMemberKind::Setter
-                | ObjectMemberKind::GetterAndSetter => FoundKind::Accessor,
+                _ => FoundKind::Accessor,
             },
             types: member.types,
             is_optional: member.is_optional,
@@ -127,30 +125,7 @@ pub(in crate::lower) fn find_array_element_type(
     match file.queries.type_shape(container).ok()?.kind {
         ShapeKind::Array { element, .. } => Some(element),
         ShapeKind::Constrained { base, .. } => find_array_element_type(file, base),
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object
-        | ShapeKind::Union(_) => None,
+        _ => None,
     }
 }
 
@@ -167,27 +142,7 @@ fn has_number_type(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) 
             ShapeKind::Number | ShapeKind::NumberLiteral(_) | ShapeKind::NumericEnumMember(_) => {}
             ShapeKind::Union(members) => pending.extend_from_slice(members),
             ShapeKind::Constrained { base, .. } => pending.push(base),
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable { .. }
-            | ShapeKind::Never
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::AnyObject
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Array { .. }
-            | ShapeKind::Tuple { .. }
-            | ShapeKind::Builtin { .. }
-            | ShapeKind::Class(_)
-            | ShapeKind::Object => return false,
+            _ => return false,
         }
     }
     true
@@ -234,33 +189,7 @@ fn compute_written_type(
             let operand_type = find_written_type(file, operand)?;
             file.queries.awaited_type(operand_type).ok()
         }
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => None,
+        _ => None,
     }
 }
 

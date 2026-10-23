@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -15,12 +16,6 @@ const files = {
   "in-a-function.cjs": `function load(which) { return which ? require(__dirname + "/lib/common.js") : require(\`\${__dirname}/lib/other.js\`); }\nconsole.log(load(true).name, load(false).name);\n`,
   "declared.cjs": `function inner(__dirname) { return require(__dirname + "/common.js").name; }\nconsole.log(inner(require("node:path").join(__filename, "..", "lib")));\n`,
 };
-
-async function run(cmd: string[], cwd: string, env = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 for (const flags of [[], ["--compile-in-place"]]) {
   for (const main of ["sum.cjs", "sums.cjs", "template.cjs", "resolve.cjs", "import.mjs", "in-a-function.cjs"]) {

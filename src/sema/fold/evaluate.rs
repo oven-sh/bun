@@ -126,17 +126,6 @@ impl<'a, 's> Evaluator<'a, 's> {
         let (left, right) = (self.operand(left), self.operand(right));
         match op {
             BinOp::Add => self.add_all(addends),
-            BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor => evaluate_numeric_operands(op, left, right),
             BinOp::Lt => evaluate_relational(left, right, Ordering::is_lt),
             BinOp::Le => evaluate_relational(left, right, Ordering::is_le),
             BinOp::Gt => evaluate_relational(left, right, Ordering::is_gt),
@@ -150,6 +139,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                 debug_assert!(false, "the folder owns the evaluation order of {op:?}");
                 Value::Unknown
             }
+            _ => evaluate_numeric_operands(op, left, right),
         }
     }
 
@@ -269,20 +259,7 @@ fn evaluate_numeric(op: BinOp, left: f64, right: f64) -> Option<f64> {
         BinOp::BitAnd => f64::from(to_int32(left) & to_int32(right)),
         BinOp::BitOr => f64::from(to_int32(left) | to_int32(right)),
         BinOp::BitXor => f64::from(to_int32(left) ^ to_int32(right)),
-        BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::EqEq
-        | BinOp::NotEq
-        | BinOp::EqEqEq
-        | BinOp::NotEqEq
-        | BinOp::In
-        | BinOp::Instanceof
-        | BinOp::And
-        | BinOp::Or
-        | BinOp::Nullish
-        | BinOp::Comma => return None,
+        _ => return None,
     };
     Some(canonicalize_nan(result))
 }
@@ -387,11 +364,7 @@ fn evaluate_loose_equality(left: Operand<'_>, right: Operand<'_>) -> Value {
 fn is_string(operand: Operand<'_>) -> bool {
     match operand {
         Operand::String(_) => true,
-        Operand::Undefined
-        | Operand::Null
-        | Operand::Boolean(_)
-        | Operand::Number(_)
-        | Operand::BigInt(_) => false,
+        _ => false,
     }
 }
 

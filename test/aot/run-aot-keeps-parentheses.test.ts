@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // `bun run --aot` runs the text that plain Bun runs and notes beside it which expressions are held to a type. An expression that is held to a type
@@ -128,14 +129,7 @@ test("an expression that is held to a type keeps the parentheses it needs", asyn
     "main.ts": program(),
   });
   async function ran(...flags: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", ...flags, "main.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "run", ...flags, "main.ts"], String(dir));
     return {
       stdout,
       stderr: stderr

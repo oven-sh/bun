@@ -23,7 +23,7 @@ use support::toy_executable::{
     ALL_TARGETS, NEVER_REMOVED_BYTES, Target, ToyLayout, build_executable, layout_of, pattern_byte,
 };
 use support::toy_table::{
-    ABORTING_GUARD, RECOVERABLE_GUARD, REFERENCE, ToyIcuPackage, ToyLibrary, ToyRange, ToyTable,
+    ABORTING_GUARD, RECOVERABLE_GUARD, REFERENCE, ToyIcuPackage, ToyRange, ToyTable,
     encode_table, find_icu_item, icu_package,
 };
 
@@ -132,7 +132,6 @@ fn create_table(ranges: Vec<ToyRange>) -> ToyTable {
         ranges,
         icu_packages: Vec::new(),
         languages: Vec::new(),
-        libraries: Vec::new(),
     }
 }
 
@@ -521,29 +520,6 @@ impl TrimmedCheck<'_> {
             summary.format == Some(self.layout.target.format),
             "{label}: wrong format"
         );
-        let libraries: Vec<&ToyLibrary> = self
-            .table
-            .libraries
-            .iter()
-            .filter(|library| library.has_retained_bytes || !library.sets.is_empty())
-            .collect();
-        assert!(
-            summary.libraries.len() == libraries.len(),
-            "{label}: wrong number of libraries"
-        );
-        for (library, status) in libraries.iter().zip(&summary.libraries) {
-            let is_removed = !library.has_retained_bytes
-                && library.sets.iter().all(|set| self.is_set_removed(*set));
-            assert!(
-                &*status.name == library.name,
-                "{label}: libraries are out of order"
-            );
-            assert!(
-                status.is_removed == is_removed,
-                "{label}: wrong status of {}",
-                library.name
-            );
-        }
     }
 
     fn check_second_runs(&self) {
@@ -721,23 +697,8 @@ fn random_table(random: &mut Random, layout: &ToyLayout, f: [Feature; 5]) -> Toy
     .filter(|(index, _)| has_bit(*index))
     .map(|(_, edge)| edge)
     .collect();
-    let libraries = vec![
-        ToyLibrary {
-            name: "alpha",
-            version: "1.0",
-            has_retained_bytes: false,
-            sets: vec![0, 3],
-        },
-        ToyLibrary {
-            name: "beta",
-            version: "2",
-            has_retained_bytes: true,
-            sets: vec![5],
-        },
-    ];
     ToyTable {
         edges,
-        libraries,
         ..create_table(ranges)
     }
 }

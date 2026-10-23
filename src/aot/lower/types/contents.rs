@@ -30,28 +30,7 @@ pub(in crate::lower) fn find_contents_type(
             }
             ShapeKind::TypeVariable { constraint, .. } => constraint?,
             ShapeKind::Constrained { base, .. } => base,
-            ShapeKind::Anything(_)
-            | ShapeKind::Never
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::AnyObject
-            | ShapeKind::Function(_)
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Tuple { .. }
-            | ShapeKind::Class(_)
-            | ShapeKind::Object
-            | ShapeKind::Union(_) => return None,
+            _ => return None,
         };
     }
 }

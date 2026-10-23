@@ -204,10 +204,7 @@ impl ModuleGraph {
             ModuleRef::File(file) => match self.kind(file) {
                 ModuleKind::SourceText => Shape::EsModule,
                 ModuleKind::CommonJs => self.commonjs().shape(module),
-                ModuleKind::Data
-                | ModuleKind::RuntimeSource
-                | ModuleKind::Runtime
-                | ModuleKind::External => Shape::AsToday,
+                _ => Shape::AsToday,
             },
             ModuleRef::Inner { file, callback } => {
                 match self
@@ -261,15 +258,7 @@ impl ModuleGraph {
                 self.site(file, call)
             }
             ImportSiteKind::ImportEquals(declaration) => self.import_equals_site(file, declaration),
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::GetBuiltinModule(_) => None,
+            _ => None,
         }
     }
 
@@ -356,11 +345,7 @@ impl ModuleGraph {
     fn finish_fixed_member(&self, module: ModuleRef, member: Member) -> Member {
         match member {
             Member::Marker(_) => self.marker(module).map_or(Member::OnObject, Member::Marker),
-            Member::Variable(_)
-            | Member::Copy(_)
-            | Member::Binding(_)
-            | Member::Undefined
-            | Member::OnObject => member,
+            _ => member,
         }
     }
 
@@ -389,15 +374,7 @@ impl ModuleGraph {
                 true => self.commonjs().imported_member(accessed, variable),
                 false => self.commonjs().required_member(accessed, variable),
             }),
-            ImportBinding::Local
-            | ImportBinding::Unused
-            | ImportBinding::Unbound
-            | ImportBinding::Namespace { .. }
-            | ImportBinding::Builtin(_)
-            | ImportBinding::CapturedBuiltin { .. }
-            | ImportBinding::BuiltinMember { .. }
-            | ImportBinding::NamespaceRead { .. }
-            | ImportBinding::Exports { .. } => None,
+            _ => None,
         }
     }
 
@@ -484,11 +461,7 @@ impl ModuleGraph {
         match module {
             ModuleRef::File(file) if self.has_record(file) => self.exports(file),
             ModuleRef::Face(file) => self.commonjs().exports_of_face(file),
-            ModuleRef::File(_)
-            | ModuleRef::Inner { .. }
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => &[],
+            _ => &[],
         }
     }
 
@@ -521,11 +494,7 @@ impl ModuleGraph {
                     Err(_) => &[],
                 }
             }
-            ModuleRef::File(_)
-            | ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => &[],
+            _ => &[],
         }
     }
 
@@ -662,10 +631,7 @@ impl ModuleGraph {
                 match self.kind(target) {
                     ModuleKind::SourceText => {}
                     ModuleKind::CommonJs => commonjs_files.push(target),
-                    ModuleKind::Data
-                    | ModuleKind::RuntimeSource
-                    | ModuleKind::Runtime
-                    | ModuleKind::External => continue,
+                    _ => continue,
                 }
                 successors[file.idx()].push(target);
             }

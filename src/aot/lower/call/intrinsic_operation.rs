@@ -128,21 +128,7 @@ fn payload_bits(
         PayloadKind::Bool => constant_boolean(lowering.file, argument).map(u64::from),
         PayloadKind::Int64 => constant_integer(lowering.file, argument).map(|value| value as u64),
         PayloadKind::Double => constant_number(lowering.file, argument).map(f64::to_bits),
-        PayloadKind::Function
-        | PayloadKind::Layout
-        | PayloadKind::Field
-        | PayloadKind::Variable
-        | PayloadKind::Module
-        | PayloadKind::ModuleFailure
-        | PayloadKind::Type
-        | PayloadKind::TypeSite
-        | PayloadKind::EvalScope
-        | PayloadKind::Data
-        | PayloadKind::ExpectedResult
-        | PayloadKind::Builtin
-        | PayloadKind::Record
-        | PayloadKind::Variant
-        | PayloadKind::List => None,
+        _ => None,
     }
 }
 
@@ -206,16 +192,7 @@ fn operand_kind_type(types: &mut TypeTable, kind: OperandKind) -> Option<TypeId>
         OperandKind::Object => Some(TypeTable::OBJECT),
         OperandKind::Callable => Some(TypeTable::FUNCTION),
         OperandKind::Array => Some(TypeTable::ARRAY),
-        OperandKind::Any
-        | OperandKind::Layout
-        | OperandKind::Declared
-        | OperandKind::Environment
-        | OperandKind::EvalOperand
-        | OperandKind::Results
-        | OperandKind::IteratorState
-        | OperandKind::Enumerator
-        | OperandKind::Exception
-        | OperandKind::ClassToken => None,
+        _ => None,
     }
 }
 

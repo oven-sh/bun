@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -18,12 +19,6 @@ const files = {
     console.log(prototypes.every((prototype, i) => prototype.constructor === made[i]), plainObjects() - before >= count, made[5](1));
   `,
 };
-
-async function run(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 // Object.freeze() of a closure takes one structure transition. Property by property it would ask for the descriptor of `prototype`, and that read makes the object.
 test("freezing a function that nothing has touched does not make its prototype object", async () => {

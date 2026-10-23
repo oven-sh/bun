@@ -1,7 +1,8 @@
 // For ../flow-schedules.test.ts and ../servers/schedules.test.ts: one program built under the usual schedule of flow's rules and under three others.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunExe, isWindows } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./run";
 
 export const schedules: Record<string, string[]> = {
   usual: [],
@@ -16,8 +17,7 @@ export const schedules: Record<string, string[]> = {
 export const mostSpread = 0.25;
 
 export async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd);
   return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
 }
 

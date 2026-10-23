@@ -57,10 +57,8 @@ impl PropertyKey {
 
     pub fn string_name(&self) -> Option<StringId> {
         match self.kind {
-            PropertyKeyKind::Text
-            | PropertyKeyKind::EnginePrivateName
-            | PropertyKeyKind::PrivateName => self.text,
             PropertyKeyKind::WellKnownSymbol | PropertyKeyKind::CreatedSymbol => None,
+            _ => self.text,
         }
     }
 }

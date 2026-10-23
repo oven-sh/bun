@@ -126,9 +126,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.add_stores(file, &mut members, candidates);
         let is_constructor = members.iter().any(|member| match member.source {
             ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_) => true,
-            ClassMemberSource::Member(_)
-            | ClassMemberSource::ParameterProperty(_)
-            | ClassMemberSource::StaticStore(_) => false,
+            _ => false,
         });
         if !is_constructor {
             return None;
@@ -277,14 +275,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 });
                 (ObjectMemberKind::Setter, types, false)
             }
-            MemberKind::Method
-            | MemberKind::Getter
-            | MemberKind::Setter
-            | MemberKind::Constructor
-            | MemberKind::CallSignature
-            | MemberKind::ConstructSignature
-            | MemberKind::IndexSignature
-            | MemberKind::StaticBlock => return None,
+            _ => return None,
         };
         Some(ClassMember {
             name: self.member_name(name),
@@ -403,50 +394,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 fn can_merge_with_class(decl: Decl) -> bool {
     match decl {
         Decl::Class(_) | Decl::Interface(_) | Decl::Module(_) => true,
-        Decl::Var(_)
-        | Decl::Param(_)
-        | Decl::Fn(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => false,
+        _ => false,
     }
 }
 
 fn can_be_constructor_function(function: &hir::Func) -> bool {
     match function.kind {
         FnKind::Decl | FnKind::Expr => !function.flags.intersects(Flags::ASYNC | Flags::GENERATOR),
-        FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => false,
+        _ => false,
     }
 }
 

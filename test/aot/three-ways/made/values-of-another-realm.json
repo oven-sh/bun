@@ -1,16 +1,3 @@
 {
- "a-map-and-a-set-of-another-realm": "all agree",
- "a-map-and-a-set-whose-realm-has-patched-them": "all agree",
- "a-shadow-realm": "all agree",
- "a-typed-object-as-the-global-of-a-context": "all agree",
- "an-array-of-another-realm": "all agree",
- "an-array-whose-realm-has-elements-on-the-prototype": "all agree",
- "an-array-whose-realm-has-patched-its-iterator": "all agree",
- "an-array-whose-realm-has-patched-its-methods": "all agree",
- "an-object-of-another-realm": "all agree",
- "an-object-whose-realm-has-patched-object-prototype": "all agree",
- "code-run-in-this-context": "alone: math: THROWS TypeError: Cannot assign to Math.random because built-in objects are read-only in",
- "other-things-of-another-realm": "all agree",
- "the-order-of-jobs-with-a-promise-of-another-realm": "all agree",
- "typed-things-handed-into-a-context": "all agree"
+ "code-run-in-this-context": "alone: math: THROWS TypeError: Cannot assign to Math.random because built-in objects are read-only in"
 }

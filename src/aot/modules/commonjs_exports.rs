@@ -126,10 +126,7 @@ pub(super) struct CommonJsTexts {
 fn file_of(module: ModuleRef) -> Option<FileId> {
     match module {
         ModuleRef::File(file) | ModuleRef::Inner { file, .. } => Some(file),
-        ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => None,
+        _ => None,
     }
 }
 

@@ -162,11 +162,7 @@ impl ScopeAnalysis {
         match binding {
             BindingRef::Symbol(symbol) => match self.form(symbol) {
                 BindingForm::Stored => Some(self.symbol_placements[symbol.idx()]),
-                BindingForm::NotAValue
-                | BindingForm::Import
-                | BindingForm::Callee { .. }
-                | BindingForm::MappedArgument { .. }
-                | BindingForm::ContainerMember { .. } => None,
+                _ => None,
             },
             BindingRef::Slot(scope, slot) => find_by_key(&self.slot_placements, (scope, slot)),
         }

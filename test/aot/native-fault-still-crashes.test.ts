@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 if (isASAN)
@@ -36,14 +37,11 @@ test.skipIf(isASAN)(
   async () => {
     using dir = tempDir("native-fault-still-crashes", { "main.ts": main });
     const run = async (cmd: string[]) => {
-      await using proc = Bun.spawn({
-        cmd,
-        cwd: String(dir),
-        env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
+      const { stdout, stderr, exitCode } = await runCommand(cmd, String(dir), {
+        ...bunEnv,
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     };
 

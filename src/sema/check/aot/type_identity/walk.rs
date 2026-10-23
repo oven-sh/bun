@@ -59,28 +59,7 @@ fn is_top_level_scope(bound: &Bound<'_>, scope: ScopeId) -> bool {
         match enclosing.kind {
             ScopeKind::File => return true,
             ScopeKind::Module(_) => scope = enclosing.parent,
-            ScopeKind::Fn(_)
-            | ScopeKind::Block
-            | ScopeKind::Class(_)
-            | ScopeKind::Interface(_)
-            | ScopeKind::TypeAlias(_)
-            | ScopeKind::TypeParams
-            | ScopeKind::Enum(_)
-            | ScopeKind::TypeParamList(_)
-            | ScopeKind::Param(_)
-            | ScopeKind::ReturnType(_)
-            | ScopeKind::Extends
-            | ScopeKind::InferConstraint
-            | ScopeKind::StaticMember
-            | ScopeKind::ComputedName
-            | ScopeKind::BaseExpression
-            | ScopeKind::FunctionName(_)
-            | ScopeKind::PropertyDeclaration(..)
-            | ScopeKind::PropertyType(..)
-            | ScopeKind::With(_)
-            | ScopeKind::FieldInitializer(_)
-            | ScopeKind::ClassDecorators(_)
-            | ScopeKind::ImplicitBlock(_) => return false,
+            _ => return false,
         }
     }
     false

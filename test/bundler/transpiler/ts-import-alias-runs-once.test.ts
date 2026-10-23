@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "../../aot/harness/run";
 
 test.concurrent.each([
   [
@@ -34,15 +35,7 @@ console.log("ran", new NumberFormat("en-US", options).format(1));
     "entry.ts": entry,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "entry.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "entry.ts"], String(dir));
 
   expect(stderr).toBe("");
   expect(stdout).toBe("ran 1\n");

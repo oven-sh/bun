@@ -64,11 +64,7 @@ impl<'s> Folder<'_, 's> {
         if let Value::Known(value) = self.folded(argument).value {
             return match self.evaluator.to_constant(value) {
                 Constant::String(text) => ImportSpecifier::Constant(text),
-                Constant::Undefined
-                | Constant::Null
-                | Constant::Boolean(_)
-                | Constant::Number(_)
-                | Constant::BigInt(_) => ImportSpecifier::Unknown,
+                _ => ImportSpecifier::Unknown,
             };
         }
         let mut prefix = self.collect_prefix(argument, Nesting::Outermost);
@@ -112,41 +108,7 @@ impl<'s> Folder<'_, 's> {
             },
             ExprKind::Call(call) => self.expand_call(hir[call]),
             ExprKind::Cond { .. } => Expansion::Alternatives(self.collect_alternatives(e)),
-            ExprKind::Missing
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_)
-            | ExprKind::Dot { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::New(_)
-            | ExprKind::Unary { .. }
-            | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => Expansion::Unknown,
+            _ => Expansion::Unknown,
         }
     }
 
@@ -597,43 +559,7 @@ impl<'s> Folder<'_, 's> {
                     BindingSource::Expression { .. } | BindingSource::Unknown => break false,
                 },
                 ExprKind::Call(call) => break self.is_path_module_request(e, hir[call]),
-                ExprKind::Missing
-                | ExprKind::PrivateIdentifier(_)
-                | ExprKind::This
-                | ExprKind::Super
-                | ExprKind::Null
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::Number(_)
-                | ExprKind::String(_)
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex { .. }
-                | ExprKind::Template { .. }
-                | ExprKind::TaggedTemplate(_)
-                | ExprKind::Array(_)
-                | ExprKind::Object(_)
-                | ExprKind::Fn(_)
-                | ExprKind::Class(_)
-                | ExprKind::Dot { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::New(_)
-                | ExprKind::Unary { .. }
-                | ExprKind::Binary { .. }
-                | ExprKind::Assign { .. }
-                | ExprKind::Cond { .. }
-                | ExprKind::Spread(_)
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. }
-                | ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::NonNull(_)
-                | ExprKind::Instantiation { .. }
-                | ExprKind::Jsx(_)
-                | ExprKind::ImportCall { .. }
-                | ExprKind::ImportMeta
-                | ExprKind::NewTarget(_)
-                | ExprKind::JsxText(_) => break false,
+                _ => break false,
             }
         };
         let joins_paths = |member: Atom| member == known::join || member == known::resolve;
@@ -673,11 +599,7 @@ impl<'s> Folder<'_, 's> {
         };
         match self.evaluator.to_constant(specifier) {
             Constant::String(text) => is_path_specifier(text),
-            Constant::Undefined
-            | Constant::Null
-            | Constant::Boolean(_)
-            | Constant::Number(_)
-            | Constant::BigInt(_) => false,
+            _ => false,
         }
     }
 
@@ -694,12 +616,7 @@ impl<'s> Folder<'_, 's> {
         }
         match bound.binding_stability(symbol) {
             BindingStability::Stable | BindingStability::Linked => {}
-            BindingStability::NoBinding
-            | BindingStability::Stored
-            | BindingStability::NotInitializedOnce
-            | BindingStability::VisibleToEval
-            | BindingStability::MappedArgument
-            | BindingStability::ContainerMember => return BindingSource::Unknown,
+            _ => return BindingSource::Unknown,
         }
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => BindingSource::Expression {
@@ -711,12 +628,7 @@ impl<'s> Folder<'_, 's> {
                 members: path,
             },
             BindingInitializer::Import => self.find_import_source(symbol),
-            BindingInitializer::Class(_)
-            | BindingInitializer::Function(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Opaque => BindingSource::Unknown,
+            _ => BindingSource::Unknown,
         }
     }
 
@@ -738,32 +650,7 @@ impl<'s> Folder<'_, 's> {
                     let is_type_only = import.flags.contains(Flags::TYPE_ONLY);
                     (import.target.spec(), None, is_type_only)
                 }
-                Decl::Var(_)
-                | Decl::Param(_)
-                | Decl::Fn(_)
-                | Decl::Class(_)
-                | Decl::Interface(_)
-                | Decl::Alias(_)
-                | Decl::Enum(_)
-                | Decl::EnumMember(_)
-                | Decl::Module(_)
-                | Decl::TypeParam(_)
-                | Decl::ExportSpec(_)
-                | Decl::ExportStarAs(_)
-                | Decl::ExportExpr(_)
-                | Decl::UmdGlobal(_)
-                | Decl::File
-                | Decl::Require(_)
-                | Decl::ModuleExports(_)
-                | Decl::ExportsProperty(_)
-                | Decl::Expando(_)
-                | Decl::ObjectLiteral(_)
-                | Decl::CommonJsVariable
-                | Decl::Member(_)
-                | Decl::ParameterProperty(_)
-                | Decl::ThisProperty(_)
-                | Decl::Property(_)
-                | Decl::TypeLiteral(_) => continue,
+                _ => continue,
             };
             if !is_type_only {
                 return BindingSource::ModuleExport { specifier, export };

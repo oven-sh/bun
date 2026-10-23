@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `var __require = /* @__PURE__ */ createRequire(import.meta.url);` is what bundlers write at the head of the ES modules they emit.
@@ -73,14 +74,7 @@ console.log(made("./lib/local.cjs"));
 describe.concurrent.each(Object.keys(refused))("%s", entry => {
   test("bun run --aot does not load the file", async () => {
     using dir = tempDir("create-require-in-a-var", { ...files, [entry]: refused[entry] });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--debug-aot", entry],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { stdout, exitCode } = await runCommand([bunExe(), "run", "--debug-aot", entry], String(dir));
     expect({ stdout, exitCode }).toEqual({
       stdout: "MODULE_NOT_FOUND true\nanother function got ./lib/local.cjs\n",
       exitCode: 0,
@@ -92,14 +86,7 @@ describe.concurrent.each(Object.keys({ ...compiled, ...ordinary }))("%s", entry 
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("create-require-in-a-var", { ...files, [entry]: compiled[entry] ?? ordinary[entry] });
     const run = async (flags: string[], env: Record<string, string | undefined>) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", ...flags, entry],
-        cwd: String(dir),
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { stdout, stderr, exitCode } = await runCommand([bunExe(), "run", ...flags, entry], String(dir), env);
       return { stdout, stderr, exitCode };
     };
     const plain = await run([], bunEnv);

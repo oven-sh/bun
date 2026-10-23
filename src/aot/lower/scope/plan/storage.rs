@@ -38,11 +38,7 @@ pub(super) fn place_bindings(
         .zip(forms)
         .map(|(symbol, &form)| match form {
             BindingForm::Stored => place_stored(BindingRef::Symbol(symbol)),
-            BindingForm::NotAValue
-            | BindingForm::Import
-            | BindingForm::Callee { .. }
-            | BindingForm::MappedArgument { .. }
-            | BindingForm::ContainerMember { .. } => Placement::LOCAL,
+            _ => Placement::LOCAL,
         });
     let symbols: Vec<Placement> = symbols.collect();
     let captured = sharing.captured.iter().map(|captured| captured.binding);

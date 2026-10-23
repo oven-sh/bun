@@ -1,0 +1,44 @@
+# No test finds the object that a module has for import.meta, module, exports or require, so a Check that names such a built-in would leave the typed code with every value of its type. A TypeTest may name it: it does not pass
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badCheckOfImportMeta" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=builtin(ImportMeta)
+    Return
+}
+function f1 name="badCheckOfModuleObject" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=builtin(ModuleObject)
+    Return
+}
+function f2 name="badCheckOfExports" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=builtin(ModuleObjectExports)
+    Return
+}
+function f3 name="badCheckOfRequire" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=builtin(ModuleRequire)
+    Return
+}
+function f4 name="badCheckOfUnion" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=number|builtin(GlobalThis)|builtin(ImportMeta)
+    Return
+}
+function f5 name="goodCheckOfRealmBuiltin" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=builtin(GlobalThis)|builtin(ArrayPrototypePush)
+    Return
+}
+function f6 name="goodTestAndProof" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=builtin(ImportMeta)
+    v2 = TypeTest v0 testedType=Array|builtin(ModuleRequire)
+    v3 = Check v0 castType=object
+    v4 = AssumeType v3 castType=builtin(ImportMeta)
+    Return
+}

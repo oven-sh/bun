@@ -19,7 +19,6 @@ pub mod macho_ranges;
 pub mod macho_symbols;
 pub mod macho_types;
 pub mod mapped_file;
-pub mod payload_references;
 pub mod pe;
 pub mod pe_ranges;
 pub mod section;

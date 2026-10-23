@@ -1,0 +1,29 @@
+# process.on.call(handedOver(), "message", listener)
+# Nobody knows the receiver. Nobody was handed `process`, so it is not `process`, and parseHandle is not entered (runtimefunction 65559)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="on"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="handedOver" [isFreeName]
+    v4 = Call v3
+    v5 = String string="message"
+    v6 = NewClosure function=f2
+    v7 = Call v1, v4, v5, v6
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f2 name="listener" results=[{type=anything}] {
+  b0():
+    Return
+}

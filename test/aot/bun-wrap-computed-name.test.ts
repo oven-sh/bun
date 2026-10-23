@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const folder = join(import.meta.dir, "programs", "modules");
@@ -10,13 +11,11 @@ const programs = ["bun-wrap-computed-name", "bun-wrap-computed-name-alone", "bun
 test.concurrent.each(programs)(
   "bun run --aot %s",
   async name => {
-    await using ran = Bun.spawn({
-      cmd: [bunExe(), "run", "--debug-aot", join(folder, name + ".js")],
-      env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), "run", "--debug-aot", join(folder, name + ".js")],
+      undefined,
+      { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
+    );
     const diagnostics = stderr.split("\n").filter(line => /^(warn|error)\b/.test(line));
     expect({
       stdout,

@@ -4,8 +4,7 @@
 //   jsc             $JSC, or `jsc` beside the Bun under test (CI packs the one built from the WebKit that Bun was linked with),
 //                   or in build/release-local, or in build/release
 //   testaot         $TESTAOT, or `testaot` in the same three folders
-//   front end       $FRONT_END, or the Bun under test if `bun compile --aot-out=<file>` writes the program, or `bun-aot` beside
-//                   it, or target/release/bun-aot
+//   front end       $FRONT_END, or the Bun under test if `bun compile --aot-out=<file>` writes the program
 //   engine tests    the folder of the engine's IR text tests: $AOT_ENGINE_TESTS, or `aot-tests` beside the Bun under test, or
 //                   Source/JavaScriptCore/aot/tests in $BUN_WEBKIT_PATH, or in vendor/WebKit. No script in this folder needs it
 //   python3         on $PATH
@@ -38,9 +37,7 @@ export const testaot = process.env.TESTAOT ?? findTool("testaot");
 export const python = Bun.which("python3");
 export const frontEnd =
   process.env.FRONT_END ??
-  (!isWindows && !unsupported && jsc && testaot && python && canWriteProgram()
-    ? bunExe()
-    : [join(bunDirectory, "bun-aot" + suffix), join(repository, "target", "release", "bun-aot" + suffix)].find(existsSync));
+  (!isWindows && !unsupported && jsc && testaot && python && canWriteProgram() ? bunExe() : undefined);
 export const engineTests =
   process.env.AOT_ENGINE_TESTS ??
   [
@@ -63,7 +60,7 @@ export const scriptSkipReason = isWindows
         : !python
           ? "python3 is not installed"
           : !frontEnd
-            ? "there is no front end: this Bun does not write the program (bun compile --aot-out=<file>), and there is no bun-aot in $FRONT_END, beside it or in target/release"
+            ? "there is no front end: this Bun does not write the program (bun compile --aot-out=<file>), and $FRONT_END names none"
             : undefined;
 
 /** What toolchain.py reads. Call it only where scriptSkipReason is undefined. */

@@ -3,8 +3,9 @@
 // functions that a loop calls, beside which everything the program itself does is cold. heat/cold-*.test.ts do the same to every program with an option of the compiler, in the `jsc` shell.
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const programs = [
@@ -25,12 +26,6 @@ function hotFunctions(count: number) {
   );
   const calls = Array.from({ length: count }, (_, i) => `  heat = (heat + hot${i}(round, ${i})) % 1000003;\n`);
   return `${functions.join("")}let heat = 0;\nfor (let round = 0; round < 3; round++) {\n${calls.join("")}}\nconsole.log(heat);\n`;
-}
-
-async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
 }
 
 test.concurrent.each(programs)(

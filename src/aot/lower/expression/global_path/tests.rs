@@ -461,17 +461,7 @@ impl Probe {
             let string = match reference {
                 Reference::String(string) => Some(string),
                 Reference::PropertyKey(key) => self.fragment.property_keys.get(key).text,
-                Reference::Type(_)
-                | Reference::TypeSite(_)
-                | Reference::ExpectedResult(_)
-                | Reference::Layout(_)
-                | Reference::Variable(_)
-                | Reference::Module(..)
-                | Reference::ModuleFailure(_)
-                | Reference::EvalScope(_)
-                | Reference::Function(..)
-                | Reference::Data(_)
-                | Reference::Builtin(_) => None,
+                _ => None,
             };
             is_named |= string.is_some_and(|string| self.string_text(string) == text);
         });

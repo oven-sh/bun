@@ -1,0 +1,97 @@
+# Error.isError and ArrayBuffer.isView are answered by the class of the operand, where every part of its type has one that says it. Where the type does not say it they are tests for the class,
+# which look at the kind of the cell as the functions do. Not of what has the layout of a class below a built-in class, or of a class of which nobody knows what lies above it: no type says what cell that is
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Failure" flow={baseState=BuiltinClass baseClass=Error}
+layout L2 kind=Instance name="Bytes" flow={baseState=BuiltinClass baseClass=Uint8Array}
+layout L3 kind=Instance name="BelowSomething"
+layout L4 kind=Instance name="Plain" flow={baseState=None}
+function f0 name="known" parameters=[{type=string}, {type=Error}, {type=undefined|TypeError}, {type=Uint8Array}, {type=DataView}, {type=Map|L0}, {type=Proxy}] results=[{type=anything}] {
+  b0(v0: string, v1: Error, v2: undefined|TypeError, v3: Uint8Array, v4: DataView, v5: Map|L0, v6: Proxy):
+    v7 = CallBuiltin -, v0 overload=ErrorIsError/0
+    v8 = CallBuiltin -, v1 overload=ErrorIsError/0
+    v9 = CallBuiltin -, v2 overload=ErrorIsError/0
+    v10 = CallBuiltin -, v3 overload=ArrayBufferIsView/0
+    v11 = CallBuiltin -, v4 overload=ArrayBufferIsView/0
+    v12 = CallBuiltin -, v5 overload=ArrayBufferIsView/0
+    v13 = CallBuiltin -, v5 overload=ErrorIsError/0
+    v14 = CallBuiltin -, v6 overload=ErrorIsError/0
+    v15 = NewArray v7, v8, v9, v10, v11, v12, v13, v14 contents=anything
+    Return v15
+}
+# CHECK-LABEL: function f0 name="known"
+# CHECK: v7: false = Boolean
+# CHECK-NEXT: v8: true = Boolean boolean=true
+# CHECK-NEXT: v9: boolean = TypeTest v2 testedType=Error
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: v11: true = Boolean boolean=true
+# CHECK-NEXT: v12: false = Boolean
+# CHECK-NEXT: v13: false = Boolean
+# CHECK-NEXT: v14: false = Boolean
+
+function f1 name="unknown" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = CallBuiltin -, v0 overload=ErrorIsError/0
+    v3 = CallBuiltin -, v1 overload=ArrayBufferIsView/0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f1 name="unknown"
+# CHECK: v2: boolean = TypeTest v0 testedType=Error
+# CHECK-NEXT: v3: boolean = TypeTest v1 testedType={{*}}DataView{{*}}Uint8Array
+
+function f2 name="classesBelow" parameters=[{type=RangeError|AggregateError}, {type=Float64Array|DataView}] results=[{type=anything}] {
+  b0(v0: RangeError|AggregateError, v1: Float64Array|DataView):
+    v2 = CallBuiltin -, v0 overload=ErrorIsError/0
+    v3 = CallBuiltin -, v1 overload=ArrayBufferIsView/0
+    v4 = CallBuiltin -, v1 overload=ErrorIsError/0
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f2 name="classesBelow"
+# CHECK: v2: true = Boolean boolean=true
+# CHECK-NEXT: v3: true = Boolean boolean=true
+# CHECK-NEXT: v4: false = Boolean
+
+function f3 name="classesOfProgram" parameters=[{type=string|L1}, {type=string|L2}, {type=string|L3}, {type=string|L4}] results=[{type=anything}] {
+  b0(v0: string|L1, v1: string|L2, v2: string|L3, v3: string|L4):
+    v4 = CallBuiltin -, v0 overload=ErrorIsError/0
+    v5 = CallBuiltin -, v1 overload=ArrayBufferIsView/0
+    v6 = CallBuiltin -, v2 overload=ErrorIsError/0
+    v7 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    v8 = CallBuiltin -, v2 overload=ArrayIsArray/0
+    v9 = CallBuiltin -, v3 overload=ArrayIsArray/0
+    v10 = NewArray v4, v5, v6, v7, v8, v9 contents=anything
+    Return v10
+}
+# CHECK-LABEL: function f3 name="classesOfProgram"
+# CHECK: v4: boolean = CallBuiltin -, v0 overload=ErrorIsError/0
+# CHECK-NEXT: v5: boolean = CallBuiltin -, v1 overload=ArrayBufferIsView/0
+# CHECK-NEXT: v6: boolean = CallBuiltin -, v2 overload=ErrorIsError/0
+# CHECK-NEXT: v7: boolean = CallBuiltin -, v0 overload=ArrayIsArray/0
+# CHECK-NEXT: v8: boolean = CallBuiltin -, v2 overload=ArrayIsArray/0
+# CHECK-NEXT: v9: {{*}} = TypeTest v3 testedType=Array
+
+# `$inheritsReadableStream(x)` of the library asks whether a cell is of one class of the host, which it names by a number. What is no cell, an instance of a class of the engine, a record
+# and an object of a class that nothing built in stands above are none. An object that nobody knows, an instance of a class of the host and what a built-in constructor may have made are asked.
+function f4 name="classesOfHost" parameters=[{type=undefined|string|L0|L4|Map}, {type=anything}, {type=Response}, {type=L3}, {type=L1}] results=[{type=anything}] {
+  b0(v0: undefined|string|L0|L4|Map, v1: anything, v2: Response, v3: L3, v4: L1):
+    v5 = Integer integer=3
+    v6 = CallBuiltin -, v5, v0 overload=PrivateGlobalsInherits/0
+    v7 = CallBuiltin -, v5, v1 overload=PrivateGlobalsInherits/0
+    v8 = CallBuiltin -, v5, v2 overload=PrivateGlobalsInherits/0
+    v9 = CallBuiltin -, v5, v3 overload=PrivateGlobalsInherits/0
+    v10 = CallBuiltin -, v5, v4 overload=PrivateGlobalsInherits/0
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Return v11
+}
+# CHECK-LABEL: function f4 name="classesOfHost"
+# CHECK: v6: false = Boolean
+# CHECK-NEXT: v7: boolean = CallBuiltin -, v5, v1 overload=PrivateGlobalsInherits/0
+# CHECK-NEXT: v8: boolean = CallBuiltin -, v5, v2 overload=PrivateGlobalsInherits/0
+# CHECK-NEXT: v9: boolean = CallBuiltin -, v5, v3 overload=PrivateGlobalsInherits/0
+# CHECK-NEXT: v10: boolean = CallBuiltin -, v5, v4 overload=PrivateGlobalsInherits/0

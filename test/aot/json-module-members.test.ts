@@ -1,16 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
-
-// What a JSON module exports beside `default`. Each key of the object is an export of its own, which holds the value the key had when
-// the file was loaded: a later store into the `default` object does not change it. The namespace is a module namespace object.
-
-async function spawned(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const files = {
   "data.json": `{ "b": 1, "a": 2, "zeta": { "y": 1, "x": 2 } }`,

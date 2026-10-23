@@ -240,25 +240,7 @@ fn find_key_kind(file: &mut FileLowering<'_, '_, '_, '_>, key: ExprId) -> Option
             Some(IndexKey::Number)
         }
         ShapeKind::Symbol => Some(IndexKey::Symbol),
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => None,
+        _ => None,
     }
 }
 

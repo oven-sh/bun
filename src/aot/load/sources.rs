@@ -224,11 +224,7 @@ impl Sources {
                 .builtin_function_id(&entry.public_path, export_name)
                 .map(RuntimeFunction)
                 .or_else(|| find_compiler_function(&entry.public_path, export_name)),
-            SourceKind::Program
-            | SourceKind::Data
-            | SourceKind::EvaluatedText
-            | SourceKind::RuntimeModule(_)
-            | SourceKind::TypesOnly => None,
+            _ => None,
         }
     }
 

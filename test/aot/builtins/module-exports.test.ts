@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   type ListedModule,
 } from "../../../src/codegen/builtins/collect-modules";
 import { GeneratorError } from "../../../src/codegen/builtins/declarations";
+import { run } from "../harness/run";
 import { test } from "../supported";
 import { observe as observeHere } from "./module-exports.fixture";
 
@@ -18,13 +19,12 @@ const written = parseModuleExports(text, fileName);
 
 // In a process of its own, where nothing has used the modules yet: module-exports.fixture.ts says why.
 async function observe(): Promise<Map<string, ListedModule>> {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "module-exports.fixture.ts"), dataFile, fileName],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    join(import.meta.dir, "module-exports.fixture.ts"),
+    dataFile,
+    fileName,
+  ]);
   expect({ exitCode, stderr: exitCode ? stderr : "" }).toEqual({ exitCode: 0, stderr: "" });
   const elsewhere = new Map<string, ListedModule>(JSON.parse(stdout));
   const observed = new Map<string, ListedModule>();

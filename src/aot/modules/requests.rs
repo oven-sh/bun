@@ -114,11 +114,7 @@ fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
     let interop = file_interop(files, sources, file);
     let mut requests = match interop.kind {
         ModuleKind::SourceText => scanner.collect_requests(&sites),
-        ModuleKind::CommonJs
-        | ModuleKind::Data
-        | ModuleKind::RuntimeSource
-        | ModuleKind::Runtime
-        | ModuleKind::External => Vec::new(),
+        _ => Vec::new(),
     };
     for request in &mut requests {
         if let ModuleRef::File(target) = request.target {
@@ -174,11 +170,7 @@ impl FileScanner<'_, '_> {
     fn scan_computed_site(&mut self, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
         let targets = match answer {
             CodeAnswer::Computed(targets) => targets,
-            CodeAnswer::File(_)
-            | CodeAnswer::HostModule(_)
-            | CodeAnswer::External { .. }
-            | CodeAnswer::Erased
-            | CodeAnswer::NotFound(_) => {
+            _ => {
                 debug_assert!(false, "a computed specifier has a computed answer");
                 return ScannedSite::AllModules;
             }
@@ -304,10 +296,7 @@ impl FileScanner<'_, '_> {
         for (site, answer) in self.compiled.analysis.import_sites.iter().zip(sites) {
             let target = match answer {
                 ScannedSite::Module(target) => *target,
-                ScannedSite::Unresolved
-                | ScannedSite::AllModules
-                | ScannedSite::Candidates(_)
-                | ScannedSite::Erased => continue,
+                _ => continue,
             };
             if let Some(draft) = create_request_draft(self.hir, site.kind, target) {
                 requests.add(draft);
@@ -342,29 +331,16 @@ fn site_form(site: ImportSiteKind) -> SiteForm {
         | ImportSiteKind::Import(_)
         | ImportSiteKind::ExportFrom(_)
         | ImportSiteKind::ExportStar(_) => SiteForm::Declaration,
-        ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_) => SiteForm::Load,
         ImportSiteKind::ImportMetaResolve(_) => SiteForm::Resolve,
         ImportSiteKind::GetBuiltinModule(_) => SiteForm::GetBuiltinModule,
+        _ => SiteForm::Load,
     }
 }
 
 fn is_jsx_site(site: ImportSiteKind) -> bool {
     match site {
         ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage => true,
-        ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => false,
+        _ => false,
     }
 }
 
@@ -398,11 +374,7 @@ pub(super) fn import_phase(hir: &hir::File<'_>, import: ImportId) -> ImportPhase
 pub(super) fn phase_towards(target: ModuleKind, written: ImportPhase) -> ImportPhase {
     match target {
         ModuleKind::CommonJs => ImportPhase::Evaluation,
-        ModuleKind::SourceText
-        | ModuleKind::Data
-        | ModuleKind::RuntimeSource
-        | ModuleKind::Runtime
-        | ModuleKind::External => written,
+        _ => written,
     }
 }
 
@@ -419,13 +391,7 @@ fn create_request_draft(
             ImportPhase::Evaluation,
             is_star_export_entry(hir, statement),
         ),
-        ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => return None,
+        _ => return None,
     };
     Some(RequestDraft {
         target,

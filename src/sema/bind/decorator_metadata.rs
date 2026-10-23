@@ -191,10 +191,7 @@ pub(super) fn is_decoratable_member(hir: &File<'_>, member: MemberId) -> bool {
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
             node.func.is_some() && has_body(&hir[node.func])
         }
-        MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature
-        | MemberKind::StaticBlock => false,
+        _ => false,
     }
 }
 
@@ -210,11 +207,7 @@ pub(super) fn has_parameter_decorator(hir: &File<'_>, member: MemberId) -> bool 
                 .iter()
                 .any(|parameter| has_decorators(hir, hir.param_modifiers(parameter)))
         }
-        MemberKind::Property
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature
-        | MemberKind::StaticBlock => false,
+        _ => false,
     }
 }
 
@@ -238,17 +231,7 @@ fn finish_merge(hir: &File<'_>, kind: MergeKind, current: &mut Metadata) -> Opti
             *current = Metadata::None;
             None
         }
-        Metadata::None
-        | Metadata::Void
-        | Metadata::Function
-        | Metadata::Array
-        | Metadata::Boolean
-        | Metadata::String
-        | Metadata::Number
-        | Metadata::BigInt
-        | Metadata::Symbol
-        | Metadata::Promise
-        | Metadata::QualifiedName(_) => None,
+        _ => None,
     }
 }
 
@@ -270,20 +253,7 @@ fn merge(hir: &File<'_>, kind: MergeKind, result: &mut Metadata, left: Metadata)
                 MergeKind::Union => Metadata::Object,
                 MergeKind::Intersection => left,
             },
-            Metadata::None
-            | Metadata::Any
-            | Metadata::Void
-            | Metadata::Function
-            | Metadata::Array
-            | Metadata::Boolean
-            | Metadata::String
-            | Metadata::Object
-            | Metadata::Number
-            | Metadata::BigInt
-            | Metadata::Symbol
-            | Metadata::Promise
-            | Metadata::Name(_)
-            | Metadata::QualifiedName(_) => Metadata::Object,
+            _ => Metadata::Object,
         };
         return;
     }
@@ -384,11 +354,7 @@ impl<'a, 's> MetadataCollector<'a, 's> {
                 entries.extend(first.map(|first| (DesignKey::Type, DesignValue::Type(first))));
                 entries
             }
-            MemberKind::Constructor
-            | MemberKind::CallSignature
-            | MemberKind::ConstructSignature
-            | MemberKind::IndexSignature
-            | MemberKind::StaticBlock => DesignEntries::new(),
+            _ => DesignEntries::new(),
         }
     }
 

@@ -58,15 +58,11 @@ pub(super) enum Resolution {
 impl Resolution {
     fn is_binding(self) -> bool {
         match self {
-            Resolution::Variable(_)
-            | Resolution::Namespace { .. }
-            | Resolution::RuntimeMember { .. }
-            | Resolution::Synthetic { .. }
-            | Resolution::LiveName { .. } => true,
             Resolution::DynamicStar { .. }
             | Resolution::Unloadable { .. }
             | Resolution::NotFound
             | Resolution::Ambiguous => false,
+            _ => true,
         }
     }
 }
@@ -84,13 +80,7 @@ impl ResolvedName {
                 Some(RequiredName::new(ModuleRef::File(module), name))
             }
             Resolution::LiveName { module, name } => Some(RequiredName::new(module, name)),
-            Resolution::Variable(_)
-            | Resolution::Namespace { .. }
-            | Resolution::RuntimeMember { .. }
-            | Resolution::Synthetic { .. }
-            | Resolution::Unloadable { .. }
-            | Resolution::NotFound
-            | Resolution::Ambiguous => None,
+            _ => None,
         };
         ResolvedName {
             resolution,
@@ -137,12 +127,7 @@ fn imported_namespace_resolution(module: ModuleRef, phase: ImportPhase) -> Resol
                 name: known::default,
             }
         }
-        ModuleRef::File(_)
-        | ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => Resolution::Namespace { module, phase },
+        _ => Resolution::Namespace { module, phase },
     }
 }
 
@@ -318,21 +303,14 @@ impl DynamicStarTargets {
 fn find_table(table_files: &[FileId], module: ModuleRef) -> Option<usize> {
     match module {
         ModuleRef::File(file) => table_files.binary_search(&file).ok(),
-        ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => None,
+        _ => None,
     }
 }
 
 fn star_targets(scans: &Scans, module: &ExportEntries) -> impl Iterator<Item = ModuleRef> {
     let target_of = move |&site: &u32| match scans.of(module.file).sites[site as usize] {
         ScannedSite::Module(target) => Some(target),
-        ScannedSite::Unresolved
-        | ScannedSite::AllModules
-        | ScannedSite::Candidates(_)
-        | ScannedSite::Erased => None,
+        _ => None,
     };
     module.stars.iter().filter_map(target_of)
 }
@@ -595,13 +573,7 @@ fn find_link_failure(
     let kind = match resolution {
         Resolution::NotFound => ModuleFailureKind::ExportNotFound { exporter, name },
         Resolution::Ambiguous => ModuleFailureKind::ExportAmbiguous { exporter, name },
-        Resolution::Variable(_)
-        | Resolution::Namespace { .. }
-        | Resolution::RuntimeMember { .. }
-        | Resolution::Synthetic { .. }
-        | Resolution::LiveName { .. }
-        | Resolution::DynamicStar { .. }
-        | Resolution::Unloadable { .. } => return None,
+        _ => return None,
     };
     let order = FailureOrder {
         site,
@@ -890,10 +862,7 @@ pub(super) fn finish_exports(
                 ExportBinding::Synthetic(synthetic.id_of(ModuleRef::Runtime(module), name))
             }
             Resolution::LiveName { module, name } => ExportBinding::Indirect { module, name },
-            Resolution::DynamicStar { .. }
-            | Resolution::Unloadable { .. }
-            | Resolution::NotFound
-            | Resolution::Ambiguous => return None,
+            _ => return None,
         };
         let is_from_star_export = position >= own_count;
         Some(ModuleExport {

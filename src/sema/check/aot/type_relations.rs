@@ -16,34 +16,7 @@ fn function_of_declaration(hir: &hir::File<'_>, declaration: Decl) -> Option<FnI
     match declaration {
         Decl::Fn(function) => Some(function),
         Decl::Member(member) => hir[member].func.some(),
-        Decl::Var(_)
-        | Decl::Param(_)
-        | Decl::Class(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::EnumMember(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => None,
+        _ => None,
     }
 }
 

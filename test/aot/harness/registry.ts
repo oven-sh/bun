@@ -23,7 +23,6 @@ export interface Registry {
   runtimeCounters: string[];
   flowResults: string[];
   passes: PassDeclaration[];
-  lossReasons: string[];
   operations: string[];
   features: string[];
   /** The faults that `--aot-sabotage=<name>` puts into a build on purpose. Not listed by a Bun that has none. */
@@ -39,7 +38,7 @@ export function registry(): Registry {
   return (cached = JSON.parse(listed.stdout.toString()));
 }
 
-export type RegistryList = "statistics" | "runtimeCounters" | "flowResults" | "lossReasons" | "operations" | "features";
+export type RegistryList = "statistics" | "runtimeCounters" | "flowResults" | "operations" | "features";
 
 export function isDeclared(list: RegistryList, name: string): boolean {
   return registry()[list].includes(name);

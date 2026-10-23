@@ -152,40 +152,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
                 check_tape_encoding(array.get().tape())?;
                 self.open_json_array(*array);
             }
-            Data::EUnary(_)
-            | Data::EBinary(_)
-            | Data::EClass(_)
-            | Data::ENew(_)
-            | Data::EFunction(_)
-            | Data::ECall(_)
-            | Data::EDot(_)
-            | Data::EIndex(_)
-            | Data::EArrow(_)
-            | Data::EJsxElement(_)
-            | Data::ESpread(_)
-            | Data::ETemplate(_)
-            | Data::ERegExp(_)
-            | Data::EAwait(_)
-            | Data::EYield(_)
-            | Data::EIf(_)
-            | Data::EImport(_)
-            | Data::EIdentifier(_)
-            | Data::EImportIdentifier(_)
-            | Data::EPrivateIdentifier(_)
-            | Data::ECommonjsExportIdentifier(_)
-            | Data::ERequireString(_)
-            | Data::ERequireResolveString(_)
-            | Data::ERequireCallTarget
-            | Data::ERequireResolveCallTarget
-            | Data::EMissing(_)
-            | Data::EThis(_)
-            | Data::ESuper(_)
-            | Data::ENewTarget(_)
-            | Data::EImportMeta(_)
-            | Data::EImportMetaMain(_)
-            | Data::ERequireMain
-            | Data::ESpecial(_)
-            | Data::ENameOfSymbol(_) => return Err(NotData::Expression),
+            _ => return Err(NotData::Expression),
         }
         Ok(())
     }
@@ -276,47 +243,7 @@ fn property_key(key: &Expr) -> Result<PropertyKey<'_>, NotData> {
             Ok(PropertyKey::Boolean(boolean.value))
         }
         Data::ENull(_) => Ok(PropertyKey::Null),
-        Data::EArray(_)
-        | Data::EUnary(_)
-        | Data::EBinary(_)
-        | Data::EClass(_)
-        | Data::ENew(_)
-        | Data::EFunction(_)
-        | Data::ECall(_)
-        | Data::EDot(_)
-        | Data::EIndex(_)
-        | Data::EArrow(_)
-        | Data::EJsxElement(_)
-        | Data::EObject(_)
-        | Data::EObjectJSON(_)
-        | Data::EArrayJSON(_)
-        | Data::ESpread(_)
-        | Data::ETemplate(_)
-        | Data::ERegExp(_)
-        | Data::EAwait(_)
-        | Data::EYield(_)
-        | Data::EIf(_)
-        | Data::EImport(_)
-        | Data::EIdentifier(_)
-        | Data::EImportIdentifier(_)
-        | Data::EPrivateIdentifier(_)
-        | Data::ECommonjsExportIdentifier(_)
-        | Data::EBigInt(_)
-        | Data::ERequireString(_)
-        | Data::ERequireResolveString(_)
-        | Data::ERequireCallTarget
-        | Data::ERequireResolveCallTarget
-        | Data::EMissing(_)
-        | Data::EThis(_)
-        | Data::ESuper(_)
-        | Data::EUndefined(_)
-        | Data::ENewTarget(_)
-        | Data::EImportMeta(_)
-        | Data::EImportMetaMain(_)
-        | Data::ERequireMain
-        | Data::ESpecial(_)
-        | Data::EInlinedEnum(_)
-        | Data::ENameOfSymbol(_) => Err(NotData::Expression),
+        _ => Err(NotData::Expression),
     }
 }
 

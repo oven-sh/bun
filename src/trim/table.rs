@@ -12,13 +12,13 @@ use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
 use crate::model::{EdgeStrength, FeatureEdge, FeatureEdges};
 
 pub use crate::model::{
-    IcuItemRun, IcuLanguage, IcuPackage, Library, LocaleGroup, ModuleText, RemovableRange,
+    IcuItemRun, IcuLanguage, IcuPackage, LocaleGroup, ModuleText, RemovableRange,
     SetIndex, TrimTable,
 };
 
 pub const TABLE_MAGIC: [u8; 8] = *b"BUNTRIM\0";
-pub const TABLE_VERSION: u32 = 3;
-pub const TABLE_HEADER_BYTES: usize = 120;
+pub const TABLE_VERSION: u32 = 4;
+pub const TABLE_HEADER_BYTES: usize = 96;
 pub const TRIMMED_MAGIC: [u8; 8] = *b"BUNTRMD\0";
 pub const REMOVED_RANGES_HEADER_BYTES: usize = 16;
 pub const MAX_TABLE_BYTES: u64 = 16 << 20;
@@ -42,9 +42,6 @@ const RANGE_RECORD_BYTES: usize = 12;
 const ICU_PACKAGE_RECORD_BYTES: usize = 16;
 const ICU_RUN_RECORD_BYTES: usize = 12;
 const ICU_LANGUAGE_RECORD_BYTES: usize = 8;
-const LIBRARY_RECORD_BYTES: usize = 28;
-const LIBRARY_SET_RECORD_BYTES: usize = 2;
-const TEXT_RECORD_BYTES: usize = 1;
 const MODULE_TEXT_RECORD_BYTES: usize = 16;
 
 const FILL_ONLY: u8 = 0;
@@ -71,9 +68,6 @@ pub enum MalformedTable {
     IcuPackages,
     IcuRuns,
     IcuLanguages,
-    Libraries,
-    LibrarySets,
-    Text,
     ModuleTexts,
     TrailingBytes,
 }
@@ -92,9 +86,6 @@ struct Sections<'a> {
     icu_packages: &'a [u8],
     icu_runs: &'a [u8],
     icu_languages: &'a [u8],
-    libraries: &'a [u8],
-    library_sets: &'a [u8],
-    text: &'a [u8],
     module_texts: &'a [u8],
 }
 
@@ -188,16 +179,6 @@ fn read_language_name(record: &[u8]) -> Option<[u8; 4]> {
     is_valid.then_some(name)
 }
 
-fn read_text<'a>(
-    text: &mut Tiling<'a>,
-    start: u32,
-    byte_count: u32,
-) -> Result<&'a str, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::Text);
-    let bytes = text.take(start, byte_count).ok_or(MALFORMED)?;
-    core::str::from_utf8(bytes).map_err(|_| MALFORMED)
-}
-
 fn read_address_range(
     base_address: u64,
     record: &[u8],
@@ -265,9 +246,6 @@ fn parse_sections(table: &[u8]) -> Result<Sections<'_>, TableError> {
         icu_packages: next_section(ICU_PACKAGE_RECORD_BYTES)?,
         icu_runs: next_section(ICU_RUN_RECORD_BYTES)?,
         icu_languages: next_section(ICU_LANGUAGE_RECORD_BYTES)?,
-        libraries: next_section(LIBRARY_RECORD_BYTES)?,
-        library_sets: next_section(LIBRARY_SET_RECORD_BYTES)?,
-        text: next_section(TEXT_RECORD_BYTES)?,
         module_texts: next_section(MODULE_TEXT_RECORD_BYTES)?,
     })
 }
@@ -450,53 +428,6 @@ fn parse_icu_packages(
     Ok(packages)
 }
 
-fn parse_library_sets(library_sets: &[u8], set_count: usize) -> Result<Vec<SetIndex>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::LibrarySets);
-    let mut sets = Vec::with_capacity(library_sets.len() / LIBRARY_SET_RECORD_BYTES);
-    let mut previous: Option<SetIndex> = None;
-    for record in library_sets.as_chunks::<LIBRARY_SET_RECORD_BYTES>().0 {
-        let set = read_set_index(read_u16(record, 0), set_count).ok_or(MALFORMED)?;
-        if previous.is_some_and(|previous| previous >= set) {
-            return Err(MALFORMED);
-        }
-        sets.push(set);
-        previous = Some(set);
-    }
-    Ok(sets)
-}
-
-fn parse_libraries(sections: &Sections<'_>, set_count: usize) -> Result<Vec<Library>, TableError> {
-    const MALFORMED: TableError = TableError::Malformed(MalformedTable::Libraries);
-    let mut text = Tiling::new(sections.text, TEXT_RECORD_BYTES);
-    let mut library_sets = Tiling::new(sections.library_sets, LIBRARY_SET_RECORD_BYTES);
-    let mut libraries = Vec::with_capacity(sections.libraries.len() / LIBRARY_RECORD_BYTES);
-    let mut previous_name: Option<&str> = None;
-    for record in sections.libraries.as_chunks::<LIBRARY_RECORD_BYTES>().0 {
-        let name = read_text(&mut text, read_u32(record, 0), read_u32(record, 4))?;
-        let version = read_text(&mut text, read_u32(record, 8), read_u32(record, 12))?;
-        let sets = library_sets
-            .take(read_u32(record, 16), read_u32(record, 20))
-            .ok_or(MALFORMED)?;
-        if previous_name.is_some_and(|previous| previous >= name) {
-            return Err(MALFORMED);
-        }
-        libraries.push(Library {
-            name: Box::from(name),
-            version: Box::from(version),
-            has_retained_bytes: read_flag(read_u32(record, 24)).ok_or(MALFORMED)?,
-            sets: parse_library_sets(sets, set_count)?,
-        });
-        previous_name = Some(name);
-    }
-    if !library_sets.is_complete() {
-        return Err(MALFORMED);
-    }
-    if !text.is_complete() {
-        return Err(TableError::Malformed(MalformedTable::Text));
-    }
-    Ok(libraries)
-}
-
 fn are_some_of_set(readers: SetIndex, set: SetIndex, sets: &[FeatureSet]) -> bool {
     readers != set && sets[usize::from(readers.0)].is_subset_of(&sets[usize::from(set.0)])
 }
@@ -555,7 +486,6 @@ pub fn parse_trim_table(section: &[u8]) -> Result<TrimTable, TableError> {
     let edges = parse_edges(&sections)?;
     let ranges = parse_ranges(&sections, base_address, set_count)?;
     let icu_packages = parse_icu_packages(&sections, base_address, set_count, &icu_languages)?;
-    let libraries = parse_libraries(&sections, set_count)?;
     let module_texts = parse_module_texts(&sections, base_address, &sets)?;
     Ok(TrimTable {
         features_hash: read_u64(table, FEATURES_HASH_OFFSET),
@@ -565,7 +495,6 @@ pub fn parse_trim_table(section: &[u8]) -> Result<TrimTable, TableError> {
         ranges,
         icu_packages,
         icu_languages,
-        libraries,
         module_texts,
     })
 }

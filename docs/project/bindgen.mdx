@@ -785,11 +785,8 @@ A few things a schema cannot say with bindgen's own keys:
 | any other key                             | a column of the table: `SignatureColumns`, `EntryColumns` in `src/codegen/builtins/vocabulary.ts` |
 
 `b.any.returning(..)` is still `b.any` to Rust. Each word is `"string"`, `"number"`, `"int32"`, `"bigint"`, `"boolean"`,
-`"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself), the name of a class of a schema, or one
-of `nativeInstances` in `src/codegen/declared-type-checks.ts` (`"Array"`, `"Buffer"`, `"Headers"` ..). Compiled code takes
-the words on trust. In a build with assertions (a debug build, CI's ASAN lane) the generated host function looks at the
-value and ends the process, naming the member, if it is none of them. A release build looks at nothing. So does `x_set_cached` of a cached getter. A result that is a class (`b.self`, `Other.nullable`)
-or `b.string.local` is held to its type the same way, because Rust may hand back any JS value for it. Without
+`"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself) or the name of a class (`"Array"`,
+`"Buffer"`, `"Headers"`, a class of a schema ..). Compiled code takes the words on trust. Without
 `.returning` the compiler takes a `b.any` result for an object nobody knows, and takes the member to do anything at all
 to its operands.
 

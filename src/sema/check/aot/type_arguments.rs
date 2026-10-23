@@ -98,30 +98,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .find_map(|&part| self.find_reference_to_class(part, class)),
-            TypeData::Intrinsic(_)
-            | TypeData::UnresolvedName { .. }
-            | TypeData::StringLit { .. }
-            | TypeData::NumberLit { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::BoolLit { .. }
-            | TypeData::EnumLit { .. }
-            | TypeData::Enum { .. }
-            | TypeData::EvolvingArray(_)
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::Marker(_)
-            | TypeData::Union(_)
-            | TypeData::Tuple { .. }
-            | TypeData::Anon { .. }
-            | TypeData::Fns { .. }
-            | TypeData::Synth(_)
-            | TypeData::ReverseMapped { .. }
-            | TypeData::Cond { .. }
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Keyof(_)
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. } => None,
+            _ => None,
         }
     }
 

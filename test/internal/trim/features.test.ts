@@ -1,18 +1,14 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
-import { resolveConfig, type Toolchain } from "../../../scripts/build/config.ts";
-import { allDeps } from "../../../scripts/build/deps/index.ts";
-import type { ResolvedDep } from "../../../scripts/build/source.ts";
+import { type Toolchain } from "../../../scripts/build/config.ts";
 import { checkBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import { declarationsOf, declarationsPath, documentedModules } from "../../../scripts/build/trim/declarations.ts";
 import { featureNamed, loadFeatures } from "../../../scripts/build/trim/features.ts";
 import { icuItemClasses } from "../../../scripts/build/trim/icu-data.ts";
-import { readLibrariesFile, writeLibrariesFile } from "../../../scripts/build/trim/libraries.ts";
-import { objectFormats, type BuiltinUses } from "../../../scripts/build/trim/types.ts";
+import { type BuiltinUses } from "../../../scripts/build/trim/types.ts";
 import { specifierOf } from "../../../src/codegen/builtins-manifest-model.ts";
 import { guardHeader } from "./toy-program.ts";
 
@@ -116,53 +112,6 @@ test("no trim feature documents a module of src/js/internal", () => {
   const documented = model.trimFeatures.flatMap(trimFeature => documentedModules(model, uses, trimFeature));
   expect(documented.length).toBeGreaterThan(10);
   expect(documented.filter(module => internalSpecifiers.has(module))).toEqual([]);
-});
-
-test("every profile has a ratio for every format", () => {
-  expect(model.profiles.length).toBeGreaterThan(0);
-  expect(
-    model.profiles
-      .filter(profile => objectFormats.some(format => profile.minimumCutRatio[format] === undefined))
-      .map(profile => profile.name),
-  ).toEqual([]);
-});
-
-test("every vendored library is listed with the version that is built", () => {
-  using dir = tempDir("trim-libraries", {});
-  const buildDir = String(dir);
-  const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const depsFolder = join(root, "scripts", "build", "deps");
-  const depFiles = readdirSync(depsFolder).filter(
-    file => file.endsWith(".ts") && !["index.ts", "nodejs-headers.ts", "webkit.ts"].includes(file),
-  );
-  const sqliteHeader = readFileSync(join(root, "src", "jsc", "bindings", "sqlite", "sqlite3_local.h"), "utf8");
-  const sqliteVersion = /#define SQLITE_VERSION +"([^"]+)"/.exec(sqliteHeader)![1]!;
-  const versions = depFiles.map(file => {
-    const pinned = /_COMMIT = "([0-9a-f]{40})";(?: \/\/ v?(\S+))?/.exec(readFileSync(join(depsFolder, file), "utf8"));
-    return [basename(file, ".ts"), pinned ? (pinned[2] ?? pinned[1]!.slice(0, 8)) : sqliteVersion] as const;
-  });
-
-  const cfg = resolveConfig(
-    { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", buildDir, linuxSysroot: buildDir },
-    mockToolchain(),
-  );
-  const deps = allDeps.map(
-    dep =>
-      ({
-        name: dep.name,
-        libs: [join(buildDir, `${dep.name}.a`)],
-        objects: [],
-        sources: [],
-      }) as Partial<ResolvedDep> as ResolvedDep,
-  );
-  const listed = readLibrariesFile(writeLibrariesFile(cfg, deps)).libraries;
-
-  const listedVersion = (dep: string) =>
-    listed.find(library => normalize(library.name).startsWith(normalize(dep)))?.version;
-  expect(versions.map(([dep]) => [dep, listedVersion(dep)] as const)).toEqual(versions);
-  expect(listed.length).toBe(depFiles.length);
-  const names = listed.map(library => library.name);
-  expect(names).toEqual([...names].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))));
 });
 
 const neverOffered: Record<string, string> = {

@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { unsupported } from "./run-programs";
 
 const assets = {
@@ -42,8 +43,7 @@ test.skipIf(unsupported)(
       said: expect.not.stringContaining("error"),
       exitCode: 0,
     });
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([join(String(dir), "out")]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false true 8081 1,1 hello\n", stderr: "", exitCode: 0 });
   },
   120_000,

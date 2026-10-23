@@ -1,3 +1,0 @@
-import { programs } from "./run-programs";
-
-programs("classes-below-built-in-classes", 3, 8);

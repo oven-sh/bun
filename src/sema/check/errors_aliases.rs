@@ -12,6 +12,7 @@
 //! Comment directives: `Directives` determines which directive suppresses a diagnostic, `expected_errors` creates the
 //! TS2578 for each `@ts-expect-error`, and `Program::finish_file` drops those whose directive was used.
 
+use super::aot::DiagnosticSubject;
 use super::errors_operators::language_version;
 use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
@@ -1324,7 +1325,8 @@ impl Checker<'_, '_> {
         } else if site.is_for_augmentation {
             self.error_at(at, 2664, &[Arg::Atom(spec)]);
         } else if is_side_effect {
-            self.error_at(at, 2882, &[Arg::Atom(spec)]);
+            self.error_at(at, 2882, &[Arg::Atom(spec)]).subject =
+                DiagnosticSubject::ModuleSpecifier(spec);
         // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
         } else if crate::resolve::is_node_core_module(text)
             && self.hir(file).text.get(start as usize) != Some(&b'`')
@@ -1334,7 +1336,8 @@ impl Checker<'_, '_> {
             let code = if uses_wildcard_types { 2580 } else { 2591 };
             self.error_at(at, code, &[Arg::Atom(spec)]);
         } else {
-            self.error_at(at, 2307, &[Arg::Atom(spec)]);
+            self.error_at(at, 2307, &[Arg::Atom(spec)]).subject =
+                DiagnosticSubject::ModuleSpecifier(spec);
         }
         false
     }

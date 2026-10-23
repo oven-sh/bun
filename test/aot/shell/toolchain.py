@@ -5,13 +5,13 @@
     $TESTAOT print <program> [--until=<PassID>] references=narrow [<option word>...]
     $JSC --aotImagePath=<image> [--<JSC option>=<value>...] -e <text of prelude.js> -e "runCompiledEntryPoint(<id>)"
 
-The front end writes the program as IR. A Bun as the front end goes on to build an executable, so it also gets `--outfile <file>`.
+The front end is a Bun. It writes the program as IR and goes on to build an executable, so it also gets `--outfile <file>`.
 `testaot compile` writes the image and prints `entry <index> <id>` for each entry point. `testaot print` prints the IR as text: as read,
 or after the first run of a pass. `testaot list options` prints the option words, `testaot list passes` the names of the passes.
 
 Each tool is an executable file named by an environment variable:
 
-    FRONT_END   cargo build --release -p bun_aot_standalone   (target/release/bun-aot), or a Bun
+    FRONT_END   a Bun built from this tree
     TESTAOT     BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local --target=testaot   (build/release-local/testaot)
     JSC         BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local --target=jsc       (build/release-local/jsc)
     PLAIN       any Bun
@@ -91,13 +91,9 @@ def front_end(source, out, flags=(), *, cwd=None, seconds=120, env=None):
 
     Only the file counts, not the exit code: a Bun goes on to its own engine, which has host built-ins and rejects this program."""
     _remove_file(out)
-    command = [tool("FRONT_END"), "compile", source, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", *flags]
-    is_bun = not os.path.basename(command[0]).startswith("bun-aot")
-    if is_bun:
-        command += ["--outfile", out + ".executable"]
+    command = [tool("FRONT_END"), "compile", source, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", *flags, "--outfile", out + ".executable"]
     code, said = run(command, cwd, seconds, env)
-    if is_bun:
-        _remove_file(out + ".executable")
+    _remove_file(out + ".executable")
     if not os.path.isfile(out):
         raise ToolFailed(code, said)
 

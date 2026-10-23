@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 
 const files = {
@@ -38,14 +39,7 @@ test("nothing is refused here", () => expect(1).toBe(1));
 };
 
 async function bunTest(cwd: string, ...flags: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...flags],
-    cwd,
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], cwd, { ...bunEnv, NO_COLOR: "1" });
   return { output: stdout + stderr, exitCode };
 }
 

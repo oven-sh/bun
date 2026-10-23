@@ -109,11 +109,7 @@ fn create_class_slot_variable(
             None
         }
         ClassSlot::StaticField(_) => Some(layouts::class_layout(file, class)),
-        ClassSlot::ClassObject
-        | ClassSlot::ClassToken
-        | ClassSlot::ComputedKey(_)
-        | ClassSlot::PrivateMethod(_)
-        | ClassSlot::DecoratorState => None,
+        _ => None,
     };
     Variable {
         name: None,

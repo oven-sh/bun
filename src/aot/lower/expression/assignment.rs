@@ -44,43 +44,7 @@ pub(in crate::lower) fn classify_assignment_target(
         ExprKind::Object(properties) if !is_parenthesized => {
             AssignmentTarget::ObjectPattern(properties)
         }
-        ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => AssignmentTarget::Expression,
+        _ => AssignmentTarget::Expression,
     }
 }
 
@@ -165,9 +129,7 @@ fn lower_plain_assignment(
             pattern::assign_pattern(lowering, target, assigned, Some(value));
             assigned
         }
-        AssignmentTarget::Elision
-        | AssignmentTarget::Identifier { .. }
-        | AssignmentTarget::Expression => {
+        _ => {
             let reference = member::lower_reference(lowering, target, KeyConversion::AtAccess);
             let assigned = lower_assigned_value(lowering, target, value);
             lowering.set_position(plain_store_position(lowering.file, expression, target));
@@ -259,10 +221,7 @@ fn lower_assigned_value(
             let key = member::name_key(lowering.file, name);
             lower_named_evaluation(lowering, value, PropertyName::Constant(key))
         }
-        AssignmentTarget::Elision
-        | AssignmentTarget::ArrayPattern(_)
-        | AssignmentTarget::ObjectPattern(_)
-        | AssignmentTarget::Expression => lower_expression(lowering, value),
+        _ => lower_expression(lowering, value),
     }
 }
 
@@ -282,13 +241,7 @@ pub(super) fn lower_update(
         UnOp::PreDec => (UpdateOperator::Decrement, false),
         UnOp::PostInc => (UpdateOperator::Increment, true),
         UnOp::PostDec => (UpdateOperator::Decrement, true),
-        UnOp::Plus
-        | UnOp::Minus
-        | UnOp::BitNot
-        | UnOp::Not
-        | UnOp::Typeof
-        | UnOp::Void
-        | UnOp::Delete => {
+        _ => {
             debug_assert!(false, "not an update operator");
             return old;
         }

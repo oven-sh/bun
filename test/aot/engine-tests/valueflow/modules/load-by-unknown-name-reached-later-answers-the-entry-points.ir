@@ -1,0 +1,90 @@
+# module.exports = fromMain; require("./early.cjs"); one()   with   one() { two() }  two() { three() }  three() { require(name)() }   built with two entry points, main.cjs and second.cjs
+# A module is required under a name nobody knows only in a function that is entered late, after modules have run. The load evaluates nothing: the file that nothing else names stays unreached.
+# It answers what the entry points export, the one that is still running among them, and not what early.cjs exports, although that file has run. No code that the build has not seen runs for that
+# RUN: valueflow-solve calls
+# CHECK: f3 v3 -> {{*}}f6 f10
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f5
+# UNREACHED-NEXT: unreached f7
+# UNREACHED-NEXT: unreached f8
+# UNREACHED-NOT: unreached f
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f3:v2
+# UNSEEN-NEXT: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/early.cjs" displayPath="early.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g1
+module m2 path="/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g2
+module m3 path="/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f9 exportsVariable=g3
+entry module=m0
+entry module=m3
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    PutModuleVariable v0 variable=g0
+    EvaluateModule module=m1 referrer=m0
+    v3 = GetModuleVariable variable=g1
+    v4 = NewClosure function=f1
+    v5 = Call v4
+    Return
+}
+function f1 name="one" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = RequireDynamic v1 referrer=m0
+    v3 = Call v2
+    Return v3
+}
+function f4 name="early" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f5 name="other" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f6 name="fromMain" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="fromEarly" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="fromOther" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="second" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f10
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f10 name="fromSecond" module=m3 results=[{type=anything}] {
+  b0():
+    Return
+}

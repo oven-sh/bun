@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Rules of --aot about functions. `bun run --debug-aot`, which runs compiled code, prints what is recorded of the executable.
@@ -36,14 +37,7 @@ test.concurrent.each([
   "typed-objects/field-attributes-changed-through-untyped-code",
 ])("%s", async name => {
   const file = [".ts", ".js", "/main.ts"].map(end => join(programs, name + end)).find(path => existsSync(path))!;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--debug-aot", file],
-    cwd: dirname(file),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", file], dirname(file));
   // A stored output says where an executable differs from plain Bun on purpose. Without one, plain Bun is what it has to print.
   const stored = join(programs, name + ".expected.txt");
   const printsUnderPlainBun = async () => {

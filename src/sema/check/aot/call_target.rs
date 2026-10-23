@@ -16,16 +16,7 @@ const UNTYPED: PositionTypes = PositionTypes {
 fn is_construct_signature(kind: FnKind) -> bool {
     match kind {
         FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType => true,
-        FnKind::Decl
-        | FnKind::Expr
-        | FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::FunctionType
-        | FnKind::IndexSignature => false,
+        _ => false,
     }
 }
 
@@ -198,11 +189,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 sig: inner,
                 ret: TypeId::UNRESOLVED,
             } if self.c.is_optional_call_signature_of(inner) => inner,
-            SigData::Decl { .. }
-            | SigData::DefaultConstruct { .. }
-            | SigData::Construct { .. }
-            | SigData::Synth { .. }
-            | SigData::WithReturn { .. } => signature,
+            _ => signature,
         }
     }
 
@@ -405,15 +392,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let symbol = self.c.class_sym(of, class);
                 PositionTypes::unwritten(self.class_instance_type(symbol))
             }
-            FnKind::Decl
-            | FnKind::Expr
-            | FnKind::Arrow
-            | FnKind::StaticBlock
-            | FnKind::CallSignature
-            | FnKind::ConstructSignature
-            | FnKind::FunctionType
-            | FnKind::ConstructorType
-            | FnKind::IndexSignature => UNTYPED,
+            _ => UNTYPED,
         }
     }
 }

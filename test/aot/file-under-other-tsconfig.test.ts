@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const options = `"strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "types": []`;
@@ -75,12 +76,6 @@ const leftToTheProgram: Record<string, [specifier: string, program: string, near
 
 const buildCommand = [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"];
 const runFromSourceCommand = [bunExe(), "run", "--aot", "main.ts"];
-
-async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 for (const [what, files] of Object.entries(accepted)) {
   test(

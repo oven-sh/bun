@@ -278,30 +278,6 @@ fn warn_function_introspection(
 fn is_function_shape(kind: ShapeKind<'_>) -> bool {
     match kind {
         ShapeKind::Function(_) => true,
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => false,
+        _ => false,
     }
 }

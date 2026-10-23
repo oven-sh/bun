@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, tempDir } from "harness";
 import { test } from "./supported";
+import { run } from "./harness/run";
 
 // Freezing an array, or allocating an Array subclass, must not break what compiled code assumes about structures and cell types.
 // Only language semantics are exercised here, so plain `bun run` is the oracle.
@@ -66,8 +67,7 @@ export function frozenArrayTests(part: number, parts: number) {
     using dir = tempDir("run-aot-frozen-arrays", { "main.mjs": prelude + cases.join("\n") + "\n" });
     const results = [];
     for (const flags of [[], ["--aot"]]) {
-      await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, "main.mjs"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { stdout, exitCode } = await run([bunExe(), "run", ...flags, "main.mjs"], String(dir));
       results.push({ lines: stdout.split("\n"), exitCode });
     }
     expect(results[0].lines.length).toBe(cases.length + 1);

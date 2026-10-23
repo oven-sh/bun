@@ -1,12 +1,5 @@
 {
  "callee-alone": "as bun run",
  "callee-and-an-eval-elsewhere": "as bun run",
- "eval-alone-in-a-declaration": "all agree",
- "eval-in-a-declaration-that-is-exported": "all agree",
- "eval-in-a-declaration-with-var": "all agree",
- "eval-in-a-function-expression": "all agree",
- "eval-in-a-method": "all agree",
- "eval-in-a-nested-declaration": "all agree",
- "eval-in-a-required-file": "all agree",
  "eval-require": "as bun run"
 }

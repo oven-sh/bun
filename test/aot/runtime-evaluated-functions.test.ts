@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { openTypesFlags } from "./open-types";
 import { test } from "./supported";
 
@@ -27,17 +28,16 @@ async function run(files: Record<string, string>, entryPoint: string) {
   });
   const directory = String(dir);
   const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", ...openTypesFlags, entryPoint, "--outfile", outfile],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  const {
+    stdout: out,
+    stderr: err,
+    exitCode,
+  } = await runCommand(
+    [bunExe(), "build", "--compile", "--aot", ...openTypesFlags, entryPoint, "--outfile", outfile],
+    directory,
+  );
   expect({ exitCode, output: exitCode ? out + err : "" }).toEqual({ exitCode: 0, output: "" });
-  await using compiled = Bun.spawn({ cmd: [outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, ended] = await Promise.all([compiled.stdout.text(), compiled.stderr.text(), compiled.exited]);
+  const { stdout, stderr, exitCode: ended } = await runCommand([outfile], directory);
   return { stdout, stderr, exitCode: ended, buildOutput: out + err };
 }
 const prints = (stdout: string) => expect.objectContaining({ stdout, stderr: "", exitCode: 0 });

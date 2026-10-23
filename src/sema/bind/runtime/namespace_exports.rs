@@ -36,30 +36,7 @@ fn classify_declaration(decl: Decl) -> NamespaceDeclaration {
         Decl::Class(class) => NamespaceDeclaration::Class(class),
         Decl::Enum(id) => NamespaceDeclaration::Enum(id),
         Decl::Module(module) => NamespaceDeclaration::Module(module),
-        Decl::Param(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::EnumMember(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => NamespaceDeclaration::NoBinding,
+        _ => NamespaceDeclaration::NoBinding,
     }
 }
 

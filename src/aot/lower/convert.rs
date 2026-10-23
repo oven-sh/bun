@@ -229,10 +229,7 @@ fn convert_as(
     if let (Some(source), Some(target)) = (source, target) {
         let kind = match construct {
             Construct::Assertion => ConversionKind::Asserted,
-            Construct::Flow
-            | Construct::ContentsRead
-            | Construct::IndexSignatureRead
-            | Construct::CallResult { .. } => ConversionKind::Performed,
+            _ => ConversionKind::Performed,
         };
         supertypes::record_flow_into_type(lowering.file, source, target, kind);
     }

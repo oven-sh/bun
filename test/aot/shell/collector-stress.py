@@ -6,7 +6,7 @@ image is stressed, not the compile. A value that compiled code still uses and th
 time, instead of once in a million runs. Run it on Linux x64 too: with fewer registers, fewer stale copies of a pointer are left to keep
 such a value alive by accident.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/collector-stress.py [-j <jobs>] [--every <n>] [--young] [--part <i>/<n>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> python3 test/aot/shell/collector-stress.py [-j <jobs>] [--every <n>] [--young] [--part <i>/<n>] <program>... | all
 
     --every <n>     collect at every n-th slow-path allocation (default: 3). 1 and 2 find other bugs and take longer
     --young         run Eden collections. A full collection finds everything from the roots. An Eden collection relies on the write

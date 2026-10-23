@@ -125,24 +125,7 @@ impl<S: Storage> BoundIn<S> {
             Decl::ExportExpr(stmt) => {
                 find_symbol(&declarations.export_expression_symbols, stmt).unwrap_or(SymbolId::NONE)
             }
-            Decl::Interface(_)
-            | Decl::Alias(_)
-            | Decl::EnumMember(_)
-            | Decl::TypeParam(_)
-            | Decl::ExportSpec(_)
-            | Decl::ExportStarAs(_)
-            | Decl::UmdGlobal(_)
-            | Decl::File
-            | Decl::ModuleExports(_)
-            | Decl::ExportsProperty(_)
-            | Decl::Expando(_)
-            | Decl::ObjectLiteral(_)
-            | Decl::CommonJsVariable
-            | Decl::Member(_)
-            | Decl::ParameterProperty(_)
-            | Decl::ThisProperty(_)
-            | Decl::Property(_)
-            | Decl::TypeLiteral(_) => return None,
+            _ => return None,
         })
     }
 
@@ -290,12 +273,7 @@ impl Bound<'_> {
                     false => InitialState::Initialized,
                 }
             }
-            BindingKind::NoBinding
-            | BindingKind::Import
-            | BindingKind::Let
-            | BindingKind::Const
-            | BindingKind::Class
-            | BindingKind::ClassInnerName => InitialState::Uninitialized,
+            _ => InitialState::Uninitialized,
         }
     }
 
@@ -315,26 +293,7 @@ impl Bound<'_> {
             NodeData::Pat(name) => {
                 find_entry(&references.dynamic_declarator_lookups, name).copied()
             }
-            NodeData::None
-            | NodeData::File
-            | NodeData::Stmt(_)
-            | NodeData::Type(_)
-            | NodeData::PatProp(_)
-            | NodeData::PatElem(_)
-            | NodeData::Param(_)
-            | NodeData::TypeParam(_)
-            | NodeData::Member(_)
-            | NodeData::Prop(_)
-            | NodeData::VarDecl(_)
-            | NodeData::Case(_)
-            | NodeData::EnumMember(_)
-            | NodeData::ImportSpec(_)
-            | NodeData::ExportSpec(_)
-            | NodeData::TupleElem(_)
-            | NodeData::Modifier(_)
-            | NodeData::Name(_)
-            | NodeData::Paren(_)
-            | NodeData::Part(..) => None,
+            _ => None,
         }
     }
 

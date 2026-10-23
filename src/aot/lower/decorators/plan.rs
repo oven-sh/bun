@@ -34,11 +34,7 @@ fn decorated_kind(hir: &hir::File<'_>, member: MemberId) -> Option<DecoratedKind
         MemberKind::Setter => Some(DecoratedKind::Setter),
         MemberKind::Property if is_auto_accessor(hir, member) => Some(DecoratedKind::Accessor),
         MemberKind::Property => Some(DecoratedKind::Field),
-        MemberKind::Constructor
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature
-        | MemberKind::StaticBlock => None,
+        _ => None,
     }
 }
 

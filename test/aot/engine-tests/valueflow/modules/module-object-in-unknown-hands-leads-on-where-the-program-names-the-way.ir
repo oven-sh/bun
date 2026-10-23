@@ -1,0 +1,32 @@
+# main.cjs: require("./child.cjs"); module.children; handedOver(module)        child.cjs: module.exports = exportedByChild
+# The front end says that the program names a way between module objects (flags of main.cjs), so the host answers `children` to whoever holds a module object. The module object of main.cjs is in unknown hands, and with it that of child.cjs and what child.cjs exports.
+# main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has a program that does not name the way
+# RUN: valueflow-why escaped=f2
+# CHECK: n0 escaped
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = PropGet v2 key="children"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="handedOver" [isFreeName]
+    v6 = Call v5, -, v2
+    Return
+}
+function f1 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="exportedByChild" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

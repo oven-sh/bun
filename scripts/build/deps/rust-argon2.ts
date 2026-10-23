@@ -11,7 +11,6 @@ const RUST_ARGON2_COMMIT = "ed81866f163f0c7026aa6fd8388adf37242eb32a"; // 3.0.0
 
 export const rustArgon2: Dependency = {
   name: "rust-argon2",
-  release: "3.0.0",
 
   source: () => ({
     kind: "github-archive",

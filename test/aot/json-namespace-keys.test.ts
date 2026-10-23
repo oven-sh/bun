@@ -1,17 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
-
-// The keys of `import * as ns from "./data.json"`. A module namespace lists its names sorted. `bun run` exports every key of the
-// object; the bundler only those that are identifiers. Nothing is bundled under --aot: `bun run --aot` and an executable built with
-// --aot print what `bun run` prints.
-
-async function spawned(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function run(flags: string[], cwd: string, entry: string) {
   return spawned([bunExe(), "run", ...flags, entry], cwd);

@@ -517,10 +517,7 @@ fn host_value_decides_expression() {
         );
         let constant = match expected {
             Decision::Constant(constant) => FoldedValue::Constant(constant),
-            Decision::Unknown
-            | Decision::GlobalPath(_)
-            | Decision::Data(_)
-            | Decision::DeferredData => FoldedValue::Unknown,
+            _ => FoldedValue::Unknown,
         };
         assert_eq!(decisions.constant(&analyzed.hir, call), constant);
     }

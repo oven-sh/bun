@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const options = `"target": "esnext", "module": "esnext", "moduleResolution": "bundler", "skipLibCheck": true, "types": []`;
@@ -12,14 +13,10 @@ const project = {
 
 async function run(files: Record<string, string>, args: string[]) {
   using dir = tempDir("aot-preload", { ...project, ...files });
-  await using ran = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd: join(String(dir), "sub"),
-    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], join(String(dir), "sub"), {
+    ...bunEnv,
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   return { stdout, stderr, exitCode };
 }
 

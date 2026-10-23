@@ -1,0 +1,32 @@
+# validate<T>(v) of a list with more nodes than the limit has interpreted nodes, so the general validator takes the value at once, and the call reports one loss
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxParserPlanNodes:2
+# RUN: pass SelectTypedResults
+# LOSS: MaxParserPlanNodes x1 f0 v1
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ValidatorsCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0, L1] validation=[{shape=Object{layout=L0 members=[{key="a" node=1 field=0}, {key="b" node=2 field=1}]} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Object{layout=L1 members=[{key="x" node=1 field=0}]} type=L1}]
+expectedresult x1 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="x" node=1 field=0}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="b" declared={type=L1}}]
+layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
+
+function f0 name="threeNodes" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="threeNodes"
+# CHECK-NOT: CallDirect
+# CHECK: = CallBuiltin -, v0, {{*}} overload=CompilerHelpersValidateByPlan/0
+# CHECK-NOT: CallDirect
+
+function f1 name="twoNodes" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
+    Return v1
+}
+# CHECK-LABEL: function f1 name="twoNodes"
+# CHECK: = CallDirect v0 function=[[validator]]
+# CHECK: function [[validator]] {{*}}role=Validator {{*}}creator=Validator{type=L1 layout=L1 expectedResult=x1}

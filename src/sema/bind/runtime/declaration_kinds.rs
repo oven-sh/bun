@@ -25,14 +25,7 @@ impl DeclarationKind {
             DeclarationKind::NoBinding
             | DeclarationKind::ImplicitBlockFunction
             | DeclarationKind::BlockScopedRequire => false,
-            DeclarationKind::Var
-            | DeclarationKind::Parameter
-            | DeclarationKind::TopLevelFunction
-            | DeclarationKind::BlockFunction
-            | DeclarationKind::Lexical
-            | DeclarationKind::Import
-            | DeclarationKind::SimpleCatchParameter
-            | DeclarationKind::TypeScriptValue => true,
+            _ => true,
         }
     }
 }
@@ -76,29 +69,7 @@ pub(super) fn symbol_column(decl: Decl) -> SymbolColumn {
         Decl::Class(c) => SymbolColumn::Class(c),
         Decl::Enum(e) => SymbolColumn::Enum(e),
         Decl::Module(m) => SymbolColumn::Module(m),
-        Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::EnumMember(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => SymbolColumn::None,
+        _ => SymbolColumn::None,
     }
 }
 
@@ -186,17 +157,7 @@ pub(super) fn creates_binding(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) 
                 ..
             }
         ),
-        Decl::ExportExpr(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_) => true,
+        _ => true,
     }
 }
 
@@ -234,59 +195,12 @@ pub(super) fn statement_position(
                 }
                 StmtKind::Labeled { .. } => statement = parent,
                 StmtKind::Block(_) | StmtKind::Switch { .. } => return FunctionPosition::Block,
-                StmtKind::Empty
-                | StmtKind::Debugger
-                | StmtKind::Expr(_)
-                | StmtKind::Var(_)
-                | StmtKind::Fn(_)
-                | StmtKind::Class(_)
-                | StmtKind::Interface(_)
-                | StmtKind::TypeAlias(_)
-                | StmtKind::Enum(_)
-                | StmtKind::Module(_)
-                | StmtKind::Return(_)
-                | StmtKind::If { .. }
-                | StmtKind::For { .. }
-                | StmtKind::ForIn { .. }
-                | StmtKind::ForOf { .. }
-                | StmtKind::While { .. }
-                | StmtKind::DoWhile { .. }
-                | StmtKind::Try { .. }
-                | StmtKind::Throw(_)
-                | StmtKind::Break(_)
-                | StmtKind::Continue(_)
-                | StmtKind::Import(_)
-                | StmtKind::ImportEquals(_)
-                | StmtKind::ExportNamed(_)
-                | StmtKind::ExportStar { .. }
-                | StmtKind::ExportDefault(_)
-                | StmtKind::ExportAssign(_)
-                | StmtKind::ExportAsNamespace(_)
-                | StmtKind::With { .. }
-                | StmtKind::Directive { .. } => return FunctionPosition::ImplicitBlock,
+                _ => return FunctionPosition::ImplicitBlock,
             },
             Parent::FnBody(_) | Parent::File | Parent::Module(_) => {
                 return FunctionPosition::TopLevel;
             }
-            Parent::None
-            | Parent::Expr(_)
-            | Parent::Stmt(_)
-            | Parent::VarInit(_)
-            | Parent::ParamDefault(_)
-            | Parent::PatPropDefault(_)
-            | Parent::PatElemDefault(_)
-            | Parent::Prop(_)
-            | Parent::PropKey(_)
-            | Parent::PatKey(_)
-            | Parent::MemberKey(_)
-            | Parent::MethodKey(_)
-            | Parent::MemberInit(_)
-            | Parent::EnumInit(_)
-            | Parent::Case(_)
-            | Parent::ClassExtends(_)
-            | Parent::ClassDecorator(_)
-            | Parent::MemberDecorator(_)
-            | Parent::ParamDecorator(_) => return FunctionPosition::ImplicitBlock,
+            _ => return FunctionPosition::ImplicitBlock,
         }
     }
 }
@@ -331,17 +245,7 @@ fn function_kind(hir: &File<'_>, bound: &BoundBuilder, f: FnId) -> DeclarationKi
             }
             FunctionPosition::Block => DeclarationKind::BlockFunction,
         },
-        FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => DeclarationKind::NoBinding,
+        _ => DeclarationKind::NoBinding,
     }
 }
 
@@ -363,25 +267,7 @@ pub(super) fn declaration_kind(
             DeclarationKind::Import
         }
         Decl::Enum(_) | Decl::Module(_) | Decl::ImportEquals(_) => DeclarationKind::TypeScriptValue,
-        Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::EnumMember(_)
-        | Decl::TypeParam(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => DeclarationKind::NoBinding,
+        _ => DeclarationKind::NoBinding,
     }
 }
 

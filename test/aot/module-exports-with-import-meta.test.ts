@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `import.meta` says nothing about what kind of module a file is: without `import` and `export` it is CommonJS by the same signs as any
@@ -43,8 +44,7 @@ exports.isModule = require.main === module;
 };
 
 const run = async (cmd: string[], cwd: string) => {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd);
   return { stdout, stderr, exitCode };
 };
 

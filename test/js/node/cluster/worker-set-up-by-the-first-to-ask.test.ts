@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "../../../aot/harness/run";
 
 const expected = [
   'dgram-exclusive: message {"had":true,"has":false,"isWorker":true,"id":"number","state":"online","same":true,"keys":"Worker,_events,_eventsCount,_getServer,_maxListeners,_setupWorker,isMaster,isPrimary,isWorker,worker","extra":"after false number"} | online | exit 0',
@@ -15,13 +16,10 @@ const expected = [
 ];
 
 test("every kind of worker is set up once", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "worker-set-up-by-the-first-to-ask-fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    join(import.meta.dir, "worker-set-up-by-the-first-to-ask-fixture.js"),
+  ]);
   expect({ lines: stdout.trimEnd().split("\n"), stderr, exitCode }).toEqual({
     lines: expected,
     stderr: "",

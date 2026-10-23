@@ -20,7 +20,6 @@ export const modelOf = (...features: Feature[]): FeatureModel => ({
   trimFeatures: [],
   icuData: [],
   icuLanguageGroups: [],
-  profiles: [],
   hash: 0n,
 });
 

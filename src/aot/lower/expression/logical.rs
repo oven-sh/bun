@@ -209,28 +209,6 @@ fn logical_operator(op: BinOp) -> Option<LogicalOperator> {
         BinOp::And => Some(LogicalOperator::And),
         BinOp::Or => Some(LogicalOperator::Or),
         BinOp::Nullish => Some(LogicalOperator::Nullish),
-        BinOp::Add
-        | BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor
-        | BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::EqEq
-        | BinOp::NotEq
-        | BinOp::EqEqEq
-        | BinOp::NotEqEq
-        | BinOp::In
-        | BinOp::Instanceof
-        | BinOp::Comma => None,
+        _ => None,
     }
 }

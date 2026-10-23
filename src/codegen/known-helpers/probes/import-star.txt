@@ -1,2 +1,0 @@
-import * as probeNamespace from "./probe-a";
-export const probeResult = probeNamespace.probeValue;

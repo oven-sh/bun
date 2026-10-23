@@ -36,36 +36,6 @@ fn is_await_statement(hir: &File<'_>, stmt: StmtId) -> bool {
             let first = declarations.iter().next();
             first.is_some_and(|first| hir[first].kind == VarKind::AwaitUsing)
         }
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Expr(_)
-        | StmtKind::Fn(_)
-        | StmtKind::Class(_)
-        | StmtKind::Interface(_)
-        | StmtKind::TypeAlias(_)
-        | StmtKind::Enum(_)
-        | StmtKind::Module(_)
-        | StmtKind::Return(_)
-        | StmtKind::If { .. }
-        | StmtKind::For { .. }
-        | StmtKind::ForIn { .. }
-        | StmtKind::While { .. }
-        | StmtKind::DoWhile { .. }
-        | StmtKind::Block(_)
-        | StmtKind::Switch { .. }
-        | StmtKind::Try { .. }
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::Labeled { .. }
-        | StmtKind::Import(_)
-        | StmtKind::ImportEquals(_)
-        | StmtKind::ExportNamed(_)
-        | StmtKind::ExportStar { .. }
-        | StmtKind::ExportDefault(_)
-        | StmtKind::ExportAssign(_)
-        | StmtKind::ExportAsNamespace(_)
-        | StmtKind::With { .. }
-        | StmtKind::Directive { .. } => false,
+        _ => false,
     }
 }

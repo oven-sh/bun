@@ -158,19 +158,11 @@ fn compute_form(context: &Context<'_, '_>, symbol: SymbolId, kind: BindingKind) 
     if kind == BindingKind::Import {
         return match input.modules.import_binding(input.file, symbol) {
             ImportBinding::Unused => BindingForm::NotAValue,
-            ImportBinding::Variable(_)
-            | ImportBinding::Namespace { .. }
-            | ImportBinding::Exports { .. }
-            | ImportBinding::Builtin(_)
-            | ImportBinding::CapturedBuiltin { .. }
-            | ImportBinding::BuiltinMember { .. }
-            | ImportBinding::Synthetic(_)
-            | ImportBinding::NamespaceRead { .. }
-            | ImportBinding::Unbound => BindingForm::Import,
             ImportBinding::Local => {
                 debug_assert!(false, "the module graph binds every import");
                 BindingForm::Import
             }
+            _ => BindingForm::Import,
         };
     }
     if let Some(container) = find_container(context, symbol) {
@@ -212,11 +204,6 @@ fn top_scope(context: &Context<'_, '_>, function: WalkedFunctionId) -> ScopeId {
     let bound = context.input.bound;
     match context.walk.functions[function.index()].key {
         FunctionKey::ModuleBody(_) => context.file_scope,
-        FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_) => {
-            unreachable!("the walk meets no function of this kind")
-        }
         FunctionKey::Source(source) => bound.fns[source.function.idx()].scope,
         FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) => {
             unreachable!("a signature has no scopes")
@@ -230,6 +217,9 @@ fn top_scope(context: &Context<'_, '_>, function: WalkedFunctionId) -> ScopeId {
             let class = bound.member_class(member);
             let class = class.expect("an accessor function belongs to a class member");
             bound.class_scope[class.idx()]
+        }
+        _ => {
+            unreachable!("the walk meets no function of this kind")
         }
     }
 }

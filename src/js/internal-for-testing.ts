@@ -47,11 +47,6 @@ export const highwayStringsForTesting: (
     | "countChar"
     | "indexOfAny"
     | "lastIndexOfAny"
-    | "indexOfUntidySlash"
-    | "lastIndexOfSlash"
-    | "lastIndexOfSlashOrDot"
-    | "commonPrefixLength"
-    | "countSlashes"
     | "memmem"
     | "memrmem"
     | "memmem16"
@@ -1212,12 +1207,6 @@ export const resolveComputedSpecifier = (
 ): { kind: "computed"; candidates: string[] } | { kind: "all"; cause: string } =>
   JSON.parse(resolveComputedSpecifierNative(importer, prefix, suffix, kind));
 
-/** A native class whose members answer the value they are handed, whatever type they declare: src/runtime/api/declared_types_testing.bind.ts. */
-export const DeclaredTypesForTesting: new () => Record<string, (value?: unknown) => unknown> & {
-  readonly heldString: unknown;
-  readonly firstHeldString: unknown;
-} = $newRustFunction("declared_types_testing.rs", "getClass", 0)();
-
 const trimExecutableNative = $newRustFunction("trim_testing.rs", "trimExecutable", 3) as (
   path: string,
   out: string,
@@ -1230,23 +1219,6 @@ export const trimExecutable = (
   featureNames: string[],
 ): { removed: string[]; removedBytes: number; fileBytesSaved: number; uncutReason: string | null } =>
   JSON.parse(trimExecutableNative(path, out, featureNames.join("\n")));
-
-const measureTrimProfileNative = $newRustFunction("trim_testing.rs", "measureTrimProfile", 2) as (
-  path: string,
-  usedFeatureNames: string,
-) => string;
-/** What `bun build --compile --trim` would remove from the executable at `path` for a program that uses `usedFeatureNames` and no other feature. Writes nothing. */
-export const measureTrimProfile = (
-  path: string,
-  usedFeatureNames: string[],
-): { removedBytes: number; fileBytesSaved: number; uncutReason: string | undefined } => {
-  const summary = JSON.parse(measureTrimProfileNative(path, usedFeatureNames.join("\n")));
-  return {
-    removedBytes: summary.removedBytes,
-    fileBytesSaved: summary.fileBytesSaved,
-    uncutReason: summary.uncutReason ?? undefined,
-  };
-};
 
 const readTrimTableNative = $newRustFunction("trim_testing.rs", "readTrimTable", 1) as (path: string) => string;
 /** The trim table of the executable at `path`, as `decodeTable` of scripts/build/trim/table.ts returns it. Throws on a file without one. */

@@ -4,6 +4,7 @@
 #include "BunCompiledModules.h"
 #include <JavaScriptCore/AOTBuiltinTable.h>
 #include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -195,7 +196,7 @@ JSC_DEFINE_HOST_FUNCTION(getMemberOfRemovedBinding, (JSC::JSGlobalObject * globa
     auto name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto* handler = JSC::asObject(callFrame->thisValue());
-    if (name == vm.propertyNames->toPrimitiveSymbol)
+    if (name == vm.propertyNames->toPrimitiveSymbol || name == vm.propertyNames->iteratorSymbol)
         return JSC::JSValue::encode(handler->getDirect(vm, name));
     if (name.isSymbol() || name == vm.propertyNames->then)
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -207,10 +208,26 @@ JSC_DEFINE_HOST_FUNCTION(convertRemovedBindingToPrimitive, (JSC::JSGlobalObject*
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(getNextElementOfRemovedBinding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue standIn = JSC::asObject(callFrame->thisValue())->getDirect(vm, vm.propertyNames->value);
+    return JSC::JSValue::encode(JSC::createIteratorResultObject(globalObject, standIn, false));
+}
+
+JSC_DEFINE_HOST_FUNCTION(iterateRemovedBinding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* iterator = JSC::constructEmptyObject(globalObject);
+    iterator->putDirect(vm, vm.propertyNames->value, callFrame->thisValue());
+    iterator->putDirectNativeFunction(vm, globalObject, vm.propertyNames->next, 0, getNextElementOfRemovedBinding, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
+    return JSC::JSValue::encode(iterator);
+}
+
 }
 
 // A module reads the members of its native bindings while it is imported, and an import doesn't throw. Every member is the stand-in itself.
-// A module may also use a member as a number or a property key.
+// A module may also use a member as a number or a property key, or destructure the binding as an array.
 extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobalObject* globalObject, uint16_t feature)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -222,6 +239,7 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobal
     auto* handler = JSC::constructEmptyObject(globalObject);
     handler->putDirectNativeFunction(vm, globalObject, vm.propertyNames->get, 3, Bun::getMemberOfRemovedBinding, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
     handler->putDirectNativeFunction(vm, globalObject, vm.propertyNames->toPrimitiveSymbol, 1, Bun::convertRemovedBindingToPrimitive, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
+    handler->putDirectNativeFunction(vm, globalObject, vm.propertyNames->iteratorSymbol, 0, Bun::iterateRemovedBinding, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
     auto* standIn = JSC::ProxyObject::create(globalObject, target, handler);
     RETURN_IF_EXCEPTION(scope, {});
     handler->putDirect(vm, vm.propertyNames->value, standIn);

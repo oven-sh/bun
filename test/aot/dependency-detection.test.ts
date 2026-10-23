@@ -1,23 +1,19 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function build(directory: string, entryPoint: string) {
   const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: said, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile],
+    directory,
+  );
   if (exitCode) return { said, exitCode, stdout: "" };
-  await using ran = Bun.spawn({ cmd: [outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout] = await Promise.all([ran.stdout.text(), ran.exited]);
+  const { stdout } = await run([outfile], directory);
   return { said, exitCode, stdout };
 }
 const strict = (more: object = {}) =>
@@ -221,14 +217,7 @@ test("a type error in a file of a package that the program takes only types from
 }, 120_000);
 
 async function withoutBundler(directory: string, ...args: string[]) {
-  await using ran = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], directory);
   return { said: stdout + stderr, stdout, exitCode };
 }
 const takesFromClient = (index: string, name = "", use = "") => ({
@@ -422,14 +411,10 @@ test.each([
     const codes = (said: string) =>
       [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
     const defines = Object.entries(when).map(([name, value]) => `--define=${name}=${JSON.stringify(value)}`);
-    await using building = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", join(String(dir), "out"), ...defines],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [built] = await Promise.all([building.stderr.text(), building.exited]);
+    const { stderr: built } = await run(
+      [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", join(String(dir), "out"), ...defines],
+      String(dir),
+    );
     const checked = await withoutBundler(String(dir), "check", "--aot", ...defines, "main.ts");
     expect({ build: codes(built), check: codes(checked.said) }).toEqual({ build: ["TS100009"], check: ["TS100009"] });
     expect(checked.exitCode).toBe(0);

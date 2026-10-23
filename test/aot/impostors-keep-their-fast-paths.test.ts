@@ -4,6 +4,7 @@ import { cpSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { buildEnvironment, compileCommand, withReport } from "./harness/flags";
+import { run } from "./harness/run";
 import {
   countTurn,
   functionsOf,
@@ -55,12 +56,6 @@ async function runCases(project: Built, rows: Row[], countsInstructions: boolean
   };
   await Promise.all(Array.from({ length: Math.min(atOnce, rows.length) }, worker));
   return seen;
-}
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
 }
 
 async function build(folder: string, entry: string, withoutProjectFile: boolean, into: string): Promise<Built> {

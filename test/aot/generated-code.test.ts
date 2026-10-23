@@ -11,6 +11,7 @@
 import { expect, test } from "bun:test";
 import { isASAN, isDebug } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
 const skipReason =
@@ -21,14 +22,11 @@ if (skipReason) console.error(`SKIPPED: test/aot/generated-code.test.ts: ${skipR
 test.skipIf(!!skipReason)(
   `the generated code is what the programs expect${skipReason ? ` (SKIPPED: ${skipReason})` : ""}`,
   async () => {
-    await using script = Bun.spawn({
-      cmd: [python!, join(import.meta.dir, "shell", "expectations.py"), "all"],
-      env: scriptEnvironment(),
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
+    const { stdout, stderr, exitCode } = await run(
+      [python!, join(import.meta.dir, "shell", "expectations.py"), "all"],
+      undefined,
+      scriptEnvironment(),
+    );
     const lines = stdout.split("\n").filter(line => line !== "");
     expect(stderr).toBe("");
     expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs, [1-9][0-9]* expectation lines: /);

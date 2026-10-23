@@ -1,0 +1,60 @@
+# A call with a typed result has the effects that its overload declares: it throws, and it runs the code of its operand. The function of the library behind the entry returns its argument and says nothing about the call, but the call may enter it. Where the call itself makes the value that is tested, it says what SelectTypedResults puts in its place: the helper that walks any value
+# FORM: Prepared optimizing
+# RUN: effects summaries f2 f3 f4
+# RUN(GRAPH): pass BuildCallGraph
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+runtimefunction id=131115 function=f0
+runtimefunction id=131116 function=f1
+function f0 name="validate" role=Library enclosingRuntimeFunction=131115 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f1 name="validateByPlan" role=Library enclosingRuntimeFunction=131116 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+# CHECK: f0 return: none throw: none
+# CHECK: f1 return: none throw: none
+
+function f2 name="typedResult" role=OutlinedBody parameters=[{type=undefined}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: undefined, v1: anything):
+    v2 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    v3 = CallBuiltin -, v0 overload=BunBundleValidate/0
+    v4 = CallBuiltin -, v1 overload=BunBundleValidate/0 expectedResult=x0
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v3 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v4 CallBuiltin: {{*}}throws{{*}}callsUnknownCode
+
+function f3 name="helper" role=OutlinedBody parameters=[{type=undefined}, {type=string}, {type=object}] results=[{type=undefined}] {
+  b0(v0: undefined, v1: string, v2: object):
+    v3 = CallBuiltin -, v0, v1 overload=CompilerHelpersValidateByPlan/0
+    v4 = CallBuiltin -, v2, v1 overload=CompilerHelpersValidateByPlan/0
+    Return
+}
+# A helper that reaches built-ins only through intrinsics and locked members runs what its operands bring: its entry and their types describe it, not the summary of its function
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v3 CallBuiltin: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v4 CallBuiltin: {{*}}throws{{*}}callsUnknownCode
+
+function f4 name="parsedText" role=OutlinedBody parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: v2 CallBuiltin: reads(StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v3 CallBuiltin: {{*}}writes({{*}}ParserState{{*}}throws{{*}}callsUnknownCode
+
+# GRAPH: f0: callees | callers f2 |
+# GRAPH-NEXT: f1: callees | callers f3 f4 |
+# GRAPH-NEXT: f2: callees f0 | callers |
+# GRAPH-NEXT: f3: callees f1 | callers |
+# GRAPH-NEXT: f4: callees f1 | callers |

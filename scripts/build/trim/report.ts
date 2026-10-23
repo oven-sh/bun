@@ -13,6 +13,7 @@ import {
   type GraphFailure,
   type SectionGraph,
 } from "./graph.ts";
+import { demangleMsvcName, isMsvcName } from "./msvc-names.ts";
 import { smallestGroupBytes } from "./partition.ts";
 import type { RangeFailure } from "./ranges.ts";
 import {
@@ -27,10 +28,8 @@ import {
   type Partition,
   type PartitionFailure,
 } from "./types.ts";
-import type { RelocationFailure } from "./validate-elf-relocations.ts";
 
-export type LinkFailure =
-  GraphFailure | EntryPointFailure | PartitionFailure | DeclaredUseFailure | RangeFailure | RelocationFailure;
+export type LinkFailure = GraphFailure | EntryPointFailure | PartitionFailure | DeclaredUseFailure | RangeFailure;
 
 export interface ReportContext {
   graph: SectionGraph;
@@ -63,9 +62,6 @@ const failureKindOrder = {
   GuardWithoutUser: true,
   RetainedSectionInRemovableRange: true,
   TableEntryOutsideRemovableRanges: true,
-  RelinkedImageDiffers: true,
-  UnknownRelocationType: true,
-  ReferenceIntoRemovableRange: true,
 } satisfies Record<LinkFailure["kind"], true>;
 
 const guardEdgeText = {
@@ -86,21 +82,24 @@ export class Demangler {
   }
 
   demangle(names: string[]): string[] {
-    if (this.path === undefined) return [...names];
     const unknown = [...new Set(names)].filter(name => !this.demangledNames.has(name));
-    if (unknown.length > 0) {
-      const demangled = spawnSync(this.path, ["--no-strip-underscore"], {
-        input: unknown.join("\n") + "\n",
-        encoding: "utf8",
-        maxBuffer: 1 << 30,
-      });
-      if (demangled.status !== 0) throw new BuildError(`failed to run ${this.path}`, { cause: demangled.error });
-      const lines = demangled.stdout.split("\n");
-      unknown.forEach((name, index) =>
-        this.demangledNames.set(name, (lines[index] ?? name).replace(/ \(\.llvm\.\d+\)$/, "")),
-      );
-    }
-    return names.map(name => this.demangledNames.get(name)!);
+    for (const name of unknown.filter(isMsvcName)) this.demangledNames.set(name, demangleMsvcName(name) ?? name);
+    this.demangleWithTool(unknown.filter(name => !isMsvcName(name)));
+    return names.map(name => this.demangledNames.get(name) ?? name);
+  }
+
+  private demangleWithTool(names: string[]): void {
+    if (this.path === undefined || names.length === 0) return;
+    const demangled = spawnSync(this.path, ["--no-strip-underscore"], {
+      input: names.join("\n") + "\n",
+      encoding: "utf8",
+      maxBuffer: 1 << 30,
+    });
+    if (demangled.status !== 0) throw new BuildError(`failed to run ${this.path}`, { cause: demangled.error });
+    const lines = demangled.stdout.split("\n");
+    names.forEach((name, index) =>
+      this.demangledNames.set(name, (lines[index] ?? name).replace(/ \(\.llvm\.\d+\)$/, "")),
+    );
   }
 }
 
@@ -150,6 +149,10 @@ class Printer {
 
   builtinPath(id: number): string {
     return this.builtinOf.get(id)?.path ?? `built-in ${id}`;
+  }
+
+  successorsOf(node: number): number[] {
+    return [...this.graph.successors.subarray(this.graph.successorStart[node]!, this.graph.successorStart[node + 1]!)];
   }
 
   private nameOf(node: number): string {
@@ -299,8 +302,6 @@ function failureNodes(failure: LinkFailure, details: FailureDetails): number[] {
   switch (failure.kind) {
     case "UnreadInput":
     case "UnresolvedReference":
-    case "RelinkedImageDiffers":
-    case "UnknownRelocationType":
       return [];
     case "GuardWithoutReference":
       return failure.entry === undefined ? [failure.guard] : [failure.guard, failure.entry];
@@ -322,8 +323,6 @@ function failureNodes(failure: LinkFailure, details: FailureDetails): number[] {
     case "RetainedSectionInRemovableRange":
     case "TableEntryOutsideRemovableRanges":
       return [failure.node];
-    case "ReferenceIntoRemovableRange":
-      return failure.to === undefined ? [failure.from] : [failure.from, failure.to];
     default: {
       const unhandled: never = failure;
       throw new BuildError(`trim report: unknown failure ${JSON.stringify(unhandled)}`);
@@ -337,11 +336,15 @@ function describeGuardWithoutReference(
 ): string {
   const missing =
     failure.entry === undefined ? `${failure.target}, which is not in the image` : printer.describe(failure.entry);
-  return (
+  const text =
     `the guard in ${printer.describe(failure.guard)} has no reference to ${missing}, ` +
     `an entry point of ${printer.featureName(failure.feature)}: the compiler inlined it, so nothing can be cut. ` +
-    `The entry point must not be inlined (#[inline(never)], NEVER_INLINE)`
-  );
+    `The entry point must not be inlined (#[inline(never)], NEVER_INLINE)`;
+  const references = failure.entry === undefined ? printer.successorsOf(failure.guard) : [];
+  if (references.length === 0) return text;
+  const listed = references.slice(0, maxListedReferences).map(node => printer.describe(node));
+  const more = references.length > listed.length ? ` and ${references.length - listed.length} more` : "";
+  return `${text}\n  it refers to ${listed.join(", ")}${more}`;
 }
 
 function describeRetainedReference(
@@ -429,18 +432,6 @@ function describeFailure(
       return (
         `a table in data holds ${printer.describe(failure.node)}, which can be removed with ${features}, and no ` +
         `range of the trim table lists it: it would stay callable after what it calls is removed`
-      );
-    }
-    case "RelinkedImageDiffers":
-      return `section ${failure.section} of the link with --emit-relocs differs from the shipped one, so its relocations say nothing about it`;
-    case "UnknownRelocationType":
-      return `relocation type ${failure.type} in ${failure.section} is not known to validate-elf-relocations.ts`;
-    case "ReferenceIntoRemovableRange": {
-      const features = requirePartition(context).sets[failure.range.set]!;
-      const target = failure.to === undefined ? "an address in no section" : printer.describe(failure.to);
-      return (
-        `${printer.describe(failure.from)} at ${hex(failure.address)} refers to ${target}, ` +
-        `which can be removed with ${printer.featureNames(features)}, and the section graph has no such reference`
       );
     }
     default: {

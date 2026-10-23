@@ -1,0 +1,41 @@
+# validate<T>(v) of a type with a node that the library validates, at the root or below, asks the general validator at once: the interpreter reads the value of the program, getters and all, and whenever the validation then ended in anything but Parsed the general validator would read it a second time
+# FORM: Prepared optimizing
+# RUN: pass SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ValidatorsCreated = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0|L1 layouts=[L0, L1] validation=[{shape=Union{arms=[1, 2]} type=L0|L1}, {shape=Object{layout=L0 members=[{key="left" node=0 field=0 isOptional=true}]} type=L0}, {shape=Object{layout=L1 members=[{key="right" node=0 field=0 isOptional=true}]} type=L1}]
+expectedresult x1 type=L2 layouts=[L0, L1, L2] validation=[{shape=Object{layout=L2 members=[{key="n" node=1 field=0}, {key="tree" node=2 field=1}]} type=L2}, {shape=Primitive{primitive=Number} type=number}, {shape=Union{arms=[3, 4]} type=L0|L1}, {shape=Object{layout=L0 members=[{key="left" node=2 field=0 isOptional=true}]} type=L0}, {shape=Object{layout=L1 members=[{key="right" node=2 field=0 isOptional=true}]} type=L1}]
+layout L0 name="LeftNode" fields=[{key="left" declared={type=undefined|object}}]
+layout L1 name="RightNode" fields=[{key="right" declared={type=undefined|object}}]
+layout L2 name="Holder" fields=[{key="n" declared={type=number}}, {key="tree" declared={type=object}}]
+
+function f0 name="validated" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="validated"
+# CHECK: b0(v0: anything):
+# CHECK-NOT: CallDirect
+# CHECK: [[plan]]:{{*}}= String string="[{\"shape\":\"Union\"
+# CHECK-NEXT: = CallBuiltin -, v0, [[plan]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NOT: CallDirect
+# CHECK-NOT: BunBundleValidate
+# CHECK: }
+
+function f1 name="interpretedBelowTheRoot" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
+    Return v1
+}
+# CHECK-LABEL: function f1 name="interpretedBelowTheRoot"
+# CHECK: b0(v0: anything):
+# CHECK-NOT: CallDirect
+# CHECK: [[planOfHolder]]:{{*}}= String string="[{\"shape\":\"Object\"
+# CHECK-NEXT: = CallBuiltin -, v0, [[planOfHolder]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NOT: CallDirect
+# CHECK-NOT: BunBundleValidate
+# CHECK: }

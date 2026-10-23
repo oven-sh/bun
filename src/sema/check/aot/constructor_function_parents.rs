@@ -41,9 +41,7 @@ impl<'s> LinkedFunctions<'s> {
             LinkEnd::Declaration(ClassDeclaration::Function(function)) if function.file == file => {
                 Some(function.function)
             }
-            LinkEnd::Declaration(_)
-            | LinkEnd::LibraryDeclaration(_)
-            | LinkEnd::Parameter { .. } => None,
+            _ => None,
         };
         let mut of_functions = Vec::new();
         let mut ends = Vec::new();
@@ -109,11 +107,7 @@ fn find_position(hir: &hir::File<'_>, source: ClassMemberSource) -> u32 {
 fn find_store_into_this(member: &ClassMember) -> Option<ExprId> {
     match member.source {
         ClassMemberSource::ThisStore(store) if !member.is_static => Some(store),
-        ClassMemberSource::ThisStore(_)
-        | ClassMemberSource::Member(_)
-        | ClassMemberSource::ParameterProperty(_)
-        | ClassMemberSource::PrototypeStore(_)
-        | ClassMemberSource::StaticStore(_) => None,
+        _ => None,
     }
 }
 
@@ -186,10 +180,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let origins: SmallVec<[ObjectOrigin; 2]> = origins.collect();
         let declarations = origins.into_iter().filter_map(|origin| match origin {
             ObjectOrigin::Symbol(class) => self.find_library_declaration_of_class(class),
-            ObjectOrigin::TypeLiteral { .. }
-            | ObjectOrigin::MappedType { .. }
-            | ObjectOrigin::ObjectLiteral { .. }
-            | ObjectOrigin::Computed => None,
+            _ => None,
         });
         declarations.collect()
     }

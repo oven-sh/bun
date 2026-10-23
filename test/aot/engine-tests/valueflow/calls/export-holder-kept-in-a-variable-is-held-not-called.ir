@@ -1,0 +1,61 @@
+# node:readline   var exports = { first, second }; function first() { .. exports .. }; return exports        main   readline = require("node:readline"); input(require(name))
+# A module of the library whose functions name the object that holds its exports keeps that object in a variable and returns the variable. It is the same object to whoever loads the module:
+# it is only held, however it got into hands that nobody follows, and so is whatever it leads to. export-of-library-module-is-held-not-called.ir has the object returned as it is allocated
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# CHECK-NEXT: unreached f3
+# CHECK-NEXT: unreached f4
+# RUN(ESCAPED): valueflow-why escaped=f2 escaped=f3
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: not held
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v3
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+# UNSEEN-NEXT: held f2
+# UNSEEN-NEXT: held f3
+# UNSEEN-NOT: held
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSqlite body=f4
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+layout L0 name="Exports" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = RequireDynamic v2 referrer=m0
+    v4 = PropGet v1 key="input" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    Return v5
+}
+function f2 name="first" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return
+}
+function f3 name="second" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireBuiltinModule runtimeModule=BunSqlite
+    Return v0
+}
+function f4 name="sqlite" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

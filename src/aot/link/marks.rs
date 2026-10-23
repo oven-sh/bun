@@ -479,13 +479,7 @@ impl<'a> Marker<'a> {
                 let data = &records.data[index];
                 data.for_each_reference(&mut self.reference_visitor(LayoutUse::Direct));
             }
-            LocalKind::String
-            | LocalKind::Layout
-            | LocalKind::Variable
-            | LocalKind::ModuleTarget
-            | LocalKind::ModuleReferrer
-            | LocalKind::ModuleFailure
-            | LocalKind::Function => {
+            _ => {
                 unreachable!("only a record of a unit is queued as local work")
             }
         }
@@ -562,10 +556,6 @@ fn resolve_undefined_layout(
     key: ProgramLayoutKey,
 ) -> UndefinedLayout {
     match key.key {
-        LayoutKey::ObjectType { .. }
-        | LayoutKey::UntypedLiteral { .. }
-        | LayoutKey::Container(_)
-        | LayoutKey::TypeParameter(_) => UndefinedLayout::Empty,
         LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_) => {
             match context.first_direct_layout_use[index].load(Ordering::Relaxed) {
                 NO_UNIT => UndefinedLayout::Empty,
@@ -575,5 +565,6 @@ fn resolve_undefined_layout(
         LayoutKey::Environment { .. } => UndefinedLayout::Error {
             referrer: context.first_layout_referrer[index].load(Ordering::Relaxed),
         },
+        _ => UndefinedLayout::Empty,
     }
 }

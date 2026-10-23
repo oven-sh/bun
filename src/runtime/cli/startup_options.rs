@@ -332,11 +332,8 @@ fn find_ignored_options(
 
 fn uses_package_manager(cache: GlobalCache) -> bool {
     match cache {
-        GlobalCache::allow_install
-        | GlobalCache::read_only
-        | GlobalCache::force
-        | GlobalCache::fallback => true,
         GlobalCache::auto | GlobalCache::disable => false,
+        _ => true,
     }
 }
 
@@ -525,6 +522,3 @@ pub(crate) fn exit_for_unadmitted_debugger(flag: Option<&'static str>) -> ! {
         obstacle: Obstacle::BuiltWithoutInspector,
     })
 }
-
-#[cfg(test)]
-mod tests;

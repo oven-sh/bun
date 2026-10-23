@@ -1,0 +1,38 @@
+# Creating a permanent constant cell touches the allocator and is no safepoint; a cell made at each evaluation, or by the host, collects
+# FORM: Prepared
+# RUN: effects f0
+# RUN(EACH): effects f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="permanentCells" role=Library parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = BigInt digits="12345678901234567890"
+    v3 = Builtin builtin=MathMax
+    v4 = KeyConstant key=@@iterator
+    v5 = LinkTimeConstant constant=6
+    v6 = SharedRegExpLiteral pattern="a+"
+    v7 = TypeTest v0 testedType="a"|"b"
+    Return
+}
+# CHECK-NOT: collects
+# CHECK-NOT: throws
+# CHECK: v1 String: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v2 BigInt: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v3 Builtin: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v4 KeyConstant: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v5 LinkTimeConstant: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v6 SharedRegExpLiteral: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v7 TypeTest: none
+# CHECK-NOT: collects
+# CHECK-NOT: throws
+function f1 name="cellsOfOneEvaluation" results=[{type=undefined}] {
+  b0():
+    v0 = NewRegExp pattern="a+"
+    v1 = NewClosure function=f0
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    Return
+}
+# EACH: v0 NewRegExp: reads(AllocatorState) writes(AllocatorState) collects
+# EACH-NEXT: v1 NewClosure: reads(AllocatorState) writes(AllocatorState) collects
+# EACH-NEXT: v2 ModuleBuiltin: reads(AllocatorState, RuntimeState) writes(AllocatorState, RuntimeState) throws collects

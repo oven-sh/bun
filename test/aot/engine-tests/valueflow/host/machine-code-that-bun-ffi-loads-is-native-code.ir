@@ -1,0 +1,59 @@
+# class Kept { constructor(v) { this.a = v } }  new Kept(1).a; function neverHandedOut() {}
+# compile({ symbols: { callback } })  with the native function behind `cc` of bun:ffi;  Bun.FFI.callback(options, other)
+# What bun:ffi loads is machine code. It gets numbers, pointers and the closures that it is handed, and it holds and calls those: both callbacks are entered, with arguments nobody knows.
+# It defines no function of JavaScript, so no unseen code runs, and what it is not handed stays in the program: the class and the other function.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Kept" {{*}}initialization=SetAtCreation{{*}}fieldCreation=OnlyAtConstruction
+# RUN(UNSEEN): valueflow-solve unseen unreached
+# UNSEEN-NOT: unreached f2
+# UNSEEN-NOT: unreached f3
+# UNSEEN: unreached f4
+# UNSEEN-NOT: unseen RunsUnseenCode
+# UNSEEN: unseen-code no
+# UNSEEN: modules-by-name no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Kept" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Options" fields=[{key="symbols" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Symbols" fields=[{key="callback" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Integer integer=1
+    v4 = Construct v2, -, v3
+    v5 = PropGet v4 key="a"
+    v6 = NewClosure function=f2
+    v7 = NewObject -, v6 layout=L2 fields=[0]
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = Builtin builtin=NativeFunctionsFfiRsBun__FFI__cc
+    v10 = Call v9, -, v8
+    v11 = Builtin builtin=Bun
+    v12 = PropGet v11 key="FFI"
+    v13 = PropGet v12 key="callback"
+    v14 = NewClosure function=f3
+    v15 = Call v13, v12, v8, v14 calleeKey="callback"
+    v16 = NewClosure function=f4
+    Return
+}
+function f1 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f2 name="callback" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="other" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="neverHandedOut" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

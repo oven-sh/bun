@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Every way of reaching a global, for every kind of global that a host may replace through the `globals` of a Bun.ModuleGraph:
@@ -1040,14 +1041,7 @@ test.todo(
       });
       expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
       for (const where of ["main", "worker"]) {
-        await using ran = Bun.spawn({
-          cmd: [executable, where],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+        const { stdout, stderr, exitCode } = await run([executable, where], String(dir));
         expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
         said[where + flags.join("")] = new Map(
           (JSON.parse(stdout) as Row[]).map(row => [row.slice(0, 4).join(" | "), row[4]]),

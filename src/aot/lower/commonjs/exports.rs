@@ -22,12 +22,6 @@ pub(super) fn own_shape(file: &FileLowering<'_, '_, '_, '_>) -> Shape {
 fn top_scope_of(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option<ScopeId> {
     let bound = file.bound;
     match key {
-        FunctionKey::ModuleBody(_)
-        | FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Signature(_)
-        | FunctionKey::ClassSignature(_) => None,
         FunctionKey::Source(source) => Some(bound.fns[source.function.idx()].scope),
         FunctionKey::ImplicitConstructor(class)
         | FunctionKey::InstanceInitializer(class)
@@ -37,6 +31,7 @@ fn top_scope_of(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option
         | FunctionKey::PrivateNameTest { member, .. } => bound
             .member_class(member)
             .map(|class| bound.class_scope[class.idx()]),
+        _ => None,
     }
 }
 
@@ -82,17 +77,7 @@ pub(super) fn is_module_body(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) ->
             .modules
             .inner_module(file.file, source.function)
             .is_some(),
-        FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Signature(_)
-        | FunctionKey::ClassSignature(_)
-        | FunctionKey::ImplicitConstructor(_)
-        | FunctionKey::InstanceInitializer(_)
-        | FunctionKey::StaticInitializer(_)
-        | FunctionKey::AccessorGetter { .. }
-        | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => false,
+        _ => false,
     }
 }
 
@@ -107,10 +92,7 @@ pub(super) fn ensure_exports_variable(
             file,
             function: callback,
         }),
-        ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => return None,
+        _ => return None,
     };
     Some(scope::ensure_variable(file, key))
 }
@@ -466,11 +448,7 @@ fn is_inner_parameter(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: S
         ModuleRef::Inner { callback, .. } => {
             inner_parameters(lowering.file, callback).contains(&Some(symbol))
         }
-        ModuleRef::File(_)
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => false,
+        _ => false,
     }
 }
 
@@ -504,10 +482,7 @@ fn find_module_exports_access(
                     == Some(BuiltinId::ModuleObjectExports);
             is_own.then_some(module)
         }
-        ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => None,
+        _ => None,
     }
 }
 

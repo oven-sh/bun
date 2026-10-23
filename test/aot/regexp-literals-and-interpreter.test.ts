@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { test } from "./supported";
 
@@ -9,14 +10,10 @@ import { test } from "./supported";
 async function compileAndRun(source: string) {
   using dir = tempDir("aot-regexp-literals", { "main.ts": source });
   const cwd = String(dir);
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "app"],
+  const { stderr: buildErrors, exitCode: buildExitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "app"],
     cwd,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  );
   expect({ buildErrors, buildExitCode }).toEqual({
     buildErrors: expect.not.stringMatching(/^error\b/m),
     buildExitCode: 0,

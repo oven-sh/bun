@@ -1,0 +1,29 @@
+# A test that names what a native binding answers cannot tell that object, which the realm keeps no cell for, from another object: the edge that is not taken keeps it. A test that names a built-in of the realm decides
+# FORM: Prepared
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)}] results=[{type=undefined}] {
+  b0(v0: builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)):
+    v1 = TypeTest v0 testedType=builtin(NativeRustNode_fs_bindingRsCreateBinding)
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="amongObjects"
+# CHECK: b1(v2: builtin(NativeRustNode_fs_bindingRsCreateBinding)):
+# CHECK: b2(v3: builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)):
+function f1 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)}] results=[{type=undefined}] {
+  b0(v0: builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)):
+    v1 = TypeTest v0 testedType=builtin(GlobalThis)
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="ofRealm"
+# CHECK: b1(v2: builtin(GlobalThis)):
+# CHECK: b2(v3: builtin(NativeRustNode_fs_bindingRsCreateBinding)):

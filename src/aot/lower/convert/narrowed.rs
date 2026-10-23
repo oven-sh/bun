@@ -78,41 +78,7 @@ fn classify_reference(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -
         },
         ExprKind::This => Reference::This,
         ExprKind::Dot { .. } | ExprKind::Index { .. } => classify_member(file, expression),
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => Reference::NotAReference,
+        _ => Reference::NotAReference,
     }
 }
 
@@ -134,14 +100,7 @@ fn find_this_position(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> De
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
             DeclaredType::from_compiler(TypeTable::OBJECT)
         }
-        FunctionKind::Plain
-        | FunctionKind::Arrow
-        | FunctionKind::Method
-        | FunctionKind::Getter
-        | FunctionKind::Setter
-        | FunctionKind::Initializer
-        | FunctionKind::Module
-        | FunctionKind::CommonJsModule => match function.flags.contains(FunctionFlags::HAS_THIS) {
+        _ => match function.flags.contains(FunctionFlags::HAS_THIS) {
             true => function.this_type,
             false => DeclaredType::untyped(),
         },
@@ -184,29 +143,7 @@ fn classify_receiver_type(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
                 false => Receiver::WithoutSlots,
             }
         }
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Constrained { .. } => Receiver::WithoutSlots,
+        _ => Receiver::WithoutSlots,
     }
 }
 
@@ -305,10 +242,7 @@ fn find_declared_position(
                     false => position,
                 }
             }
-            ObjectMemberKind::Field
-            | ObjectMemberKind::Getter
-            | ObjectMemberKind::Setter
-            | ObjectMemberKind::GetterAndSetter => DeclaredType::untyped(),
+            _ => DeclaredType::untyped(),
         },
         Ok(MemberLookup::Index(signature)) => {
             map_position(file, access, signature.types.checked.ok())

@@ -1,0 +1,47 @@
+# main.cjs: module.exports = exportedByMain; require("./child.cjs"); require("./sibling.cjs")        child.cjs: module.parent.exports()
+# `parent` answers the module object of a module that requires the one whose module object somebody has got hold of: that of main.cjs. It may also be that of a file from outside the image,
+# whose exports nobody knows: the call hands its receiver to a callee nobody knows. One flag of the program stands for all four ways, so `children` leads on from main.cjs to sibling.cjs
+# RUN: valueflow-solve calls
+# CHECK: f2 v3 -> {{*}}f1
+# RUN(APPLY): valueflow-apply
+# APPLY-NOT: variable g0 name="exports" {{*}}writers=AllKnown
+# APPLY-NOT: variable g2 name="exports" {{*}}writers=AllKnown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}]
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f2 exportsVariable=g1
+module m2 path="/app/sibling.cjs" displayPath="sibling.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3 exportsVariable=g2
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    Return
+}
+function f1 name="exportedByMain" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleObject module=m1
+    v1 = PropGet v0 key="parent"
+    v2 = PropGet v1 key="exports"
+    v3 = Call v2, v1
+    Return
+}
+function f3 name="sibling" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f4 name="exportedBySibling" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}

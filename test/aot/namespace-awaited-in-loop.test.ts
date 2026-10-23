@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const programs: Record<string, string> = {
@@ -29,20 +30,15 @@ test.concurrent.each(Object.keys(programs))(
       "main.ts": programs[name],
     });
     const outfile = join(String(dir), isWindows ? "out.exe" : "out");
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, buildErrors, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const { stderr: buildErrors, exitCode: buildCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+      String(dir),
+    );
     expect({ buildErrors: buildErrors.split("\n").filter(line => line.startsWith("error")), buildCode }).toEqual({
       buildErrors: [],
       buildCode: 0,
     });
-    await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, , exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+    const { stdout, exitCode } = await run([outfile], String(dir));
     expect({ stdout, exitCode }).toEqual({ stdout: "2\n", exitCode: 0 });
   },
   60_000,

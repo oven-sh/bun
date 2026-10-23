@@ -89,17 +89,7 @@ fn classify_shape<'x>(kind: &'x ShapeKind<'_>) -> ComparedShape<'x> {
         ShapeKind::Array { .. } | ShapeKind::Builtin { .. } => ComparedShape::Container,
         ShapeKind::Never | ShapeKind::Undefined | ShapeKind::Null => ComparedShape::NoValue,
         ShapeKind::Anything(_) | ShapeKind::AnyObject => ComparedShape::Loose,
-        ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol => ComparedShape::Primitive,
+        _ => ComparedShape::Primitive,
     }
 }
 
@@ -116,15 +106,8 @@ pub(super) fn can_hold_family(file: &mut FileLowering<'_, '_, '_, '_>, ty: Check
         return false;
     };
     match classify_shape(&shape.kind) {
-        ComparedShape::Transparent(_)
-        | ComparedShape::Class(_)
-        | ComparedShape::ObjectType
-        | ComparedShape::TypeParameter { .. }
-        | ComparedShape::Tuple(_)
-        | ComparedShape::Function(_)
-        | ComparedShape::ClassConstructor(_)
-        | ComparedShape::Container => true,
         ComparedShape::Primitive | ComparedShape::NoValue | ComparedShape::Loose => false,
+        _ => true,
     }
 }
 
@@ -136,14 +119,7 @@ fn find_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Op
         ComparedShape::TypeParameter { parameter, .. } => {
             Some(layouts::type_parameter_layout(file, parameter))
         }
-        ComparedShape::Transparent(_)
-        | ComparedShape::Tuple(_)
-        | ComparedShape::Function(_)
-        | ComparedShape::ClassConstructor(_)
-        | ComparedShape::Container
-        | ComparedShape::Primitive
-        | ComparedShape::NoValue
-        | ComparedShape::Loose => None,
+        _ => None,
     }
 }
 
@@ -281,66 +257,12 @@ fn find_flowing_operands(
             BinOp::Or | BinOp::Nullish => FlowingOperands::Two(left, right),
             // Of the left operand of `&&` only what is falsy is the value, and no object is.
             BinOp::And | BinOp::Comma => FlowingOperands::One(right),
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor
-            | BinOp::Lt
-            | BinOp::Le
-            | BinOp::Gt
-            | BinOp::Ge
-            | BinOp::EqEq
-            | BinOp::NotEq
-            | BinOp::EqEqEq
-            | BinOp::NotEqEq
-            | BinOp::In
-            | BinOp::Instanceof => FlowingOperands::Whole,
+            _ => FlowingOperands::Whole,
         },
         ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => {
             FlowingOperands::One(expr)
         }
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => FlowingOperands::Whole,
+        _ => FlowingOperands::Whole,
     }
 }
 
@@ -757,15 +679,13 @@ enum ValueKind {
 
 fn find_value_kind(shape: &ComparedShape<'_>) -> ValueKind {
     match shape {
-        ComparedShape::Class(_)
-        | ComparedShape::ObjectType
-        | ComparedShape::TypeParameter { .. } => ValueKind::Object,
         ComparedShape::Function(_) | ComparedShape::ClassConstructor(_) => ValueKind::Function,
         ComparedShape::Tuple(_) | ComparedShape::Container => ValueKind::List,
         ComparedShape::Primitive => ValueKind::Primitive,
         ComparedShape::Transparent(_) | ComparedShape::NoValue | ComparedShape::Loose => {
             ValueKind::Other
         }
+        _ => ValueKind::Object,
     }
 }
 
@@ -1119,11 +1039,8 @@ fn compare_objects(
 
 fn is_read_through(kind: ObjectMemberKind) -> bool {
     match kind {
-        ObjectMemberKind::Field
-        | ObjectMemberKind::Method
-        | ObjectMemberKind::Getter
-        | ObjectMemberKind::GetterAndSetter => true,
         ObjectMemberKind::Setter => false,
+        _ => true,
     }
 }
 

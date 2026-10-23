@@ -82,10 +82,6 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
-        if ctx.bundler_options.library {
-            super::compile_command::configure_library(ctx);
-        }
-
         if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {
             if !user_requested_browser_target {
                 return super::compile_command::CompileCommand::exec(ctx);
@@ -162,26 +158,7 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        if ctx.bundler_options.dts
-            && (ctx.bundler_options.outdir.is_empty() || ctx.bundler_options.compile)
-        {
-            Output::err_generic(
-                "--dts requires --outdir, and cannot be used with --compile",
-                (),
-            );
-            Global::exit(1);
-        }
-        let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
-            Some(crate::cli::check_command::check_and_emit_declarations)
-        } else if ctx.bundler_options.check {
-            Some(crate::cli::check_command::check_for_build_command)
-        } else {
-            None
-        };
-
-        if let Some(type_check) = type_check
-            && ctx.bundler_options.transform_only
-        {
+        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
@@ -192,15 +169,16 @@ impl BuildCommand {
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
-            if !type_check(checked, log_ref) {
+            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
-        } else {
-            this_transpiler.options.type_check = type_check;
+        } else if ctx.bundler_options.check {
+            this_transpiler.options.type_check =
+                Some(crate::cli::check_command::check_for_build_command);
         }
 
         this_transpiler.options.source_map =
@@ -555,7 +533,7 @@ impl BuildCommand {
         this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
-        if ctx.bundler_options.production || ctx.bundler_options.library {
+        if ctx.bundler_options.production {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
         }
@@ -766,29 +744,6 @@ impl BuildCommand {
             }
         }
 
-        if ctx.bundler_options.dts {
-            if let Err(error) = super::compile_command::add_declaration_files(
-                crate::cli::check_command::take_declaration_files(),
-                src_root_dir,
-                !ctx.bundler_options.transform_only,
-                &mut output_files,
-            ) {
-                let mut message = Vec::new();
-                error.write_message(&mut message);
-                Output::err_generic("{}", (bstr::BStr::new(&message),));
-                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
-            }
-        }
-
-        if ctx.bundler_options.library {
-            super::compile_command::add_package_files(
-                ctx,
-                src_root_dir,
-                log_ref,
-                &mut output_files,
-            );
-        }
-
         let output_files: &mut [options::OutputFile] = &mut output_files;
         let bundled_end = bun_core::time::nano_timestamp();
 
@@ -864,9 +819,6 @@ impl BuildCommand {
             for f in output_files.iter() {
                 max_path_len =
                     max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
-                // A file that is listed beside the bundle's own may lack the prefix that those share.
-                max_path_len =
-                    max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + 2);
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -1154,11 +1106,6 @@ impl BuildCommand {
                     writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
                         options::OutputKind::EntryPoint => "<blue>",
                         options::OutputKind::Chunk => "<cyan>",
-                        options::OutputKind::Asset
-                            if super::compile_command::is_declaration_file(f) =>
-                        {
-                            "<d>"
-                        }
                         options::OutputKind::Asset => "<magenta>",
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
@@ -1209,11 +1156,6 @@ impl BuildCommand {
                     match f.output_kind {
                         options::OutputKind::EntryPoint => "entry point",
                         options::OutputKind::Chunk => "chunk",
-                        options::OutputKind::Asset
-                            if super::compile_command::is_declaration_file(f) =>
-                        {
-                            "declaration"
-                        }
                         options::OutputKind::Asset => "asset",
                         options::OutputKind::Sourcemap => "source map",
                         options::OutputKind::Bytecode => "bytecode",

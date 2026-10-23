@@ -481,33 +481,40 @@ function isMissing(input: any, member: PlanMember, value: any): boolean {
 
 function createIssue(path: any[], code: string, expected: string, value: any, message: string | undefined): any {
   const received = describeReceived(value);
-  let defaultMessage = "Invalid input: expected " + expected;
+  let prefix = "Invalid input: ";
+  let detail = "expected " + expected;
+  let summary: string | undefined;
   switch (code) {
     case "invalid_type":
     case "invalid_union":
-      defaultMessage += ", received " + received;
+      detail += ", received " + received;
       break;
     case "invalid_value":
-      defaultMessage += ", received " + quoteReceived(value, received);
+      detail += ", received " + quoteReceived(value, received);
       break;
     case "unrecognized_keys":
-      defaultMessage = "Unrecognized key: " + expected;
+      prefix = "Unrecognized key: ";
+      detail = expected;
+      summary = "unrecognized key " + expected;
       break;
     case "too_small":
-      defaultMessage = "Too small: expected " + expected;
+      prefix = "Too small: ";
       break;
     case "too_big":
-      defaultMessage = "Too big: expected " + expected;
+      prefix = "Too big: ";
       break;
     case "not_multiple_of":
-      defaultMessage = "Invalid number: must be a " + expected;
+      prefix = "Invalid number: ";
+      detail = "must be a " + expected;
       break;
     case "invalid_pattern":
       code = "invalid_format";
-      defaultMessage = "Invalid string: must match pattern " + expected.slice("string to match ".length);
+      prefix = "Invalid string: ";
+      detail = "must match pattern " + expected.slice("string to match ".length);
       break;
   }
-  return { path, code, expected, received, message: message === undefined ? defaultMessage : message };
+  if (message !== undefined) return { path, code, expected, received, message, summary: message };
+  return { path, code, expected, received, message: prefix + detail, summary: summary ?? detail };
 }
 
 function add(run: Run, issues: any[], issue: any): void {
@@ -819,28 +826,31 @@ function addUnder(run: Run, path: any[], found: any[], count: number, issues: an
   run.remainingIssues -= taken;
 }
 
-function addWithWholePaths(found: any[], limit: number, path: any[], issues: any[]): void {
+function addWithWholePaths(found: any[], limit: number, path: any[], issues: any[], summaries: string[]): void {
   const end = issues.length + limit;
   for (let i = 0; i < found.length && issues.length < end; i++) {
     const entry = found[i];
     if (!$isArray(entry)) {
-      issues.push({ ...entry, path: [...path, ...entry.path] });
+      const { summary, ...issue } = entry;
+      issues.push({ ...issue, path: [...path, ...entry.path] });
+      summaries.push(summary);
       continue;
     }
     const length = path.length;
     for (let j = 0; j < entry[0].length; j++) path.push(entry[0][j]);
-    addWithWholePaths(entry[1], $min(entry[2], end - issues.length), path, issues);
+    addWithWholePaths(entry[1], $min(entry[2], end - issues.length), path, issues, summaries);
     path.length = length;
   }
 }
 
-function issuesOf(run: Run, value: any): any[] {
+function errorOf(run: Run, value: any): any {
   const found: any[] = [];
   report(run, 0, value, [], found);
   if (found.length === 0) add(run, found, createIssue([], "invalid_type", expectedOf(run, 0), value, undefined));
   const issues: any[] = [];
-  addWithWholePaths(found, maxIssueCount(), [], issues);
-  return issues;
+  const summaries: string[] = [];
+  addWithWholePaths(found, maxIssueCount(), [], issues, summaries);
+  return errorWith(issues, summaries[0]);
 }
 
 function isIdentifier(key: string): boolean {
@@ -862,19 +872,8 @@ function formatPath(path: any[]): string {
   return text;
 }
 
-function withoutPrefix(message: string): string {
-  const prefixes = ["Invalid input: ", "Too small: ", "Too big: ", "Invalid string: ", "Invalid number: "];
-  for (let i = 0; i < prefixes.length; i++) {
-    if (message.startsWith(prefixes[i])) return message.slice(prefixes[i].length);
-  }
-  return message;
-}
-
-function errorWith(issues: any[]): any {
+function errorWith(issues: any[], summary: string): any {
   const first = issues[0];
-  let summary = withoutPrefix(String(first.message));
-  if (first.code === "unrecognized_keys" && summary.startsWith("Unrecognized key: "))
-    summary = "unrecognized key " + first.expected;
   if (first.path.length) summary = formatPath(first.path) + ": " + summary;
   if (issues.length > 1) summary += " (and " + (issues.length - 1) + " more)";
   const error: any = new TypeError(summary);
@@ -891,7 +890,7 @@ export function validateByPlan(value: unknown, plan: string): unknown {
   const held = heldRoot(run, value);
   const result = build(run, 0, held);
   if (result !== run.refused) return result;
-  throw errorWith(issuesOf(run, held));
+  throw errorOf(run, held);
 }
 
 export function interpretNode(value: unknown, plan: string): [boolean, unknown] {

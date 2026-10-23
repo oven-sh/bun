@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const here = process.platform;
@@ -49,12 +50,6 @@ for (const [name, index] of Object.entries(packages)) {
 }
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 // TODO: an addon that is named only behind a throw or a return is embedded.
 test.todo(

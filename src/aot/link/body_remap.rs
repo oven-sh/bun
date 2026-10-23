@@ -1,6 +1,6 @@
 use super::state::UnitIds;
 use crate::ir::generated::Function;
-use crate::ir::{InParallel, PropertyKeyId, for_each_mut};
+use crate::ir::{InParallel, for_each_mut};
 use core::mem::take;
 use std::sync::Arc;
 
@@ -54,15 +54,6 @@ impl BodyRemap {
                     let function_types = take(&mut function.function_types);
                     function.remap_ids(&map);
                     function.function_types = function_types;
-                    // They came in the order of the numbers that the file gave its keys, which hang on what else the file has looked at.
-                    function.relations.stores.sort_unstable_by_key(|store| {
-                        (
-                            store.source,
-                            store.target,
-                            store.key.map(PropertyKeyId::to_word),
-                            store.creation_operand,
-                        )
-                    });
                     function
                 })
                 .collect();

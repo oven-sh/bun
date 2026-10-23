@@ -94,10 +94,7 @@ impl ModuleNumbers {
                 let position = self.inner_modules.binary_search(&(file, callback)).ok()?;
                 Some(self.file_count + position)
             }
-            ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => None,
+            _ => None,
         }
     }
 }
@@ -126,10 +123,7 @@ impl PlannedSites {
                     answers_require_with_namespace(files, modules, tables, site.target)
                 }
                 ModuleKind::CommonJs => true,
-                ModuleKind::Data
-                | ModuleKind::RuntimeSource
-                | ModuleKind::Runtime
-                | ModuleKind::External => false,
+                _ => false,
             };
         }
     }
@@ -428,20 +422,7 @@ impl<'a, 's> FileText<'a, 's> {
                         Node::Function(bound.param_fn[parameter.idx()])
                     }
                     Parent::File => return Some((CodeUnit::File, position)),
-                    Parent::None
-                    | Parent::Expr(_)
-                    | Parent::PatPropDefault(_)
-                    | Parent::PatElemDefault(_)
-                    | Parent::PatKey(_)
-                    | Parent::MemberKey(_)
-                    | Parent::MemberInit(_)
-                    | Parent::EnumInit(_)
-                    | Parent::Case(_)
-                    | Parent::ClassExtends(_)
-                    | Parent::ClassDecorator(_)
-                    | Parent::MemberDecorator(_)
-                    | Parent::ParamDecorator(_)
-                    | Parent::Module(_) => return None,
+                    _ => return None,
                 },
                 Node::Statement(child) => match bound.parent_of_stmt(child) {
                     Parent::File => return Some((CodeUnit::File, position)),
@@ -626,14 +607,7 @@ fn plan_file_sites(
                     .push((text.enclosing_module(call), target));
                 continue;
             }
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::GetBuiltinModule(_) => continue,
+            _ => continue,
         };
         planned.sites.push(PlannedSite {
             key,
@@ -661,15 +635,7 @@ fn loading_call(site: ImportSiteKind) -> Option<ExprId> {
         ImportSiteKind::ImportCall(call)
         | ImportSiteKind::Require(call)
         | ImportSiteKind::ImportMetaRequire(call) => Some(call),
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => None,
+        _ => None,
     }
 }
 
@@ -870,10 +836,8 @@ pub(super) fn compute_order(
         .entry_points()
         .iter()
         .filter(|entry| match entry.kind {
-            EntryPointKind::Additional
-            | EntryPointKind::HostLoadedModule
-            | EntryPointKind::ImportedModule => true,
             EntryPointKind::Main | EntryPointKind::Library => false,
+            _ => true,
         });
     let late_targets = late_targets.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
     let late_targets = late_targets.filter_map(|target| Some(numbers.number_of(target)? as u32));

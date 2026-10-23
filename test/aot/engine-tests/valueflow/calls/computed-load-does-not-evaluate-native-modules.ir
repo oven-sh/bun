@@ -1,0 +1,74 @@
+# sqlite = require("bun:sqlite"); loaded = require(name); loaded()   built with two entry points, main.cjs and other.cjs
+# A load under a name that is put together at run time evaluates nothing, and of the program's files it answers the entry points. A module of the library that is written in JavaScript is in the image only if seen code names it:
+# the one that the program requires has run and stays in the answer, and the one that nobody names stays unreached. A native module has no code to run. Its object is in the answer as an object that the analysis follows,
+# and being there is no use of it, so nothing comes into the image for it
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 ->
+# CHECK-NOT: f2
+# CHECK: BunJsc
+# CHECK-NOT: f2
+# CHECK: f4 f6
+# CHECK-NOT: f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+# UNREACHED-NEXT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+# UNREACHED-NOT: unreached f6
+# RUN(USED): valueflow-solve used
+# USED-NOT: BunJsc
+# USED-NOT: NodeReadline
+# USED: BunSqlite
+# USED-NOT: BunJsc
+# USED-NOT: NodeReadline
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v3
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime exportRule=RuntimeModule runtimeModule=BunJsc
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m3 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSqlite body=f3
+module m4 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g0
+entry module=m0
+entry module=m4
+variable g0 name="exports" module=m4 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m3 referrer=m0 specifier="bun:sqlite"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = RequireDynamic v2 referrer=m0
+    v4 = Call v3
+    Return
+}
+function f1 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="createInterface" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="sqlite" module=m3 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    Return v0
+}
+function f4 name="open" module=m3 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="other" module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f6 name="exported" module=m4 results=[{type=anything}] {
+  b0():
+    Return
+}

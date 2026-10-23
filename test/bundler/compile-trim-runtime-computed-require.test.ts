@@ -1,8 +1,9 @@
 // A `require()` whose name is computed brings Bun's run-time `require` into the executable. That function also answers
 // "bun:test", which must not keep the test runner in a program that never names it.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import { canTrim, featureNamed, model } from "./compile-trim-features";
@@ -22,12 +23,6 @@ const programs = {
 };
 
 const behindTheTestRunner = ["Test", "RuntimeTranspiler", "DeepEquals"].map(featureNamed);
-
-async function run(cmd: string[], cwd: string) {
-  await using child = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function build(folder: string, entry: string) {
   const executable = join(folder, entry.replace(".cjs", isWindows ? ".exe" : ""));

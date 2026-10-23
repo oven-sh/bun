@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run } from "../harness/run";
 import { describe, test } from "../supported";
 
 const registersAnotherHandler = `import { get } from "./library";
@@ -51,12 +52,6 @@ import "./unchecked";
 import "./javascript.js";
 `,
 };
-
-async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function runExecutable(cwd: string, entry: string) {
   expect(await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], cwd)).toMatchObject({

@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Files } from "./generate-program";
+import { run } from "../harness/run";
 
 export type Build = { executable: string; seconds: number; error?: string };
 
@@ -11,7 +12,6 @@ export async function buildProgram(bun: string, folder: string, files: Files, en
   }
   const executable = join(folder, "program");
   const start = performance.now();
-  const build = Bun.spawn({ cmd: [bun, "build", "--compile", "--aot", ...flags, "--target=bun", "./main.ts", "./worker.ts", "--outfile", executable], cwd: folder, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  const { stdout, stderr, exitCode } = await run([bun, "build", "--compile", "--aot", ...flags, "--target=bun", "./main.ts", "./worker.ts", "--outfile", executable], folder, env);
   return { executable, seconds: (performance.now() - start) / 1000, error: exitCode ? `exit code ${exitCode}\n${stdout}${stderr}` : undefined };
 }

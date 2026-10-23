@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { built } from "./run-programs";
 import { test } from "./supported";
 
@@ -36,14 +37,7 @@ test.skipIf(isASAN || isDebug)(
     });
     built({ stderr: await build.stderr.text(), exitCode: await build.exited });
     const measure = async (mode: string) => {
-      await using ran = Bun.spawn({
-        cmd: [executable, mode],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+      const { stdout, stderr, exitCode } = await run([executable, mode], String(dir));
       expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return JSON.parse(stdout) as { length: number; peak: number };
     };

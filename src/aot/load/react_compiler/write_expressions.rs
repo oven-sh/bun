@@ -103,21 +103,7 @@ impl TreeWriter<'_, '_> {
                 let name = self.atoms.intern(b"target");
                 Ok(self.add_expression_at(ExprKind::NewTarget(name), range))
             }
-            ExprData::EClass(_)
-            | ExprData::EJsxElement(_)
-            | ExprData::EObjectJSON(_)
-            | ExprData::EArrayJSON(_)
-            | ExprData::EImport(_)
-            | ExprData::EPrivateIdentifier(_)
-            | ExprData::ERequireString(_)
-            | ExprData::ERequireResolveString(_)
-            | ExprData::ERequireCallTarget
-            | ExprData::ERequireResolveCallTarget
-            | ExprData::EImportMetaMain(_)
-            | ExprData::ERequireMain
-            | ExprData::ESpecial(_)
-            | ExprData::EInlinedEnum(_)
-            | ExprData::ENameOfSymbol(_) => Err(unsupported(expression.data.tag())),
+            _ => Err(unsupported(expression.data.tag())),
         }
     }
 
@@ -172,14 +158,7 @@ impl TreeWriter<'_, '_> {
         match self.origin_of(reference) {
             SymbolOrigin::ClassicFactory => self.write_member_path(&jsx.factory, loc),
             SymbolOrigin::ClassicFragment => self.write_member_path(&jsx.fragment, loc),
-            SymbolOrigin::Source
-            | SymbolOrigin::Local
-            | SymbolOrigin::Outlined
-            | SymbolOrigin::JsxImport(_)
-            | SymbolOrigin::MemoCacheSentinel
-            | SymbolOrigin::EarlyReturnSentinel
-            | SymbolOrigin::ImportItem
-            | SymbolOrigin::ImportNamespace => self.identifier(reference, loc),
+            _ => self.identifier(reference, loc),
         }
     }
 
@@ -326,10 +305,7 @@ impl TreeWriter<'_, '_> {
             G::PropertyKind::Normal => None,
             G::PropertyKind::Get => Some((PropKind::Getter, FnKind::Getter)),
             G::PropertyKind::Set => Some((PropKind::Setter, FnKind::Setter)),
-            G::PropertyKind::Declare
-            | G::PropertyKind::Abstract
-            | G::PropertyKind::ClassStaticBlock
-            | G::PropertyKind::AutoAccessor => {
+            _ => {
                 return Err(UnsupportedNode(property.kind.into()));
             }
         };
@@ -475,42 +451,7 @@ impl TreeWriter<'_, '_> {
         match self.file[expression].kind {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
             ExprKind::Call(call) => self.file[call].chain,
-            ExprKind::Missing
-            | ExprKind::Ident(_)
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::Template { .. }
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_)
-            | ExprKind::New(_)
-            | ExprKind::Unary { .. }
-            | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
-            | ExprKind::Cond { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => Chain::No,
+            _ => Chain::No,
         }
     }
 
@@ -824,42 +765,7 @@ fn precedence(expression: &Expr) -> Level {
         ExprData::ENumber(number) if is_negative(number.value()) => Level::Prefix,
         ExprData::ECall(_) | ExprData::EImport(_) => Level::New,
         ExprData::ENew(_) => Level::Call,
-        ExprData::EArray(_)
-        | ExprData::EClass(_)
-        | ExprData::EFunction(_)
-        | ExprData::EDot(_)
-        | ExprData::EIndex(_)
-        | ExprData::EJsxElement(_)
-        | ExprData::EObject(_)
-        | ExprData::EObjectJSON(_)
-        | ExprData::EArrayJSON(_)
-        | ExprData::ESpread(_)
-        | ExprData::ETemplate(_)
-        | ExprData::ERegExp(_)
-        | ExprData::EIdentifier(_)
-        | ExprData::EImportIdentifier(_)
-        | ExprData::EPrivateIdentifier(_)
-        | ExprData::ECommonjsExportIdentifier(_)
-        | ExprData::EBoolean(_)
-        | ExprData::EBranchBoolean(_)
-        | ExprData::ENumber(_)
-        | ExprData::EBigInt(_)
-        | ExprData::EString(_)
-        | ExprData::ERequireString(_)
-        | ExprData::ERequireResolveString(_)
-        | ExprData::ERequireCallTarget
-        | ExprData::ERequireResolveCallTarget
-        | ExprData::EMissing(_)
-        | ExprData::EThis(_)
-        | ExprData::ESuper(_)
-        | ExprData::ENull(_)
-        | ExprData::ENewTarget(_)
-        | ExprData::EImportMeta(_)
-        | ExprData::EImportMetaMain(_)
-        | ExprData::ERequireMain
-        | ExprData::ESpecial(_)
-        | ExprData::EInlinedEnum(_)
-        | ExprData::ENameOfSymbol(_) => Level::Member,
+        _ => Level::Member,
     }
 }
 

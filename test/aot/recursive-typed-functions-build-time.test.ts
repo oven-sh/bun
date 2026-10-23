@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const functionCount = isDebug || isASAN ? 400 : 4_000;
@@ -29,18 +30,7 @@ for (const [shape, write] of Object.entries(shapes)) {
       using dir = tempDir("aot-recursive-typed", {
         "main.ts": `${Array.from({ length: functionCount }, (_, index) => write(index)).join("\n")}\nexport const result = f0(3);\n`,
       });
-      await using checked = Bun.spawn({
-        cmd: [bunExe(), "check", "--aot", "./main.ts"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        checked.stdout.text(),
-        checked.stderr.text(),
-        checked.exited,
-      ]);
+      const { stdout, stderr, exitCode } = await run([bunExe(), "check", "--aot", "./main.ts"], String(dir));
       expect({ output: exitCode ? stdout + stderr : "", exitCode }).toEqual({ output: "", exitCode: 0 });
     },
     timeout,

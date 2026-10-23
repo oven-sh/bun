@@ -1,0 +1,54 @@
+# A test that names import.meta cannot tell the object, which each module has one of, from another object: the edge that is not taken keeps it. Where import.meta is the only object the value may be, the test asks for an object and decides. A built-in of the realm is one cell, and the edge that is not taken has lost it
+# FORM: Prepared
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(ImportMeta)}] results=[{type=undefined}] {
+  b0(v0: builtin(GlobalThis)|builtin(ImportMeta)):
+    v1 = TypeTest v0 testedType=builtin(ImportMeta)
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="amongObjects"
+# CHECK: b1(v2: builtin(ImportMeta)):
+# CHECK: b2(v3: builtin(GlobalThis)|builtin(ImportMeta)):
+function f1 name="onlyObject" parameters=[{type=number|builtin(ImportMeta)}] results=[{type=undefined}] {
+  b0(v0: number|builtin(ImportMeta)):
+    v1 = TypeTest v0 testedType=builtin(ImportMeta)
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="onlyObject"
+# CHECK: b1(v2: builtin(ImportMeta)):
+# CHECK: b2(v3: number):
+function f2 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(ImportMeta)}] results=[{type=undefined}] {
+  b0(v0: builtin(GlobalThis)|builtin(ImportMeta)):
+    v1 = TypeTest v0 testedType=builtin(GlobalThis)
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="ofRealm"
+# CHECK: b1(v2: builtin(GlobalThis)):
+# CHECK: b2(v3: builtin(ImportMeta)):
+function f3 name="compared" parameters=[{type=number|builtin(ImportMeta)}] results=[{type=undefined}] {
+  b0(v0: number|builtin(ImportMeta)):
+    v1 = ModuleBuiltin builtin=ImportMeta module=m0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="compared"
+# CHECK: b1(v3: builtin(ImportMeta)):
+# CHECK: b2(v4: number|builtin(ImportMeta)):

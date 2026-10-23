@@ -184,24 +184,14 @@ fn is_known_member(
         ModuleRef::File(file) if modules.interop(module).kind == ModuleKind::RuntimeSource => {
             match input.sources.kind(file) {
                 SourceKind::RuntimeModule(runtime_module) => runtime_module,
-                SourceKind::Program
-                | SourceKind::Data
-                | SourceKind::EvaluatedText
-                | SourceKind::RuntimeFunctions
-                | SourceKind::TypesOnly => return false,
+                _ => return false,
             }
         }
-        ModuleRef::File(_)
-        | ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::External { .. } => return false,
+        _ => return false,
     };
     match find_module_export(input.builtin_names, runtime_module, name, input.platform) {
-        ModuleExport::Found(_)
-        | ModuleExport::PropertyOfNamespace(_)
-        | ModuleExport::HeldByNamespace => true,
         ModuleExport::Absent | ModuleExport::Unknown => false,
+        _ => true,
     }
 }
 

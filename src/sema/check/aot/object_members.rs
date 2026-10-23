@@ -37,27 +37,7 @@ fn receiver_kind(shape: TypeShape<'_>) -> ReceiverKind {
         ShapeKind::Array { .. } | ShapeKind::Tuple { .. } | ShapeKind::Builtin { .. } => {
             ReceiverKind::Container
         }
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => ReceiverKind::Other,
+        _ => ReceiverKind::Other,
     }
 }
 
@@ -387,29 +367,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     false => self.c.intersection(&forms),
                 })
             }
-            TypeData::Intrinsic(_)
-            | TypeData::UnresolvedName { .. }
-            | TypeData::StringLit { .. }
-            | TypeData::NumberLit { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::BoolLit { .. }
-            | TypeData::EnumLit { .. }
-            | TypeData::Enum { .. }
-            | TypeData::EvolvingArray(_)
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::Marker(_)
-            | TypeData::Tuple { .. }
-            | TypeData::Fns { .. }
-            | TypeData::Synth(_)
-            | TypeData::ReverseMapped { .. }
-            | TypeData::Cond { .. }
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Keyof(_)
-            | TypeData::Substitution { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. } => None,
+            _ => None,
         }
     }
 
@@ -428,12 +386,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 self.c.type_from_node(file, node)
             }
             Origin::ClassStatic(symbol) | Origin::Function(symbol) => self.c.type_of_symbol(symbol),
-            Origin::ObjectLiteral(..)
-            | Origin::WidenedLiteral(..)
-            | Origin::EnumObject(_)
-            | Origin::Module(_)
-            | Origin::Namespace { .. }
-            | Origin::GlobalThis => ty,
+            _ => ty,
         }
     }
 }

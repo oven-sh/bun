@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { test } from "./supported";
 
@@ -11,8 +12,7 @@ import { test } from "./supported";
 const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...userEnv } = bunEnv;
 
 async function spawned(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: userEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(cmd, cwd, userEnv);
   return { stdout, stderr, exitCode };
 }
 

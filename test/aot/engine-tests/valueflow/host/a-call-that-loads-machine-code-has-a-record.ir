@@ -1,0 +1,19 @@
+# process.dlopen(module, "./addon.node")
+# Machine code is no JavaScript that nobody has seen: the solve raises no event for it, no fact falls, and the run time admits no text for its sake.
+# But an addon reads and calls globals by names that nobody sees, so whoever removes what the program does not use is told of each call that may load one: a record with a cause of its own
+# RUN: valueflow-solve unseen
+# CHECK: unseen RunsMachineCode ProcessDlopen f0:v4
+# CHECK-NEXT: unseen-code no
+# CHECK-NEXT: modules-by-name no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="dlopen"
+    v2 = NewObject
+    v3 = String string="./addon.node"
+    v4 = Call v1, v0, v2, v3
+    Return
+}

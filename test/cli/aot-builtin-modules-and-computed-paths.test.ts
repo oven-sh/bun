@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "../aot/harness/run";
 import { test } from "../aot/supported";
 import { importingByName } from "./aot-builtin-modules";
 
@@ -43,14 +44,11 @@ test("a computed name that can only be a path does not make bun run --aot compil
   using doors = tempDir("builtin-modules-and-computed-paths", withADoor);
   const cost: Record<string, number> = {};
   for (const entry of Object.keys({ ...withoutADoor, ...withADoor })) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--debug-aot", entry],
-      cwd: String(entry in withADoor ? doors : dir),
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), "run", "--debug-aot", entry],
+      String(entry in withADoor ? doors : dir),
       env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    );
     expect({ entry, stdout: stdout.trim(), exitCode }).toEqual({ entry, stdout: "run", exitCode: 0 });
     cost[entry] = Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
   }

@@ -36,11 +36,7 @@ fn macro_and_transform_events(host: &StatementsHost) -> Vec<HostEvent> {
     let mut events = host.events();
     events.retain(|event| match event {
         HostEvent::RanMacros { .. } | HostEvent::TransformedTree(_) => true,
-        HostEvent::ReadCode(_)
-        | HostEvent::StartedBackgroundReads(_)
-        | HostEvent::BackgroundRead(_)
-        | HostEvent::FinishedDeferredReads
-        | HostEvent::ParsedCode(_) => false,
+        _ => false,
     });
     events
 }

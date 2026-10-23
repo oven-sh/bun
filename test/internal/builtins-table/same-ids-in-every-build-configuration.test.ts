@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
-const generated = process.env.AOT_BUILTINS_GENERATED;
 const schemas = globAllSources().bindgen;
 const testSchemas = schemas.filter(schema => schema.endsWith("_test.bind.ts")).map(schema => basename(schema));
 
@@ -20,6 +20,7 @@ async function idsFor(typesOnly: readonly string[]): Promise<string> {
       "--target=Linux",
       `--sources=${schemas.map(schema => `${crateOf(schema)}=${schema}`).join(",")}`,
       `--prebuilt-generated=${generated}`,
+      `--engine-directory=${engineDirectory}`,
       `--types-only=${typesOnly.join(",")}`,
     ],
     cwd: bunRoot,

@@ -4,6 +4,7 @@ import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { formatDifferences, type CompareOptions } from "./compare";
+import { run } from "../harness/run";
 
 /**
  * `from` imports `specifier`. Two elements: the resolvers are only compared. Three: what `bun run` answers for `import`
@@ -61,14 +62,7 @@ async function compareInChild(
 ): Promise<Comparison> {
   const script = `import { compareCodeResolution } from "bun:internal-for-testing";
 console.log(JSON.stringify(compareCodeResolution(${JSON.stringify(root)}, ${JSON.stringify(options)})));`;
-  await using child = Bun.spawn({
-    cmd: [bunExe(), "--no-install", ...args, "-e", script],
-    cwd: root,
-    env: { ...bunEnv, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "--no-install", ...args, "-e", script], root, { ...bunEnv, ...env });
   expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
   return JSON.parse(stdout);
 }

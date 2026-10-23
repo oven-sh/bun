@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { readFileSync, readdirSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
@@ -12,6 +12,7 @@ import {
   specifierOf,
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
+import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");
 const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time"), {
@@ -27,8 +28,7 @@ const script = join(root, "src", "codegen", "builtins-manifest.ts");
 const generatorTimeout = 120_000;
 
 async function bun(...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: root, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], root);
   return { stdout, stderr, exitCode };
 }
 

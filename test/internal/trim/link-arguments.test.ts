@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
@@ -27,10 +27,11 @@ import {
 import { machO } from "../../../scripts/build/trim/linker-macho.ts";
 import type { LinkerFormat, LinkName, LinkRequest } from "../../../scripts/build/trim/linker.ts";
 import type { RemovableRange } from "../../../scripts/build/trim/ranges.ts";
-import { decodeTable, removedRangeListBytes, roomFor } from "../../../scripts/build/trim/table.ts";
+import { removedRangeListBytes, roomFor } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry, BuiltinUses } from "../../../scripts/build/trim/types.ts";
 import { packageOf } from "../icu-data-package.ts";
 import { feature, modelOf } from "./toy-graph.ts";
+import { run } from "../../aot/harness/run";
 
 setDefaultTimeout(60_000);
 
@@ -77,49 +78,38 @@ function graphOf(sections: Section[], more: Partial<SectionGraphParts> = {}) {
 }
 
 describe("parseArguments", () => {
-  const paths = ["work", "features.json", "builtin-uses.json", "libraries.json"];
+  const paths = ["work", "features.json", "builtin-uses.json"];
   const parse = (...words: string[]) => parseArguments(["bun", "link.ts", ...words]);
   const parsed: Arguments = {
     work: "work",
     featuresPath: "features.json",
     builtinUsesPath: "builtin-uses.json",
-    librariesPath: "libraries.json",
     demangler: undefined,
-    validatesRelocations: false,
     command: ["clang", "-o", "program"],
   };
 
-  test("takes four paths and a command", () => {
+  test("takes three paths and a command", () => {
     expect(parse(...paths, "--", "clang", "-o", "program")).toEqual(parsed);
   });
 
-  test("takes each option alone, both together, and between the paths", () => {
+  test("takes its option behind the paths and between them", () => {
     const command = ["--", "clang", "-o", "program"];
     expect(parse(...paths, "--demangler=/usr/bin/llvm-cxxfilt", ...command)).toEqual({
       ...parsed,
       demangler: "/usr/bin/llvm-cxxfilt",
     });
-    expect(parse(...paths, "--validate-relocations", ...command)).toEqual({ ...parsed, validatesRelocations: true });
-    expect(parse(...paths, "--validate-relocations=report", ...command)).toEqual({
-      ...parsed,
-      validatesRelocations: "report",
-    });
-    expect(parse("--validate-relocations", "work", "--demangler=filt", ...paths.slice(1), ...command)).toEqual({
-      ...parsed,
-      demangler: "filt",
-      validatesRelocations: true,
-    });
+    expect(parse("work", "--demangler=filt", ...paths.slice(1), ...command)).toEqual({ ...parsed, demangler: "filt" });
   });
 
   test("leaves every word after the first separator to the command", () => {
-    const command = ["clang", "--validate-relocations", "--", "--unknown"];
+    const command = ["clang", "--demangler=filt", "--", "--unknown"];
     expect(parse(...paths, "--", ...command)).toEqual({ ...parsed, command });
   });
 
   const rejected: [name: string, words: string[]][] = [
     ["no separator", [...paths, "clang"]],
-    ["three paths", [...paths.slice(0, 3), "--", "clang"]],
-    ["five paths", [...paths, "more", "--", "clang"]],
+    ["two paths", [...paths.slice(0, 2), "--", "clang"]],
+    ["four paths", [...paths, "more", "--", "clang"]],
     ["an unknown option", [...paths, "--plan=old", "--", "clang"]],
     ["a demangler option without a path", [...paths, "--demangler=", "--", "clang"]],
     ["an empty command", [...paths, "--"]],
@@ -127,7 +117,7 @@ describe("parseArguments", () => {
   test.each(rejected)("rejects %s with the usage line", (_, words) => {
     expect(() => parse(...words)).toThrow(BuildError);
     expect(() => parse(...words)).toThrow(
-      "usage: link.ts <work directory> <features.json> <builtin-uses.json> <libraries.json> [",
+      "usage: link.ts <work directory> <features.json> <builtin-uses.json> [",
     );
   });
 });
@@ -145,9 +135,7 @@ describe("createLinker", () => {
     work: join(folder, "work"),
     featuresPath: "",
     builtinUsesPath: "",
-    librariesPath: "",
     demangler: undefined,
-    validatesRelocations: false,
     command,
   });
   const elfCommand = (folder: string, compiler = "clang++") => [
@@ -292,16 +280,7 @@ describe("createLinker", () => {
     expect(printedArguments(second.log).slice(2)).toEqual(command.slice(3));
     expect(linker.command).toEqual(elfCommand(folder, bunExe()));
 
-    writeFileSync(second.executable, "the shipped image");
-    const relocations = linker.link(request({ name: "relocations", first: [join(folder, "print-arguments.js")] }));
-    expect(relocations).toMatchObject({
-      executable: join(linker.work, "relocations"),
-      map: join(linker.work, "relocations.map"),
-    });
-    expect(printedArguments(relocations.log).slice(-2)).toEqual(["-o", second.executable]);
-    expect(readFileSync(second.executable, "utf8")).toBe("the shipped image");
     expect(readFileSync(join(linker.work, "second.log"), "latin1")).toBe(second.log);
-    expect(readFileSync(join(linker.work, "relocations.log"), "latin1")).toBe(relocations.log);
   });
 
   test("throws the end of the log when the linker fails", () => {
@@ -326,50 +305,26 @@ describe("createLinker", () => {
 describe("a failed link", () => {
   async function runLink(...words: string[]) {
     const script = join(import.meta.dir, "..", "..", "..", "scripts", "build", "trim", "link.ts");
-    await using proc = Bun.spawn({ cmd: [bunExe(), script, ...words], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([bunExe(), script, ...words]);
     return { stdout, stderr, exitCode };
   }
 
   test("prints the message after trim:", async () => {
-    const { stdout, stderr, exitCode } = await runLink("work", "features.json", "builtin-uses.json", "libraries.json");
+    const { stdout, stderr, exitCode } = await runLink("work", "features.json", "builtin-uses.json");
     expect(stderr).toMatch(/^trim: usage: link\.ts <work directory> .* -- <link command>\n$/);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
-  });
-
-  test("prints the file and the cause of the error", async () => {
-    using dir = tempDir("trim-link-no-model", {});
-    const [work, features] = [join(String(dir), "work"), join(String(dir), "features.json")];
-    const { stdout, stderr, exitCode } = await runLink(
-      work,
-      features,
-      "builtin-uses.json",
-      "libraries.json",
-      "--",
-      "cc",
-    );
-    expect(stderr.split("\n").slice(0, 2)).toEqual(["trim: cannot read the feature model", `  at: ${features}`]);
-    expect(stderr).toMatch(/^  cause: .*ENOENT/m);
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 
   test("reads the uses of the built-ins before it links, and checks them against the model", async () => {
     using dir = tempDir("trim-link-uses", {
-      "features.json": JSON.stringify({ version: 2, features: [{ name: "Extra", index: Extra }] }),
+      "features.json": JSON.stringify({ hash: "0", features: [{ name: "Extra", index: Extra }] }),
       "undeclared.json": serializeBuiltinUses({ entries: [builtinUsing("Missing")] }),
     });
     const at = (name: string) => join(String(dir), name);
-    const missing = await runLink(at("work"), at("features.json"), at("absent.json"), "libraries.json", "--", "cc");
-    expect(missing.stderr.split("\n").slice(0, 2)).toEqual([
-      "trim: cannot read the built-in uses",
-      `  at: ${at("absent.json")}`,
-    ]);
-    expect(missing.exitCode).toBe(1);
     const undeclared = await runLink(
       at("work"),
       at("features.json"),
       at("undeclared.json"),
-      "libraries.json",
       "--",
       "cc",
     );
@@ -537,9 +492,7 @@ describe("layOut", () => {
       },
       model,
       uses,
-      libraries: { nm: "", libraries: [] },
       demangler: undefined,
-      validatesRelocations: false,
       reviewDirectory,
       stopwatch: new Stopwatch(),
     };
@@ -565,15 +518,10 @@ describe("layOut", () => {
     expect(rooms).toEqual([0, 1024]);
     expect(layout).toMatchObject({ room: 1024, secondLinks: 1, droppedRanges: 0 });
     expect(tables).toEqual([layout.table]);
-    expect(decodeTable(layout.table)).toMatchObject({
-      sets: [[Extra]],
-      ranges: [
-        { start: 0x2000, end: 0x4000, isCode: true, canBeCut: true, canBeFilled: true },
-        { start: 0x10000, end: 0x10010, isCode: false, canBeCut: false, canBeFilled: true },
-      ],
-      edges: [],
-      icuLanguages: [],
-    });
+    expect(layout.ranges).toMatchObject([
+      { start: 0x2000, end: 0x4000, isCode: true, canBeCut: true, canBeFilled: true },
+      { start: 0x10000, end: 0x10010, isCode: false, canBeCut: false, canBeFilled: true },
+    ]);
     expect(readdirSync(session.reviewDirectory).sort()).toEqual([
       "entry-points.txt",
       "groups.txt",
@@ -660,19 +608,6 @@ describe("layOut", () => {
           ],
         },
       ]);
-      expect(decodeTable(layout.table)).toMatchObject({
-        sets: [[Extra]],
-        icuPackages: [
-          {
-            start,
-            end,
-            runs: [
-              { firstItem: 0, itemCount: 1, set: 0 },
-              { firstItem: 2, itemCount: 1, set: 0 },
-            ],
-          },
-        ],
-      });
       const printed = summaryOf(layout, session);
       expect(printed[printed.indexOf(`the trim table takes ${layout.table.length} of 1024 bytes`) + 1]).toBe(
         "ICU data: 3 items, 0.00 MB, removable in 2 runs, 0 languages in 0 groups: Extra 0.00 MB",
@@ -696,17 +631,6 @@ describe("layOut", () => {
         { name: "oc", group: 1 },
       ];
       expect(layout.icuLanguages).toEqual(languages);
-      expect(decodeTable(layout.table)).toMatchObject({
-        icuLanguages: languages,
-        icuPackages: [
-          {
-            runs: [
-              { firstItem: 0, itemCount: 1, set: 0, localeGroup: 0 },
-              { firstItem: 2, itemCount: 1, set: 0, localeGroup: 1 },
-            ],
-          },
-        ],
-      });
       expect(summaryOf(layout, session)).toContain(
         "ICU data: 3 items, 0.00 MB, removable in 2 runs, 3 languages in 2 groups: Extra 0.00 MB",
       );
@@ -733,7 +657,7 @@ describe("layOut", () => {
     expect(rooms).toEqual([0, 1024, room]);
     expect(layout).toMatchObject({ room, secondLinks: 2 });
     expect(tables).toEqual([layout.table]);
-    expect(decodeTable(layout.table).ranges).toHaveLength(201);
+    expect(layout.ranges).toHaveLength(201);
   });
 
   test("a table whose size never settles fails the link", () => {
@@ -818,12 +742,5 @@ describe("layOut", () => {
       expect(requests.map(request => request.first)).toEqual([["room.s.o"], ["room.s.o"]]);
       expect(requests.map(request => rewritten(request, inputs))).toEqual([inputs, inputs]);
     });
-  });
-
-  test("--validate-relocations does nothing for a format other than ELF", () => {
-    using dir = tempDir("trim-layout-macho", {});
-    const { session, requests } = fakeSession(String(dir), { read: () => readingOf(1, "macho") });
-    layOut({ ...session, validatesRelocations: true });
-    expect(namesOf(requests)).toEqual(["first", "second"]);
   });
 });

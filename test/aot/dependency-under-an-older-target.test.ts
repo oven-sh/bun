@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 test("a package that ships its TypeScript stays typed where only tsc's output for the application's older target would differ", async () => {
@@ -25,17 +26,13 @@ export function pick(options?: { name?: string }, name = options?.name ?? fallba
 `,
   });
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [printed, said, built] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  const {
+    stdout: printed,
+    stderr: said,
+    exitCode: built,
+  } = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], String(dir));
   expect(printed + said).not.toContain("ships-typescript");
   expect(built).toBe(0);
-  await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+  const { stdout, exitCode } = await run([outfile], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: "a name of its own 3 seven yes 1 outer:1\n", exitCode: 0 });
 }, 120_000);

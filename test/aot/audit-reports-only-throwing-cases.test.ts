@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "types": [] } }`;
@@ -15,14 +16,7 @@ function calls(): void { try { untyped("x"); } catch {} }
 calls();
 `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--aot-log-type-mismatches", "main.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const { stderr, exitCode } = await run([bunExe(), "run", "--aot-log-type-mismatches", "main.ts"], String(dir));
   expect(mismatches(stderr).map(line => line.replace(/^.*; from /, ""))).toEqual([
     expect.stringMatching(/^main\.ts:4 < main\.ts/),
   ]);
@@ -39,14 +33,10 @@ function calls(): void { try { untyped("x"); } catch {} }
 calls();
 `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--aot-log-type-mismatches", "src/deep/main.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const { stderr, exitCode } = await run(
+    [bunExe(), "run", "--aot-log-type-mismatches", "src/deep/main.ts"],
+    String(dir),
+  );
   const records = mismatches(stderr);
   expect(records.map(line => line.split(" ")[4])).toEqual(["src/deep/main.ts:2:17"]);
   expect(records.map(line => line.replace(/^.*; from /, ""))).toEqual([
@@ -77,14 +67,7 @@ try { console.log("a string", untyped("x")); } catch (e) { console.log("a string
   });
   const said: Record<string, { stdout: string; lines: string[]; exitCode: number }> = {};
   for (const flags of [[], ["--aot"], ["--aot-log-type-mismatches"]]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", ...flags, "main.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "run", ...flags, "main.ts"], String(dir));
     said[flags.join()] = {
       stdout,
       lines: mismatches(stderr).map(line =>

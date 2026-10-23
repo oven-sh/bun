@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 type When = "top" | "late" | "spied" | "preload" | "ahead";
@@ -2240,8 +2241,7 @@ for (const [name, kind] of Object.entries(kinds))
 for (const [name, files] of Object.entries(ways)) cases[name] = files;
 
 async function printed(cwd: string, args: string[]) {
-  await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd);
   const noise =
     /^bun test v|^Ran \d+ tests? across|^\s+at |^\s*\d+ \| |^\s+\^|^note: |^warn: |^\S+\(\d+,\d+\): warning TS\d+: /;
   const lines = (stdout + "\n" + stderr)

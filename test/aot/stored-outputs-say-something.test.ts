@@ -4,7 +4,8 @@ import { expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
-import { slot, spawned, told } from "./run-programs";
+import { generators } from "./generate";
+import { pathOfWrittenProgram, slot, spawned, told } from "./run-programs";
 import { describe, test } from "./supported";
 
 const root = join(import.meta.dir, "programs");
@@ -24,16 +25,32 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun prints another first line in about one run of eight; the stored output is what it prints in the other seven, and what the executable always prints",
 };
 
-const stored = (readdirSync(root, { recursive: true }) as string[])
-  .map(file => file.replaceAll("\\", "/"))
+// A script that writes programs may write what they are to print too (generate.ts).
+const filesOfScripts = Object.entries(generators).flatMap(([topic, generator]) =>
+  generator()
+    .programs()
+    .flatMap(program => Object.keys(program.files).map(file => `${topic}/${file}`)),
+);
+const stored = [
+  ...new Set([
+    ...(readdirSync(root, { recursive: true }) as string[]).map(file => file.replaceAll("\\", "/")),
+    ...filesOfScripts,
+  ]),
+]
   .filter(file => file.endsWith(".expected.txt"))
   .map(file => file.slice(0, -".expected.txt".length))
   .filter(name => !existsSync(join(root, name + ".todo.txt")) && !plainBunVaries[name])
   .sort();
 const topics = [...new Set(stored.map(name => name.split("/")[0]))];
+const isKept = (name: string) =>
+  extensions.some(
+    extension => existsSync(join(root, `${name}.${extension}`)) || existsSync(join(root, name, `main.${extension}`)),
+  );
+// A script writes the program. What is stored for it lies beside it where it is written.
+const written = new Map(stored.filter(name => !isKept(name)).map(name => [name, pathOfWrittenProgram(name)]));
 
 async function saysNothing(name: string): Promise<boolean> {
-  const beside = join(root, name);
+  const beside = written.get(name)?.replace(/([\\/]main)?\.[a-z]+$/, "") ?? join(root, name);
   const path = [
     ...extensions.map(extension => `${beside}.${extension}`),
     ...extensions.map(extension => join(beside, `main.${extension}`)),

@@ -72,10 +72,7 @@ impl LinkedProject<'_, '_> {
         }
         match find_module_export(self.builtin_names, module, name, self.platform) {
             ModuleExport::Found(builtin) => LinkedBinding::Builtin(table::canonical_id(builtin)),
-            ModuleExport::Unknown
-            | ModuleExport::Absent
-            | ModuleExport::HeldByNamespace
-            | ModuleExport::PropertyOfNamespace(_) => LinkedBinding::Unknown,
+            _ => LinkedBinding::Unknown,
         }
     }
 }
@@ -95,9 +92,7 @@ impl Library<'_, '_> {
         match export_referent(&self.project, file, known::default, member).referent {
             StaticReferent::Class(class) => Some(ClassDeclaration::Class(class)),
             StaticReferent::Function(function) => Some(ClassDeclaration::Function(function)),
-            StaticReferent::Builtin(_)
-            | StaticReferent::Namespace(_)
-            | StaticReferent::Unknown(_) => None,
+            _ => None,
         }
     }
 
@@ -134,10 +129,7 @@ impl NamedValues for LinkedProject<'_, '_> {
             StaticReferent::Namespace(NamespaceReferent::Module(ModuleRef::Runtime(module))) => {
                 library.find_declaration(module, None)
             }
-            StaticReferent::Class(_)
-            | StaticReferent::Function(_)
-            | StaticReferent::Namespace(_)
-            | StaticReferent::Unknown(_) => None,
+            _ => None,
         }
     }
 
@@ -180,9 +172,7 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
         if let Some(module) = find_module_of_object(holder) {
             return match self.runtime_module_export(module, name) {
                 LinkedBinding::Builtin(member) => Some(member),
-                LinkedBinding::Binding(_)
-                | LinkedBinding::Namespace(_)
-                | LinkedBinding::Unknown => None,
+                _ => None,
             };
         }
         let name = self.builtin_names.get(name)?;
@@ -202,13 +192,7 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             | ImportBinding::CapturedBuiltin {
                 member: builtin, ..
             } => LinkedBinding::Builtin(table::canonical_id(builtin)),
-            ImportBinding::Local
-            | ImportBinding::Unused
-            | ImportBinding::Unbound
-            | ImportBinding::BuiltinMember { .. }
-            | ImportBinding::Exports { .. }
-            | ImportBinding::Synthetic(_)
-            | ImportBinding::NamespaceRead { .. } => LinkedBinding::Unknown,
+            _ => LinkedBinding::Unknown,
         }
     }
 
@@ -234,15 +218,7 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
             | ImportSiteKind::GetBuiltinModule(_) => {}
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_) => return None,
+            _ => return None,
         }
         let SiteAnswer::Module(module) = self.graph.find_site_answer(file, site)? else {
             return None;
@@ -284,10 +260,7 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
     fn find_target_of_copied_properties(&self, builtin: BuiltinId) -> Option<u32> {
         match prototype_operation_of(builtin)? {
             PrototypeOperation::CopyProperties { target } => Some(target),
-            PrototypeOperation::SetPrototype { .. }
-            | PrototypeOperation::CreateObject { .. }
-            | PrototypeOperation::LinkClasses { .. }
-            | PrototypeOperation::CallFunction { .. } => None,
+            _ => None,
         }
     }
 }

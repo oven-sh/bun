@@ -1,0 +1,67 @@
+# A key of which nothing is known is expected to be an index where the receiver is proven to be an array or a typed array
+# FORM: Prepared
+# RUN: element-access
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="array" parameters=[{type=Array<number>}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: anything, v2: number):
+    v3 = ElemGet v0, v1
+    ElemSet v0, v1, v2
+    ElemDefine v0, v1, v2
+    v6 = ElemHas v0, v1
+    v7 = ElemDelete v0, v1
+    Return v3
+}
+# CHECK: F0 v3 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[key, pristine(Storage+Names), storage]
+# CHECK-NEXT: F0 v4 ElemSet: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[key, pristine(Storage+Names), storage]
+# CHECK-NEXT: F0 v5 ElemDefine: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[key, pristine(Storage+Names), storage]
+# CHECK-NEXT: F0 v6 ElemHas: form=Array level=Expected operation=HasArrayElement class=[[array]] storage=Double integralKey tests=[key, pristine(Storage+Names), storage]
+# CHECK-NEXT: F0 v7 ElemDelete: form=ByKey level=Unknown
+function f1 name="typed-array" parameters=[{type=Uint8Array}, {type=Buffer}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: Buffer, v2: anything, v3: number):
+    v4 = ElemGet v0, v2
+    ElemSet v0, v2, v3
+    v6 = ElemGet v1, v2
+    v7 = ElemHas v0, v2
+    Return v4
+}
+# CHECK-NEXT: F1 v4 ElemGet: form=TypedArray level=Expected operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8 integralKey tests=[key]
+# CHECK-NEXT: F1 v5 ElemSet: form=TypedArray level=Expected operation=PutTypedArrayElement class=[[uint8]] typedArray=TypeUint8 integralKey tests=[key]
+# CHECK-NEXT: F1 v6 ElemGet: form=TypedArray level=Expected operation=GetTypedArrayElement class=[[buffer]] typedArray=TypeUint8 integralKey tests=[key]
+# CHECK-NEXT: F1 v7 ElemHas: form=ByKey level=Unknown
+function f2 name="only-the-key-is-open" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage, Names]>, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-NEXT: F2 v2 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[key]
+function f3 name="keys-that-are-no-index" parameters=[{type=Array<number>}, {type=string}, {type=symbol}, {type=number|string}, {type=undefined|number}, {type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: string, v2: symbol, v3: number|string, v4: undefined|number, v5: anything ~ string):
+    v6 = ElemGet v0, v1
+    v7 = ElemGet v0, v2
+    v8 = ElemGet v0, v3
+    v9 = ElemGet v0, v4
+    v10 = ElemGet v0, v5
+    Return v6
+}
+# CHECK-NEXT: F3 v6 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v7 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v8 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v9 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F3 v10 ElemGet: form=ByKey level=Unknown
+function f4 name="receivers-that-say-nothing-of-the-key" parameters=[{type=Array<number> flags=[IsExpected]}, {type=Array<number>|Uint8Array}, {type=Map<number, number>}, {type=Arguments}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number>, v1: Array<number>|Uint8Array, v2: Map<number, number>, v3: Arguments, v4: string, v5: anything):
+    v6 = ElemGet v0, v5
+    v7 = ElemGet v1, v5
+    v8 = ElemGet v2, v5
+    v9 = ElemGet v3, v5
+    v10 = ElemGet v4, v5
+    Return v6
+}
+# CHECK-NEXT: F4 v6 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F4 v7 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F4 v8 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F4 v9 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F4 v10 ElemGet: form=ByKey level=Unknown
+# CHECK-NOT: tests=

@@ -3,7 +3,7 @@ import type { NamedBytes } from "./icu-data.ts";
 import type { Partition } from "./partition.ts";
 import type { OutputPolicy } from "./ranges.ts";
 
-export type LinkName = "first" | "second" | "relocations";
+export type LinkName = "first" | "second";
 
 export interface Link {
   name: LinkName;

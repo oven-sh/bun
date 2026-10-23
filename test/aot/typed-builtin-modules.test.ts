@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { unsupported } from "./run-programs";
 
 const tsconfig = JSON.stringify({
@@ -35,14 +36,11 @@ declare const require: (specifier: string) => unknown;
       "main.ts": `${declarations}function addInProgram(a: number, b: number): number {\n  return a + b;\n}\nconsole.log(addInProgram, [${required.join(", ")}]);\n`,
     });
     const map = join(String(dir), "image.map");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "main"],
-      cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_aotMapFilePath: map },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "main"],
+      String(dir),
+      { ...bunEnv, BUN_JSC_aotMapFilePath: map },
+    );
     expect({ stderr: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
       stderr: [],
       exitCode: 0,

@@ -18,12 +18,7 @@ type DecoratorList = SmallVec<[ValueId; 8]>;
 fn is_method_or_accessor(kind: MemberKind) -> bool {
     match kind {
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter => true,
-        MemberKind::Property
-        | MemberKind::Constructor
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature
-        | MemberKind::StaticBlock => false,
+        _ => false,
     }
 }
 

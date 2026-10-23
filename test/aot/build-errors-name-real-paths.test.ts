@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // What the build refuses it names by file and line. The file has to be named as the system names it: on Windows
@@ -11,14 +12,10 @@ test("an error of an --aot build names the file by a path that can be opened", a
     "main.mjs": `console.log("first line");\nimport { a } from "./absent.mjs";\nconsole.log(a);\n`,
   });
   const outfile = join(String(dir), isWindows ? "program.exe" : "program");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", outfile],
+    String(dir),
+  );
   expect(stderr).toContain('Could not resolve: "./absent.mjs"');
   const place = stderr.split(/\r?\n/).find(line => /^\s+at .*:2:\d+$/.test(line)) ?? "";
   const path = place

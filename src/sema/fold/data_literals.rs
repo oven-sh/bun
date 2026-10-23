@@ -201,38 +201,7 @@ impl<'s> DataReader<'_, '_, 's> {
                 | ExprKind::Instantiation { expr, .. } => e = expr,
                 ExprKind::Array(items) => return Visited::Composite(Composite::Array(items)),
                 ExprKind::Object(props) => return self.visit_object(props),
-                ExprKind::Missing
-                | ExprKind::Ident(_)
-                | ExprKind::PrivateIdentifier(_)
-                | ExprKind::This
-                | ExprKind::Super
-                | ExprKind::Null
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::Number(_)
-                | ExprKind::String(_)
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex { .. }
-                | ExprKind::Template { .. }
-                | ExprKind::TaggedTemplate(_)
-                | ExprKind::Fn(_)
-                | ExprKind::Class(_)
-                | ExprKind::Dot { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::Call(_)
-                | ExprKind::New(_)
-                | ExprKind::Unary { .. }
-                | ExprKind::Binary { .. }
-                | ExprKind::Assign { .. }
-                | ExprKind::Cond { .. }
-                | ExprKind::Spread(_)
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. }
-                | ExprKind::Jsx(_)
-                | ExprKind::ImportCall { .. }
-                | ExprKind::ImportMeta
-                | ExprKind::NewTarget(_)
-                | ExprKind::JsxText(_) => return Visited::Unknown,
+                _ => return Visited::Unknown,
             }
         }
     }

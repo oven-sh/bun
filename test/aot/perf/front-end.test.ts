@@ -12,6 +12,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as spawned } from "../harness/run";
 
 setDefaultTimeout(120_000);
 
@@ -75,12 +76,6 @@ const server = Bun.serve({
 console.log(server.port);
 `,
 };
-
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 if (!mode) console.error("SKIPPED: test/aot/perf/front-end.test.ts: it wants a quiet machine. AOT_PERF=1 runs it");
 else if (process.platform !== "linux" || process.arch !== "x64")

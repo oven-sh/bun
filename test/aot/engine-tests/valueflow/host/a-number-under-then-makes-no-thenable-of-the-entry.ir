@@ -1,0 +1,13 @@
+# What is no function under `then` is an export like any other: the promise is fulfilled with the namespace, which has no `default`.
+# RUN: valueflow-solve used
+# CHECK-NOT: BunServe
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="then" variable=g0}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]
+variable g0 name="then" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}

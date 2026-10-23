@@ -11,10 +11,10 @@ use crate::compile::testing::TemporaryDirectory;
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
     Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult, Field, Function,
-    FunctionFlags, FunctionRelations, FunctionVisibility, HandedTo, Header, HostRead, ImportPhase,
+    FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase,
     Layout, LayoutKind, LimitId, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
-    ModuleRequestKind, OperandOf, ProgramList, RelationSubject, RequiredName, RuntimeFunctionEntry,
-    SCHEMA_HASH, StaticField, StoredInto, SyntheticExport, TemplatePart, TemplatePlaceholder,
+    ModuleRequestKind, ProgramList, RequiredName, RuntimeFunctionEntry,
+    SCHEMA_HASH, StaticField, SyntheticExport, TemplatePart, TemplatePlaceholder,
     TypeSite, TypeSiteKind, UndeclaredMembers, ValidatedPrimitive, ValidationMember,
     ValidationNode, ValidationRule, ValidationShape, Variable, WebAssemblyModule,
 };
@@ -212,17 +212,7 @@ fn create_function(names: &Names) -> Function {
     let (parameter, capture) = (builder.parameter(0), builder.capture(0));
     let sum = builder.add(parameter, capture);
     builder.return_value(Some(sum));
-    let relations = FunctionRelations {
-        subjects: vec![RelationSubject::default()],
-        stores: vec![StoredInto::default()],
-        handed: vec![HandedTo::default()],
-        operands: vec![OperandOf::default()],
-        results_fully_listed: 1,
-    };
-    Function {
-        relations,
-        ..builder.finish().0
-    }
+    builder.finish().0
 }
 
 fn create_full_program() -> Program {

@@ -29,32 +29,7 @@ fn find_name_position(hir: &hir::File<'_>, declaration: Decl) -> Option<u32> {
         Decl::Module(declaration) => Some(hir[declaration].name_pos),
         Decl::Fn(function) => Some(hir[function].name_pos),
         Decl::Class(class) => Some(hir[class].name_pos),
-        Decl::Var(_)
-        | Decl::Param(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::EnumMember(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::ExportExpr(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => None,
+        _ => None,
     }
 }
 
@@ -176,18 +151,7 @@ fn find_code_unit(text: &ModuleText<'_, '_>, expression: ExprId) -> Option<CodeU
                 return Some(CodeUnit::Function(bound.param_fn[parameter.idx()]));
             }
             Parent::MemberInit(member) => return Some(CodeUnit::FieldInitializer(member)),
-            Parent::None
-            | Parent::PatPropDefault(_)
-            | Parent::PatElemDefault(_)
-            | Parent::PatKey(_)
-            | Parent::MemberKey(_)
-            | Parent::EnumInit(_)
-            | Parent::Case(_)
-            | Parent::ClassExtends(_)
-            | Parent::ClassDecorator(_)
-            | Parent::MemberDecorator(_)
-            | Parent::ParamDecorator(_)
-            | Parent::Module(_) => return None,
+            _ => return None,
         };
         let scope = bound.scope_of_stmt(statement);
         return scope.is_some().then(|| bound.code_unit(scope));
@@ -286,11 +250,7 @@ fn find_constant(text: &ModuleText<'_, '_>, expression: ExprId) -> Option<Consta
 fn find_constant_name(text: &ModuleText<'_, '_>, key: ExprId) -> Option<Atom> {
     match find_constant(text, key)? {
         Constant::String(name) => Some(name),
-        Constant::Undefined
-        | Constant::Null
-        | Constant::Boolean(_)
-        | Constant::Number(_)
-        | Constant::BigInt(_) => None,
+        _ => None,
     }
 }
 

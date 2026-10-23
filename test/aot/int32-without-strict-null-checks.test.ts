@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -22,14 +23,11 @@ const prelude = `import type { int32 } from "bun";\ndeclare const console: { log
 async function build(program: string) {
   using dir = tempDir("aot-int32-lax", { "tsconfig.json": tsconfig, "main.ts": prelude + program });
   const outfile = join(String(dir), isWindows ? "app.exe" : "app");
-  await using built = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([built.stderr.text(), built.exited]);
+  const { stderr, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", outfile],
+    String(dir),
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   const errors = stderr
     .split("\n")
     .filter(line => line.startsWith("error: "))

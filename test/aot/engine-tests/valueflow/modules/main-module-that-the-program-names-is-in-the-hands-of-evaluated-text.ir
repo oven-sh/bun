@@ -1,0 +1,52 @@
+# As exports-of-a-commonjs-module-stay-in-the-program-beside-evaluated-text.ir, and the program reads process.mainModule
+# The host answers the module object of the entry point there, to the program and to evaluated text alike: what the entry point exports is in unknown hands.
+# One flag of the program stands for all four ways (ModuleFlags::NamesWayToModuleObjects), so `children` leads on from there: what helper.cjs exports is in unknown hands too
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText
+# RUN(WHY): valueflow-why escaped=f3 escaped=f2
+# WHY: escaped=f3
+# WHY: n0 escaped
+# WHY: escaped=f2
+# WHY: n0 escaped
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v3 key="twice"
+    v5 = Integer integer=21
+    v6 = Call v4, v3, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Builtin builtin=Function
+    v10 = Construct v9, -, v8
+    v11 = Call v10
+    v12 = Builtin builtin=Process
+    v13 = PropGet v12 key="mainModule"
+    v14 = Undefined
+    Return v14
+}
+function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f2
+    PropSet v0, v2 key="twice" mode=Sloppy
+    v4 = Undefined
+    Return v4
+}
+function f2 name="twice" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="exportedByMain" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

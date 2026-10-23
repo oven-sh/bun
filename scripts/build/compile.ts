@@ -226,10 +226,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
   if (cfg.trimmable) {
     assert(cfg.cxxfilt !== undefined, "a trimmable link needs llvm-cxxfilt");
-    const isProven = cfg.linux && cfg.x64 && cfg.abi === "gnu";
-    const validate = !cfg.ci || cfg.darwin || cfg.windows ? "" : ` --validate-relocations${isProven ? "" : "=report"}`;
     n.rule("link_trimmable", {
-      command: `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(librariesFilePath(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)}${validate} -- ${linkCommand}`,
+      command: `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)} -- ${linkCommand}`,
       description: "link $out (trimmable)",
       rspfile: "$out.rsp",
       rspfile_content: "$in_newline",
@@ -572,14 +570,6 @@ const trimScripts = (cfg: Config) => [
   resolve(cfg.cwd, "scripts", "build", "error.ts"),
 ];
 const trimReviewFiles = ["entry-points.txt", "requires.txt", "groups.txt", "retained-by.txt"];
-
-/**
- * `<buildDir>/libraries.json`: name, version and link inputs of each vendored library (trim/libraries.ts writes it at
- * configure time).
- */
-export function librariesFilePath(cfg: Pick<Config, "buildDir">): string {
-  return resolve(cfg.buildDir, "libraries.json");
-}
 
 /**
  * Link an executable. Returns absolute path to output (with cfg.exeSuffix

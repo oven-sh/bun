@@ -1,0 +1,27 @@
+# The host hands the default export of the entry point to Bun.serve, which calls what it finds on it. An export that the host does not read stays where it is
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}, {name="other" variable=g1}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}]
+layout L0 name="Server" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    PutModuleVariable v3 variable=g1
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}

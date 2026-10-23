@@ -58,43 +58,7 @@ pub(super) fn classify_test(
             };
         }
         ExprKind::Binary { op, left, right } => (op, left, right),
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => return LeafTest::Truthiness,
+        _ => return LeafTest::Truthiness,
     };
     if !operator::is_comparison(op)
         || main_module_operand(file.hir, file.bound, expression).is_some()
@@ -113,28 +77,7 @@ fn find_equality(op: BinOp) -> Option<Equality> {
         BinOp::NotEq => (true, true),
         BinOp::EqEqEq => (false, false),
         BinOp::NotEqEq => (false, true),
-        BinOp::Add
-        | BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor
-        | BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::In
-        | BinOp::Instanceof
-        | BinOp::And
-        | BinOp::Or
-        | BinOp::Nullish
-        | BinOp::Comma => return None,
+        _ => return None,
     };
     Some(Equality {
         is_loose,
@@ -221,14 +164,7 @@ fn find_unchanging_local(
         | BindingKind::Let
         | BindingKind::Parameter
         | BindingKind::SimpleCatchParameter => true,
-        BindingKind::NoBinding
-        | BindingKind::Import
-        | BindingKind::TypeScriptContainer
-        | BindingKind::Var
-        | BindingKind::Class
-        | BindingKind::ClassInnerName
-        | BindingKind::Function
-        | BindingKind::FunctionName => false,
+        _ => false,
     };
     (has_no_value_before && bound.is_stable_binding(symbol)).then_some(symbol)
 }
@@ -301,37 +237,7 @@ fn classify_type_test_call(file: &FileLowering<'_, '_, '_, '_>, site: CallId) ->
         Intrinsic::IsNullish => TypeTable::NULLISH,
         Intrinsic::IsObject => TypeTable::OBJECT,
         Intrinsic::IsCallable => TypeTable::FUNCTION,
-        Intrinsic::Operation(_)
-        | Intrinsic::Conversion(_)
-        | Intrinsic::Throw(_)
-        | Intrinsic::IfAbruptCloseIterator
-        | Intrinsic::SymbolKey(_)
-        | Intrinsic::HasJSType { .. }
-        | Intrinsic::Builtin(_)
-        | Intrinsic::Construct(_)
-        | Intrinsic::NativeBinding(_)
-        | Intrinsic::LinkTimeConstant(_)
-        | Intrinsic::NativeCall(_)
-        | Intrinsic::Undefined
-        | Intrinsic::Int(_)
-        | Intrinsic::Bool(_)
-        | Intrinsic::Double(_)
-        | Intrinsic::Call { .. }
-        | Intrinsic::Apply
-        | Intrinsic::ArrayPush
-        | Intrinsic::PutByValDirect { .. }
-        | Intrinsic::GetOwnProperty { .. }
-        | Intrinsic::ArgumentCount
-        | Intrinsic::Argument
-        | Intrinsic::PrivateGlobal
-        | Intrinsic::ReplaceablePrivateGlobal
-        | Intrinsic::PrivateName
-        | Intrinsic::LinkedFunction(_)
-        | Intrinsic::Directive(_)
-        | Intrinsic::PrependArgument { .. }
-        | Intrinsic::HasPromiseStatus(_)
-        | Intrinsic::Erased
-        | Intrinsic::BundleError => return LeafTest::Truthiness,
+        _ => return LeafTest::Truthiness,
     };
     LeafTest::Type {
         operand,

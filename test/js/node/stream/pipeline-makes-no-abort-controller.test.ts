@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
+import { run } from "../../../aot/harness/run";
 
 test("stream.pipeline() neither makes nor aborts an AbortController of the program's", async () => {
-  await using child = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
       const Original = AbortController;
       let made = 0, aborted = 0;
       globalThis.AbortController = class extends Original {
@@ -18,12 +18,7 @@ test("stream.pipeline() neither makes nor aborts an AbortController of the progr
         console.log(JSON.stringify({ error: error ?? null, made, aborted }));
       });
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  ]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
     stdout: JSON.stringify({ error: null, made: 0, aborted: 0 }),
     stderr: "",

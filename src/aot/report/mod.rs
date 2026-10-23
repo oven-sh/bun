@@ -10,7 +10,6 @@ mod file_counts;
 mod format;
 mod json;
 mod levels;
-mod losses;
 #[cfg(test)]
 mod message;
 mod model;

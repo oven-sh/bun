@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { built } from "./run-programs";
 import { test } from "./supported";
 
@@ -34,12 +35,6 @@ const files = {
 };
 
 const callsWithReplacer = 1;
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("JSON.stringify takes the slow path for a date with its own toJSON and for no other date", async () => {
   using dir = tempDir("aot-dates-in-json", files);

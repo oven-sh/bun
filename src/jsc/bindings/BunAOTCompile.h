@@ -55,8 +55,6 @@ extern "C" BunAOTBytes Bun__AOT__imageCode();
 extern "C" void Bun__AOT__setMismatchLog(intptr_t descriptor, bool isJSON);
 extern "C" void Bun__AOT__setMismatchLogFormat(bool isJSON);
 extern "C" void Bun__AOT__setVerbose(bool isVerbose);
-extern "C" void Bun__AOT__dumpObjectCensusIfRequested(JSC::JSGlobalObject*);
-extern "C" void Bun__AOT__answerObjectCensusRequest(JSC::JSGlobalObject*);
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address);
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset);
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress);

@@ -7,7 +7,6 @@ import { detectWindowsSysroot } from "../../../scripts/build/config.ts";
 import { coffRecordSectionName, namedBytesOfPe } from "../../../scripts/build/trim/coff-graph.ts";
 import { CoffObject } from "../../../scripts/build/trim/coff-objects.ts";
 import type { FeatureName } from "../../../scripts/build/trim/features.ts";
-import type { Library } from "../../../scripts/build/trim/libraries.ts";
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
@@ -59,7 +58,6 @@ export interface LinkOptions {
   inputs?: string[];
   minimums?: Record<FeatureName, number>;
   builtins?: BuiltinEntry[];
-  libraries?: Library[];
   isFreestanding?: boolean;
   afterCompile?(folder: string): void;
 }
@@ -108,8 +106,8 @@ async function prepareInputs(folder: string, options: LinkOptions, pathOf: (name
 
 export async function wrapped(folder: string, options: LinkOptions = {}) {
   await prepareInputs(folder, options, name => name);
-  const { minimums, builtins, libraries } = options;
-  const linkInputs = writeLinkInputs(folder, { minimums, builtins, libraries, nm: nm ?? "" });
+  const { minimums, builtins } = options;
+  const linkInputs = writeLinkInputs(folder, { minimums, builtins });
   return await run(linkArguments(linkInputs, linkCommand(options, name => name)), folder);
 }
 

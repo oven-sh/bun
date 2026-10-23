@@ -54,26 +54,7 @@ pub(super) fn has_unit_type(file: &mut FileLowering<'_, '_, '_, '_>, expression:
         | ShapeKind::NumberLiteral(_)
         | ShapeKind::NumericEnumMember(_)
         | ShapeKind::StringLiteral(_) => true,
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Boolean
-        | ShapeKind::Number
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Object
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => false,
+        _ => false,
     }
 }
 

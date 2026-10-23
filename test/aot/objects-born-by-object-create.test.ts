@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -34,14 +35,11 @@ ${body}
 export const sum = (point: Point) => point.x + point.y + point.kind.length;
 `;
   using dir = tempDir("aot-objects-born-by-object-create", { "tsconfig.json": tsconfig, "main.ts": main });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=json", "main.ts"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "check", "--aot", "--no-pretty", "--explain=json", "main.ts"],
+    String(dir),
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   const rows: Row[] = stdout
     .split("\n")
     .filter(line => line.startsWith('{"rank"'))

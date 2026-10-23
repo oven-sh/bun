@@ -27,6 +27,7 @@ const stubOffset = 18;
 const originOffset = 19;
 const builtinOffset = 20;
 const largestFunctionThatOnlyReturns = 32;
+const unwindRecordSection = /^\.[px]data(\$|$)/;
 
 export type EntryPointFailure =
   GraphFailure | { kind: "GuardWithoutReference"; guard: number; entry: undefined; feature: number; target: string };
@@ -80,11 +81,23 @@ export function sortedUnique<T>(items: T[], compare: (a: T, b: T) => number): T[
   return sorted.filter((item, index) => index === 0 || compare(sorted[index - 1]!, item) !== 0);
 }
 
+// A COFF function that sets up a frame refers to its unwind records, and they to it and to each other.
+export function isUnwindRecordOf(graph: SectionGraph, record: number, node: number): boolean {
+  if (graph.format !== "coff" || !unwindRecordSection.test(graph.section[record]!)) return false;
+  for (let edge = graph.successorStart[record]!; edge < graph.successorStart[record + 1]!; edge++) {
+    const target = graph.successors[edge]!;
+    if (target !== node && !unwindRecordSection.test(graph.section[target]!)) return false;
+  }
+  return true;
+}
+
 // The optimizer removes a call of a function that does nothing, also one it may not inline, and the function with it.
 export function onlyReturns(graph: SectionGraph, node: number): boolean {
-  return (
-    graph.size[node]! <= largestFunctionThatOnlyReturns && graph.successorStart[node] === graph.successorStart[node + 1]
-  );
+  if (graph.size[node]! > largestFunctionThatOnlyReturns) return false;
+  for (let edge = graph.successorStart[node]!; edge < graph.successorStart[node + 1]!; edge++) {
+    if (!isUnwindRecordOf(graph, graph.successors[edge]!, node)) return false;
+  }
+  return true;
 }
 
 function decodeRecordSection(

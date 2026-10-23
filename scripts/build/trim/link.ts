@@ -1,12 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { isBitcode } from "./binary-reader.ts";
 import { checkBuiltinUses, readBuiltinUses } from "./builtin-uses.ts";
 import { checkDeclaredUses, findUsedFeaturesWithoutGuard } from "./declared-uses.ts";
-import { openElf } from "./elf-file.ts";
 import {
   findCFunctionEntryPoints,
   findCxxFunctionEntryPoints,
@@ -18,7 +17,6 @@ import {
 import { readFeatureModel } from "./features.ts";
 import type { GraphReading, SectionGraph } from "./graph.ts";
 import { icuPackagesOf, type IcuPackageRuns } from "./icu-data.ts";
-import { libraryBytes, readLibrariesFile, type LibrariesFile } from "./libraries.ts";
 import { coff } from "./linker-coff.ts";
 import { groupOfNode } from "./linker-common.ts";
 import { elf } from "./linker-elf.ts";
@@ -55,15 +53,12 @@ import type {
   Partition,
   RemovableRange,
 } from "./types.ts";
-import { validateElfRelocations } from "./validate-elf-relocations.ts";
 
 export interface Arguments {
   work: string;
   featuresPath: string;
   builtinUsesPath: string;
-  librariesPath: string;
   demangler: string | undefined;
-  validatesRelocations: boolean | "report";
   command: string[];
 }
 
@@ -73,8 +68,8 @@ export const maxSecondLinks = 3;
 export const builtinModulesHeaderBytes = 48;
 
 const usage =
-  "usage: link.ts <work directory> <features.json> <builtin-uses.json> <libraries.json> " +
-  "[--demangler=<llvm-cxxfilt>] [--validate-relocations[=report]] -- <link command>";
+  "usage: link.ts <work directory> <features.json> <builtin-uses.json> " +
+  "[--demangler=<llvm-cxxfilt>] -- <link command>";
 const demanglerOption = "--demangler=";
 const responseFileArgument = /^((?:\/clang:)?-Wl,)?@(.*)$/;
 const rangeCountMargin = 1.25;
@@ -107,19 +102,16 @@ export function parseArguments(argv: string[]): Arguments {
   if (separator < 0) throw new BuildError(usage);
   const positional: string[] = [];
   let demangler: string | undefined;
-  let validatesRelocations: boolean | "report" = false;
   for (const word of argv.slice(2, separator)) {
     if (!word.startsWith("--")) positional.push(word);
     else if (word.startsWith(demanglerOption) && word.length > demanglerOption.length) {
       demangler = word.slice(demanglerOption.length);
-    } else if (word === "--validate-relocations") validatesRelocations = true;
-    else if (word === "--validate-relocations=report") validatesRelocations = "report";
-    else throw new BuildError(`unknown option ${word}\n${usage}`);
+    } else throw new BuildError(`unknown option ${word}\n${usage}`);
   }
   const command = argv.slice(separator + 1);
-  if (positional.length !== 4 || command.length === 0) throw new BuildError(usage);
-  const [work, featuresPath, builtinUsesPath, librariesPath] = positional as [string, string, string, string];
-  return { work, featuresPath, builtinUsesPath, librariesPath, demangler, validatesRelocations, command };
+  if (positional.length !== 3 || command.length === 0) throw new BuildError(usage);
+  const [work, featuresPath, builtinUsesPath] = positional as [string, string, string];
+  return { work, featuresPath, builtinUsesPath, demangler, command };
 }
 
 interface ResponseFileLine {
@@ -199,7 +191,6 @@ export function createLinker(arguments_: Arguments): { linker: Linker; format: O
   const paths: Record<LinkName, { executable: string; map: string }> = {
     first: { executable: join(work, firstLinkName + (isCoff ? ".exe" : "")), map: join(work, "first.map") },
     second: { executable: output, map: finalMap },
-    relocations: { executable: join(work, "relocations"), map: join(work, "relocations.map") },
   };
   const linker: Linker = {
     work,
@@ -216,12 +207,9 @@ export function createLinker(arguments_: Arguments): { linker: Linker; format: O
     },
     link(request) {
       const { executable, map } = paths[request.name];
-      // lld names the output file in the image where a version script defines a version.
-      const takesPlaceOfOutput = request.name === "relocations";
-      const written = takesPlaceOfOutput ? output : executable;
       const rewritten = command.flatMap((argument, index) => {
         if (index === 0) return [];
-        if (index === outputAt) return [outputFlag + written];
+        if (index === outputAt) return [outputFlag + executable];
         if (index === mapAt) return [mapFlag + map];
         const replaced = request.replaced.get(index);
         if (replaced !== undefined) return [replaced];
@@ -232,16 +220,10 @@ export function createLinker(arguments_: Arguments): { linker: Linker; format: O
         writeFileSync(copy, rewriteResponseFile(file, request));
         return [`${file.prefix}@${copy}`];
       });
-      const setAside = join(work, "second");
-      if (takesPlaceOfOutput) renameSync(output, setAside);
       const linked = spawnSync(compiler, [...request.first, ...rewritten, ...request.last], {
         encoding: "latin1",
         maxBuffer: 1 << 30,
       });
-      if (takesPlaceOfOutput) {
-        if (existsSync(output)) renameSync(output, executable);
-        renameSync(setAside, output);
-      }
       if (linked.error !== undefined) {
         throw new BuildError(`the ${request.name} link could not run ${compiler}`, { cause: linked.error });
       }
@@ -259,9 +241,7 @@ export interface LinkSession {
   format: LinkerFormat;
   model: FeatureModel;
   uses: BuiltinUses;
-  libraries: LibrariesFile;
   demangler: string | undefined;
-  validatesRelocations: boolean | "report";
   reviewDirectory: string;
   stopwatch: Stopwatch;
 }
@@ -349,7 +329,7 @@ function encodeTrimTable(
   ranges: RemovableRange[],
   { packages, languages }: IcuData,
   moduleTexts: ModuleTextRange[],
-  { linker, model, libraries }: LinkSession,
+  { model }: LinkSession,
 ): Buffer {
   return encodeTable(
     assembleTable({
@@ -358,7 +338,6 @@ function encodeTrimTable(
       ranges,
       icuPackages: packages,
       icuLanguages: languages,
-      libraries: libraryBytes(libraries, [...linker.inputs], analysis.reading.graph, analysis.partition, linker.work),
       moduleTexts,
     }),
   );
@@ -515,53 +494,12 @@ function linkUntilTableFits(plan: SecondLinkPlan, session: LinkSession): Layout 
   throw new BuildError(`the trim table did not fit the bytes reserved for it in ${maxSecondLinks} links`);
 }
 
-export function relocationLinkArguments(work: string, shipped: string): string[] {
-  const file = openElf(shipped, "r");
-  if (file === undefined) throw new BuildError(`${shipped} is not an ELF file`);
-  closeSync(file.fd);
-  const unwindTablesAt = file.sections.findIndex(section => section.name === ".eh_frame");
-  if (unwindTablesAt <= 1) return ["-Wl,--emit-relocs"];
-  const unwindTableOrder = join(work, "unwind-table-order.ld");
-  const before = file.sections[unwindTablesAt - 1]!.name;
-  writeFileSync(unwindTableOrder, `SECTIONS { .eh_frame : { KEEP(*(.eh_frame)) } } INSERT AFTER ${before};\n`);
-  return ["-Wl,--emit-relocs", `-Wl,-T,${unwindTableOrder}`];
-}
-
-function validateRelocations(layout: Layout, session: LinkSession): void {
-  const { request, analysis } = layout;
-  const withRelocations = session.linker.link({
-    ...request,
-    name: "relocations",
-    last: [...request.last, ...relocationLinkArguments(session.linker.work, layout.link.executable)],
-  });
-  session.stopwatch.lap("link with relocations");
-  const failures = validateElfRelocations({
-    shipped: layout.link,
-    withRelocations,
-    graph: analysis.reading.graph,
-    partition: analysis.partition,
-    ranges: layout.ranges,
-  });
-  session.stopwatch.lap("relocations");
-  ensureNoFailures(failures, analysis.context);
-  rmSync(withRelocations.executable, { force: true });
-}
-
 export function layOut(session: LinkSession): Layout {
   const { linker, format, stopwatch } = session;
   const plan = planSecondLink(session);
   const layout = linkUntilTableFits(plan, session);
   const { analysis } = layout;
   format.writeTable(layout.table);
-  if (session.validatesRelocations !== false && analysis.reading.graph.format === "elf") {
-    try {
-      validateRelocations(layout, session);
-    } catch (error) {
-      if (session.validatesRelocations !== "report" || !(error instanceof BuildError)) throw error;
-      console.log(`trim: the linker's relocations disagree, which does not stop this link:\n${error.message}`);
-      rmSync(join(linker.work, "relocations"), { force: true });
-    }
-  }
   writeReviewFiles(session.reviewDirectory, analysis.context, analysis.entries.entryPoints);
   writeSectionsFile(join(linker.work, "sections.txt"), analysis.context);
   format.tidyUp();
@@ -695,11 +633,10 @@ function main(): void {
   try {
     const stopwatch = new Stopwatch();
     const arguments_ = parseArguments(process.argv);
-    const { demangler, validatesRelocations } = arguments_;
+    const { demangler } = arguments_;
     const model = readFeatureModel(arguments_.featuresPath);
     const uses = readBuiltinUses(arguments_.builtinUsesPath);
     checkBuiltinUses(uses, model, arguments_.builtinUsesPath);
-    const libraries = readLibrariesFile(arguments_.librariesPath);
     const { linker, format: objectFormat } = createLinker(arguments_);
     const reviewDirectory = linker.output + ".trim";
     rmSync(reviewDirectory, { recursive: true, force: true });
@@ -710,9 +647,7 @@ function main(): void {
       format,
       model,
       uses,
-      libraries,
       demangler,
-      validatesRelocations,
       reviewDirectory,
       stopwatch,
     };

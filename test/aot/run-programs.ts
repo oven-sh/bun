@@ -1,8 +1,8 @@
 // Runs every program under ./programs three ways, and the three outputs must agree: plain `bun run`, built with
 // `bun build --compile --aot`, and built once more with `--aot-erase-types` (not for a program without a TypeScript file, which has
 // no type to erase). The output of plain Bun is computed on the spot, so nothing is stored for a program that behaves the same in
-// all three. Each <topic>.test.ts next to this file runs one folder of programs, or one part of a large folder; each
-// variant-<name>.test.ts runs the quick subset again with flags that force the compiler down a path small programs do not take.
+// all three. parts.mts has a row for each folder of programs, and for each variant, which runs the quick subset again with flags that
+// force the compiler down a path small programs do not take. `bun test ..` below stands for `bun test test/aot/parts.test.ts`.
 //
 //   programs/<topic>/<name>.ts            a program in a single file (.ts, .tsx, .mts, .cts, .js, .mjs or .cjs); its first line says what it tests.
 //                                         Programs that differ in the extension alone share the name of their test and the files beside them
@@ -43,22 +43,22 @@
 //   programs/strings/regexps-built-at-start.cjs  the tokens that regexps-built-at-start.ts and its twin put together
 //   programs/untyped-speed/commonjs-package/lib/*.js  the modules that index.js of the package requires
 //                                         A file directly in ./programs is a helper. One in the folder of a topic is a program unless `helpers` below lists it
-//   packages/, packages-<topic>.test.ts   programs that import packages, with a runner of their own: packages/run-packages.ts
+//   packages/                             programs that import packages, with a runner of their own: packages/run-packages.ts
 //
-//   bun test test/aot                                     one program in ten, others for each commit of Bun (see `inShare` below); of packages/, one importer in ten and at least one per case
-//   bun test test/aot/strings                             one topic, the same
-//   AOT_SHARE=all bun test test/aot                       every program
-//   AOT_SHARE=<revision> bun test test/aot                the programs that the Bun of that revision takes
-//   AOT_PROGRAMS=quick bun test test/aot                  one program in ten, the same ones every time
-//   AOT_PROGRAMS= bun test test/aot                       everything, packages/ too, even with a debug or ASAN build of Bun
-//   AOT_PROGRAMS=replace bun test test/aot/strings        the programs whose path contains the text
+//   TEST_PART=all bun test ..                             one program in ten, others for each commit of Bun (see `inShare` below); of packages/, one importer in ten and at least one per case
+//   TEST_PART=aot/strings bun test ..                     one topic, the same
+//   AOT_SHARE=all bun test ..                             every program
+//   AOT_SHARE=<revision> bun test ..                      the programs that the Bun of that revision takes
+//   AOT_PROGRAMS=quick bun test ..                        one program in ten, the same ones every time
+//   AOT_PROGRAMS= bun test ..                             everything, packages/ too, even with a debug or ASAN build of Bun
+//   AOT_PROGRAMS=replace bun test ..                      the programs whose path contains the text
 //   AOT_PROGRAMS_JOBS=4 bun test ..                       how many programs run at once (default: one per core)
 //   AOT_PROGRAMS_UPDATE=1 bun test ..                     rewrites the .expected.txt, .erased.txt and .build-errors.txt files that exist
 //
 // shell/ has two tools for working on the compiler without building Bun; perf/ has an opt-in performance test; servers/ has
 // opt-in tests of HTTP servers written with Bun.serve, node:http and popular frameworks, and the tools that measure them.
 // generated-code.test.ts runs shell/expectations.py, which checks the `// IR`, `// CALLS` and `// COUNTER:` lines and the `//!` comments of the programs, where its tools are built.
-// every-program-folder-has-a-runner.test.ts fails where a folder of programs has no <topic>.test.ts or lacks one of its parts.
+// parts.mts is the table of what CI runs as a test file of its own: every folder of programs, in how many parts.
 //
 // Terms used in the first lines of the programs:
 //   plain Bun             `bun run` on the same file, without --aot
@@ -81,7 +81,7 @@
 //   untyped-code          code without type information
 //   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join, relative, sep } from "path";
@@ -148,6 +148,7 @@ function findKept(folder: string, into: string[]) {
 // would have there. Which of them a run takes goes by those paths, as for a program that is kept, so only what is taken is written.
 let writtenRoot: string | undefined;
 const notYetWritten = new Map<string, { topic: string; program: WrittenProgram }>();
+const programsOfScript = new Map<string, WrittenProgram[]>();
 // The programs that follow from the table of built-ins have to be made before anybody knows their names, a group at a time. What is listed is the group: <that folder>/<topic>/<group>.
 // The part of a folder, and in a variant the share, go by that path. The rest is asked of each program of a group that is made, as of any other program.
 const groups = new Map<string, { topic: string; group: string; rows: Row[]; programs?: string[] }>();
@@ -168,7 +169,10 @@ function findWritten(topic: string, into: string[]) {
       groups.clear();
     });
   }
-  for (const program of generator.programs()) {
+  if (!programsOfScript.has(topic)) programsOfScript.set(topic, generator.programs());
+  for (const program of programsOfScript.get(topic)!) {
+    // What is kept under the name of a program that the script writes takes its place.
+    if (existsSync(join(root, topic, program.entry))) continue;
     const path = join(writtenRoot, topic, program.entry);
     notYetWritten.set(path, { topic, program });
     into.push(path);
@@ -193,6 +197,16 @@ export function listWrittenPrograms(files = /./): string[] {
   return all.filter(path => files.test(groups.has(path) ? `${path}.${generators[groups.get(path)!.topic]().fromTable!.extension}` : path));
 }
 
+/** Where a program that a script writes lies, written. `name`: its path below ./programs without the extension. Not to be called from inside a test. */
+export function pathOfWrittenProgram(name: string): string | undefined {
+  const [topic] = name.split("/");
+  if (!(topic in generators)) return undefined;
+  const all: string[] = [];
+  findWritten(topic, all);
+  const path = all.find(path => !groups.has(path) && besideOf(inPrograms(path)).replaceAll("\\", "/") === name);
+  return path && taken([path], () => true)[0];
+}
+
 /** Stands the path, out of such a list, for a group of programs that have yet to be made? */
 export const isGroup = (path: string) => groups.has(path);
 
@@ -214,8 +228,14 @@ export function taken(listed: string[], takes: (path: string) => boolean): strin
   const paths = listed.filter(path => groups.has(path) || takes(path));
   for (const path of paths) {
     const unwritten = notYetWritten.get(path);
-    if (unwritten) writeProgram(join(writtenRoot!, unwritten.topic), unwritten.program);
     notYetWritten.delete(path);
+    if (!unwritten) continue;
+    writeProgram(join(writtenRoot!, unwritten.topic), unwritten.program);
+    // What somebody has decided about such a program is kept in ./programs, under its name.
+    for (const suffix of [".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"]) {
+      const kept = join(root, inPrograms(besideOf(path)) + suffix);
+      if (existsSync(kept)) copyFileSync(kept, besideOf(path) + suffix);
+    }
   }
   const notYetMade = paths.flatMap(path => groups.get(path) ?? []).filter(group => !group.programs);
   for (const [topic, some] of Map.groupBy(notYetMade, group => group.topic)) {
@@ -264,7 +284,9 @@ export async function slot<T>(work: () => Promise<T>): Promise<T> {
 
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
-  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 90_000, killSignal: "SIGKILL" });
+  // A build that verifies the IR after every pass takes sixteen times as long as one that does not.
+  const timeout = cmd.includes("--aot-check=verify-each-pass") ? 240_000 : 90_000;
+  await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signal: proc.signalCode };
 }
@@ -343,7 +365,7 @@ export type CompiledProgram = {
   stubCopiesExpected?: boolean;
 };
 
-const loggingOptions = new Set(["logAOTPhaseTimes", "dumpAOTIR", "dumpAOTB3Graph", "dumpAOTDisassembly", "aotFunctionToDump", "aotMapFilePath"].map(name => `BUN_JSC_${name}`));
+const loggingOptions = new Set(["logAOTPhaseTimes", "dumpAOTB3Graph", "dumpAOTDisassembly", "aotFunctionToDump", "aotMapFilePath"].map(name => `BUN_JSC_${name}`));
 
 const nextExecutablePath = (folder: string, name: string) => join(folder, `${name}-${executables++}${isWindows ? ".exe" : ""}`);
 
@@ -619,3 +641,15 @@ export function variant(label: string, buildFlags: string[], runEnv: Record<stri
   );
 }
 
+
+export function variantWithTrimmedRuntime(part: number, parts: number) {
+  using probe = tempDir("trimmed-runtime-probe", { "hello.ts": "console.log(1);" });
+  const probed = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],
+    cwd: String(probe),
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  if (probed.exitCode === 0) variant("trimmed-runtime", ["--trim"], {}, part, parts);
+  else test.skip("this Bun was not linked for --trim", () => {});
+}

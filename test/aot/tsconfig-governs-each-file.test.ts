@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const shared = {
@@ -16,8 +17,7 @@ const config = (more: object = {}, rest: object = {}) =>
   JSON.stringify({ compilerOptions: { ...shared, ...more }, ...rest });
 
 async function run(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], cwd);
   return { said: stdout + stderr, exitCode };
 }
 

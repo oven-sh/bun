@@ -1,24 +1,8 @@
 use super::builder::{BuilderScratch, FunctionBuilder};
 use super::declared::DeclaredType;
 use super::generated::{Function, FunctionFlags};
-use super::ids::{Id, ModuleId, TypeId};
-use super::program::Program;
-use super::text::parse_program;
+use super::ids::TypeId;
 use super::types::TypeTable;
-
-pub fn parse(text: &str) -> Program {
-    parse_named("text", text)
-}
-
-pub fn parse_named(name: &str, text: &str) -> Program {
-    match parse_program(text) {
-        Ok(program) => program,
-        Err(error) => panic!(
-            "{name}:{}:{}: expected {} in\n{text}",
-            error.line, error.column, error.expected
-        ),
-    }
-}
 
 pub fn function_with_parameters(flags: FunctionFlags, parameters: &[TypeId]) -> Function {
     let declare = |&ty: &TypeId| DeclaredType {
@@ -41,22 +25,6 @@ pub fn build_function(parameters: &[TypeId], fill: impl FnOnce(&mut FunctionBuil
     let (function, _) = builder.finish();
     assert_eq!(function.body.check_stream(), Ok(()));
     function
-}
-
-#[test]
-#[should_panic(expected = "broken.ir:1:1: expected a record keyword")]
-fn parse_named_reports_name_and_position() {
-    parse_named("broken.ir", "?");
-}
-
-#[test]
-fn parse_reads_program_lines() {
-    let program = parse("entry module=m1\nentry module=m0\n");
-    let modules = program.entries.iter().map(|entry| entry.module);
-    assert_eq!(
-        modules.collect::<Vec<_>>(),
-        [ModuleId::new(1), ModuleId::new(0)]
-    );
 }
 
 #[test]

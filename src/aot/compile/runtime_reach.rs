@@ -167,11 +167,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 | MemberKind::Constructor => {
                     !member.func.is_none() && hir::has_body(&hir[member.func])
                 }
-                MemberKind::Property
-                | MemberKind::CallSignature
-                | MemberKind::ConstructSignature
-                | MemberKind::IndexSignature
-                | MemberKind::StaticBlock => false,
+                _ => false,
             };
             let has_plain_key = !matches!(member.key, PropKey::Computed(_));
             let is_decorated = member
@@ -563,11 +559,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 Some(&unit) => SymbolClass::Unit(unit),
                 None => SymbolClass::Other,
             },
-            BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Import
-            | BindingInitializer::Opaque => SymbolClass::Other,
+            _ => SymbolClass::Other,
         }
     }
 
@@ -833,10 +825,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.collect_module_units();
                 false
             }
-            SourceKind::Program
-            | SourceKind::Data
-            | SourceKind::EvaluatedText
-            | SourceKind::TypesOnly => {
+            _ => {
                 return FileUnits {
                     is_library: false,
                     units: Vec::new(),

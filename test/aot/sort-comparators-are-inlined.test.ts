@@ -12,10 +12,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { buildEnvironment, compileCommand, runtimeEnvironment, withoutPass } from "./harness/flags";
+import { compileCommand, isDeveloperFlag, runtimeEnvironment, withoutPass } from "./harness/flags";
+import { describe, printIR, test, writesProgramInto } from "./harness/printed-ir";
 import { isDeclared } from "./harness/registry";
 import { built, slot, spawned, told, withoutCoreDump } from "./run-programs";
-import { describe, test } from "./supported";
 
 const program = join(import.meta.dir, "programs", "arrays", "sort-sites-do-not-slow-each-other.ts");
 const numberOfComparators = 5;
@@ -62,7 +62,7 @@ const directCalleeOf = (operation: string) =>
 const operationsOf = (body: Body, frequencies: Frequency[]) =>
   body.blocks.filter(block => frequencies.includes(block.frequency)).flatMap(block => block.operations);
 
-/** Every function as the build prints it after instruction selection. */
+/** Every function after instruction selection. */
 function parseBodies(dump: string) {
   const bodies = new Map<string, Body>();
   let body: Body | undefined;
@@ -134,16 +134,13 @@ function find(bodies: Body[], frequencies: Frequency[], matches: (operation: str
 
 async function compile(folder: string, name: string, flags: string[]) {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
-  const command = [bunExe(), ...compileCommand, "--explain=statistics", ...flags, program, "--outfile", executable];
-  const build = await spawned(command, dirname(program), {
-    ...bunEnv,
-    NO_COLOR: "1",
-    [buildEnvironment.dumpsIR]: "Select",
-  });
+  const command = [bunExe(), ...compileCommand, "--explain=statistics", ...flags, writesProgramInto(folder), program];
+  const build = await spawned([...command, "--outfile", executable], dirname(program), { ...bunEnv, NO_COLOR: "1" });
   built(build);
+  const code = await printIR(folder, { until: "Select", flags: flags.filter(isDeveloperFlag) });
   const lines = build.stderr.matchAll(/^(\w+) (\d+)$/gm);
   const statistics = new Map(Array.from(lines, ([, statistic, value]) => [statistic, Number(value)] as const));
-  return { executable, statistics, sorts: findSortsOf(build.stderr) };
+  return { executable, statistics, sorts: findSortsOf(code) };
 }
 
 describe.concurrent("compile/aot/sort comparators", () => {

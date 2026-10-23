@@ -1,8 +1,9 @@
 import * as imported from "bun:test";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import Module, { createRequire } from "node:module";
 import { join } from "node:path";
+import { run } from "../../../aot/harness/run";
 
 // Computed, so that `require` learns the name when it runs.
 const specifier = ["bun", "test"].join(":");
@@ -87,12 +88,6 @@ describe("require('bun:test') under a computed name, in bun test", () => {
     expect(() => files.first.load(specifier)).toThrow("Bun.jest() expects an absolute file path, got 'relative.js'");
   });
 });
-
-async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test.concurrent("require('bun:test') under a computed name, outside bun test", async () => {
   using dir = tempDir("require-bun-test-outside", {

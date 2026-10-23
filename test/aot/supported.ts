@@ -7,7 +7,7 @@ import { unsupported } from "./run-programs";
 export { unsupported };
 
 // bun:test refuses `.skipIf()`, `.todo` and the like on what is skipped already.
-function alwaysSkipped<T extends object>(skipped: T): T {
+export function alwaysSkipped<T extends object>(skipped: T): T {
   return new Proxy(skipped, {
     get(target, name, self) {
       if (typeof name === "string" && /^(skip|todo|failing|concurrent|serial)?[iI]f$/.test(name)) return () => self;

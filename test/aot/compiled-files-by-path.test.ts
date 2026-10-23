@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 test("an executable that runs in place finds its files by paths with unusual characters", async () => {
@@ -36,8 +37,7 @@ console.log(JSON.stringify({ written, computed, missing }));
 `,
   });
   const run = async (cmd: string[], env = bunEnv) => {
-    await using proc = Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runCommand(cmd, String(dir), env);
     return { stdout, stderr, exitCode };
   };
   const plain = await run([bunExe(), "run", "main.cjs"]);

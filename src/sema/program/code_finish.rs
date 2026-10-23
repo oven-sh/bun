@@ -320,11 +320,7 @@ fn host_modules_of<'a>(answer: &'a CodeAnswer<'_>) -> &'a [HostModuleId] {
     match answer {
         CodeAnswer::HostModule(module) => std::slice::from_ref(module),
         // Only a constant name brings a module of the host into the program.
-        CodeAnswer::Computed(_)
-        | CodeAnswer::File(_)
-        | CodeAnswer::External { .. }
-        | CodeAnswer::Erased
-        | CodeAnswer::NotFound(_) => &[],
+        _ => &[],
     }
 }
 

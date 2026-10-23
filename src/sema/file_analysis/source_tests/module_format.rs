@@ -402,18 +402,13 @@ fn site_kind_name(kind: ImportSiteKind) -> &'static str {
 
 fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
     match kind {
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportEquals(_) => None,
         ImportSiteKind::ImportCall(call)
         | ImportSiteKind::Require(call)
         | ImportSiteKind::RequireResolve(call)
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call) => Some(call),
+        _ => None,
     }
 }
 

@@ -1,8 +1,9 @@
 // The compiled JSON.stringify writes into a buffer that the program keeps between calls. A large buffer is released at the end of
 // every call, whichever way the call ends: an 8-bit result, a 16-bit result, or a fallback to the generic writer.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -35,24 +36,13 @@ test.skipIf(isASAN || isDebug)(
   async () => {
     using dir = tempDir("aot-json-stringify-buffer-release", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: buildStderr, exitCode: buildExitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+      String(dir),
+    );
     expect({ stderr: buildExitCode ? buildStderr : "", exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
     const measure = async (mode: string) => {
-      await using ran = Bun.spawn({
-        cmd: [executable, mode],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+      const { stdout, stderr, exitCode } = await run([executable, mode], String(dir));
       expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return JSON.parse(stdout) as { length: number; rss: number };
     };

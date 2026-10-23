@@ -1,0 +1,70 @@
+# The table says more about the result of an entry than the function of the library declares, whose types are only expected. A call that a pass created with the type of the table still becomes a direct call, and the result is assumed to have that type
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins ResolveBuiltins
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=31 function=f2
+runtimefunction id=65 function=f7
+runtimefunction id=131113 function=f0
+runtimefunction id=131116 function=f1
+function f0 name="holdsRule" role=Library enclosingRuntimeFunction=131113 parameters=[{type=anything}, {type=string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f1 name="validateByPlan" role=Library enclosingRuntimeFunction=131116 parameters=[{type=anything}, {type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    Return v3
+}
+
+function f3 name="promisedBoolean" parameters=[{type=anything}, {type=string}] results=[{type=boolean}] {
+  b0(v0: anything, v1: string):
+    v2 = CallBuiltin -, v0, v1 overload=CompilerHelpersHoldsRule/0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="promisedBoolean"
+# CHECK-NOT: CallBuiltin
+# CHECK: [[called3]]: anything{{*}} = CallDirect v0, v1 function=f0
+# CHECK-NEXT: v2: boolean = AssumeType [[called3]] castType=boolean
+# CHECK-NEXT: Return v2
+
+function f4 name="nothingPromised" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = CallBuiltin -, v0, v1 overload=CompilerHelpersValidateByPlan/0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="nothingPromised"
+# CHECK-NOT: AssumeType
+# CHECK: v2: anything = CallDirect v0, v1 function=f1
+
+function f5 name="declaredByTheFunction" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeEvery/0
+    Return v3
+}
+# CHECK-LABEL: function f5 name="declaredByTheFunction"
+# CHECK-NOT: AssumeType
+# CHECK: v3: boolean = CallDirect v0, v1, v2 function=f2
+
+function f6 name="promisedClass" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeMap/0
+    Return v3
+}
+# The table promises the class and nothing about its contents
+# CHECK-LABEL: function f6 name="promisedClass"
+# CHECK-NOT: CallBuiltin
+# CHECK: [[called6]]: anything{{*}} = CallDirect v0, v1, v2 function=f7
+# CHECK-NEXT: v3: Array = AssumeType [[called6]] castType=Array
+
+function f7 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

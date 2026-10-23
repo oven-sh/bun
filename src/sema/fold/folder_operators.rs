@@ -64,18 +64,7 @@ impl<'s> Folder<'_, 's> {
                 self.conditions.insert(e, true);
                 Folded::UNKNOWN
             }
-            ExprKind::Missing
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::Super
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::New(_)
-            | ExprKind::Assign { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => Folded::UNKNOWN,
+            _ => Folded::UNKNOWN,
         }
     }
 
@@ -145,23 +134,7 @@ impl<'s> Folder<'_, 's> {
                 Some(is_equal) => self.decide(e, Decision::Constant(Constant::Boolean(!is_equal))),
                 None => self.fold_equality(op, left, right, false),
             },
-            BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor
-            | BinOp::Lt
-            | BinOp::Le
-            | BinOp::Gt
-            | BinOp::Ge
-            | BinOp::In
-            | BinOp::Instanceof => self.fold_operands(op, left, right),
+            _ => self.fold_operands(op, left, right),
         }
     }
 

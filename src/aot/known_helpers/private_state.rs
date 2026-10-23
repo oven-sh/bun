@@ -302,9 +302,7 @@ impl Finder<'_, '_, '_> {
             ExportBinding::Variable(variable) => {
                 variable.file == self.file && variable.id == symbol
             }
-            ExportBinding::Synthetic(_)
-            | ExportBinding::Namespace { .. }
-            | ExportBinding::Indirect { .. } => false,
+            _ => false,
         })
     }
 

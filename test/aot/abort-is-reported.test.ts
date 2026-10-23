@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { run } from "./harness/run";
 
 if (isASAN)
   console.error(
@@ -13,19 +14,12 @@ test.skipIf(isASAN)(
   async () => {
     using dir = tempDir("abort-is-reported", { "main.ts": `console.log("never printed");` });
     const withoutCoreDump = isWindows ? [] : ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"'];
-    await using proc = Bun.spawn({
-      cmd: [...withoutCoreDump, bunExe(), "run", "main.ts"],
-      cwd: String(dir),
-      env: {
-        ...bunEnv,
-        BUN_JSC_crashIfInterpreterIsUsed: "1",
-        BUN_CRASH_REPORT_URL: "",
-        BUN_ENABLE_CRASH_REPORTING: "0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
+    const { stdout, stderr, exitCode } = await run([...withoutCoreDump, bunExe(), "run", "main.ts"], String(dir), {
+      ...bunEnv,
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+      BUN_CRASH_REPORT_URL: "",
+      BUN_ENABLE_CRASH_REPORTING: "0",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("crashIfInterpreterIsUsed: ");
     expect(stderr).toContain("Bun has crashed");

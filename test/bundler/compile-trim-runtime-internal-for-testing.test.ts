@@ -1,13 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const programs = {
   "hello.ts": `console.log("hello world");`,
@@ -78,7 +73,11 @@ describe.skipIf(probed.exitCode !== 0 || isDebug)("bun:internal-for-testing is i
             ["refused", []],
             ["refused-and-trimmed", ["--trim"]],
           ] as const) {
-            const built = await run([bunExe(), "build", "--compile", ...flags, ...trim, entry, "--outfile", outfile], folder, notAllowed);
+            const built = await run(
+              [bunExe(), "build", "--compile", ...flags, ...trim, entry, "--outfile", outfile],
+              folder,
+              notAllowed,
+            );
             expect(built.stderr).toContain(`Could not resolve: "bun:internal-for-testing"`);
             expect(built.exitCode).toBe(entry === "asks.js" ? 0 : 1);
             if (entry !== "asks.js") continue;

@@ -142,13 +142,7 @@ impl Diagnostics {
                     let code = Code::ProgramLimitExceeded;
                     self.add(None, Diagnostic::new(code, None, &arguments));
                 }
-                LinkError::UndefinedFunction { .. }
-                | LinkError::UndefinedLayout { .. }
-                | LinkError::UndefinedVariable { .. }
-                | LinkError::ConflictingDefinitions { .. }
-                | LinkError::ConflictingRuntimeFunctions { .. }
-                | LinkError::MissingUnit { .. }
-                | LinkError::TypeHashCollision { .. } => {
+                _ => {
                     self.report_internal_error(Stage::LinkAndEmit, describe(&error));
                 }
             }

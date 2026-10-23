@@ -74,12 +74,6 @@ icu-data unused :
 icu-language-group no nb nn
 icu-language-group sr hr
 `,
-  "profiles.def": `profile hello :
-  minimum-cut-ratio 90
-profile server : Zlib Sqlite
-  minimum-cut-ratio 80 elf
-  minimum-cut-ratio 0 macho
-`,
 };
 
 describe("parseFeatures", () => {
@@ -137,7 +131,7 @@ describe("parseFeatures", () => {
     expect(featureNamed(model, "Zlib")).not.toHaveProperty("cxxFunctions");
   });
 
-  test("reads trim features, ICU lines and profiles, with member lists sorted by index", () => {
+  test("reads trim features and ICU lines, with member lists sorted by index", () => {
     expect(model.trimFeatures[0]).toEqual({
       name: "sqlite-all",
       features: ["Sqlite", "Zlib"],
@@ -156,10 +150,6 @@ describe("parseFeatures", () => {
     expect(model.icuLanguageGroups).toEqual([
       ["no", "nb", "nn"],
       ["sr", "hr"],
-    ]);
-    expect(model.profiles).toEqual([
-      { name: "hello", features: [], minimumCutRatio: { elf: 90, macho: 90, coff: 90 } },
-      { name: "server", features: ["Sqlite", "Zlib"], minimumCutRatio: { elf: 80, macho: 0 } },
     ]);
   });
 
@@ -200,7 +190,6 @@ describe("parseFeatures", () => {
       "bun.def": 'feature A "a"\nfeature B "b"',
       "trim-features.def": 'trim-feature a : A\n  about "x"',
       "icu-data.def": "icu-data zone : A\nicu-language-group no nb",
-      "profiles.def": "profile hello : A\n  minimum-cut-ratio 90",
       ...changes,
     });
     const base = parse(files()).hash;
@@ -212,9 +201,6 @@ describe("parseFeatures", () => {
         "a trim feature's texts and sizes",
         { "trim-features.def": 'trim-feature a : A\n  about "y"\n  also "z"\n  saves 1 2' },
       ],
-      ["a profile's features", { "profiles.def": "profile hello : A B\n  minimum-cut-ratio 90" }],
-      ["a profile's ratio", { "profiles.def": "profile hello : A\n  minimum-cut-ratio 10" }],
-      ["another profile", { "profiles.def": "profile hello : A\n  minimum-cut-ratio 90\nprofile other :" }],
     ])("leaves out %s", (_, changes) => {
       expect(parse(files(changes)).hash).toBe(base);
     });
@@ -238,139 +224,21 @@ describe("parseFeatures", () => {
   });
 });
 
-describe("JSON form", () => {
-  test("round trips", () => {
-    const model = parse(sample);
-    const text = serializeFeatureModel(model);
-    const read = readJson(text);
-    expect(read).toEqual(model);
-    expect(read.hash).toBe(model.hash);
-    expect(serializeFeatureModel(read)).toBe(text);
-    const json = JSON.parse(text);
-    expect(Object.keys(json)).toEqual([
-      "version",
-      "hash",
-      "features",
-      "trimFeatures",
-      "icuData",
-      "icuLanguageGroups",
-      "profiles",
-    ]);
-    expect(json.version).toBe(2);
-    expect(Object.keys(json.trimFeatures[0])).toEqual(["name", "features", "about", "also", "saves", "rustName"]);
-  });
-
-  test("fills in absent members", () => {
-    const model = readJson(`{
-      "version": 2,
-      "features": [{ "name": "Extra", "index": 128 }, { "name": "JIT", "index": 0 }],
-      "trimFeatures": [{ "name": "html-rewriter" }],
-      "icuData": [{ "itemClass": "zone" }],
-      "profiles": [{ "name": "hello" }]
-    }`);
-    expect(model.features).toEqual([
-      {
-        name: "JIT",
-        rustName: "Jit",
-        index: 0,
-        text: "JIT",
-        enteredFrom: "program",
-        isEngine: true,
-        minimumBytes: {},
-        exports: false,
-      },
-      {
-        name: "Extra",
-        rustName: "Extra",
-        index: 128,
-        text: "Extra",
-        enteredFrom: "program",
-        isEngine: false,
-        minimumBytes: {},
-        exports: false,
-      },
-    ]);
-    expect(model.trimFeatures).toEqual([
-      { name: "html-rewriter", features: [], about: "", also: [], rustName: "HtmlRewriter" },
-    ]);
-    expect(model.icuData).toEqual([{ itemClass: "zone", exceptWindows: false, byLocale: false, features: [] }]);
-    expect(model.icuLanguageGroups).toEqual([]);
-    expect(model.profiles).toEqual([{ name: "hello", features: [], minimumCutRatio: {} }]);
-  });
-
-  test("reads a model without lists", () => {
-    const model = readJson('{ "version": 2 }');
-    expect({ ...model, hash: undefined }).toEqual({
-      features: [],
-      trimFeatures: [],
-      icuData: [],
-      icuLanguageGroups: [],
-      profiles: [],
-      hash: undefined,
-    });
-  });
-
-  test.each([1, 3])("rejects version %d", version => {
-    expect(buildErrorOf(() => readJson(`{ "version": ${version}, "features": [] }`)).message).toBe(
-      `unknown feature model version: ${version}`,
-    );
-  });
-
-  test("rejects a wrong hash", () => {
-    const text = '{ "version": 2, "hash": "0x0000000000000000", "features": [] }';
-    expect(buildErrorOf(() => readJson(text)).message).toStartWith(
-      "hash 0x0000000000000000 does not match the model, 0x",
-    );
-  });
-
-  test.each([
-    ["features[0].index", '"features": [{ "name": "Extra", "index": "128" }]'],
-    ["features[0].enteredFrom", '"features": [{ "name": "Extra", "index": 128, "enteredFrom": "options" }]'],
-    ["features[0].minimumBytes", '"features": [{ "name": "Extra", "index": 128, "minimumBytes": { "wasm": 1 } }]'],
-    ["icuData[0].byLocale", '"icuData": [{ "itemClass": "zone", "byLocale": 1 }]'],
-    ["model.icuLanguageGroups", '"icuLanguageGroups": ["no"]'],
-    ["profiles[0].name", '"profiles": [{}]'],
-    ["profiles[0].minimumCutRatio", '"profiles": [{ "name": "hello", "minimumCutRatio": { "elf": 101 } }]'],
-  ])("rejects %s of the wrong type, naming the file and the member", (member, lists) => {
-    const error = buildErrorOf(() => readJson(`{ "version": 2, ${lists} }`));
-    expect(error.message).toBe(`${member} is missing or has the wrong type`);
-    expect(error.file).toEndWith("model.json");
-  });
-
-  test("applies the same checks as the parser", () => {
-    const rejected = (lists: string) => buildErrorOf(() => readJson(`{ "version": 2, ${lists} }`)).message;
-    expect(
-      rejected(
-        '"features": [{ "name": "A", "index": 128 }, { "name": "B", "index": 129 }, { "name": "A", "index": 130 }]',
-      ),
-    ).toStartWith("feature A is declared twice");
-    expect(rejected('"features": [{ "name": "A", "index": 512 }]')).toBe("feature A has index 512, limit 512");
-    expect(rejected('"features": [{ "name": "A", "index": 128 }, { "name": "B", "index": 128 }]')).toBe(
-      "two features have index 128",
-    );
-    expect(rejected('"features": [{ "name": "A", "index": 128, "isEngine": true }]')).toBe(
-      "isEngine of feature A disagrees with index 128",
-    );
-    expect(rejected('"icuLanguageGroups": [["no", "nb"], ["nb", "nn"]]')).toBe("icu-language-group lists nb twice");
-    expect(rejected('"profiles": [{ "name": "hello", "features": ["Z"] }]')).toBe(
-      "unknown feature Z in profile of hello",
-    );
-  });
+test("the JSON form round trips", () => {
+  const model = parse(sample);
+  expect(readJson(serializeFeatureModel(model))).toEqual(model);
 });
 
 const oneFeature = 'feature A "a"';
 const trimFile = (text: string): Files => ({ "bun.def": 'feature A "a"\nfeature B "b"', "trim-features.def": text });
 const icuFile = (text: string): Files => ({ "bun.def": 'feature A "a"\nfeature B "b"', "icu-data.def": text });
-const profileFile = (text: string): Files => ({ "bun.def": 'feature A "a"\nfeature B "b"', "profiles.def": text });
 
 const rejected: [name: string, files: Files, site: string][] = [
   ["feature in trim-features.def", { "trim-features.def": oneFeature }, "trim-features.def:1"],
   ["feature in icu-data.def", { "icu-data.def": oneFeature }, "icu-data.def:1"],
-  ["feature in profiles.def", { "profiles.def": oneFeature }, "profiles.def:1"],
   ["trim-feature in bun.def", { "bun.def": 'trim-feature a : A\n  about "x"' }, "bun.def:1"],
   ["icu-data in bun.def", { "bun.def": "icu-data a :" }, "bun.def:1"],
   ["icu-language-group in bun.def", { "bun.def": "icu-language-group no nb" }, "bun.def:1"],
-  ["profile in bun.def", { "bun.def": "profile a :" }, "bun.def:1"],
   ["too many engine features", { "engine.def": repeated(129, index => `feature E${index} "e"`) }, "engine.def:129"],
   ["index limit", { "bun.def": repeated(385, index => `feature E${index} "e"`) }, "bun.def:385"],
   [
@@ -416,7 +284,6 @@ const rejected: [name: string, files: Files, site: string][] = [
     "bun.def:3",
   ],
   ["unknown trim feature attribute", trimFile('trim-feature a : A\n  about "x"\n  exports'), "trim-features.def:3"],
-  ["unknown profile attribute", profileFile("profile a : A\n  minimum 1"), "profiles.def:2"],
   ["indented line under icu-data", icuFile("icu-data a : A\n  exports"), "icu-data.def:2"],
   ["indented line under icu-language-group", icuFile("icu-language-group no nb\n  exports"), "icu-data.def:2"],
   ["feature without text", { "bun.def": "feature A" }, "bun.def:1"],
@@ -441,19 +308,6 @@ const rejected: [name: string, files: Files, site: string][] = [
   ["language of four letters", icuFile("icu-language-group no root"), "icu-data.def:1"],
   ["language twice in a group", icuFile("icu-language-group no nb no"), "icu-data.def:1"],
   ["language in two groups", icuFile("icu-language-group no nb\nicu-language-group nn nb"), "icu-data.def:2"],
-  ["profile without colon", profileFile("profile a A"), "profiles.def:1"],
-  ["profile without words", profileFile("profile"), "profiles.def:1"],
-  ["invalid profile name", profileFile("profile Abc :"), "profiles.def:1"],
-  ["ratio above 100", profileFile("profile a : A\n  minimum-cut-ratio 101"), "profiles.def:2"],
-  ["negative ratio", profileFile("profile a : A\n  minimum-cut-ratio -1"), "profiles.def:2"],
-  ["ratio with a fraction", profileFile("profile a : A\n  minimum-cut-ratio 1.5"), "profiles.def:2"],
-  ["ratio without words", profileFile("profile a : A\n  minimum-cut-ratio"), "profiles.def:2"],
-  ["ratio for an unknown format", profileFile("profile a : A\n  minimum-cut-ratio 1 wasm"), "profiles.def:2"],
-  [
-    "ratio twice for one format",
-    profileFile("profile a : A\n  minimum-cut-ratio 1 elf\n  minimum-cut-ratio 2"),
-    "profiles.def:3",
-  ],
   ["invalid feature name", { "bun.def": 'feature abc "a"' }, "bun.def:1"],
   ["invalid trim feature name", trimFile('trim-feature Abc : A\n  about "x"'), "trim-features.def:1"],
   ["malformed JSON text", { "bun.def": 'feature A "a' }, "bun.def:1"],
@@ -482,13 +336,10 @@ const rejected: [name: string, files: Files, site: string][] = [
     "trim-features.def:3",
   ],
   ["ICU class declared twice", { "icu-data.def": "icu-data a :\nicu-data a :" }, "icu-data.def:2"],
-  ["profile declared twice", profileFile("profile a : A\nprofile a : B"), "profiles.def:2"],
   ["same member twice in a trim feature", trimFile('trim-feature a : A A\n  about "x"'), "trim-features.def:1"],
   ["same member twice in an ICU line", icuFile("icu-data a : A A"), "icu-data.def:1"],
-  ["same member twice in a profile", profileFile("profile a : A A"), "profiles.def:1"],
   ["trim feature naming an unknown feature", trimFile('trim-feature a : Z\n  about "x"'), "trim-features.def:1"],
   ["icu-data naming an unknown feature", { "icu-data.def": "icu-data a : Z" }, "icu-data.def:1"],
-  ["profile naming an unknown feature", profileFile("profile a : Z"), "profiles.def:1"],
   ["trim feature without about", trimFile("trim-feature a : A"), "trim-features.def:1"],
 ];
 

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const numberOfMethods = 120;
@@ -68,12 +69,6 @@ const files = {
     console.log(use(new Big()), structures() - before);
   `,
 };
-
-async function run(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test.each(["required-late.cjs", "imported.mjs"])(
   "the members that the operations of a class definition create are added to one Structure: %s",

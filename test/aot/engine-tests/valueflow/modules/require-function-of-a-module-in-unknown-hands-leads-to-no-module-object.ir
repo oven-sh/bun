@@ -1,0 +1,36 @@
+# globalThis.handedOut = require; eval(text)
+# A text that is evaluated and holds the require function of a file of the image finds no file of the image in its cache, and the host answers undefined for `main` in a program in which no file names a way between module objects.
+# A name that the text hands it finds the entry points alone. So nobody but the code of the program calls what the files export
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = ModuleBuiltin builtin=ImportMeta module=m0
+    v2 = PropGet v1 key="path"
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v0 key="handedOut" mode=Strict
+    v6 = Builtin builtin=Eval
+    v7 = Call v6, -, v2
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f2
+    PropSet v0, v2 key="handler" mode=Strict
+    Return
+}
+function f2 name="handler" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

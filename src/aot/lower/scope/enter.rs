@@ -185,10 +185,7 @@ fn emit_entry_value(
                 entry.find_initial_value(BindingRef::Slot(scope, ScopeSlot::Arguments))
             }
             ScopeSlot::EvalVariables => Some(create_eval_variables_object(lowering)),
-            ScopeSlot::Arguments
-            | ScopeSlot::WithObject
-            | ScopeSlot::CommonJs(_)
-            | ScopeSlot::Class(_) => None,
+            _ => None,
         },
     }
 }
@@ -200,28 +197,7 @@ fn create_entry_this(
     let function = match lowering.file.bound.scopes[entry.scope.idx()].kind {
         ScopeKind::Fn(function) => Some(function),
         ScopeKind::FieldInitializer(_) => return Some(function::get_this(lowering)),
-        ScopeKind::File
-        | ScopeKind::Module(_)
-        | ScopeKind::Block
-        | ScopeKind::Class(_)
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => None,
+        _ => None,
     };
     if let Some(function) = function {
         if function::is_derived_constructor(lowering.file, function) {

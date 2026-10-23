@@ -166,21 +166,8 @@ enum ParsedShape {
     Other,
 }
 
-// `010`, `08` and `"\1"` are errors in strict code alone, and the tree does not say that one was met.
-#[allow(clippy::disallowed_methods)] // two patterns at every place, not one text
-fn may_hold_legacy_octal(text: &[u8]) -> bool {
-    let continues_a_token =
-        |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'.');
-    text.windows(2).enumerate().any(|(at, pair)| match *pair {
-        [b'0', b'0'..=b'9'] => at == 0 || !continues_a_token(text[at - 1]),
-        [b'\\', b'1'..=b'9'] => true,
-        [b'\\', b'0'] => text.get(at + 2).is_some_and(u8::is_ascii_digit),
-        _ => false,
-    })
-}
-
 fn parses_alone(text: &[u8]) -> Option<ParsedShape> {
-    if !is_valid_utf8(text) || may_hold_legacy_octal(text) {
+    if !is_valid_utf8(text) {
         return None;
     }
     let session = Session::new();
@@ -217,8 +204,9 @@ fn has_syntax_error(hir: &File<'_>) -> bool {
         || diagnostics.any(|diagnostic| diagnostic.class == DiagnosticClass::EarlyError)
 }
 
-// `await` or `yield` in a list of parameters, and `for (var a = 1 in b)`.
-const SYNTAX_THAT_MAY_BE_AN_ERROR: u32 = rare::SUSPENDS_IN_PARAMETERS | rare::ODD_LOOP_HEAD;
+// `await` or `yield` in a list of parameters, `for (var a = 1 in b)`, and `010`.
+const SYNTAX_THAT_MAY_BE_AN_ERROR: u32 =
+    rare::SUSPENDS_IN_PARAMETERS | rare::ODD_LOOP_HEAD | rare::LEGACY_OCTAL;
 
 // The parameters of an arrow function are read as if no generator stood around them: `(a = yield) => 1` has a name there, where the language has the operator, which is an error.
 fn has_yield_as_name(hir: &File<'_>) -> bool {
@@ -286,35 +274,7 @@ fn is_supported_expression(kind: ExprKind) -> bool {
         | ExprKind::Jsx(_)
         | ExprKind::ImportMeta
         | ExprKind::JsxText(_) => false,
-        ExprKind::Missing
-        | ExprKind::Ident(_)
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Template { .. }
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::ImportCall { .. }
-        | ExprKind::NewTarget(_) => true,
+        _ => true,
     }
 }
 
@@ -446,7 +406,12 @@ mod tests {
             b"'use strict'; { function f() {} function f() {} }",
             b"'use strict'; switch (1) { case 1: function f() {} case 2: function f() {} }",
         ]);
-        let taken: [&[u8]; 12] = [
+        let taken: [&[u8]; 17] = [
+            b"return '2024-01-08'",
+            b"return \"at 10:08\" + ' 010 '",
+            b"return 1 // 010",
+            b"return 1 /* \\1 */",
+            b"return 'a\\\\1'",
             b"return 10.05 + 105 + 1e05 + 0.5 + 0",
             b"return a0 + a.b0 + $0 + _01",
             b"return '\\n\\0' + '\\x01' + '\\u0001'",

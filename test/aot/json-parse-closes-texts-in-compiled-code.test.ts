@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { built } from "./run-programs";
 import { test } from "./supported";
 
@@ -27,12 +28,6 @@ const files = {
     console.log(sumOf(texts[process.argv[2]!]!, Number(process.argv[3])));
   `,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("the run time is asked to close a parsed text only where it reads on or owns the original characters", async () => {
   using dir = tempDir("aot-json-parse-closes-texts", files);

@@ -1,0 +1,84 @@
+# Each reason for which a call with a typed form keeps its plain result is reported as a decline with the reason
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults
+# STATISTIC: TypedResultsSelected = 0
+# CHECK: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f0 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f1 v2 None [0] reason=TargetHasNoTypedPart
+# CHECK-NEXT: decline TypedResultNotSelected f2 v1 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f3 v2 None [0] reason=RowsHaveSeveralLayouts
+# CHECK-NEXT: decline TypedResultNotSelected f4 v6 None [0] reason=AnotherSourceIsOpen
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=number|string
+expectedresult x1 type=undefined|null|L0 layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+layout L1 name="Group" fields=[{key="name" declared={type=string}}]
+variable g0 name="pending" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="noTarget" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="noTarget"
+# CHECK: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: Return v2
+
+function f1 name="targetHasNoObjectOrArray" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="targetHasNoObjectOrArray"
+# CHECK: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
+# CHECK-NEXT: Return v2
+
+function f2 name="promiseStoredInVariableFirst" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0 expectedResult=x1
+    PutModuleVariable v1 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = Await v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="promiseStoredInVariableFirst"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0 expectedResult=x1
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+
+function f3 name="rowsOfTwoLayouts" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = CallBuiltin v1, v0 overload=Bun_sql/0
+    v3 = Await v2
+    v4 = Check v3 castType=undefined|null|Array<L0|L1>
+    Return v4
+}
+# CHECK-LABEL: function f3 name="rowsOfTwoLayouts"
+# CHECK: v2:{{*}}= CallBuiltin v1, v0 overload=Bun_sql/0
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NOT: ExpectRows
+
+function f4 name="anotherSourceIsOpen" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = JSONSourceOpen v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = JSONSourceStart v3
+    v5 = Undefined
+    v6 = CallBuiltin -, v1, v5 overload=JSONParse/0
+    v7 = Check v6 castType=undefined|null|L0
+    v8 = JSONGetByte v4
+    v9 = NewArray v7, v8 contents=anything
+    Return v9
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="anotherSourceIsOpen"
+# CHECK: v6:{{*}}= CallBuiltin -, v1, v5 overload=JSONParse/0
+# CHECK-NEXT: v7:{{*}}= Check v6 castType=undefined|null|L0
+# CHECK-NOT: JSONSourceOpen

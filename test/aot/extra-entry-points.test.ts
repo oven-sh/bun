@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const see = `const see = v => v === null || (typeof v !== "object" && typeof v !== "function") ? String(v) : typeof v + " " + Object.keys(v).sort().join("+") + " default: " + (v.default === undefined ? "none" : typeof v.default + " " + Object.keys(v.default).sort().join("+"));\n`;
@@ -29,12 +30,6 @@ const mains: Record<string, string> = {
   "by-require-then-import.mjs": `import { createRequire } from "node:module";\n${see}const load = createRequire(import.meta.url);\n${each("(load(name), await import(name))")}console.log((await import("./rt/counts.cjs")).default === load("./rt/counts.cjs"), load("./rt/counts.cjs").ran);\n`,
   "by-a-written-name.mjs": `import { createRequire } from "node:module";\nconst loaded = createRequire(import.meta.url)("./rt/literal.cjs");\nconsole.log(Object.keys(loaded).join(), Object.keys(loaded.default ?? {}).join());\n`,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function isAsPlain(main: string, text: string, entries: Record<string, string>) {
   using dir = tempDir("extra-entry-points", { ...entries, [main]: text });

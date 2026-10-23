@@ -73,15 +73,11 @@ impl Quiet<'_, '_> {
     pub fn names_locked_object(&self, expression: ExprId) -> bool {
         self.find_locked_builtin(expression)
             .is_some_and(|found| match table::entry(found).kind {
-                BuiltinKind::Namespace
-                | BuiltinKind::Constructor
-                | BuiltinKind::Function
-                | BuiltinKind::Prototype
-                | BuiltinKind::Method => true,
                 BuiltinKind::Accessor
                 | BuiltinKind::DataProperty
                 | BuiltinKind::Constant
                 | BuiltinKind::NativeBinding => false,
+                _ => true,
             })
     }
 

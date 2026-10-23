@@ -1,8 +1,8 @@
 use super::{BuildDiagnostic, WithoutBunTypes};
 use crate::{Category, Diagnostic, MessageChain};
-use bun_core::strings;
+use bun_sema::atom::Atom;
 use bun_sema::check::Requested;
-use bun_sema::check::aot::{DiagnosticClass, Effect, FileOrigin, effect_of};
+use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{CodeAnswer, FileId, FileRole, Files};
 use bun_sema::resolve::{CodeHost, TypedVersionOrigin};
@@ -127,21 +127,11 @@ const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
 /// `Property '{0}' does not exist on type '{1}'` and `'{0}' has no exported member '{1}'`, with and without advice.
 const UNKNOWN_MEMBER_CODES: [u32; 5] = [2305, 2339, 2551, 2694, 2724];
 
-/// The compiler declares a few members of the module "bun", and TypeScript a few of `import.meta`. `@types/bun` has the rest.
-const HOLDERS_THAT_BUN_TYPES_FILL: [&[u8]; 3] =
-    [b"'typeof import(\"bun\")'", b"'\"bun\"'", b"'ImportMeta'"];
-
 fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
     EXACT_OPTIONAL_PROPERTY_CODES.contains(&code)
         || chain
             .iter()
             .any(|link| is_about_exact_optional_property(link.code, &link.message_chain))
-}
-
-fn first_quoted(text: &[u8]) -> Option<&[u8]> {
-    let start = strings::index_of_char(text, b'\'')? as usize + 1;
-    let length = strings::index_of_char(&text[start..], b'\'')? as usize;
-    Some(&text[start..start + length])
 }
 
 impl ProgramOrigins<'_, '_> {
@@ -166,22 +156,25 @@ impl ProgramOrigins<'_, '_> {
         let Some(missing) = self.without_bun_types else {
             return false;
         };
-        let (code, text) = (diagnostic.code, &diagnostic.text[..]);
+        let code = diagnostic.code;
         match origin {
             FileOrigin::ProgramSource => {}
-            FileOrigin::NoFile
-            | FileOrigin::ProgramJavaScript
-            | FileOrigin::ProjectTypedVersion
-            | FileOrigin::DependencySource
-            | FileOrigin::DependencyJavaScript
-            | FileOrigin::Declarations
-            | FileOrigin::Runtime
-            | FileOrigin::EvaluatedText => return false,
+            _ => return false,
         }
         if UNKNOWN_MODULE_CODES.contains(&code) {
-            self.is_import_that_the_build_loads(diagnostic)
+            match diagnostic.subject {
+                DiagnosticSubject::ModuleSpecifier(specifier) => {
+                    self.is_import_that_the_build_loads(diagnostic.file, specifier)
+                }
+                DiagnosticSubject::None | DiagnosticSubject::MemberContainer(_) => false,
+            }
         } else if UNKNOWN_MEMBER_CODES.contains(&code) {
-            (HOLDERS_THAT_BUN_TYPES_FILL.iter()).any(|holder| strings::contains(text, holder))
+            match diagnostic.subject {
+                DiagnosticSubject::MemberContainer(container) => {
+                    missing.incomplete_containers.contains(&Some(container))
+                }
+                DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
+            }
         } else if diagnostic.class == DiagnosticClass::Style {
             // A callback that is passed to what has no declaration has parameters without types.
             !missing.has_configuration_file
@@ -200,12 +193,11 @@ impl ProgramOrigins<'_, '_> {
     }
 
     /// `@types/bun` declares what an import of a text file, of a TOML file and the like yields.
-    fn is_import_that_the_build_loads(&self, diagnostic: &Diagnostic) -> bool {
-        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+    fn is_import_that_the_build_loads(&self, file: Option<FileId>, specifier: Atom) -> bool {
+        let (Some(files), Some(file)) = (self.files, file) else {
             return false;
         };
-        let specifier = first_quoted(&diagnostic.text).and_then(|text| files.atoms.lookup(text));
-        let (Some(compiled), Some(specifier)) = (files.compiled(file), specifier) else {
+        let Some(compiled) = files.compiled(file) else {
             return false;
         };
         let sites = compiled
@@ -216,10 +208,8 @@ impl ProgramOrigins<'_, '_> {
         sites.into_iter().any(|(site, answer)| {
             site.specifier == ImportSpecifier::Constant(specifier)
                 && match answer {
-                    CodeAnswer::File(_)
-                    | CodeAnswer::HostModule(_)
-                    | CodeAnswer::External { .. } => true,
                     CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_) => false,
+                    _ => true,
                 }
         })
     }
@@ -276,6 +266,8 @@ impl ProgramOrigins<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bun_sema::bind::SymbolId;
+    use bun_sema::program::Sym;
 
     #[test]
     fn requested_follows_effect_table() {
@@ -353,63 +345,87 @@ mod tests {
 
     #[test]
     fn what_bun_types_would_declare_stops_no_build_without_them() {
+        let symbol = |id: u32| Sym {
+            file: FileId(1),
+            id: SymbolId(id),
+        };
+        let [bun_module, import_meta, own_type] = [symbol(0), symbol(1), symbol(2)];
+        let incomplete_containers = [Some(bun_module), Some(import_meta)];
         let without_configuration_file = WithoutBunTypes {
             has_configuration_file: false,
+            incomplete_containers,
         };
         let with_configuration_file = WithoutBunTypes {
             has_configuration_file: true,
+            incomplete_containers,
         };
-        let stops_build =
-            |without_bun_types: Option<&WithoutBunTypes>, code: u32, args: &[&str]| {
-                let origins = ProgramOrigins {
-                    files: None,
-                    origins: &[FileOrigin::ProgramSource],
-                    project_origin: FileOrigin::NoFile,
-                    without_bun_types,
-                };
-                let diagnostic = Diagnostic {
-                    file: Some(FileId(0)),
-                    class: DiagnosticClass::of_code(code),
-                    ..crate::global(code, args)
-                };
-                let reported = origins.apply_effects(vec![diagnostic]);
-                assert!(
-                    reported.iter().all(|it| it.effect == Effect::StopsBuild),
-                    "{code} {args:?}"
-                );
-                !reported.is_empty()
+        let stops_build = |without_bun_types: Option<&WithoutBunTypes>,
+                           code: u32,
+                           args: &[&str],
+                           subject: DiagnosticSubject| {
+            let origins = ProgramOrigins {
+                files: None,
+                origins: &[FileOrigin::ProgramSource],
+                project_origin: FileOrigin::NoFile,
+                without_bun_types,
             };
-        let cases: [(u32, &[&str], bool); 9] = [
-            (2584, &["document"], true),
-            (2304, &["nothing"], true),
-            (2307, &["./missing"], true),
-            (2339, &["serve", "typeof import(\"bun\")"], false),
-            (2339, &["dir", "ImportMeta"], false),
-            (2339, &["member", "Own"], true),
-            (2347, &[], false),
-            (2709, &["EventEmitter"], false),
-            (2322, &["string", "number"], true),
+            let diagnostic = Diagnostic {
+                file: Some(FileId(0)),
+                class: DiagnosticClass::of_code(code),
+                subject,
+                ..crate::global(code, args)
+            };
+            let reported = origins.apply_effects(vec![diagnostic]);
+            assert!(
+                reported.iter().all(|it| it.effect == Effect::StopsBuild),
+                "{code} {args:?}"
+            );
+            !reported.is_empty()
+        };
+        use DiagnosticSubject::{MemberContainer, None as NoSubject};
+        let cases: [(u32, &[&str], DiagnosticSubject, bool); 14] = [
+            (2584, &["document"], NoSubject, true),
+            (2304, &["nothing"], NoSubject, true),
+            (2307, &["./missing"], NoSubject, true),
+            (2339, &["serve", "A"], MemberContainer(bun_module), false),
+            (2305, &["A", "serve"], MemberContainer(bun_module), false),
+            (2694, &["A", "Server"], MemberContainer(bun_module), false),
+            (2339, &["dir", "A"], MemberContainer(import_meta), false),
+            (2339, &["member", "Own"], MemberContainer(own_type), true),
+            (
+                2339,
+                &["dir", "ImportMeta"],
+                MemberContainer(own_type),
+                true,
+            ),
+            (2339, &["dir", "ImportMeta"], NoSubject, true),
+            (2339, &["length", "\"bun\""], NoSubject, true),
+            (2347, &[], NoSubject, false),
+            (2709, &["EventEmitter"], NoSubject, false),
+            (2322, &["string", "number"], NoSubject, true),
         ];
-        for (code, args, still_stops) in cases {
+        for (code, args, subject, still_stops) in cases {
             for missing in [&without_configuration_file, &with_configuration_file] {
                 assert_eq!(
-                    stops_build(Some(missing), code, args),
+                    stops_build(Some(missing), code, args, subject),
                     still_stops,
                     "{code} {args:?}"
                 );
             }
-            assert!(stops_build(None, code, args), "{code} {args:?}");
+            assert!(stops_build(None, code, args, subject), "{code} {args:?}");
         }
         let implicit_any: (u32, &[&str]) = (7006, &["request", "any"]);
         assert!(!stops_build(
             Some(&without_configuration_file),
             implicit_any.0,
-            implicit_any.1
+            implicit_any.1,
+            NoSubject
         ));
         assert!(stops_build(
             Some(&with_configuration_file),
             implicit_any.0,
-            implicit_any.1
+            implicit_any.1,
+            NoSubject
         ));
     }
 

@@ -1,0 +1,57 @@
+# internal/http: const kHandle = Symbol("handle"); export { METHODS, kHandle }
+# node:readline: const http = require("internal/http"); const kHandle = http.kHandle; function mark(holder) { holder[kHandle] = 2 }  mark({ a: 1 })
+# main.js: require("node:readline"); Function("text")()
+# Unseen code loads modules by names that nobody knows. In a process that runs a compiled program no name loads a module of the library that the table does not call public, not even
+# with --expose-internals (Bun: seal_internals() in src/resolve_builtins), so what internal/http exports stays in known hands:
+# the read of http.kHandle answers the one symbol, and the store under it names a field. exports-of-a-public-library-module-are-held-where-unseen-code-runs.ir has the public module
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Holder" fields=[{key="a"
+# CHECK: {key=symbol("handle")@m1:100
+# CHECK: variable g1 name="kHandle" module=m2 declared={type=symbol("handle")@m1:100}
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="internal/http" displayPath="internal/http" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalHttp body=f1
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f2
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=number}}]
+layout L1 module=m1 fields=[{key="METHODS" declared={type=anything}}, {key="kHandle" declared={type=anything}}]
+variable g0 name="kHandle" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="kHandle" module=m2 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=Function
+    v2 = String string="text"
+    v3 = Call v1, -, v2
+    v4 = Call v3, -
+    Return v0
+}
+function f1 name="http" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="handle"
+    v2 = Call v0, -, v1 @100
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    v5 = GetModuleVariable variable=g0
+    v6 = NewObject -, v4, v5 layout=L1 fields=[0, 1]
+    Return v6
+}
+function f2 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m2 specifier="internal/http"
+    v1 = PropGet v0 key="METHODS"
+    v2 = PropGet v0 key="kHandle"
+    PutModuleVariable v2 variable=g1
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = CallDirect v5 function=f3
+    Return v5
+}
+function f3 name="mark" module=m2 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=2
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}

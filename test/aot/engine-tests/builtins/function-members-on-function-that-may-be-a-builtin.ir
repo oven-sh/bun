@@ -1,0 +1,29 @@
+# The receiver is one of two functions of the program or a built-in function, and is expected to be one of the two. The test for every function lets the built-in function through,
+# which has members of its own: behind the test the receiver is still no instance like any other, so the read could not be resolved. No test is planned, and the read stays a read by name
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# PLAN: function f0
+# PLAN-NOT: testedType=function
+# CHECK-LABEL: function f0 name="inheritedMember"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = PropGet v1 key="bind"
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="inheritedMember" parameters=[{type=f1|f2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f1|f2):
+    v1 = AssumeType v0 castType=f1|f2|builtin(SetTimeout)
+    v2 = PropGet v1 key="bind"
+    Return v2
+}
+
+function f1 name="first" results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f2 name="second" results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -114,11 +114,7 @@ fn create_load_error(message: &[u8], file_name: &[u8]) -> InternalError {
 fn runtime_module_of(kind: SourceKind) -> Option<RuntimeModule> {
     match kind {
         SourceKind::RuntimeModule(module) => Some(module),
-        SourceKind::Program
-        | SourceKind::Data
-        | SourceKind::EvaluatedText
-        | SourceKind::RuntimeFunctions
-        | SourceKind::TypesOnly => None,
+        _ => None,
     }
 }
 
@@ -228,11 +224,7 @@ impl FrozenLists {
 fn evaluated_text_file(compiled: &CompiledModule<'_>, site: EvaluatedTextSite) -> Option<FileId> {
     match *compiled.implied_answers.get(site.implied_answer as usize)? {
         CodeAnswer::File(file) => Some(file),
-        CodeAnswer::HostModule(_)
-        | CodeAnswer::External { .. }
-        | CodeAnswer::Erased
-        | CodeAnswer::Computed(_)
-        | CodeAnswer::NotFound(_) => None,
+        _ => None,
     }
 }
 
@@ -360,10 +352,7 @@ fn runtime_entry_point_kind(
             Err(_) => Some(EntryPointKind::ImportedModule),
         },
         SourceKind::RuntimeFunctions => Some(EntryPointKind::Library),
-        SourceKind::Program
-        | SourceKind::Data
-        | SourceKind::EvaluatedText
-        | SourceKind::TypesOnly => None,
+        _ => None,
     }
 }
 
@@ -389,9 +378,6 @@ fn implied_module(entries: &[SourceEntry], answer: CodeAnswer<'_>) -> Option<Run
     match answer {
         CodeAnswer::File(file) => runtime_module_of(entries[file.idx()].kind),
         CodeAnswer::HostModule(id) => RuntimeModule::from_registry_id(id.0),
-        CodeAnswer::External { .. }
-        | CodeAnswer::Erased
-        | CodeAnswer::Computed(_)
-        | CodeAnswer::NotFound(_) => None,
+        _ => None,
     }
 }

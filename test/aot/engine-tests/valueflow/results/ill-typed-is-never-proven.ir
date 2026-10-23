@@ -1,0 +1,90 @@
+# interface Runner { m(): number }  function m() { return 1 }  const kept: Runner = { m }, changed: Runner = { m };  (changed as any).m = "text";  run(kept);  runChanged(changed)
+# The store through `any` puts a string into a field of functions. Nothing throws and nothing escapes: the analysis follows the string like any value. The field may now be stored a value of another type,
+# so a read of `m` by name from that layout never has the type of the field. It has the type of all that arrives, the string too, and whoever calls it has to look first.
+# The same store into a field that is only expected to hold functions, as a file that is not checked sends it, leaves the field expected.
+# A parameter that is expected to hold a Runner and gets a value from code that nobody compiles stays expected too, with the type as read: a position that is not proven is never narrowed.
+# Beside each: the same position at which nothing arrives but what its type lists is proven
+# RUN: valueflow-apply
+# CHECK: layout L1 name="kept" fields=[{key="m" declared={type=f5} {{*}}occupancy=AlwaysFilled{{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]
+# CHECK: layout L2 name="changed" fields=[{key="m" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: layout L3 name="looseKept" fields=[{key="m" declared={type=f5} {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]
+# CHECK: layout L4 name="looseChanged" fields=[{key="m" declared={type=function|f5 flags=[IsExpected]} {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# RUN(RESULTS): valueflow-results
+# RESULTS: class [[kept]] layout=L1 impossibleMutations=[{{*}}StoreOfOtherType
+# RESULTS-NEXT: class [[changed]] layout=L2 impossibleMutations=[
+# RESULTS-NOT: StoreOfOtherType
+# RESULTS: class [[looseKept]] layout=L3 impossibleMutations=[{{*}}StoreOfOtherType
+# RESULTS-NEXT: class [[looseChanged]] layout=L4 impossibleMutations=[
+# RESULTS-NOT: StoreOfOtherType
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Runner" fields=[{key="m" declared={type=f6} flags=[IsRequired]}]
+layout L1 name="kept" fields=[{key="m" declared={type=f6} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="changed" fields=[{key="m" declared={type=f6} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="looseKept" fields=[{key="m" declared={type=f6 flags=[IsExpected]} flags=[IsRequired]}]
+layout L4 name="looseChanged" fields=[{key="m" declared={type=f6 flags=[IsExpected]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = String string="text"
+    PropSet v2, v3 key="m" mode=Strict
+    v5 = NewObject -, v0 layout=L3 fields=[0]
+    v6 = NewObject -, v0 layout=L4 fields=[0]
+    PropSet v6, v3 key="m" mode=Strict
+    v8 = NewClosure function=f1
+    v9 = Call v8, -, v1
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v2
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v1
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="outside" [isFreeName]
+    v16 = NewClosure function=f4
+    v17 = Call v16, -, v1
+    v18 = Call v16, -, v15
+    Return
+}
+function f1 name="run" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="run"
+# CHECK: parameters=[{type=L1}]
+# CHECK: [[read]]: f5 = PropGet {{*}}key="m" accessSite={{*}} receivers=[L1]
+# CHECK: = Call {{*}}callees=[f5]
+function f2 name="runChanged" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+# CHECK-LABEL: function f2 name="runChanged"
+# CHECK: parameters=[{type=L2}]
+# CHECK: [[changedRead]]: anything{{*}} = PropGet {{*}}key="m" accessSite={{*}} receivers=[L2]
+# CHECK: [[arrives]]: {{*}}"text"|f5{{*}} = AssumeType [[changedRead]] castType=
+# CHECK: = Call [[arrives]], {{*}}callees=[f5]
+function f3 name="expectKept" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+# CHECK-LABEL: function f3 name="expectKept"
+# CHECK: parameters=[{type=L1}]
+# CHECK: b0(v0: L1):
+function f4 name="expectOutside" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+# CHECK-LABEL: function f4 name="expectOutside"
+# CHECK: parameters=[{type=L0|L1|L2|L3|L4 flags=[IsExpected]}]
+# CHECK: b0(v0: anything ~ L0|L1|L2|L3|L4):
+function f5 name="m" results=[{type=anything}] functionTypes=[f6] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="m" role=Signature results=[{type=anything}]

@@ -9,15 +9,12 @@ const RANGES: usize = 3;
 const ICU_PACKAGES: usize = 4;
 const ICU_RUNS: usize = 5;
 const ICU_LANGUAGES: usize = 6;
-const LIBRARIES: usize = 7;
-const LIBRARY_SETS: usize = 8;
-const TEXT: usize = 9;
-const MODULE_TEXTS: usize = 10;
-const RECORD_BYTES: [usize; 11] = [6, 8, 2, 12, 16, 12, 8, 28, 2, 1, 16];
+const MODULE_TEXTS: usize = 7;
+const RECORD_BYTES: [usize; 8] = [6, 8, 2, 12, 16, 12, 8, 16];
 const BASE_ADDRESS: u64 = 0x1_0000;
 
 #[derive(Default)]
-struct SectionBytes([Vec<u8>; 11]);
+struct SectionBytes([Vec<u8>; 8]);
 
 impl SectionBytes {
     fn push_u16s(&mut self, section: usize, values: &[u16]) {
@@ -82,19 +79,6 @@ pub(crate) fn encode_table(table: &TrimTable) -> Vec<u8> {
         sections.0[ICU_LANGUAGES].extend_from_slice(&language.name);
         sections.push_u16s(ICU_LANGUAGES, &[language.group.0, 0]);
     }
-    for library in &table.libraries {
-        for text in [&library.name, &library.version] {
-            let start = sections.record_count(TEXT);
-            sections.push_u32s(LIBRARIES, &[start, text.len() as u32]);
-            sections.0[TEXT].extend_from_slice(text.as_bytes());
-        }
-        let first_set = sections.record_count(LIBRARY_SETS);
-        sections.push_u32s(LIBRARIES, &[first_set, library.sets.len() as u32]);
-        sections.push_u32s(LIBRARIES, &[u32::from(library.has_retained_bytes)]);
-        for set in &library.sets {
-            sections.push_u16s(LIBRARY_SETS, &[set.0]);
-        }
-    }
     for text in &table.module_texts {
         let AddressRange { start, end } = text.range;
         let readers = text.readers.map_or(0, |readers| readers.0 + 1);
@@ -134,7 +118,6 @@ fn empty_table() -> TrimTable {
         ranges: Vec::new(),
         icu_packages: Vec::new(),
         icu_languages: Vec::new(),
-        libraries: Vec::new(),
         module_texts: Vec::new(),
     }
 }
@@ -166,12 +149,6 @@ fn sample_table() -> TrimTable {
     let language = |name: &[u8; 4], group| IcuLanguage {
         name: *name,
         group: LocaleGroup(group),
-    };
-    let library = |name: &str, version: &str, has_retained_bytes, sets: &[u16]| Library {
-        name: Box::from(name),
-        version: Box::from(version),
-        has_retained_bytes,
-        sets: sets.iter().copied().map(SetIndex).collect(),
     };
     let module_text = |start, end, module, set, readers: Option<u16>, can_be_cut| ModuleText {
         range: address_range(start, end),
@@ -213,10 +190,6 @@ fn sample_table() -> TrimTable {
             language(b"nb\0\0", 1),
             language(b"no\0\0", 1),
         ],
-        libraries: vec![
-            library("alpha", "1.0", true, &[0, 2]),
-            library("gamma", "2.1", false, &[1]),
-        ],
         module_texts: vec![
             module_text(0x2000, 0x2020, 7, 1, Some(0), true),
             module_text(0x2020, 0x2030, 3, 2, None, false),
@@ -257,14 +230,13 @@ macro_rules! malformed_table_tests {
 
 malformed_table_tests! {
     wrong_magic: 0, b'X' => Magic;
-    byte_length_below_header: BYTE_LENGTH_OFFSET, 108u32 => Length;
-    unaligned_section_offset: directory_entry(EDGES), 114u32 => Directory;
-    section_offset_inside_header: directory_entry(EDGES), 108u32 => Directory;
-    descending_section_offsets: directory_entry(FEATURE_SETS), 112u32 => Directory;
+    byte_length_below_header: BYTE_LENGTH_OFFSET, 84u32 => Length;
+    unaligned_section_offset: directory_entry(EDGES), 90u32 => Directory;
+    section_offset_inside_header: directory_entry(EDGES), 84u32 => Directory;
+    descending_section_offsets: directory_entry(FEATURE_SETS), 88u32 => Directory;
     overlapping_sections: directory_entry(EDGES) + 4, 3u32 => Directory;
     maximum_record_count: directory_entry(EDGES) + 4, u32::MAX => Directory;
     section_size_wrapping_u32: directory_entry(EDGES) + 4, (1u32 << 31) + 2 => Directory;
-    text_over_next_section: directory_entry(TEXT) + 4, 17u32 => Directory;
     module_texts_past_byte_length: directory_entry(MODULE_TEXTS) + 4, 3u32 => Directory;
     unsorted_edges: record_field(EDGES, 0, 0), feature(2).index() => Edges;
     repeated_edge: record_field(EDGES, 1, 2), feature(1).index() => Edges;
@@ -308,20 +280,6 @@ malformed_table_tests! {
     language_after_padding: record_field(ICU_LANGUAGES, 0, 3), b'x' => IcuLanguages;
     language_group_at_limit: record_field(ICU_LANGUAGES, 0, 4), 65535u16 => IcuLanguages;
     nonzero_reserved_language_field: record_field(ICU_LANGUAGES, 0, 6), 1u16 => IcuLanguages;
-    unsorted_library_names: record_field(TEXT, 8, 0), b'a' => Libraries;
-    skipped_library_set: record_field(LIBRARIES, 1, 16), 3u32 => Libraries;
-    library_sets_past_end: record_field(LIBRARIES, 1, 20), 2u32 => Libraries;
-    library_set_without_library: record_field(LIBRARIES, 1, 20), 0u32 => Libraries;
-    invalid_retained_bytes_flag: record_field(LIBRARIES, 0, 24), 2u32 => Libraries;
-    repeated_library_set: record_field(LIBRARY_SETS, 0, 0), 2u16 => LibrarySets;
-    invalid_library_set: record_field(LIBRARY_SETS, 1, 0), 3u16 => LibrarySets;
-    skipped_library_text: record_field(LIBRARIES, 1, 0), 9u32 => Text;
-    shared_library_text: record_field(LIBRARIES, 1, 8), 5u32 => Text;
-    library_text_past_end: record_field(LIBRARIES, 1, 12), 4u32 => Text;
-    text_without_library: record_field(LIBRARIES, 1, 12), 2u32 => Text;
-    maximum_text_start: record_field(LIBRARIES, 0, 0), u32::MAX => Text;
-    maximum_text_length: record_field(LIBRARIES, 0, 4), u32::MAX => Text;
-    invalid_utf8_text: record_field(TEXT, 0, 0), 0xffu8 => Text;
     overlapping_module_texts: record_field(MODULE_TEXTS, 1, 0), 0x201fu32 => ModuleTexts;
     empty_module_text: record_field(MODULE_TEXTS, 0, 4), 0u32 => ModuleTexts;
     two_texts_of_one_module: record_field(MODULE_TEXTS, 1, 8), 7u16 => ModuleTexts;
@@ -334,12 +292,6 @@ malformed_table_tests! {
 }
 
 #[test]
-fn equal_library_names() {
-    let result = parse_patched_table(record_field(TEXT, 8, 0), b"alpha");
-    assert_malformed(result, MalformedTable::Libraries);
-}
-
-#[test]
 fn four_letter_language() {
     let result = parse_patched_table(record_field(ICU_LANGUAGES, 0, 2), b"ux");
     assert_malformed(result, MalformedTable::IcuLanguages);
@@ -347,7 +299,7 @@ fn four_letter_language() {
 
 #[test]
 fn tables_round_trip() {
-    assert_eq!(encode_table(&empty_table()).len(), 120);
+    assert_eq!(encode_table(&empty_table()).len(), 96);
     for table in [empty_table(), sample_table()] {
         assert_eq!(parse_trim_table(&encode_table(&table)), Ok(table));
     }
@@ -433,7 +385,7 @@ fn first_checks() {
     assert_eq!(parse_trim_table(&[0; 256]), Err(TableError::Empty));
     let trimmed = encode_removed_ranges(&[], 64).bytes;
     assert_eq!(parse_trim_table(&trimmed), Err(TableError::AlreadyTrimmed));
-    for version in [2u32, 4] {
+    for version in [TABLE_VERSION - 1, TABLE_VERSION + 1] {
         let result = parse_patched_table(VERSION_OFFSET, &version.to_le_bytes());
         assert_eq!(result, Err(TableError::UnsupportedVersion));
     }
@@ -464,7 +416,7 @@ fn truncated_table_is_rejected() {
     for length in (16..bytes.len()).step_by(4) {
         assert_malformed(parse_trim_table(&bytes[..length]), MalformedTable::Length);
     }
-    for length in (120..bytes.len()).step_by(4) {
+    for length in (96..bytes.len()).step_by(4) {
         let mut truncated = bytes[..length].to_vec();
         let byte_length = (length as u32).to_le_bytes();
         write_bytes(&mut truncated, BYTE_LENGTH_OFFSET, &byte_length);

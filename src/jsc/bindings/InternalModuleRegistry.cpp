@@ -275,15 +275,18 @@ static void throwModuleTextRemovedError(JSC::JSGlobalObject* globalObject, uint3
 
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
+#if ENABLE(AOT)
+    // The JavaScript of a module stays when its feature is removed. Its native functions throw.
+    if (JSC::AOT::hasBuiltinModule(globalObject, id)) {
+        Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
+        return JSC::AOT::evaluateBuiltinModule(globalObject, id);
+    }
+#endif
     if (auto feature = InternalModuleRegistryConstants::moduleFeatures[id]; feature && JSC::isFeatureRemoved(*feature)) [[unlikely]] {
         throwRemovedModuleError(globalObject, *feature, id);
         return {};
     }
 #if ENABLE(AOT)
-    if (JSC::AOT::hasBuiltinModule(globalObject, id)) {
-        Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
-        return JSC::AOT::evaluateBuiltinModule(globalObject, id);
-    }
     if (JSC::AOT::refusesLibraryText()) [[unlikely]] {
         throwModuleNotCompiledError(globalObject, id, Bun::ErrorCode::ERR_MODULE_NOT_FOUND);
         return {};
@@ -396,12 +399,12 @@ JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, I
 JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ErrorCode ifNotInExecutable)
 {
     uint32_t id = field;
-    if (id < InternalModuleRegistryConstants::moduleCount) {
+    if (id < InternalModuleRegistryConstants::moduleCount && !JSC::AOT::hasBuiltinModule(globalObject, id)) {
         if (auto feature = InternalModuleRegistryConstants::moduleFeatures[id]; feature && JSC::isFeatureRemoved(*feature)) [[unlikely]] {
             throwRemovedModuleError(globalObject, *feature, id, ifNotInExecutable);
             return {};
         }
-        if (JSC::AOT::refusesLibraryText() && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
+        if (JSC::AOT::refusesLibraryText()) [[unlikely]] {
             throwModuleNotCompiledError(globalObject, id, ifNotInExecutable);
             return {};
         }

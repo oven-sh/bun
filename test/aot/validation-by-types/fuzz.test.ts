@@ -1,9 +1,10 @@
 // Generated types and generated values: see generate.ts. Each test builds one generated program with `bun build --compile --aot`
 // and runs it. Where zod 4 can be resolved from here, the program asks zod as well.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { run } from "../harness/run";
 import { test } from "../supported";
 import { program } from "./generate";
 
@@ -26,17 +27,12 @@ test.concurrent.each([1, 2, 3, 4, 5, 6])(
       symlinkSync(zod, join(String(dir), "node_modules", "zod"));
     }
     const outfile = join(String(dir), "program" + (isWindows ? ".exe" : ""));
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", outfile],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [said, built] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: said, exitCode: built } = await run(
+      [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", outfile],
+      String(dir),
+    );
     expect({ said: built ? said : "", built }).toEqual({ said: "", built: 0 });
-    await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+    const { stdout, stderr, exitCode } = await run([outfile], String(dir));
     const lines = stdout.trim().split("\n");
     expect(lines.filter(line => !/^(T\d+|Tree|Json|all) /.test(line))).toEqual([]);
     expect(lines.at(-1)).toContain(" disagreements 0 ");

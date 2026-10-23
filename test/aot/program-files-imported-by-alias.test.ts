@@ -1,18 +1,15 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function build(directory: string, entryPoint: string) {
   const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile],
-    cwd: directory,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: said, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile],
+    directory,
+  );
   return { said, exitCode };
 }
 

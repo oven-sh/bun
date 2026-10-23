@@ -46,40 +46,7 @@ impl Checker<'_, '_> {
             | ExprKind::Dot { .. }
             | ExprKind::Index { .. } => true,
             ExprKind::Template { exprs } => exprs.is_empty() || self.atoms().bytes(text).is_ascii(),
-            ExprKind::Binary { .. }
-            | ExprKind::Missing
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_)
-            | ExprKind::Call(_)
-            | ExprKind::New(_)
-            | ExprKind::Unary { .. }
-            | ExprKind::Assign { .. }
-            | ExprKind::Cond { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_)
-            | ExprKind::JsxText(_) => false,
+            _ => false,
         }
     }
 }
@@ -243,24 +210,7 @@ fn ends_const_local_prefix(hir: &File<'_>, bound: &Bound<'_>, statement: StmtId)
         StmtKind::Import(import) => !hir.is_type_only_import(import),
         StmtKind::ExportNamed(export) => !hir.is_type_only_export(export),
         StmtKind::ExportStar { type_only, .. } => !type_only,
-        StmtKind::Expr(_)
-        | StmtKind::Return(_)
-        | StmtKind::If { .. }
-        | StmtKind::For { .. }
-        | StmtKind::ForIn { .. }
-        | StmtKind::ForOf { .. }
-        | StmtKind::While { .. }
-        | StmtKind::DoWhile { .. }
-        | StmtKind::Block(_)
-        | StmtKind::Switch { .. }
-        | StmtKind::Try { .. }
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_)
-        | StmtKind::Labeled { .. }
-        | StmtKind::ExportDefault(_)
-        | StmtKind::ExportAssign(_)
-        | StmtKind::With { .. } => true,
+        _ => true,
     }
 }
 

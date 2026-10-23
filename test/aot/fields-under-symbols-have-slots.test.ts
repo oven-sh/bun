@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // A member that a `const` symbol names is a field of the layout like a member under a name: of a class that declares it, and of a
@@ -69,12 +70,6 @@ const operations = [
   "operationAOTDidCreateFieldOutOfLineAt",
   "operationAOTDidCreateFieldsAt",
 ];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("objects with fields under symbols are made, read and stored into without the run time", async () => {
   using directory = tempDir("aot-fields-under-symbols", files);

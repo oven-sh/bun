@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 test.skipIf(!isLinux)(
@@ -29,28 +30,20 @@ console.log("a second one", countMatches(second, 20000), writableAndExecutableMa
 `,
     });
     const cwd = String(dir);
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", "app"],
+    const { stderr: buildErrors, exitCode: buildExitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", "app"],
       cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    );
     expect({ buildErrors, buildExitCode }).toEqual({
       buildErrors: expect.not.stringMatching(/^error\b/m),
       buildExitCode: 0,
     });
     const outputs: Record<string, string> = {};
     for (const useRegExpJIT of ["1", "0"]) {
-      await using proc = Bun.spawn({
-        cmd: [join(cwd, "app")],
-        cwd,
-        env: { ...bunEnv, BUN_JSC_useRegExpJIT: useRegExpJIT },
-        stdout: "pipe",
-        stderr: "pipe",
+      const { stdout, exitCode } = await run([join(cwd, "app")], cwd, {
+        ...bunEnv,
+        BUN_JSC_useRegExpJIT: useRegExpJIT,
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(exitCode).toBe(0);
       outputs[useRegExpJIT] = stdout;
     }

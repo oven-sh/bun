@@ -1,0 +1,13 @@
+# A Buffer is a Uint8Array. A pristine Buffer inherits from Buffer.prototype, so it is no pristine Uint8Array
+# RUN: subset
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK-NEXT: t0 <= t2: no overlaps: yes
+# CHECK-NEXT: t0 <= t3: no overlaps: yes
+# CHECK: t2 <= t0: yes overlaps: yes
+# CHECK-NEXT: t2 <= t1: yes overlaps: yes
+# CHECK-NEXT: t2 <= t2: yes overlaps: yes
+# CHECK-NEXT: t2 <= t3: no overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=Buffer}, {type=Uint8Array}, {type=Buffer<anything, pristine[Names]>}, {type=Uint8Array<anything, pristine[Names]>}] results=[{type=undefined}]

@@ -83,26 +83,7 @@ fn alias_evaluation(hir: &File<'_>, bound: &Bound<'_>, alias: ImportEqualsId) ->
                 AliasEvaluation::Always
             }
         },
-        Parent::File
-        | Parent::Expr(_)
-        | Parent::Stmt(_)
-        | Parent::VarInit(_)
-        | Parent::ParamDefault(_)
-        | Parent::PatPropDefault(_)
-        | Parent::PatElemDefault(_)
-        | Parent::Prop(_)
-        | Parent::PropKey(_)
-        | Parent::PatKey(_)
-        | Parent::MemberKey(_)
-        | Parent::MethodKey(_)
-        | Parent::MemberInit(_)
-        | Parent::FnBody(_)
-        | Parent::EnumInit(_)
-        | Parent::Case(_)
-        | Parent::ClassExtends(_)
-        | Parent::ClassDecorator(_)
-        | Parent::MemberDecorator(_)
-        | Parent::ParamDecorator(_) => AliasEvaluation::Always,
+        _ => AliasEvaluation::Always,
     }
 }
 

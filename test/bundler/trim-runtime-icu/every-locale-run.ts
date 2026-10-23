@@ -58,38 +58,15 @@ const programs: [entry: string, kept: string[]][] = [
   ["intl-get-canonical-locales.js", ["IntlOther"]],
   ["names-none-of-them.js", []],
 ];
-const mostProgramsInAPart = 5;
-
-function partNumbers() {
-  return readdirSync(import.meta.dir)
-    .flatMap(name => /^every-locale-(\d+)\.test\.ts$/.exec(name)?.slice(1) ?? [])
-    .map(Number)
-    .sort((a, b) => a - b);
-}
 
 export function testDeal() {
-  test("the files every-locale-<n>.test.ts are numbered from 1 with no gap", () => {
-    const numbers = partNumbers();
-    expect(numbers).toEqual(numbers.map((_, index) => index + 1));
-  });
-
-  test(`no part holds more than ${mostProgramsInAPart} programs`, () => {
-    const parts = partNumbers().length;
-    expect(
-      Math.ceil(programs.length / parts),
-      `A test file has three minutes in CI. Add test/bundler/trim-runtime-icu/every-locale-${parts + 1}.test.ts, a copy of the one before it with its number raised.`,
-    ).toBeLessThanOrEqual(mostProgramsInAPart);
-  });
-
   test("every program is in the table", () => {
     const entries = Object.keys(files).filter(name => name !== "lists.js" && name !== "date.js");
     expect(programs.map(([entry]) => entry).sort()).toEqual(entries.sort());
   });
 }
 
-export function testPrograms(part: number) {
-  const parts = partNumbers().length;
-
+export function testPrograms(part: number, parts: number) {
   describe.skipIf(!canTrim || !!unsupported)("a method keeps all that it can open of ICU's data, in every locale", () => {
     test.concurrent.each(programs.filter((_, index) => index % parts === part - 1))(
       "%s prints the same with only %j kept",

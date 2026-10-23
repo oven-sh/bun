@@ -1,5 +1,5 @@
 import { deriveFeatureEdges } from "./edges.ts";
-import { onlyReturns, sortedUnique } from "./entry-points.ts";
+import { isUnwindRecordOf, onlyReturns, sortedUnique } from "./entry-points.ts";
 import { isOutsideCompiledPrograms } from "./features.ts";
 import { findEdge, propagateFeatureSets, reach, type SectionGraph } from "./graph.ts";
 import {
@@ -84,7 +84,8 @@ function findEmptyEntriesThatOtherCodeJumpsTo(
   for (let referrer = 0; referrer < graph.count; referrer++) {
     for (let edge = graph.successorStart[referrer]!; edge < graph.successorStart[referrer + 1]!; edge++) {
       const entry = graph.successors[edge]!;
-      if (isEmptyEntry[entry] !== 0 && !guardsOfEmptyEntry.get(entry)!.has(referrer)) found.add(entry);
+      if (isEmptyEntry[entry] === 0 || guardsOfEmptyEntry.get(entry)!.has(referrer)) continue;
+      if (!isUnwindRecordOf(graph, referrer, entry)) found.add(entry);
     }
   }
   return found;

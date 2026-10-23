@@ -1,6 +1,5 @@
 mod records;
 mod registry;
-mod sections;
 #[cfg(test)]
 mod shared;
 mod used_features;
@@ -20,10 +19,10 @@ use core::ptr::NonNull;
 use bun_aot_interface::engine::shared;
 use bun_core::ffi::{Zeroable, zeroed};
 use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize, ReportDetail};
+use bun_removable_features::FeatureSet;
 
 pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, witness_of};
 pub use self::registry::{is_optional_pass, operation_names};
-use self::sections::check_sections;
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
     describe_difference_of_runtime, has_compiler, image_alignment, relocate_image,
@@ -31,11 +30,10 @@ pub use self::shared::{
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
 pub use crate::ir::generated::{
-    AccessCountRecord, AccessRecord, AllocationRemarkRecord, ArrivalLayoutFieldRecord,
-    ArrivalLayoutRecord, ArrivalSiteRecord, BuiltinUseRecord, DeclineRecord, FeatureUseRecord,
-    FunctionReportRecord, InternalErrorRecord, LocaleUseRecord, LossRecord, ObfuscatedSiteRecord,
-    OperationCountRecord, PassTimeRecord, RemainingCheckRecord, SourceLocation, TextRange,
-    TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
+    AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
+    FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LocaleUseRecord,
+    ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord, RemainingCheckRecord,
+    SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
@@ -112,11 +110,8 @@ fn reports_of(options: &AotOptions) -> ReportSet {
     if options.explain.contains(ExplainSet::DECLINES) || detail.is_some() {
         reports |= ReportSet::DECLINES;
     }
-    if options.explain.contains(ExplainSet::ALLOCATIONS) || detail == Some(ReportDetail::Sites) {
+    if options.explain.contains(ExplainSet::ALLOCATIONS) {
         reports |= ReportSet::ALLOCATIONS;
-    }
-    if detail == Some(ReportDetail::Sites) {
-        reports |= ReportSet::ARRIVALS | ReportSet::PASS_CODE_BYTES;
     }
     if detail >= Some(ReportDetail::Functions) {
         reports |= ReportSet::FUNCTIONS;
@@ -159,6 +154,14 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     }
     if options.obfuscates {
         record.output |= OutputOptions::OBFUSCATE;
+    }
+    let mut removed = FeatureSet::from_features(&options.trim.remove_internal);
+    for name in &options.trim.remove {
+        removed.union_with(&name.features());
+    }
+    for feature in removed.iter() {
+        let index = usize::from(feature.index());
+        record.removed_features[index / 64] |= 1 << (index % 64);
     }
 }
 
@@ -281,12 +284,7 @@ impl EngineResult {
             // SAFETY: the result is not freed yet.
             unsafe { Bun__AOT__resultSection(result.as_ptr(), section.to_wire()) }
         });
-        let result = EngineResult { result, sections };
-        if let Err(error) = check_sections(&result.sections) {
-            drop(result);
-            panic!("the engine returned a malformed result: {error:?}");
-        }
-        result
+        EngineResult { result, sections }
     }
 
     pub fn image(&self) -> Option<&[u8]> {
@@ -353,10 +351,6 @@ impl EngineResult {
         self.records()
     }
 
-    pub fn losses(&self) -> &[LossRecord] {
-        self.records()
-    }
-
     pub fn functions(&self) -> &[FunctionReportRecord] {
         self.records()
     }
@@ -385,28 +379,12 @@ impl EngineResult {
         self.records()
     }
 
-    pub fn arrival_sites(&self) -> &[ArrivalSiteRecord] {
-        self.records()
-    }
-
-    pub fn arrival_site_layouts(&self) -> &[u32] {
-        self.elements(ResultSection::ArrivalSiteLayouts)
-    }
-
-    pub fn arrival_layouts(&self) -> &[ArrivalLayoutRecord] {
-        self.records()
-    }
-
-    pub fn arrival_layout_fields(&self) -> &[ArrivalLayoutFieldRecord] {
-        self.records()
-    }
-
     fn records<T: ResultRecord>(&self) -> &[T] {
         self.elements(T::SECTION)
     }
 
     fn elements<T>(&self, section: ResultSection) -> &[T] {
-        // SAFETY: the section is readable until `drop`, and `check_sections` proved that it holds the `T` of each caller.
+        // SAFETY: the section is readable until `drop`, and the engine, built from the same schema, wrote the `T` of each caller.
         unsafe { self.sections[section as usize].as_slice() }
     }
 }
@@ -489,46 +467,29 @@ unsafe extern "C" {
 
 trait ResultRecord: Copy {
     const SECTION: ResultSection;
-    const TEXT_MEMBERS: &'static [usize];
-    fn slice_from_bytes(bytes: &[u8]) -> Option<&[Self]>;
 }
 
 macro_rules! result_record {
-    ($record:ident, $section:ident, [$($text:ident),*]) => {
+    ($record:ident, $section:ident) => {
         impl ResultRecord for $record {
             const SECTION: ResultSection = ResultSection::$section;
-            const TEXT_MEMBERS: &'static [usize] = &[$(core::mem::offset_of!($record, $text)),*];
-
-            fn slice_from_bytes(bytes: &[u8]) -> Option<&[Self]> {
-                // The generated inherent function, which takes precedence over this one.
-                $record::slice_from_bytes(bytes)
-            }
         }
-        $(const _: fn(&$record) -> &TextRange = |record| &record.$text;)*
     };
 }
 
-result_record!(UserDiagnosticRecord, UserDiagnostics, [message]);
-result_record!(InternalErrorRecord, InternalErrors, [message]);
-result_record!(UnseenCodeRecord, UnseenCode, []);
-result_record!(BuiltinUseRecord, BuiltinsUsed, []);
-result_record!(FeatureUseRecord, FeaturesUsed, []);
-result_record!(LocaleUseRecord, LocalesUsed, [tag]);
-result_record!(AccessCountRecord, AccessCounts, []);
-result_record!(AccessRecord, Accesses, []);
-result_record!(RemainingCheckRecord, RemainingChecks, []);
-result_record!(TypeTestRecord, TypeTests, []);
-result_record!(DeclineRecord, Declines, []);
-result_record!(
-    AllocationRemarkRecord,
-    AllocationRemarks,
-    [forcing_operation]
-);
-result_record!(LossRecord, Losses, []);
-result_record!(FunctionReportRecord, Functions, [role]);
-result_record!(OperationCountRecord, OperationCounts, [name]);
-result_record!(PassTimeRecord, PassTimes, []);
-result_record!(ObfuscatedSiteRecord, ObfuscatedSites, [name]);
-result_record!(ArrivalSiteRecord, ArrivalSites, [operation]);
-result_record!(ArrivalLayoutRecord, ArrivalLayouts, [kind, name]);
-result_record!(ArrivalLayoutFieldRecord, ArrivalLayoutFields, [name]);
+result_record!(UserDiagnosticRecord, UserDiagnostics);
+result_record!(InternalErrorRecord, InternalErrors);
+result_record!(UnseenCodeRecord, UnseenCode);
+result_record!(BuiltinUseRecord, BuiltinsUsed);
+result_record!(FeatureUseRecord, FeaturesUsed);
+result_record!(LocaleUseRecord, LocalesUsed);
+result_record!(AccessCountRecord, AccessCounts);
+result_record!(AccessRecord, Accesses);
+result_record!(RemainingCheckRecord, RemainingChecks);
+result_record!(TypeTestRecord, TypeTests);
+result_record!(DeclineRecord, Declines);
+result_record!(AllocationRemarkRecord, AllocationRemarks);
+result_record!(FunctionReportRecord, Functions);
+result_record!(OperationCountRecord, OperationCounts);
+result_record!(PassTimeRecord, PassTimes);
+result_record!(ObfuscatedSiteRecord, ObfuscatedSites);

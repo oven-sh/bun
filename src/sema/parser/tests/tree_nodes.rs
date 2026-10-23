@@ -775,6 +775,19 @@ fn legacy_octal_forms() {
     for &text in LEGACY_OCTAL_FORMS {
         parsed("a.js", text, |_, hir| {
             assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
+            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
+        });
+    }
+    let without_legacy_octal = [
+        "x = '2024-01-08';",
+        "x = 1; // 010",
+        "x = 1; /* \\1 */",
+        r#"x = "a\\1";"#,
+        r#"x = "\0" + 10.05 + 0x01 + 0o01 + a01;"#,
+    ];
+    for text in without_legacy_octal {
+        parsed("a.js", text, |_, hir| {
+            assert_eq!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
         });
     }
 }

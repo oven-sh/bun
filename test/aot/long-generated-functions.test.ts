@@ -1,9 +1,10 @@
 // A generator writes one function of many thousands of like parts. The work of the build grows with the length of the function: each program is built at half its length and at its
 // whole length, and the instructions of the two builds are compared, so the answer is the same on a busy machine. Where instructions cannot be counted, the time limit of the test stands alone.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { measureCommand } from "./analysis-scaling/measure-check";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const n = isDebug || isASAN ? 4_000 : 16_000;
@@ -16,8 +17,7 @@ const mostGrowth = 2.5;
 const limit = 600_000;
 
 async function run(cwd: string, cmd: string[]) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd);
   return { stdout, stderr, exitCode };
 }
 

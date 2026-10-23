@@ -120,7 +120,6 @@ function x64Generic(): string[] {
 
 export const zlib: Dependency = {
   name: "zlib",
-  release: "2.3.3",
   versionMacro: "ZLIB_HASH",
 
   source: () => ({

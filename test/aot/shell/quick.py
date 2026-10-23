@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Runs the programs in ../programs without building Bun.
 
-Each program goes through three tools: the front end (`bun-aot`) lowers it to IR, `testaot` compiles the IR to an image, with B3, Air
+Each program goes through three tools: the front end (a Bun) lowers it to IR, `testaot` compiles the IR to an image, with B3, Air
 and compressed references validated, and the `jsc` shell runs the image. Use this while working on the compiler: all programs take
 about five minutes, one takes a second. The real test is `bun test test/aot`, which needs a full Bun.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all
 
     the tools   toolchain.py's docstring says how to build them
     <program>   its path under ../programs without the extension, e.g. strings/replace-all

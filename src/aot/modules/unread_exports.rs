@@ -22,13 +22,7 @@ fn loaded_value(site: ImportSiteKind) -> LoadedValue {
         | ImportSiteKind::Require(_)
         | ImportSiteKind::ImportMetaRequire(_)
         | ImportSiteKind::GetBuiltinModule(_) => LoadedValue::RequireResult,
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaResolve(_) => LoadedValue::Nothing,
+        _ => LoadedValue::Nothing,
     }
 }
 
@@ -69,11 +63,7 @@ impl ExportReads {
                 let index = *self.index_by_file.get(&file)?;
                 Some(&mut self.modules[index])
             }
-            ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => None,
+            _ => None,
         }
     }
 
@@ -189,10 +179,7 @@ impl ExportReads {
             {
                 Some(symbol.id)
             }
-            ExportBinding::Variable(_)
-            | ExportBinding::Synthetic(_)
-            | ExportBinding::Namespace { .. }
-            | ExportBinding::Indirect { .. } => None,
+            _ => None,
         }
     }
 }
@@ -219,10 +206,7 @@ pub(super) fn remove_unread_data_exports(files: &mut [FileParts]) {
             .filter(|export| reads.is_unread(module, export).is_none())
             .filter_map(|export| match export.binding {
                 ExportBinding::Variable(symbol) if symbol.file == module => Some(symbol.id),
-                ExportBinding::Variable(_)
-                | ExportBinding::Synthetic(_)
-                | ExportBinding::Namespace { .. }
-                | ExportBinding::Indirect { .. } => None,
+                _ => None,
             })
             .collect();
         let mut unread_exports = Vec::new();

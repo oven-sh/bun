@@ -97,10 +97,6 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             | ProgramList::RequiredNames
             | ProgramList::ColumnAdjustments
             | ProgramList::EvalBindings
-            | ProgramList::RelationSubjects
-            | ProgramList::StoredIntos
-            | ProgramList::HandedTos
-            | ProgramList::OperandsOf
             | ProgramList::Code
             | ProgramList::DataNodes
             | ProgramList::DataMembers

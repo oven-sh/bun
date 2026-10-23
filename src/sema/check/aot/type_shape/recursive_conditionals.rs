@@ -121,18 +121,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     push(&mut [obj, index].into_iter());
                     None
                 }
-                TypeNodeKind::Fn(_)
-                | TypeNodeKind::Object(_)
-                | TypeNodeKind::Mapped(_)
-                | TypeNodeKind::Predicate { .. }
-                | TypeNodeKind::Error
-                | TypeNodeKind::Keyword(_)
-                | TypeNodeKind::StringLit(_)
-                | TypeNodeKind::NumberLit(_)
-                | TypeNodeKind::BigIntLit { .. }
-                | TypeNodeKind::BoolLit(_)
-                | TypeNodeKind::Infer(_)
-                | TypeNodeKind::UniqueSymbol => None,
+                _ => None,
             };
             let Some(named) = named else {
                 continue;

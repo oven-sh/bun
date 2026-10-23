@@ -2,6 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { basename, join } from "path";
+import { run as runCommand } from "./harness/run";
 import { slot } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
@@ -239,15 +240,10 @@ async function check(path: string, mode: CompileMode) {
 describe.concurrent("compile/aot/transpiler-parity", () => {
   beforeAll(async () => {
     directory = tempDir("transpiler-parity", { "wrapper.ts": wrapperSource, "use-wrapper.ts": preloadSource });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "wrapper.ts", "--outfile", wrapperPath()],
-      cwd: String(directory),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const { stderr, exitCode } = await runCommand(
+      [bunExe(), "build", "--compile", "wrapper.ts", "--outfile", wrapperPath()],
+      String(directory),
+    );
     if (exitCode !== 0) throw new Error(`building the wrapper failed:\n${stderr}`);
   }, 120_000);
 

@@ -4,6 +4,10 @@ import { js, pkg, ts, ways, type Case } from "./run-packages";
 const differs =
   "A require() or an import() of a path that the package does not export throws where it runs, as under `bun run`. What is thrown is an Error where `bun run` throws a ResolveMessage, and a file that is there but not exported is no part of the executable.";
 
+export const root = {
+  "imports": { "#app/*": "./app/*.mjs", "#cfg": "./app/cfg.json", "#one": "./app/one.mjs", "#pk": "hash_dep" },
+};
+
 export const cases: Case[] = [
   {
     name: "exports",

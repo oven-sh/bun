@@ -175,6 +175,8 @@ export interface DirectSource {
   /** Compile without the group's PCH (a TU whose flags differ from the PCH's). */
   noPch?: boolean;
   pch?: string;
+  /** The sources that this one includes, absolute: each gets an entry of its own in compile_commands.json, with these flags and no PCH. */
+  bundled?: string[];
   /** "cxx": a `.c` file compiled as C++ (bmalloc_SOURCES' libpas files). */
   lang?: "cxx";
 }
@@ -450,6 +452,11 @@ export interface Provides {
    * like `libs`. Only for a `prebuilt` source.
    */
   files?: string[];
+  /**
+   * The graph follows from what the tarball holds. It is then an input of configure like the Rust plans: ninja
+   * fetches it first, reconfigures, and starts over with the new manifest. Only for a `prebuilt` source.
+   */
+  contentsDecideGraph?: boolean;
 }
 
 /**
@@ -488,14 +495,6 @@ export type DepName =
  */
 export interface Dependency {
   name: DepName;
-
-  /**
-   * The upstream release the pinned source is, e.g. "1.2.0". Update it with
-   * the commit. The list of libraries in a trimmable executable reports it;
-   * without one it reports the first 8 characters of the commit. An `in-tree`
-   * source has no commit, so it needs a release.
-   */
-  release?: string;
 
   /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
@@ -1081,7 +1080,7 @@ function emitPrebuilt(
     objects: [],
     checks: [],
     generatedHeaders: [],
-    configureInputs: [],
+    configureInputs: provides.contentsDecideGraph ? [stamp] : [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
@@ -1488,6 +1487,9 @@ function emitDirect(
           ...opts,
           flags: asCxx ? ["-x", "c++", ...flags.cxx, ...extra] : [...flags.c, ...extra],
         });
+      }
+      for (const file of src.bundled ?? []) {
+        n.addCompileCommand({ directory: cfg.buildDir, file, arguments: [cfg.cxx, ...flags.cxx, ...extra, "-c", file] });
       }
       const sourcePch = src.noPch ? undefined : src.pch === undefined ? groupPch : pchByHeader.get(src.pch);
       assert(

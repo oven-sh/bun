@@ -6,7 +6,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
-import { buildEnvironment, buildFlags, compileCommand, runtimeEnvironment } from "./harness/flags";
+import { buildFlags, compileCommand, runtimeEnvironment } from "./harness/flags";
+import { printIR, test as testOfIR, writesProgramInto } from "./harness/printed-ir";
 import { built, slot, spawned, told, wanted, withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -479,14 +480,10 @@ const waysOf = ({ file }: Program) =>
     wanted === "quick" ? way === "by default" : file.endsWith(".ts") || way !== "with types erased",
   );
 
-async function compile(folder: string, { file }: Program, flags: string[], environment: Record<string, string> = {}) {
+async function compile(folder: string, { file }: Program, flags: string[]) {
   const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
-  const build = await spawned([bunExe(), ...compileCommand, ...flags, file, "--outfile", executable], folder, {
-    ...bunEnv,
-    ...environment,
-  });
-  built(build);
-  return { executable, stderr: build.stderr };
+  built(await spawned([bunExe(), ...compileCommand, ...flags, file, "--outfile", executable], folder, bunEnv));
+  return { executable };
 }
 
 async function expectOutputOfPlainBun(program: Program, flags: string[]) {
@@ -524,19 +521,17 @@ define(
   Object.entries(changesToNameAndLength).map(([name, change]) => [name, programAboutNameAndLength(change)]),
 );
 
-// One function's IR as the build prints it after instruction selection. A read that is still by name has the name as its key.
+// One function's IR after instruction selection. A read that is still by name has the name as its key.
 async function selectedCodeOf(functionName: string, program: Program) {
   using dir = tempDir("aot-function-members-code", { [program.file]: program.text });
-  const { stderr } = await compile(String(dir), program, [], {
-    [buildEnvironment.dumpsIR]: "Selected",
-    [buildEnvironment.functionToDump]: functionName,
-  });
-  expect(stderr).toContain(`name="${functionName}"`);
-  return stderr;
+  await compile(String(dir), program, [writesProgramInto(String(dir))]);
+  const code = await printIR(String(dir), { until: "Select", functionName });
+  expect(code).toContain(`name="${functionName}"`);
+  return code;
 }
 
 describe.concurrent("compile/aot/function members/name and length of a known function", () => {
-  test(
+  testOfIR(
     "are constants if nothing changes them",
     () =>
       slot(async () => {
@@ -547,7 +542,7 @@ describe.concurrent("compile/aot/function members/name and length of a known fun
     600_000,
   );
 
-  test(
+  testOfIR(
     "are read by name if the program redefines them",
     () =>
       slot(async () => {

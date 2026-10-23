@@ -130,13 +130,7 @@ impl Lookup<'_, '_> {
                 | DeclarationKind::ImplicitBlockFunction
                 | DeclarationKind::BlockScopedRequire
                 | DeclarationKind::Var => true,
-                DeclarationKind::Parameter
-                | DeclarationKind::TopLevelFunction
-                | DeclarationKind::BlockFunction
-                | DeclarationKind::Lexical
-                | DeclarationKind::Import
-                | DeclarationKind::SimpleCatchParameter
-                | DeclarationKind::TypeScriptValue => false,
+                _ => false,
             })
     }
 
@@ -171,28 +165,7 @@ impl Lookup<'_, '_> {
             ScopeKind::File => Some(Binding::Arguments(CodeUnit::File)),
             ScopeKind::Fn(f) if self.hir[f].kind == FnKind::StaticBlock => Some(Binding::Free),
             ScopeKind::FieldInitializer(_) => Some(Binding::Free),
-            ScopeKind::Fn(_)
-            | ScopeKind::Module(_)
-            | ScopeKind::Block
-            | ScopeKind::Class(_)
-            | ScopeKind::Interface(_)
-            | ScopeKind::TypeAlias(_)
-            | ScopeKind::TypeParams
-            | ScopeKind::Enum(_)
-            | ScopeKind::TypeParamList(_)
-            | ScopeKind::Param(_)
-            | ScopeKind::ReturnType(_)
-            | ScopeKind::Extends
-            | ScopeKind::InferConstraint
-            | ScopeKind::StaticMember
-            | ScopeKind::ComputedName
-            | ScopeKind::BaseExpression
-            | ScopeKind::FunctionName(_)
-            | ScopeKind::PropertyDeclaration(..)
-            | ScopeKind::PropertyType(..)
-            | ScopeKind::With(_)
-            | ScopeKind::ClassDecorators(_)
-            | ScopeKind::ImplicitBlock(_) => None,
+            _ => None,
         }
     }
 }

@@ -60,10 +60,12 @@ export function textOf(feature: FeatureName): string {
 
 export function saysFeatureWasRemoved(stderr: string, feature: FeatureName): boolean {
   if (stderr.includes(`--trim removed ${textOf(feature)} from this executable`)) return true;
-  if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it.`) && stderr.includes('code: "ERR_FEATURE_REMOVED"')) return true;
-  const [, builtin, publicName] = /^\w*rror: (\S+) was removed by --trim\b.*?(?: add "([\w-]+)" to compile\.trim\.allow\b.*)?\n\s*code: "ERR_FEATURE_REMOVED"/m.exec(stderr) ?? [];
+  // One of Bun's own modules may catch the error and put its message into one of its own: util.inspect into an AssertionError, inspector.open() into the line that Node prints.
+  if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it.`)) return true;
   // A native function of one of Bun's own modules has no path that a program could write. The message names what to allow.
+  const [, publicName] = / was removed by --trim because your code never uses it\. To keep it, add "([\w-]+)" to compile\.trim\.allow\b/.exec(stderr) ?? [];
   if (model.trimFeatures.some(each => each.name === publicName && each.features.includes(feature))) return true;
+  const [, builtin] = /^\w*rror: (\S+) was removed by --trim\b.*\n\s*code: "ERR_FEATURE_REMOVED"/m.exec(stderr) ?? [];
   // Compiled code that knows which built-in it calls names its path. The function object that stays behind knows its own name only.
   return builtinEntries.some(entry => (entry.path === builtin || entry.path.endsWith("." + builtin)) && entry.uses.some(use => use.feature === feature));
 }
@@ -123,18 +125,6 @@ function nameOf(index: number): FeatureName {
   if (name === undefined) throw new Error(`src/trim/features declares no feature with index ${index}`);
   return name;
 }
-
-export interface LinkedLibrary {
-  name: string;
-  version: string;
-  features: FeatureName[];
-  hasRetainedBytes: boolean;
-}
-
-export const libraries: LinkedLibrary[] = (table?.libraries ?? []).map(({ name, version, hasRetainedBytes, sets }) => {
-  const indexes = new Set(sets.flatMap(set => table!.sets[set]!));
-  return { name, version, features: [...indexes].sort((a, b) => a - b).map(nameOf), hasRetainedBytes };
-});
 
 const enteredFromCommandLine = new Set(model.features.filter(each => each.enteredFrom === "command-line").map(each => each.index));
 

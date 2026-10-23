@@ -1,8 +1,9 @@
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
+import { bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const [load, dynamic, gnuRelro] = [1, 2, 0x6474e552];
@@ -77,8 +78,7 @@ console.log(readFileSync("/proc/self/maps", "utf8"));
 `;
 
 async function run(cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd);
   return { stdout, stderr, exitCode };
 }
 

@@ -155,17 +155,6 @@ fn lower_source_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Function
     }
     match file.hir.runtime_function_kind(source) {
         FnKind::Constructor => class::lower_constructor(file, function, source),
-        FnKind::Decl
-        | FnKind::Expr
-        | FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => function::lower_source_function(file, function, source),
+        _ => function::lower_source_function(file, function, source),
     }
 }

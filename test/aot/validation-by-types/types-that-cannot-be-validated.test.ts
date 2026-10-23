@@ -2,8 +2,9 @@
 // `validate<T>()`: the build stops and names the member. It stops too where a type argument stands on a function that takes none.
 // Another spelling of `JSON.parse` is the same function, so it validates as well.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../harness/run";
 import { test } from "../supported";
 
 test.each([
@@ -32,14 +33,10 @@ test.each([
   "%s",
   async (program, message) => {
     using dir = tempDir("types-that-cannot-be-validated", { "program.ts": program });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", join(String(dir), "program")],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: said, exitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", join(String(dir), "program")],
+      String(dir),
+    );
     expect(said).toContain(message);
     expect(exitCode).toBe(1);
   },
@@ -48,14 +45,10 @@ test.each([
 
 test("no other function of JSON takes a type argument", async () => {
   using dir = tempDir("type-argument-on-another-function", { "program.ts": "console.log(JSON.stringify<number>(1));" });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", join(String(dir), "program")],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const { stderr: said, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", join(String(dir), "program")],
+    String(dir),
+  );
   expect(said).toContain("TS2558");
   expect(exitCode).toBe(1);
 }, 120_000);
@@ -78,17 +71,12 @@ try {
 `;
     using dir = tempDir("type-argument-on-another-spelling", { "program.ts": program });
     const executable = join(String(dir), isWindows ? "program.exe" : "program");
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", executable],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [said, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: said, exitCode: buildExitCode } = await run(
+      [bunExe(), "build", "--compile", "--aot", "./program.ts", "--outfile", executable],
+      String(dir),
+    );
     expect({ said: buildExitCode ? said : "", buildExitCode }).toEqual({ said: "", buildExitCode: 0 });
-    await using ran = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+    const { stdout, exitCode } = await run([executable], String(dir));
     expect({ stdout, exitCode }).toEqual({ stdout: "1\nTypeError: expected number, received string\n", exitCode: 0 });
   },
   120_000,

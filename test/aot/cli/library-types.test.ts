@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { describe, printIR, test, writesProgramInto } from "../harness/printed-ir";
 import { built, slot, spawned } from "../run-programs";
-import { describe, test } from "../supported";
 
 const program = {
   "app.ts": `
@@ -23,10 +23,9 @@ function headersOf(dump: string, name: string) {
 }
 
 async function dumpFunction(folder: string, name: string) {
-  const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_dumpAOTIR: "Selected", BUN_JSC_aotFunctionToDump: name };
-  const build = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env);
-  built(build);
-  return headersOf(build.stdout + build.stderr, name);
+  const command = [bunExe(), "build", "--compile", "--aot", writesProgramInto(folder), "app.ts", "--outfile", "app"];
+  built(await spawned(command, folder, { ...bunEnv, NO_COLOR: "1" }));
+  return headersOf(await printIR(folder, { until: "Select", functionName: name }), name);
 }
 
 describe("declared types of Bun's own modules", () => {

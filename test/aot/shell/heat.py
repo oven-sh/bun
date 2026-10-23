@@ -7,7 +7,7 @@ differently again: compact code, no inlining, bodies shared between call sites. 
 small to have a coldest part, and all its functions are among the hottest, which are hot and get site caches for property accesses. Most of
 a large program is neither, and `neither` compiles every function that way. A forced heat exercises each path wherever it applies.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/heat.py [-j <jobs>] [--part <i>/<n>] hot | cold | neither <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> python3 test/aot/shell/heat.py [-j <jobs>] [--part <i>/<n>] hot | cold | neither <program>... | all
 
     --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../heat/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools

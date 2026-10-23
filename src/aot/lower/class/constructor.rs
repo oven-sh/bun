@@ -171,14 +171,7 @@ pub(super) fn emit_constructor_result(
     let is_derived = match lowering.builder.function().kind {
         FunctionKind::BaseConstructor => false,
         FunctionKind::DerivedConstructor => true,
-        FunctionKind::Plain
-        | FunctionKind::Arrow
-        | FunctionKind::Method
-        | FunctionKind::Getter
-        | FunctionKind::Setter
-        | FunctionKind::Initializer
-        | FunctionKind::Module
-        | FunctionKind::CommonJsModule => {
+        _ => {
             debug_assert!(false, "only a constructor tests its result");
             return value;
         }

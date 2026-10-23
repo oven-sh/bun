@@ -1,15 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import { canTrim, featureOf, model } from "./compile-trim-features";
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const programs = {
   "hello.ts": `console.log("hello world");`,

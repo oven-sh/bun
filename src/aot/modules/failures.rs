@@ -74,13 +74,7 @@ fn unresolved_site_effect(site: ImportSiteKind) -> FailureEffect {
         | ImportSiteKind::Import(_)
         | ImportSiteKind::ExportFrom(_)
         | ImportSiteKind::ExportStar(_) => FailureEffect::StopsBuild,
-        ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => FailureEffect::ThrowsAtSite,
+        _ => FailureEffect::ThrowsAtSite,
     }
 }
 

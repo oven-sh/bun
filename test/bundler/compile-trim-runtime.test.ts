@@ -12,6 +12,7 @@ import {
 } from "harness";
 import { closeSync, constants, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import {
@@ -19,7 +20,6 @@ import {
   featureNamed,
   featureOf,
   followedRequirements,
-  libraries,
   model,
   saysFeatureWasRemoved,
   tempDirForAotBuilds,
@@ -38,12 +38,6 @@ function removedFeaturesOf(executable: string) {
   const removed = readRemovedFeatures(fileOf(executable));
   if (removed === undefined) throw new Error(`${executable} has no list of removed features`);
   return model.features.filter(feature => removed.includes(feature.index)).map(feature => feature.name);
-}
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
 }
 
 const programs = {
@@ -962,27 +956,6 @@ describe.skipIf(!canTrim)("--trim", () => {
         expect(allowed.removed).toContain("html-rewriter");
         expect(allowed.size).toBeGreaterThan(byUse.size);
         expect(await started(folder, "allowed")).toEqual(await started(folder, "by-use"));
-      });
-
-      test("log: true lists the native libraries that were removed and the ones that are still in the executable", async () => {
-        using dir = tempDirForAotBuilds("compile-trim-runtime-api", programs);
-        const spelled = (name: string) =>
-          libraries.filter(library => library.name === name).map(library => `${library.name} ${library.version}`)[0];
-        const { logged } = await buildWithApi(String(dir), "hello.ts", "trimmed", { aot: true, trim: { log: true } });
-        const listedBehind = (prefix: string) =>
-          logged.flatMap(line => (line.startsWith(prefix) ? line.slice(prefix.length).split(", ") : []));
-        const removed = listedBehind(
-          `compile.trim: native libraries ${isWindows ? "whose code was removed" : "removed"}: `,
-        );
-        const included = listedBehind("compile.trim: native libraries included: ");
-        expect(removed).toContain(spelled("lol-html"));
-        expect(included).toContain(spelled("mimalloc"));
-        expect([...removed, ...included].sort()).toEqual(
-          libraries
-            .filter(library => isWindows || library.name !== "libuv")
-            .map(library => `${library.name} ${library.version}`)
-            .sort(),
-        );
       });
     });
   });

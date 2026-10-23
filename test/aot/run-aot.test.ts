@@ -1,6 +1,7 @@
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `bun run --debug-aot` and `bun test --debug-aot` compile the program as `bun compile` does and then run it. They write no executable.
@@ -19,14 +20,7 @@ const compilerOptions = {
 const tsconfig = JSON.stringify({ compilerOptions });
 
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({
-    cmd,
-    cwd,
-    env: { ...bunEnv, BUN_AOT_VERBOSE: "1", ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, BUN_AOT_VERBOSE: "1", ...env });
   return { stdout, stderr, exitCode };
 }
 async function ran(

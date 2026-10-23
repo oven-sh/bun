@@ -1,0 +1,106 @@
+# The hand-written overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.
+# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts
+AtomicsWait/0: it is not called: it blocks the thread
+AtomicsWait/1: it is not called: it blocks the thread
+BunBuild/0: it is not called: it blocks, starts a process or opens a socket
+BunBundleFeature/0: it is not called: this realm does not have its holder
+BunBundleValidate/0: it is not called: this realm does not have its holder
+BunConnect/0: it is not called: it blocks, starts a process or opens a socket
+BunDollar/0: it is not called: it blocks, starts a process or opens a socket
+BunGenerateHeapSnapshot/0: it is not called: it blocks, starts a process or opens a socket
+BunListen/0: it is not called: it blocks, starts a process or opens a socket
+BunServe/0: it is not called: it blocks, starts a process or opens a socket
+BunSpawn/0: it is not called: it blocks, starts a process or opens a socket
+BunSpawn/1: it is not called: it blocks, starts a process or opens a socket
+BunSpawnSync/0: it is not called: it blocks, starts a process or opens a socket
+BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
+BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
+CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
+CompilerHelpersEncodeIntoRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersEncodeIntoRangeOfBytes/1: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
+CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
+CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
+CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+CompilerHelpersViewOrRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+ImportMetaResolve/0: it is not called: this realm does not have it
+ImportMetaResolveSync/0: it is not called: this realm does not have it
+NativeCppNodeURLCppBunCreateNodeICUBinding/0: it is not called: this realm does not have it
+NativeCppNodeURLCppBunCreateNodeURLBinding/0: it is not called: this realm does not have it
+NativeCppNodeV8CppBunCreateNodeV8Binding/0: it is not called: this realm does not have it
+NativeCppProcessBindingTTYWrapCppCreateBunTTYFunctions/0: it is not called: this realm does not have it
+NativeCppWorkerCppCreateNodeWorkerThreadsBinding/0: it is not called: this realm does not have it
+NativeFunctionsBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppJsFunctionReportUncaughtException/0: it is not called: it ends the process or makes it fail
+NativeFunctionsBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
+NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
+NativeFunctionsIpcRsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
+NativeFunctionsJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have its holder
+NativeFunctionsJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have its holder
+NativeFunctionsNodeAsyncHooksCppJsSetAsyncHooksEnabled/0: it is not called: it changes how the rest of the process behaves
+NativeFunctionsNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have its holder
+NativeFunctionsNode_cluster_bindingRsClusterRawBind/0: it is not called: it opens a connection or writes to the channel of a parent process
+NativeFunctionsNode_cluster_bindingRsSendHelperPrimary/0: it is not called: it opens a connection or writes to the channel of a parent process
+NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsFunction_throwValue/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/1: it is not called: this realm does not have it
+NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have it
+NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/1: it is not called: this realm does not have it
+NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have it
+NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/1: it is not called: this realm does not have it
+NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have it
+NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/1: it is not called: this realm does not have it
+NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have it
+NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/1: it is not called: this realm does not have it
+NativeRustNode_crypto_bindingRsCreateNodeCryptoBindingZig/0: it is not called: this realm does not have it
+NativeRustNode_fs_bindingRsCreateBinding/0: it is not called: this realm does not have it
+PrivateGlobalsInherits/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/1: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/2: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/3: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/4: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/5: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsMakeErrorWithCode/6: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+ProcessAbort/0: it is not called: it ends, replaces or signals a process
+ProcessDlopen/0: it is not called: it ends, replaces or signals a process
+ProcessExecve/0: it is not called: it ends, replaces or signals a process
+ProcessExit/0: it is not called: it ends, replaces or signals a process
+ProcessInitgroups/0: it is not called: it changes the state of the process
+ProcessInitgroups/1: it is not called: it changes the state of the process
+ProcessKill/0: it is not called: it ends, replaces or signals a process
+ProcessOpenStdin/0: it is not called: it takes over a standard stream
+ProcessReallyExit/0: it is not called: it ends, replaces or signals a process
+ProcessSetUncaughtExceptionCaptureCallback/0: it is not called: it changes the state of the process
+ProcessSetUncaughtExceptionCaptureCallback/1: it is not called: it changes the state of the process
+ProcessSetegid/0: it is not called: it changes the state of the process
+ProcessSetegid/1: it is not called: it changes the state of the process
+ProcessSeteuid/0: it is not called: it changes the state of the process
+ProcessSeteuid/1: it is not called: it changes the state of the process
+ProcessSetgid/0: it is not called: it changes the state of the process
+ProcessSetgid/1: it is not called: it changes the state of the process
+ProcessSetgroups/0: it is not called: it changes the state of the process
+ProcessSetuid/0: it is not called: it changes the state of the process
+ProcessSetuid/1: it is not called: it changes the state of the process
+ProcessStdin/0: it is not called: it takes over a standard stream
+ProcessUmask/0: it is not called: it changes the state of the process
+ProcessUmask/1: it is not called: it changes the state of the process
+ShadowRealmPrototypeImportValue/0: it is not called: it loads whatever its operand names
+Worker/1: it is not called: it starts a thread or opens a connection
+Worker/2: it is not called: it starts a thread or opens a connection

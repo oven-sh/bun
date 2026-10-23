@@ -1,19 +1,16 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function build(files: Record<string, string>) {
   using dir = tempDir("aot-compiled-untyped-count", files);
   const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-  await using ran = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile],
+    String(dir),
+  );
   return { line: stdout.split("\n").find(line => line.includes(" compile ")) ?? "", stderr, exitCode };
 }
 

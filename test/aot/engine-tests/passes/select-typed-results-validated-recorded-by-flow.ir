@@ -1,0 +1,54 @@
+# The objects that validating parsers allocate and validators clone have the stamp of the one site flow modeled for typed results of their layout
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveBuiltins,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ParsersCreated = 2
+# STATISTIC: ValidatorsCreated = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0, L1] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}, {key="inner" node=2 field=1}]} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Object{layout=L1 members=[{key="x" node=1 field=0}]} type=L1}]
+layout L0 name="Outer" fields=[{key="id" declared={type=number}}, {key="inner" declared={type=L1}}]
+layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = CallDirect v1 function=f1
+    v4 = Call v2, -, v3
+    v5 = ToString v1
+    v6 = CallDirect v5 function=f2
+    v7 = Call v2, -, v6
+    Return
+}
+function f1 name="validates" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0 expectedResult=x0
+    Return v2
+}
+function f2 name="parses" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0 expectedResult=x0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="validates"
+# CHECK-NOT: BunBundleValidate/0
+# CHECK: = CallDirect v0 function=[[validatorOfOuter]]
+# CHECK-NOT: BunBundleValidate/0
+# CHECK-LABEL: function f2 name="parses"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect {{*}} function=[[parserOfOuter]]
+# CHECK: function [[parserOfOuter]] {{*}}role=ValidatingParser {{*}}expectedResult=x0}
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1] allocationSite=[[siteOfOuter]] allocationClass=[[classOfOuter]]
+# CHECK: function {{*}}role=ValidatingParser {{*}}expectedResult=x0 node=2}
+# CHECK-NOT: allocationSite=[[siteOfOuter]]
+# CHECK: = NewObject -, {{*}} layout=L1 fields=[0] allocationSite=[[siteOfInner]] allocationClass=[[classOfInner]]
+# CHECK: function [[validatorOfOuter]] {{*}}role=Validator {{*}}expectedResult=x0}
+# CHECK: = CloneAs {{*}} layout=L0 fields=[1] allocationSite=[[siteOfOuter]]
+# CHECK: function {{*}}role=Validator {{*}}expectedResult=x0 node=2}
+# CHECK: = CloneAs {{*}} layout=L1 allocationSite=[[siteOfInner]]

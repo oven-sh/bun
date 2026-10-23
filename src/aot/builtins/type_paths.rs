@@ -87,15 +87,11 @@ pub struct BuiltinValuePaths {
 
 fn can_have_call_signatures(kind: BuiltinKind) -> bool {
     match kind {
-        BuiltinKind::Constructor
-        | BuiltinKind::Function
-        | BuiltinKind::Method
-        | BuiltinKind::Accessor
-        | BuiltinKind::DataProperty => true,
         BuiltinKind::Namespace
         | BuiltinKind::Prototype
         | BuiltinKind::Constant
         | BuiltinKind::NativeBinding => false,
+        _ => true,
     }
 }
 

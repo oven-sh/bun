@@ -1205,7 +1205,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(RuntimeTranspiler, jsFunctionBunPlugin);
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Plugin, jsFunctionBunPlugin);
     if (JSC::JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "Bun.plugin"_s)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
         JSC::throwException(globalObject, scope, error);

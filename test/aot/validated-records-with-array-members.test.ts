@@ -2,13 +2,14 @@
 // programs/data-from-outside/validated-records-with-array-members.ts is validated and parsed by compiled code throughout. A union that could try two
 // recursive arms has one, and the report says why.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function declinesOf(entryPoint: string, folder: string): Promise<string[]> {
-  await using build = Bun.spawn({
-    cmd: [
+  const { stderr, exitCode } = await run(
+    [
       bunExe(),
       "build",
       "--compile",
@@ -18,12 +19,8 @@ async function declinesOf(entryPoint: string, folder: string): Promise<string[]>
       "--outfile",
       join(folder, "main" + (isWindows ? ".exe" : "")),
     ],
-    cwd: folder,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    folder,
+  );
   expect(stderr).toContain("missed optimizations: ");
   expect(exitCode).toBe(0);
   return stderr.split("\n").filter(line => line.includes("generic-validator"));

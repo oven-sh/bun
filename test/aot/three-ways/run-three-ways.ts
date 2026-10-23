@@ -54,8 +54,8 @@ export function threeWays(part: number, parts: number) {
   afterAll(() => {
     rmSync(root, { recursive: true, force: true });
     if (!updates) return;
-    const all = { ...JSON.parse(readFileSync(recorded, "utf8")), ...found };
-    writeFileSync(recorded, JSON.stringify(Object.fromEntries(Object.entries(all).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n");
+    const departing = Object.entries({ ...JSON.parse(readFileSync(recorded, "utf8")), ...found }).filter(([, verdict]) => verdict !== "all agree");
+    writeFileSync(recorded, JSON.stringify(Object.fromEntries(departing.sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n");
   });
   describe.concurrent("compile/aot/modules three ways", () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -68,7 +68,7 @@ export function threeWays(part: number, parts: number) {
           slot(async () => {
             const { verdict, plain, bundle } = await judged(join(root, name), files);
             if (updates) found[name] = verdict;
-            expect({ verdict, plain, bundle }).toEqual({ verdict: updates ? verdict : verdicts[name], plain, bundle });
+            expect({ verdict, plain, bundle }).toEqual({ verdict: updates ? verdict : (verdicts[name] ?? "all agree"), plain, bundle });
           }),
         600_000,
       );

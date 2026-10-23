@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 async function run(cwd: string, cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd);
   return { stdout, said: stdout + stderr, exitCode };
 }
 

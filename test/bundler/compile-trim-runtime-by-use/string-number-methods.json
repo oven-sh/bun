@@ -1,1 +1,1 @@
-{"features": ["StringLocaleCase", "NumberPrecisionMethods", "StringPadding", "StringHTML", "StringNormalize", "StringWellFormed", "StringRepeat", "StringLastIndexOf", "EscapeUnescape", "URICoding"], "runsToday": ["StringPadding", "StringNormalize", "StringWellFormed", "StringRepeat", "StringLastIndexOf"]}
+{"features": ["StringLocaleCase", "NumberPrecisionMethods", "StringPadding", "StringHTML", "StringNormalize", "StringWellFormed", "StringRepeat", "StringLastIndexOf", "EscapeUnescape", "URICoding"]}

@@ -187,15 +187,7 @@ fn is_imported_json(file: &FileLowering<'_, '_, '_, '_>, callee: ExprId) -> bool
     };
     match file.inputs.modules.import_binding(file.file, symbol) {
         ImportBinding::Builtin(_) | ImportBinding::CapturedBuiltin { .. } => true,
-        ImportBinding::Local
-        | ImportBinding::Unused
-        | ImportBinding::Unbound
-        | ImportBinding::Variable(_)
-        | ImportBinding::Namespace { .. }
-        | ImportBinding::BuiltinMember { .. }
-        | ImportBinding::Synthetic(_)
-        | ImportBinding::NamespaceRead { .. }
-        | ImportBinding::Exports { .. } => false,
+        _ => false,
     }
 }
 

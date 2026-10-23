@@ -19,6 +19,7 @@ import { availableParallelism } from "os";
 import { join } from "path";
 import { partInShare, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
+import { run } from "../harness/run";
 
 export function collectorStress(collections: "full" | "young", part: number, parts: number) {
   const skipReason = scriptSkipReason ?? (isLinux && process.arch === "x64" ? undefined : "it is run on Linux x64, which shows the most");
@@ -30,14 +31,7 @@ export function collectorStress(collections: "full" | "young", part: number, par
   test.skipIf(!!skipReason)(
     `the programs answer the same under ${collections} collections all the time (part ${part} of ${parts})`,
     async () => {
-      await using script = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--part", share, "all"],
-        env: { ...scriptEnvironment(), WRITTEN: written },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
+      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--part", share, "all"], undefined, { ...scriptEnvironment(), WRITTEN: written });
       const lines = stdout.split("\n").filter(line => line !== "");
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs, [0-9]+ fail under stress alone, [0-9]+ run out of time$/);
@@ -57,14 +51,7 @@ export function collectorStressOn(collections: "full" | "young", every: 1 | 2 | 
   test.skipIf(!!skipReason)(
     `${programs.length} programs answer the same with a ${collections} collection at ${frequency}`,
     async () => {
-      await using script = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs],
-        env: scriptEnvironment(),
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
+      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs], undefined, scriptEnvironment());
       expect(stderr).toBe("");
       expect(stdout.split("\n").filter(line => line !== "")).toEqual([`${programs.length} programs, 0 fail under stress alone, 0 run out of time`]);
       expect(exitCode).toBe(0);

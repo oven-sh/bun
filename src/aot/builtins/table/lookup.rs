@@ -278,14 +278,10 @@ pub fn well_known_symbol(id: BuiltinId) -> Option<WellKnownSymbol> {
 pub fn is_legal_builtin_constant(id: BuiltinId) -> bool {
     let entry = entry(id);
     match entry.kind {
-        BuiltinKind::Namespace
-        | BuiltinKind::Constructor
-        | BuiltinKind::Function
-        | BuiltinKind::Prototype
-        | BuiltinKind::Method => true,
         BuiltinKind::Constant => well_known_symbol(id).is_some(),
         BuiltinKind::DataProperty => entry.scope == Scope::Module,
         BuiltinKind::Accessor | BuiltinKind::NativeBinding => false,
+        _ => true,
     }
 }
 

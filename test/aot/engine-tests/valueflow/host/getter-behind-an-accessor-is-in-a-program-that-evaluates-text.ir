@@ -1,0 +1,30 @@
+# eval(text)   The program names neither Buffer.prototype.offset nor process.send (runtimefunction 65565; 65559 is called on behalf of process.send).
+# Reading an accessor is calling its getter, and text that nobody has seen reads what it likes. The function of the library behind the accessor needs nothing else of the library, so it is in the program:
+# no read of the accessor is refused. A function that the text would have to call stays out: the call throws the error that names it.
+# getter-behind-an-accessor-stays-out-of-a-program-that-nobody-else-gets-into.ir has the same program without eval
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f2
+runtimefunction id=65565 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=Eval
+    v3 = Call v2, -, v1
+    Return
+}
+function f1 name="offset" role=Library flags=[HasThis] enclosingRuntimeFunction=65565 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="byteOffset"
+    Return v1
+}
+function f2 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

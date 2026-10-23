@@ -1,0 +1,102 @@
+# A call whose callee is proven and whose operands choose no overload still calls that entry: operands as they come, the type joined over the overloads they can reach, matched again once they narrow
+# RUN: pass ResolveBuiltins
+# RUN(NARROWED): pass ResolveBuiltins ResolveBuiltins
+# RUN(CODE): compile
+# CHECK: outcome: Changed
+# NARROWED: outcome: Changed
+# NARROWED: outcome: Changed
+# CODE: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Uint8ArrayFromHex
+    v3 = Call v2, -, v1
+    v4 = Builtin builtin=ArrayPrototypePush
+    v5 = Call v4, v1, v1
+    v6 = PropGet v0 key="output" [isFreeName]
+    v7 = Call v6, -, v3, v5
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v3: Uint8Array = CallBuiltin -, v1 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
+# CHECK: v5: int[0, 9007199254740991] = CallBuiltin v1, v1 overload=ArrayPrototypePush/{{*}} builtinCallForm=AnyReceiver
+# NARROWED-LABEL: function f0 name="main"
+# NARROWED: v3: Uint8Array = CallBuiltin -, v1 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
+# NARROWED: v5: int[0, 9007199254740991] = CallBuiltin v1, v1 overload=ArrayPrototypePush/{{*}} builtinCallForm=AnyReceiver
+
+function f1 name="typeJoinsReachableOverloads" parameters=[{type=anything}, {type=Map}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: Map, v2: anything):
+    v3 = Builtin builtin=ArrayPrototypePush
+    v4 = Call v3, v0, v2
+    v5 = Call v3, v1, v2
+    v6 = NewArray contents=anything
+    v7 = Call v3, v6, v2
+    Return v7
+}
+# CHECK-LABEL: function f1 name="typeJoinsReachableOverloads"
+# CHECK: v4: int[0, 9007199254740991] = CallBuiltin v0, v2 overload=ArrayPrototypePush/{{*}} builtinCallForm=AnyReceiver
+# CHECK-NEXT: v5: int[0, 9007199254740991] = CallBuiltin v1, v2 overload=ArrayPrototypePush/1
+# CHECK-NEXT: v6: {{*}} = NewArray
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v6, v2 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+
+function f2 name="pristineOverloadOfClassNeverPristine" parameters=[{type=Buffer}, {type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: Uint8Array):
+    v2 = Builtin builtin=TypedArrayPrototypeSlice
+    v3 = Call v2, v0
+    v4 = Call v2, v1
+    Return v4
+}
+# CHECK-LABEL: function f2 name="pristineOverloadOfClassNeverPristine"
+# CHECK: v3: Buffer|TypedArray = CallBuiltin v0 overload=TypedArrayPrototypeSlice/{{*}} builtinCallForm=AnyReceiver
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v4: TypedArray|Uint8Array = CallBuiltin v1 overload=TypedArrayPrototypeSlice/{{*}} builtinCallForm=AnyReceiver
+
+function f3 name="surplusArgumentStays" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Uint8ArrayFromHex
+    v3 = Call v2, -, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="surplusArgumentStays"
+# CHECK: v3: Uint8Array = CallBuiltin -, v0, v1 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
+
+function f4 name="expectedOperandWaitsForTest" parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ string):
+    v1 = Builtin builtin=Uint8ArrayFromHex
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="expectedOperandWaitsForTest"
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v2: Uint8Array = CallBuiltin -, v0 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
+
+function f5 name="calleeNotProven" parameters=[{type=anything}, {type=builtin(Uint8ArrayFromHex) flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything ~ builtin(Uint8ArrayFromHex), v2: anything):
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f5 name="calleeNotProven"
+# CHECK-NOT: CallBuiltin
+# CHECK: v3: anything = Call v0, -, v2
+# CHECK-NEXT: v4: anything = Call v1, -, v2
+
+function f6 name="operandNarrowsAfterFirstRound" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=StringFromCharCode
+    v2 = Call v1, -, v0
+    v3 = Builtin builtin=Uint8ArrayFromHex
+    v4 = Call v3, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f6 name="operandNarrowsAfterFirstRound"
+# CHECK: v2: string = CallBuiltin -, v0 overload=StringFromCharCode/0
+# CHECK: v4: Uint8Array = CallBuiltin -, v2 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
+# NARROWED-LABEL: function f6 name="operandNarrowsAfterFirstRound"
+# NARROWED-NOT: AnyReceiver
+# NARROWED: v4: Uint8Array = CallBuiltin -, v2 overload=Uint8ArrayFromHex/0
+# NARROWED-NEXT: Return v4

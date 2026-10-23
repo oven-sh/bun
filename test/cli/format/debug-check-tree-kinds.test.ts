@@ -1,16 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "../../aot/harness/run";
 
 async function check(name: string, text: string) {
   using dir = tempDir("fmt-tree-kinds", { [name]: text });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fmt", "--debug-check", name],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "fmt", "--debug-check", name], String(dir));
   return { stdout: stdout.trim(), stderr, exitCode };
 }
 

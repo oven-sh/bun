@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
 import { ClassType, FunctionDefinition, Getter, type ClassMember } from "../../../src/codegen/bindgen-lib-internal";
 import { loadSchemaFile } from "../../../src/codegen/bindgen-load";
@@ -13,6 +13,7 @@ import type {
 } from "../../../src/codegen/builtins/dump";
 import type { TypeSpec } from "../../../src/codegen/builtins/vocabulary";
 import { parseDeclaredType } from "../../../src/codegen/declared-type-checks";
+import { run } from "../harness/run";
 import { test } from "../supported";
 
 const typeScriptNames: Record<Primitive, string> = {
@@ -147,14 +148,7 @@ async function errorsOf(lines: string[]) {
       },
     }),
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "check"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr } = await run([bunExe(), "check"], String(dir));
   return [...(stdout + stderr).matchAll(/(agree\.ts)[":( ]+(?:line=")?(\d+)/g)].map(match => Number(match[2]));
 }
 
@@ -301,148 +295,4 @@ test("a result that is written by hand lies inside the type that the schema decl
   });
   expect(disagreements).toEqual([]);
   expect(compared).toBeGreaterThan(100);
-});
-
-// Each member of DeclaredTypesForTesting answers its operand. `inside` lies in the type that the member declares, `outside` does not.
-const checkedMembers: Record<string, { type: string; inside: string[]; outside: string[] }> = {
-  string: { type: "string", inside: ['""', '"a".repeat(3) + "b"'], outside: ["1", "undefined", "new String('a')"] },
-  number: { type: "number", inside: ["1", "0.5", "NaN", "-0"], outside: ['"1"', "1n", "null"] },
-  int32: { type: "int32", inside: ["0", "-2147483648", "2147483647"], outside: ["0.5", "2147483648", "NaN", "-0"] },
-  bigint: { type: "bigint", inside: ["1n", "2n ** 70n"], outside: ["1", "Object(1n)"] },
-  boolean: { type: "boolean", inside: ["true", "false"], outside: ["0", "undefined"] },
-  undefined: { type: "undefined", inside: ["undefined"], outside: ["null", "0"] },
-  null: { type: "null", inside: ["null"], outside: ["undefined", "{}"] },
-  object: {
-    type: "object",
-    inside: ["{}", "[]", "() => {}", "new Proxy({}, {})"],
-    outside: ["null", '"a"', "Symbol()"],
-  },
-  promise: {
-    type: "Promise",
-    inside: ["Promise.resolve(1)", "new (class extends Promise {})(() => {})"],
-    outside: ["{ then() {} }", "undefined"],
-  },
-  receiver: { type: "this", inside: ["instance"], outside: ["new DeclaredTypesForTesting()", "undefined"] },
-  sameClass: {
-    type: "DeclaredTypesForTesting",
-    inside: ["instance", "new DeclaredTypesForTesting()", "new (class extends DeclaredTypesForTesting {})()"],
-    outside: ["Object.create(DeclaredTypesForTesting.prototype)", "{}"],
-  },
-  abortSignal: {
-    type: "AbortSignal",
-    inside: ["new AbortController().signal"],
-    outside: ["new AbortController()", "new EventTarget()"],
-  },
-  array: {
-    type: "Array",
-    inside: ["[]", "[1, , 3]"],
-    outside: ["new Uint8Array(1)", "{ length: 0 }", "new Proxy([], {})"],
-  },
-  arrayBuffer: {
-    type: "ArrayBuffer",
-    inside: ["new ArrayBuffer(1)"],
-    outside: ["new SharedArrayBuffer(1)", "new Uint8Array(1)"],
-  },
-  blob: {
-    type: "Blob",
-    inside: ["new Blob([])", "Bun.file('a')", "new File([], 'a')"],
-    outside: ["new Response('')", "artifact"],
-  },
-  buffer: {
-    type: "Buffer",
-    inside: ["Buffer.alloc(1)", "Buffer.alloc(2).subarray(1)"],
-    outside: ["new Uint8Array(1)", "new ArrayBuffer(1)"],
-  },
-  date: { type: "Date", inside: ["new Date(0)", "new Date(NaN)"], outside: ["0", "Object.create(Date.prototype)"] },
-  error: {
-    type: "Error",
-    inside: ["new Error('a')", "new TypeError('a')"],
-    outside: ["Object.create(Error.prototype)", "{ message: 'a' }"],
-  },
-  headers: { type: "Headers", inside: ["new Headers()"], outside: ["{}", "new Map()"] },
-  readableStream: { type: "ReadableStream", inside: ["new ReadableStream()"], outside: ["new WritableStream()", "{}"] },
-  uint8Array: {
-    type: "Uint8Array",
-    inside: ["new Uint8Array(1)", "Buffer.alloc(1)"],
-    outside: ["new Int8Array(1)", "new Uint8ClampedArray(1)", "[]"],
-  },
-  url: { type: "URL", inside: ["new URL('http://a')"], outside: ['"http://a"', "new URLSearchParams()"] },
-  numberOrUndefined: { type: "number | undefined", inside: ["1", "undefined"], outside: ["null", '"1"'] },
-  stringOrBufferOrNull: {
-    type: "string | Buffer | null",
-    inside: ['"a"', "Buffer.alloc(1)", "null"],
-    outside: ["undefined", "new Uint8Array(1)"],
-  },
-};
-
-const prelude = `
-  const { DeclaredTypesForTesting } = require("bun:internal-for-testing");
-  const instance = new DeclaredTypesForTesting();
-`;
-// Blob::from_js takes it for a Blob, and it is no JSBlob.
-const buildArtifact = `const artifact = (await Bun.build({ entrypoints: [process.argv[1]] })).outputs[0];`;
-
-async function run(body: string) {
-  using dir = tempDir("checked-returns", { "entry.js": "export default 1;" });
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "--expose-internals",
-      "-e",
-      prelude + (body.includes("artifact") ? buildArtifact : "") + body,
-      join(String(dir), "entry.js"),
-    ],
-    env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
-
-const messageOf = (member: string, type: string) =>
-  `DeclaredTypesForTesting.${member} is declared as ${type}, but its value has another type`;
-
-test("a value inside the declared type passes the check", async () => {
-  const calls = Object.entries(checkedMembers).flatMap(([member, { inside }]) =>
-    inside.map(
-      value =>
-        `{ const value = ${value}; if (!Object.is(instance.${member}(value), value)) throw new Error(${JSON.stringify(`${member}(${value})`)}); }`,
-    ),
-  );
-  const { stdout, stderr, exitCode } = await run(`
-    ${calls.join("\n")}
-    if (DeclaredTypesForTesting.number(1) !== 1) throw new Error("static");
-    instance.hold("a");
-    console.log(instance.heldString, instance.firstHeldString, instance.firstHeldString);
-  `);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a a a\n", stderr: "", exitCode: 0 });
-});
-
-const testWithAssertions = isDebug || isASAN ? test.concurrent : test.skip;
-
-testWithAssertions.each(
-  Object.entries(checkedMembers).flatMap(([member, { type, outside }]) =>
-    outside.map(value => [member, value, type] as const),
-  ),
-)("%s(%s) ends the process and names the member", async (member, value, type) => {
-  const { stdout, stderr, exitCode } = await run(`instance.${member}(${value}); console.log("returned");`);
-  expect(stderr).toContain(messageOf(member, type));
-  expect(stdout).not.toContain("returned");
-  expect(exitCode).not.toBe(0);
-});
-
-testWithAssertions.each([
-  ["a static function", `DeclaredTypesForTesting.number("1");`, messageOf("number", "number")],
-  ["a getter", `instance.hold(1); instance.heldString;`, messageOf("heldString", "string")],
-  [
-    "a getter that keeps its first answer",
-    `instance.hold(1); instance.firstHeldString;`,
-    messageOf("firstHeldString", "string"),
-  ],
-])("%s is checked too", async (_, body, message) => {
-  const { stdout, stderr, exitCode } = await run(`${body} console.log("returned");`);
-  expect(stderr).toContain(message);
-  expect(stdout).not.toContain("returned");
-  expect(exitCode).not.toBe(0);
 });

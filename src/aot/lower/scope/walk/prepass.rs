@@ -11,27 +11,7 @@ fn find_parameter_class(bound: &Bound<'_>, parameter: ParamId) -> Option<ClassId
 fn is_variable_scope(kind: ScopeKind) -> bool {
     match kind {
         ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_) => true,
-        ScopeKind::Block
-        | ScopeKind::Class(_)
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::FieldInitializer(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => false,
+        _ => false,
     }
 }
 
@@ -81,25 +61,7 @@ pub(super) fn collect_implicit_uses(
             }
             NodeData::Member(member) => bound.member_class(member),
             NodeData::Param(parameter) => find_parameter_class(bound, parameter),
-            NodeData::None
-            | NodeData::File
-            | NodeData::Stmt(_)
-            | NodeData::Type(_)
-            | NodeData::Pat(_)
-            | NodeData::PatProp(_)
-            | NodeData::PatElem(_)
-            | NodeData::TypeParam(_)
-            | NodeData::Prop(_)
-            | NodeData::VarDecl(_)
-            | NodeData::Case(_)
-            | NodeData::EnumMember(_)
-            | NodeData::ImportSpec(_)
-            | NodeData::ExportSpec(_)
-            | NodeData::TupleElem(_)
-            | NodeData::Modifier(_)
-            | NodeData::Name(_)
-            | NodeData::Paren(_)
-            | NodeData::Part(..) => None,
+            _ => None,
         };
         debug_assert!(
             class.is_some(),

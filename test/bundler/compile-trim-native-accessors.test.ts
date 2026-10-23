@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 
 // Trimming replaces the native getters and setters of a removed feature. Where nothing is trimmed, under `bun run` and in
 // an executable built without --trim, every native accessor answers as it always has: read, stored, read again at one
@@ -26,12 +27,6 @@ const expected = {
   stderr: "",
   exitCode: 0,
 };
-
-async function run(cmd: string[], cwd: string) {
-  await using child = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("native accessors under bun run", async () => {
   using dir = tempDir("compile-trim-native-accessors", { "program.ts": program });

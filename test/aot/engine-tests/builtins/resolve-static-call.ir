@@ -1,0 +1,180 @@
+# A call or construction whose callee is one built-in function by its type becomes a CallBuiltin
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Changed
+# STATISTIC: BuiltinCallsResolved = 12
+# STATISTIC: BuiltinReadsResolved = 2
+# STATISTIC: BuiltinConversionsInserted = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="functionCall" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=StringFromCharCode
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="functionCall"
+# CHECK: v2: string = CallBuiltin -, v0 overload=StringFromCharCode/0
+
+function f1 name="holderMethodCall" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=Symbol
+    v2 = PropGet v1 key="for"
+    v3 = Call v2, v1, v0 calleeKey="for"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="holderMethodCall"
+# CHECK: v2: builtin(SymbolFor) = Builtin builtin=SymbolFor
+# CHECK: v3: symbol = CallBuiltin -, v0 overload=SymbolFor/0
+
+function f2 name="construct" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="construct"
+# CHECK: v2: RegExp = CallBuiltin -, v0 overload=RegExp/4
+
+function f3 name="constructorCall" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="constructorCall"
+# CHECK: v2: RegExp = CallBuiltin -, v0 overload=RegExp/0
+
+function f4 name="readsThisOnHolder" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="readsThisOnHolder"
+# CHECK: v2: builtin(PromiseResolve) = Builtin builtin=PromiseResolve
+# CHECK: v3: Promise{{*}} = CallBuiltin v1, v0 overload=PromiseResolve/2
+
+function f5 name="readsThisOnSubclass" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Int8Array
+    v2 = Builtin builtin=TypedArrayFrom
+    v3 = Call v2, v1, v0 calleeKey="from"
+    Return v3
+}
+# CHECK-LABEL: function f5 name="readsThisOnSubclass"
+# CHECK: v3: {{*}} = CallBuiltin v1, v0 overload=TypedArrayFrom/0
+
+function f6 name="needsHolderAsThisOnOtherObject" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number):
+    v2 = Builtin builtin=PromiseResolve
+    v3 = Call v2, v0, v1 calleeKey="resolve"
+    Return v3
+}
+# CHECK-LABEL: function f6 name="needsHolderAsThisOnOtherObject"
+# CHECK: v3: anything = CallBuiltin v0, v1 overload=PromiseResolve/{{*}} builtinCallForm=AnyReceiver
+
+function f7 name="genericOverload" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = Builtin builtin=Error
+    v2 = Builtin builtin=ErrorCaptureStackTrace
+    v3 = Call v2, v1, v0 calleeKey="captureStackTrace"
+    Return v3
+}
+# CHECK-LABEL: function f7 name="genericOverload"
+# CHECK-NOT: CallBuiltin
+# CHECK: v3: anything = Call v2, v1, v0 calleeKey="captureStackTrace"
+
+function f8 name="readsThisWithoutThis" parameters=[{type=number}, {type=string}, {type=function}] results=[{type=anything}] {
+  b0(v0: number, v1: string, v2: function):
+    v3 = Builtin builtin=PromiseResolve
+    v4 = Call v3, -, v0
+    v5 = Builtin builtin=TypedArrayOf
+    v6 = Call v5, -, v0
+    v7 = Builtin builtin=ArrayOf
+    v8 = Call v7, -, v1, v2
+    Return v8
+}
+# CHECK-LABEL: function f8 name="readsThisWithoutThis"
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: anything = Call v3, -, v0
+# CHECK-NOT: CallBuiltin
+# CHECK: v6: anything = Call v5, -, v0
+# CHECK-NOT: CallBuiltin
+# CHECK: v8: anything = Call v7, -, v1, v2
+
+function f9 name="unmatchedOperands" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Uint8ArrayFromHex
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f9 name="unmatchedOperands"
+# CHECK: v2: Uint8Array = CallBuiltin -, v0 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
+
+function f10 name="nullableCallee" parameters=[{type=undefined|builtin(StringFromCharCode)}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|builtin(StringFromCharCode), v1: number):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="nullableCallee"
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: anything = Call v0, -, v1
+
+function f11 name="globalFunctionCall" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=EncodeURIComponent
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f11 name="globalFunctionCall"
+# CHECK: v2: string = CallBuiltin -, v0 overload=EncodeURIComponent/0
+
+function f12 name="globalFunctionCallWithUndefinedThis" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=EncodeURIComponent
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+# CHECK-LABEL: function f12 name="globalFunctionCallWithUndefinedThis"
+# CHECK: v3: string = CallBuiltin -, v0 overload=EncodeURIComponent/0
+
+function f13 name="convertedArgument" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=EncodeURIComponent
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f13 name="convertedArgument"
+# CHECK: [[text]]: string = ToString v0
+# CHECK-NEXT: v2: string = CallBuiltin -, [[text]] overload=EncodeURIComponent/0
+
+function f14 name="undeclaredEntry" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleTakeHeapSnapshot
+    v2 = Call v1, v0 calleeKey="takeHeapSnapshot"
+    Return v2
+}
+# CHECK-LABEL: function f14 name="undeclaredEntry"
+# CHECK: v2: anything = CallBuiltin v0 overload=ConsoleTakeHeapSnapshot/0 builtinCallForm=AnyReceiver
+
+function f15 name="builtinOfOneModule" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v2 = Call v1, -, v0
+    v3 = PropGet v1 key="resolve"
+    v4 = Call v3, v1, v0 calleeKey="resolve"
+    Return v4
+}
+# CHECK-LABEL: function f15 name="builtinOfOneModule"
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: anything = Call v1, -, v0
+# CHECK-NEXT: v3: anything = PropGet v1 key="resolve"
+# CHECK-NEXT: v4: anything = Call v3, v1, v0 calleeKey="resolve"
+# PLACED-LABEL: function f15 name="builtinOfOneModule"
+# PLACED-NOT: TypeTest
+# PLACED-NOT: CallBuiltin

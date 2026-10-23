@@ -1,85 +1,14 @@
 import { readFileSync } from "node:fs";
 import { BuildError } from "../error.ts";
 import { isOutsideCompiledPrograms } from "./features.ts";
-import {
-  builtinKinds,
-  type BuiltinEntry,
-  type BuiltinFeatureUse,
-  type BuiltinKind,
-  type BuiltinUses,
-  type FeatureModel,
-  type FeatureName,
-} from "./types.ts";
-
-export const builtinUsesVersion = 1;
-export const builtinIdLimit = 2 ** 32;
-
-type JsonRecord = Record<string, unknown>;
+import { type BuiltinEntry, type BuiltinUses, type FeatureModel, type FeatureName } from "./types.ts";
 
 function fail(message: string, file: string): never {
   throw new BuildError(message, { file });
 }
 
-const isRecord = (value: unknown): value is JsonRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isBuiltinKind = (value: unknown): value is BuiltinKind => builtinKinds.includes(value as BuiltinKind);
-const isBuiltinId = (value: unknown): value is number =>
-  Number.isInteger(value) && (value as number) >= 0 && (value as number) < builtinIdLimit;
-const isStringList = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every(item => typeof item === "string");
-
-function parseUse(value: unknown, owner: string, path: string): BuiltinFeatureUse {
-  if (!isRecord(value)) fail(`${owner} has a use that is not an object`, path);
-  const feature = value.feature;
-  const isConditional = value.isConditional ?? false;
-  if (typeof feature !== "string") fail(`${owner} has a use without a feature`, path);
-  if (typeof isConditional !== "boolean")
-    fail(`${owner} uses ${feature} with an isConditional that is not a boolean`, path);
-  return { feature, isConditional };
-}
-
-function parseEntry(value: unknown, position: number, path: string): BuiltinEntry {
-  const owner = `entries[${position}]`;
-  if (!isRecord(value)) fail(`${owner} is not an object`, path);
-  const { id, path: builtinPath, kind, uses, nativeSymbols = [], creationSymbol, hasHiddenRoot = false } = value;
-  if (!isBuiltinId(id)) fail(`${owner}.id is not a built-in id`, path);
-  if (typeof builtinPath !== "string" || builtinPath === "") fail(`${owner}.path is not a path`, path);
-  if (!isBuiltinKind(kind)) fail(`${owner}.kind is unknown: ${String(kind)}`, path);
-  if (!Array.isArray(uses) || uses.length === 0) fail(`${owner}.uses is not a list with a member`, path);
-  if (!isStringList(nativeSymbols)) fail(`${owner}.nativeSymbols is not a list of strings`, path);
-  if (creationSymbol !== undefined && typeof creationSymbol !== "string")
-    fail(`${owner}.creationSymbol is not a string`, path);
-  if (typeof hasHiddenRoot !== "boolean") fail(`${owner}.hasHiddenRoot is not a boolean`, path);
-  return {
-    id,
-    path: builtinPath,
-    kind,
-    uses: uses.map(use => parseUse(use, builtinPath, path)),
-    nativeSymbols,
-    ...(creationSymbol === undefined ? {} : { creationSymbol }),
-    hasHiddenRoot,
-  };
-}
-
-export function parseBuiltinUses(json: unknown, path: string): BuiltinUses {
-  if (!isRecord(json)) fail("the built-in uses are not an object", path);
-  if (json.version !== builtinUsesVersion) fail(`unknown version of the built-in uses: ${String(json.version)}`, path);
-  if (!Array.isArray(json.entries)) fail("the built-in uses have no entries", path);
-  const { namedByEngine = [] } = json;
-  if (!Array.isArray(namedByEngine) || !namedByEngine.every(isBuiltinId))
-    fail("namedByEngine is not a list of built-in ids", path);
-  const entries = json.entries.map((entry, position) => parseEntry(entry, position, path));
-  return namedByEngine.length === 0 ? { entries } : { entries, namedByEngine };
-}
-
 export function readBuiltinUses(path: string): BuiltinUses {
-  let json: unknown;
-  try {
-    json = JSON.parse(readFileSync(path, "utf8"));
-  } catch (cause) {
-    throw new BuildError("cannot read the built-in uses", { file: path, cause });
-  }
-  return parseBuiltinUses(json, path);
+  return JSON.parse(readFileSync(path, "utf8")) as BuiltinUses;
 }
 
 // The natives of a module become callable when the module is evaluated, and the loader refuses a module whose feature is gone.
@@ -106,25 +35,7 @@ export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: s
 }
 
 export function serializeBuiltinUses(uses: BuiltinUses): string {
-  const { namedByEngine = [] } = uses;
-  const entries = uses.entries.map(
-    ({ id, path, kind, uses: entryUses, nativeSymbols, creationSymbol, hasHiddenRoot }) => ({
-      id,
-      path,
-      kind,
-      uses: entryUses.map(({ feature, isConditional }) => (isConditional ? { feature, isConditional } : { feature })),
-      ...(nativeSymbols.length > 0 ? { nativeSymbols } : {}),
-      ...(creationSymbol === undefined ? {} : { creationSymbol }),
-      ...(hasHiddenRoot ? { hasHiddenRoot } : {}),
-    }),
-  );
-  return (
-    JSON.stringify(
-      { version: builtinUsesVersion, entries, ...(namedByEngine.length === 0 ? {} : { namedByEngine }) },
-      null,
-      2,
-    ) + "\n"
-  );
+  return JSON.stringify(uses, null, 2) + "\n";
 }
 
 export function entriesById(uses: BuiltinUses): Map<number, BuiltinEntry> {

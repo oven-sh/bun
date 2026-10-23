@@ -1,14 +1,14 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { readElfFile } from "./elf-file";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const sizeInBun = isLinux ? readElfFile(bunExe()).packedRelocationsSize : 0;
 
 async function run(cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd);
   return { stdout, stderr, exitCode };
 }
 

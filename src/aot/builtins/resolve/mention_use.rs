@@ -84,11 +84,6 @@ impl Resolver<'_, '_> {
                 Parent::VarInit(declarator) => {
                     ControlFlow::Break(self.classify_initializer(e, declarator))
                 }
-                Parent::PropKey(_)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_)
-                | Parent::Case(_) => ControlFlow::Break(MentionUse::Inspected),
                 Parent::None
                 | Parent::File | Parent::ParamDefault(_) | Parent::PatPropDefault(_)
                 | Parent::PatElemDefault(_) | Parent::Prop(_) | Parent::MemberInit(_)
@@ -96,6 +91,7 @@ impl Resolver<'_, '_> {
                 | Parent::ClassDecorator(_) | Parent::MemberDecorator(_)
                 | Parent::ParamDecorator(_)
                 | Parent::Module(_) => ControlFlow::Break(MentionUse::Exposed),
+                _ => ControlFlow::Break(MentionUse::Inspected),
             };
             match flow {
                 ControlFlow::Break(mention_use) => return mention_use,
@@ -108,11 +104,6 @@ impl Resolver<'_, '_> {
     fn classify_expr_parent(&self, e: ExprId, node: ExprId, parent: ExprId) -> ControlFlow<MentionUse, ExprId> {
         let hir = self.input.hir;
         let mention_use = match hir[parent].kind {
-            ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. } => return ControlFlow::Continue(parent),
             ExprKind::Binary { op: BinOp::In, left, right } if node == right => {
                 MentionUse::SearchedFor(left)
             }
@@ -139,6 +130,7 @@ impl Resolver<'_, '_> {
             | ExprKind::Yield { .. } | ExprKind::Jsx(_) | ExprKind::ImportCall { .. }
             | ExprKind::ImportMeta | ExprKind::NewTarget(_)
             | ExprKind::JsxText(_) => MentionUse::Exposed,
+            _ => return ControlFlow::Continue(parent),
         };
         ControlFlow::Break(mention_use)
     }

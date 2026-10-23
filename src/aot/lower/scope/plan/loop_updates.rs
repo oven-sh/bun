@@ -51,10 +51,7 @@ fn collect_store_targets(context: &Context<'_, '_>, update: ExprId) -> Option<St
                 }
                 push_children(hir, node, &mut pending);
             }
-            TreeNode::Function(_)
-            | TreeNode::Class(_)
-            | TreeNode::Stmt(_)
-            | TreeNode::Pattern(_) => return None,
+            _ => return None,
         }
     }
     Some(targets)

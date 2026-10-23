@@ -30,7 +30,7 @@
 //! file's HIR can provide has been filled in. The HIR of a file that nothing imports is freed at
 //! the end of its task, and `finish_file` doesn't read any HIR.
 
-use super::aot::DiagnosticClass;
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::explain::NOWHERE;
 use super::*;
 use crate::util::SharedSort;
@@ -90,6 +90,7 @@ pub(super) struct Reported {
     pub(super) end: u32,
     pub(super) code: u32,
     pub(super) class: DiagnosticClass,
+    pub(super) subject: DiagnosticSubject,
     pub(super) args: Args,
     pub(super) message_chain: Vec<Reported>,
     pub(super) related_information: Vec<Reported>,
@@ -140,6 +141,7 @@ impl Reported {
             end: at.2,
             code,
             class: DiagnosticClass::of_code(code),
+            subject: DiagnosticSubject::None,
             args,
             message_chain: Vec::new(),
             related_information: Vec::new(),
@@ -435,6 +437,7 @@ impl super::Program<'_> {
             let is_same = equal_diagnostics_no_related_info(next, first);
             if is_same {
                 first.class = first.class.stricter(next.class);
+                first.subject = first.subject.or(next.subject);
                 let related = &mut first.related_information;
                 related.append(&mut next.related_information);
                 related.shared_sort_by(|a, b| self.compare_diagnostics(a, b));

@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { run } from "./harness/run";
 import { mutatedTypesFlags } from "./open-types";
 import { test } from "./supported";
 
@@ -41,14 +42,11 @@ export const stepped = new Counter().step();
 ${body}
 `;
   using dir = tempDir("aot-freeze-object-create-result", { "tsconfig.json": tsconfig, "main.ts": main });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "check", "--aot", "--no-pretty", ...mutatedTypesFlags, "main.ts"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "check", "--aot", "--no-pretty", ...mutatedTypesFlags, "main.ts"],
+    String(dir),
+    { ...bunEnv, NO_COLOR: "1" },
+  );
   const output = stdout + stderr;
   // step() stores to count in every program.
   const mutations = output

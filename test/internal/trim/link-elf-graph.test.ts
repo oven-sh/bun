@@ -6,57 +6,27 @@ import { ArchiveCache } from "../../../scripts/build/trim/archive.ts";
 import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { readElfGraph } from "../../../scripts/build/trim/elf-graph.ts";
 import { readElfObject } from "../../../scripts/build/trim/elf-objects.ts";
-import { readEntryPoints } from "../../../scripts/build/trim/entry-points.ts";
-import { findEdge, type SectionGraph } from "../../../scripts/build/trim/graph.ts";
-import { relocationLinkArguments } from "../../../scripts/build/trim/link.ts";
-import type { Link } from "../../../scripts/build/trim/linker.ts";
-import { partition } from "../../../scripts/build/trim/partition.ts";
-import { removableRanges } from "../../../scripts/build/trim/ranges.ts";
-import { checkElfRelocations } from "../../../scripts/build/trim/validate-elf-relocations.ts";
 import {
   canLink,
   compileFeatureCodeOnce,
   compileObjects,
-  createElfFormat,
-  defaultObjects,
   describeLink,
-  guardsBoth,
   isX64,
   linkByHand,
-  linked,
   linkSkipReason,
-  mainCallingFeatureCode5,
   mainReturning,
   objectPath,
   objectsWithMore,
-  sectionOf,
   sources,
   tools,
-  wrapped,
 } from "./link-elf-support.ts";
-import {
-  entryCalling,
-  expectCleanRuns,
-  Extra,
-  indexOf,
-  mixingFunction,
-  Other,
-  otherSource,
-  run,
-  skipNotice,
-  start,
-} from "./toy-program.ts";
+import { entryCalling, mixingFunction, run, skipNotice, start } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
 
 const testFile = "link-elf-graph.test.ts";
 if (!canLink) skipNotice(testFile, linkSkipReason);
-else {
-  if (isMusl) skipNotice(testFile, "musl has no symbol versions: the case with a versioned symbol does not run");
-  if (!isX64) {
-    skipNotice(testFile, "only x86-64 has R_X86_64_GOTOFF64: the case with an unknown relocation type does not run");
-  }
-}
+else if (isMusl) skipNotice(testFile, "musl has no symbol versions: the case with a versioned symbol does not run");
 
 compileFeatureCodeOnce();
 
@@ -65,9 +35,16 @@ test.skipIf(!canLink)("the symbols with which AArch64 marks code and data name n
     "marked.c": `static const int table[] = { 1, 2, 3, 5 }; int marked(int at) { return table[at & 3]; }`,
   });
   const folder = String(dir);
-  const flags = ["--target=aarch64-unknown-linux-gnu", "-O1", "-ffunction-sections", "-fdata-sections", "-ffreestanding"];
+  const flags = [
+    "--target=aarch64-unknown-linux-gnu",
+    "-O1",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-ffreestanding",
+  ];
   const compiled = await run([tools.clang!, ...flags, "-c", "marked.c", "-o", "marked.o"], folder);
-  if (compiled.exitCode !== 0) return skipNotice(testFile, "clang has no AArch64 target: the case with mapping symbols does not run");
+  if (compiled.exitCode !== 0)
+    return skipNotice(testFile, "clang has no AArch64 target: the case with mapping symbols does not run");
   expect((await run([tools["llvm-nm"]!, "--special-syms", "marked.o"], folder)).stdout).toContain(" $x");
   const read = readElfObject(join(folder, "marked.o"), new Set([".text.marked", ".rodata.table"]), new ArchiveCache());
   if (typeof read === "string") throw new Error(`marked.o was not read: ${read}`);
@@ -192,157 +169,5 @@ describeLink("the graph reader", () => {
       linkFlags: ["-lm"],
     });
     expect(readElfGraph(executable, map, log).failures).toEqual([]);
-  });
-});
-
-function withoutEdge(graph: SectionGraph, from: number, to: number): SectionGraph {
-  const edge = findEdge(graph, from, to);
-  expect(edge).toBeGreaterThanOrEqual(0);
-  const successors = new Uint32Array(graph.successors.length - 1);
-  successors.set(graph.successors.subarray(0, edge));
-  successors.set(graph.successors.subarray(edge + 1), edge);
-  const successorStart = graph.successorStart.map((first, node) => (node > from ? first - 1 : first));
-  return { ...graph, successors, successorStart };
-}
-
-function withOneByteChanged(link: Link, section: string): Link {
-  const file = readFileSync(link.executable);
-  file[sectionOf(link.executable, section).offset]! ^= 1;
-  const executable = `${link.executable}.changed`;
-  writeFileSync(executable, file);
-  return { ...link, executable };
-}
-
-describeLink("the linker's own relocations", () => {
-  const objects = ["feature_code", "entry", "embedder", "room", "main"];
-  const files = {
-    ...sources,
-    "room.c": String.raw`__asm__(".section .bun_trim,\"aR\",@progbits\n.p2align 3\n.zero 64\n.text\n");`,
-    "main.c": mainCallingFeatureCode5,
-  };
-  const validatorSummary = /^[1-9]\d* relocations from the linker: [1-9]\d* into removable ranges/m;
-
-  async function linkTwice(folder: string, linkedObjects: string[] = objects) {
-    await compileObjects(folder, linkedObjects);
-    const shipped = await linkByHand(folder, { name: "second", output: "hand", objects: linkedObjects });
-    const withRelocations = await linkByHand(folder, {
-      name: "relocations",
-      output: "relocated",
-      objects: linkedObjects,
-      linkFlags: relocationLinkArguments(folder, shipped.executable),
-    });
-    const reading = readElfGraph(shipped.executable, shipped.map, shipped.log);
-    return { shipped, withRelocations, reading, ...createElfFormat(folder, "hand") };
-  }
-
-  type Links = Awaited<ReturnType<typeof linkTwice>>;
-
-  function check(links: Links, graph: SectionGraph = links.reading.graph, shipped: Link = links.shipped) {
-    const { withRelocations, reading, features, format } = links;
-    const { entryPoints } = readEntryPoints(reading, features);
-    const partitioned = partition({
-      graph,
-      entryPoints,
-      model: features,
-      isMovable: format.isMovable,
-      isCode: format.isCode,
-    });
-    expect(partitioned.failures).toEqual([]);
-    const { ranges } = removableRanges(graph, partitioned, format);
-    return checkElfRelocations({ shipped, withRelocations, graph, partition: partitioned, ranges }).failures;
-  }
-
-  test("agree with a plain link", async () => {
-    using dir = tempDir("trim-elf-relocations", sources);
-    const result = await linked(String(dir), { validatesRelocations: true });
-    expect(result.linkOutput).toMatch(validatorSummary);
-    expectCleanRuns(result);
-  });
-
-  test("agree with a link without the header of the unwind tables", async () => {
-    using dir = tempDir("trim-elf-relocations", sources);
-    const result = await linked(String(dir), { validatesRelocations: true, linkFlags: ["-Wl,--no-eh-frame-hdr"] });
-    expect(result.linkOutput).toMatch(validatorSummary);
-    expectCleanRuns(result);
-  });
-
-  test("agree with a link that defines a symbol version, which names the output file", async () => {
-    using dir = tempDir("trim-elf-relocations", { ...sources, "version.lds": "TOY_1 { global: main; local: *; };\n" });
-    const result = await linked(String(dir), {
-      validatesRelocations: true,
-      linkFlags: ["-Wl,--version-script=version.lds", "-Wl,--export-dynamic"],
-    });
-    expect(result.linkOutput).toMatch(validatorSummary);
-    expectCleanRuns(result);
-  });
-
-  test("agree where one feature calls another's entry point", async () => {
-    using dir = tempDir("trim-elf-relocations", {
-      ...sources,
-      "entry.c": entryCalling("entry_of_other"),
-      "other.c": otherSource,
-      "main.c": guardsBoth,
-    });
-    const { table, linkOutput } = await linked(String(dir), {
-      objects: ["feature_code", "entry", "other", "embedder", "main"],
-      validatesRelocations: true,
-    });
-    expect(linkOutput).toMatch(validatorSummary);
-    expect(table.edges).toEqual([
-      { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
-    ]);
-  });
-
-  test("find a reference the graph reader missed", async () => {
-    using dir = tempDir("trim-elf-relocations", files);
-    const links = await linkTwice(String(dir));
-    const { graph } = links.reading;
-    const nodeNamed = (name: string) => graph.names.findIndex(names => names.includes(name));
-    const [from, to] = [nodeNamed("main"), nodeNamed("feature_code_5")];
-    expect(check(links)).toEqual([]);
-    const failure = { kind: "ReferenceIntoRemovableRange", from, to };
-    expect(check(links, withoutEdge(graph, from, to))).toEqual([expect.objectContaining(failure)]);
-  });
-
-  test("compare every section of the image but the table", async () => {
-    using dir = tempDir("trim-elf-relocations", files);
-    const links = await linkTwice(String(dir));
-    const checkChanged = (section: string) =>
-      check(links, links.reading.graph, withOneByteChanged(links.shipped, section));
-    expect(checkChanged(".text")).toEqual([{ kind: "RelinkedImageDiffers", section: ".text" }]);
-    expect(checkChanged(".bun_trim")).toEqual([]);
-  });
-
-  test.skipIf(!isX64)("do not stop a link that asks for a report alone", async () => {
-    using dir = tempDir("trim-elf-relocations", {
-      ...sources,
-      "offset.c": String.raw`__asm__(".data\n.globl table_offset\ntable_offset: .quad feature_code_5@GOTOFF\n.text\n");`,
-      "main.c": `
-        ${start}
-        extern long table_offset;
-        ${mainReturning("table_offset != 0 ? 0 : 1")}
-      `,
-    });
-    const program = { objects: [...defaultObjects, "offset"] };
-    const stopped = await wrapped(String(dir), { ...program, validatesRelocations: true });
-    expect(stopped.exitCode).toBe(1);
-    expect(stopped.stderr).toContain("UnknownRelocationType");
-    const result = await linked(String(dir), { ...program, validatesRelocations: "report" });
-    expect(result.linkOutput).toContain("UnknownRelocationType");
-    expectCleanRuns(result);
-  });
-
-  test.skipIf(!isX64)("report a relocation type they do not know", async () => {
-    using dir = tempDir("trim-elf-relocations", {
-      ...files,
-      "offset.c": String.raw`__asm__(".data\n.globl table_offset\ntable_offset: .quad feature_code_5@GOTOFF\n.text\n");`,
-      "main.c": `
-        ${start}
-        extern long table_offset;
-        ${mainReturning("table_offset != 0 ? 0 : 1")}
-      `,
-    });
-    const links = await linkTwice(String(dir), [...objects, "offset"]);
-    expect(check(links)).toEqual([{ kind: "UnknownRelocationType", section: ".rela.data", type: 25 }]);
   });
 });

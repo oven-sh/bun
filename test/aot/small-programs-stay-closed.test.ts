@@ -52,6 +52,10 @@ const programs: Record<string, { text: string; output: string }> = {
 
 // These need more of Bun's library than the smallest program (timers, promises, the warning printer), so only the first half holds for them: they stay closed.
 const programsThatNeedMoreOfTheLibrary: Record<string, { text: string; output: string }> = {
+  "a function is made from a constant text with digits after a zero in a string and in a comment": {
+    text: `const day = new Function("return '2024-01-08' // 010");\nconsole.log(day());\n`,
+    output: "2024-01-08\n",
+  },
   "a promise is settled": {
     text: `async function twice(x: number) {\n  return x * 2;\n}\ntwice(21).then(value => console.log(value));\n`,
     output: "42\n",

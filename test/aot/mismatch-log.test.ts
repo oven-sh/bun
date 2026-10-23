@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -78,8 +79,7 @@ function lines(text: string): Line[] {
 }
 
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, NO_COLOR: "1", ...env }, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, NO_COLOR: "1", ...env });
   return { stdout, stderr, exitCode };
 }
 

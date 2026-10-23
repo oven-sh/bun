@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "../aot/harness/run";
 import { slot } from "../aot/run-programs";
 import { test } from "../aot/supported";
 
@@ -40,27 +41,19 @@ test("tests of module.parent and module.hot bring no built-in module into the ex
     Object.keys(all).map(entry =>
       slot(async () => {
         const outfile = join(String(dir), entry + ".exe");
-        await using build = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile],
-          cwd: String(dir),
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+        const { stderr, exitCode } = await run(
+          [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile],
+          String(dir),
+        );
         expect({ entry, stderr, exitCode }).toEqual({
           entry,
           stderr: expect.not.stringContaining("error"),
           exitCode: 0,
         });
-        await using proc = Bun.spawn({
-          cmd: [outfile],
-          cwd: String(dir),
-          env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
+        const { stdout, exitCode: ranWith } = await run([outfile], String(dir), {
+          ...bunEnv,
+          BUN_JSC_crashIfInterpreterIsUsed: "1",
         });
-        const [stdout, ranWith] = await Promise.all([proc.stdout.text(), proc.exited]);
         expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
         sizes[entry] = statSync(outfile).size;
       }),

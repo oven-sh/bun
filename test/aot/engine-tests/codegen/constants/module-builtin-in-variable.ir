@@ -1,0 +1,24 @@
+# A module variable that only ever holds import.meta has a type the program tables can describe, so the build succeeds
+# FORM: AsRead
+# RUN: compile
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ImportMeta module=m0
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v2
+    Return v5
+}
+function f1 name="readsMeta" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

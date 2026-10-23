@@ -4,9 +4,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { buildEnvironment, compileCommand, withoutPass } from "./harness/flags";
+import { compileCommand, withoutPass } from "./harness/flags";
+import { printIR, test, writesProgramInto } from "./harness/printed-ir";
 import { built, spawned } from "./run-programs";
-import { test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
@@ -33,15 +33,20 @@ async function compile(source: string, name: string, flags: string[] = []): Prom
   using dir = tempDir("aot-loops-over-own-entries", { "main.js": source });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
-  const build = await spawned([bunExe(), ...compileCommand, ...flags, "main.js", "--outfile", executable], folder, {
-    ...env,
-    [buildEnvironment.dumpsIR]: "Selected",
-  });
-  built(build);
+  const command = [
+    bunExe(),
+    ...compileCommand,
+    ...flags,
+    writesProgramInto(folder),
+    "main.js",
+    "--outfile",
+    executable,
+  ];
+  built(await spawned(command, folder, env));
   const plain = await spawned([bunExe(), "main.js"], folder, env);
   expect(plain.exitCode).toBe(0);
   expect(await spawned([executable], folder, env)).toEqual(plain);
-  const bodies = bodiesOf(build.stdout + build.stderr, name);
+  const bodies = bodiesOf(await printIR(folder, { until: "Select", flags }), name);
   expect(bodies.length).toBeGreaterThan(0);
   return bodies;
 }

@@ -1,0 +1,24 @@
+# validate<T>(v) keeps what its result is expected to be on the way from the call as read to the pass that expands it: the library function of the entry, which returns its argument, is never called in its place
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 1
+# STATISTIC: ValidatorsCreated = 1
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: BunBundleValidate
+# CHECK: = CallDirect v1 function=[[validator]]
+# CHECK-NOT: BunBundleValidate
+# CHECK: function [[validator]] {{*}}role=Validator
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+variable g0 name="user" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=BunBundleValidate
+    v3 = Call v2, -, v1 expectedResult=x0
+    PutModuleVariable v3 variable=g0
+    Return
+}

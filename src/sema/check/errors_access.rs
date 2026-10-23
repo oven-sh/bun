@@ -330,7 +330,8 @@ impl<'p> Checker<'p, '_> {
         {
             let suggestion = self.name_of_unread_property(suggestion);
             let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&suggestion)];
-            self.error_at(at_index, 2551, &args);
+            let subject = self.member_container_of_type(object);
+            self.error_at(at_index, 2551, &args).subject = subject;
         } else if self.has_accessor_method_for(object, key, is_target) {
             let method: &[u8] = if is_target { b"set" } else { b"get" };
             let call = match self.access_to_string(file, self.hir(file).child(obj)) {
@@ -938,12 +939,14 @@ impl<'p> Checker<'p, '_> {
             _ => false,
         };
         let mut chain = None;
+        let mut subject = self.member_container_of_type(containing);
         if !is_private && !self.is_boolean(containing) && !is_enum && self.is_union(containing) {
             for &subtype in self.parts(containing) {
                 let apparent = self.apparent_type(subtype);
                 if self.type_of_property(apparent, name).is_none() {
                     let args = [Arg::Bytes(&missing), Arg::Type(subtype)];
                     chain = Some(self.new_diagnostic_chain(None, at, 2339, &args));
+                    subject = self.member_container_of_type(subtype);
                     break;
                 }
             }
@@ -952,7 +955,7 @@ impl<'p> Checker<'p, '_> {
         let container = self.type_to_string(container);
         let args = [Arg::Bytes(&missing), Arg::Bytes(&container)];
         let apparent = self.apparent_type(containing);
-        let diagnostic = if !is_private && self.static_side_has(containing, name) {
+        let mut diagnostic = if !is_private && self.static_side_has(containing, name) {
             let member = cat!(container, b".", missing);
             let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
@@ -984,6 +987,7 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
+        diagnostic.subject = subject;
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
         // A query re-entered while building the message is no reason to roll back the message.

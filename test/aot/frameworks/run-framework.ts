@@ -4,6 +4,7 @@ import { bunEnv, bunExe, isASAN, nodeExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
+import { run as runCommand } from "../harness/run";
 
 interface Framework {
   build: string[];
@@ -62,8 +63,7 @@ const env = {
 };
 
 async function run(cwd: string, cmd: string[]) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, env);
   return { output: exitCode === 0 ? "" : stdout + stderr, exitCode };
 }
 

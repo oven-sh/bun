@@ -89,6 +89,8 @@ pub(crate) struct Lexer<'a> {
     /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
     /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
     pub(crate) flagged: Vec<(u32, u32, u32)>,
+    /// `hir::rare::LEGACY_OCTAL`
+    pub(crate) has_legacy_octal: bool,
     /// `Options::recovers`
     pub(crate) recovers: bool,
     /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
@@ -303,6 +305,7 @@ impl<'a> Lexer<'a> {
             attach_comments: false,
             max_relevant_node_start: 0,
             flagged: Vec::new(),
+            has_legacy_octal: false,
             recovers: false,
             errors: Vec::new(),
             skips_jsdoc_asterisks: false,
@@ -453,6 +456,7 @@ impl<'a> Lexer<'a> {
         if self.is_ecmascript && !self.compiles {
             self.flagged.push((code, start as u32, end as u32));
         }
+        self.has_legacy_octal |= self.compiles;
         self.is_ecmascript
     }
 

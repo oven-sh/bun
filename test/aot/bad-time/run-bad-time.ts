@@ -10,6 +10,7 @@ import { availableParallelism } from "os";
 import { join } from "path";
 import { partInShare, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
+import { run } from "../harness/run";
 
 export function badTime(part: number, parts: number) {
   if (scriptSkipReason && !unsupported) console.error(`SKIPPED: test/aot/bad-time/bad-time-${part}.test.ts: ${scriptSkipReason}`);
@@ -20,14 +21,7 @@ export function badTime(part: number, parts: number) {
   test.skipIf(!!scriptSkipReason)(
     `no program ends with a bad time unless it means it (part ${part} of ${parts})`,
     async () => {
-      await using script = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, "all"],
-        env: { ...scriptEnvironment(), WRITTEN: written },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
+      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, "all"], undefined, { ...scriptEnvironment(), WRITTEN: written });
       const lines = stdout.split("\n").filter(line => line !== "");
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs reach their end, /);

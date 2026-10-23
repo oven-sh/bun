@@ -75,17 +75,7 @@ fn lexical_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> Bin
         SymbolColumn::Function(f) => match hir[f].kind {
             FnKind::Expr => BindingKind::FunctionName,
             FnKind::Decl => BindingKind::Function,
-            FnKind::Arrow
-            | FnKind::Method
-            | FnKind::Getter
-            | FnKind::Setter
-            | FnKind::Constructor
-            | FnKind::StaticBlock
-            | FnKind::CallSignature
-            | FnKind::ConstructSignature
-            | FnKind::FunctionType
-            | FnKind::ConstructorType
-            | FnKind::IndexSignature => BindingKind::NoBinding,
+            _ => BindingKind::NoBinding,
         },
         SymbolColumn::Class(c) => match bound.class_owner[c.idx()] {
             ClassOwner::Stmt(_) => BindingKind::Class,
@@ -115,35 +105,7 @@ fn exported_binding_kind(hir: &File<'_>, decl: Decl) -> BindingKind {
     match decl {
         Decl::EnumMember(_) => BindingKind::Const,
         Decl::ExportExpr(statement) if is_default_export(hir, statement) => BindingKind::Let,
-        Decl::ExportExpr(_)
-        | Decl::Var(_)
-        | Decl::Param(_)
-        | Decl::Fn(_)
-        | Decl::Class(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::Enum(_)
-        | Decl::Module(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ImportEquals(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::Require(_)
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => BindingKind::NoBinding,
+        _ => BindingKind::NoBinding,
     }
 }
 

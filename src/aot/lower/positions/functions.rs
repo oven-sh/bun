@@ -179,14 +179,7 @@ fn find_class_member(
 fn is_static_member(member: &Member) -> bool {
     match member.kind {
         MemberKind::StaticBlock => true,
-        MemberKind::Property
-        | MemberKind::Method
-        | MemberKind::Getter
-        | MemberKind::Setter
-        | MemberKind::Constructor
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature => member.flags.contains(Flags::STATIC),
+        _ => member.flags.contains(Flags::STATIC),
     }
 }
 
@@ -195,12 +188,7 @@ fn has_known_receiver(member: &Member) -> bool {
         MemberKind::Property | MemberKind::StaticBlock => true,
         // `static constructor() {}` is a static method.
         MemberKind::Constructor => !member.flags.contains(Flags::STATIC),
-        MemberKind::Method
-        | MemberKind::Getter
-        | MemberKind::Setter
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::IndexSignature => false,
+        _ => false,
     }
 }
 

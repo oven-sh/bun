@@ -201,12 +201,6 @@ pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bo
         BindingRef::Slot(scope, slot) => (scope, slot),
     };
     match slot {
-        ScopeSlot::NewTarget
-        | ScopeSlot::Callee
-        | ScopeSlot::HomeObject
-        | ScopeSlot::Arguments
-        | ScopeSlot::WithObject
-        | ScopeSlot::EvalVariables => true,
         ScopeSlot::This | ScopeSlot::ArgumentsBinding | ScopeSlot::CommonJs(_) => context
             .walk
             .stored_slots
@@ -219,6 +213,7 @@ pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bo
             | ClassSlot::PrivateMethod(_),
         ) => true,
         ScopeSlot::Class(ClassSlot::StaticField(_) | ClassSlot::DecoratorState) => false,
+        _ => true,
     }
 }
 
@@ -310,15 +305,7 @@ fn find_initialization(context: &Context<'_, '_>, binding: BindingRef) -> Option
         }
         ScopeSlot::Class(ClassSlot::StaticField(_) | ClassSlot::DecoratorState) => None,
         ScopeSlot::This if is_derived_constructor_scope(context, scope) => None,
-        ScopeSlot::This
-        | ScopeSlot::NewTarget
-        | ScopeSlot::Callee
-        | ScopeSlot::HomeObject
-        | ScopeSlot::Arguments
-        | ScopeSlot::ArgumentsBinding
-        | ScopeSlot::CommonJs(_)
-        | ScopeSlot::WithObject
-        | ScopeSlot::EvalVariables => Some(Initialization::AT_SCOPE_ENTRY),
+        _ => Some(Initialization::AT_SCOPE_ENTRY),
     }
 }
 
@@ -327,10 +314,7 @@ fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) ->
     let exports = input.modules.exports(input.file).iter();
     let own_variables = exports.filter_map(|export| match export.binding {
         ExportBinding::Variable(variable) if variable.file == input.file => Some(variable.id),
-        ExportBinding::Variable(_)
-        | ExportBinding::Synthetic(_)
-        | ExportBinding::Namespace { .. }
-        | ExportBinding::Indirect { .. } => None,
+        _ => None,
     });
     let mut symbols: Vec<SymbolId> = own_variables.collect();
     add_bindings_named_by_commonjs_exports(context, forms, &mut symbols);

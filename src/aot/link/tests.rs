@@ -14,7 +14,6 @@ use crate::builtins::RuntimeModule;
 use crate::ir::generated::{
     FunctionVisibility, ModuleKind, RuntimeFunctionEntry, TypeSite, TypeSiteKind,
 };
-use crate::ir::testing::parse;
 use crate::ir::{FunctionId, Id, ModuleId, TypeSiteId, print_program};
 use crate::lower::{Fragment, FragmentBuilder, ModuleFragment};
 use crate::modules::ModuleRef;
@@ -268,13 +267,6 @@ fn task_order_does_not_change_the_program() {
         print_program(&linked.expect("the program links").program)
     };
     assert_eq!(print(&reverse), print(&forward));
-}
-
-#[test]
-fn linked_program_prints_and_parses_back() {
-    let linked = link_sources(&PROGRAM).expect("the program links");
-    let text = print_program(&linked.program);
-    assert_eq!(print_program(&parse(&text)), text);
 }
 
 #[test]

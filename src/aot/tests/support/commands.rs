@@ -8,7 +8,6 @@ use bun_aot::statistics::Statistics;
 use bun_aot::{BuildFailed, WithoutServices, link_program};
 use bun_ast::{Log, Metadata};
 use std::ffi::OsStr;
-use std::mem::take;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Once;
@@ -25,7 +24,6 @@ static NEXT_PROGRAM_FILE_NUMBER: AtomicU32 = AtomicU32::new(0);
 pub struct FrontEndWords {
     pub erases_types: bool,
     pub reports_type_mismatches: bool,
-    pub shows_relations: bool,
     pub thread_count: NonZeroU32,
 }
 
@@ -34,7 +32,6 @@ impl Default for FrontEndWords {
         FrontEndWords {
             erases_types: false,
             reports_type_mismatches: false,
-            shows_relations: false,
             thread_count: NonZeroU32::MIN,
         }
     }
@@ -108,7 +105,6 @@ fn try_apply_option_word(words: &mut FrontEndWords, word: &str) -> bool {
         "erase-types" => words.erases_types = true,
         "type-errors=throw" => words.reports_type_mismatches = false,
         "type-errors=log" => words.reports_type_mismatches = true,
-        "relations" => words.shows_relations = true,
         _ => {
             let count = word.strip_prefix("threads=");
             match count.and_then(parse_decimal::<NonZeroU32>) {
@@ -180,35 +176,15 @@ fn failed_build_outcome(log: &Log, failed: &BuildFailed) -> CommandOutcome {
     CommandOutcome::Finished(create_command_result(log, &failed.statistics))
 }
 
-// The text of the relations holds words that stand in headers and bodies too, so only a test that asks for them sees them.
-fn print_selection(
-    program: &mut Program,
-    words: &FrontEndWords,
-    select: fn(&Program) -> String,
-) -> String {
-    if words.shows_relations {
-        return select(program);
-    }
-    let functions = program.functions.iter_mut();
-    let relations: Vec<_> = functions
-        .map(|function| take(&mut function.relations))
-        .collect();
-    let output = select(program);
-    for (function, relations) in program.functions.iter_mut().zip(relations) {
-        function.relations = relations;
-    }
-    output
-}
-
 fn run_front_end(input: &CommandInput<'_>, select: fn(&Program) -> String) -> CommandOutcome {
     let build = create_build(input);
     let mut log = Log::init();
-    let mut linked = match link_program(&build.options(), &WithoutServices, &mut log) {
+    let linked = match link_program(&build.options(), &WithoutServices, &mut log) {
         Ok(linked) => linked,
         Err(failed) => return failed_build_outcome(&log, &failed),
     };
     let mut result = create_command_result(&log, &linked.summary.statistics);
-    result.output = print_selection(&mut linked.program, &input.words, select);
+    result.output = select(&linked.program);
     let text = print_program(&linked.program);
     let bytes = match emit(linked.program, &run_serially) {
         Ok(bytes) => bytes,
@@ -417,7 +393,6 @@ mod tests {
         let expected = FrontEndWords {
             erases_types: false,
             reports_type_mismatches: false,
-            shows_relations: false,
             thread_count: thread_count(1),
         };
         assert_eq!(parse(&[]), Ok(expected));
@@ -428,10 +403,9 @@ mod tests {
         let expected = FrontEndWords {
             erases_types: true,
             reports_type_mismatches: true,
-            shows_relations: true,
             thread_count: thread_count(4),
         };
-        let words = ["erase-types", "type-errors=log", "relations", "threads=4"];
+        let words = ["erase-types", "type-errors=log", "threads=4"];
         assert_eq!(parse(&words), Ok(expected));
     }
 

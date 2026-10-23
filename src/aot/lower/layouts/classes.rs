@@ -273,10 +273,7 @@ fn add_named_fields(
     for entry in shape.members.iter().filter(|entry| !entry.is_static) {
         match entry.kind {
             ObjectMemberKind::Field => {}
-            ObjectMemberKind::Method
-            | ObjectMemberKind::Getter
-            | ObjectMemberKind::Setter
-            | ObjectMemberKind::GetterAndSetter => continue,
+            _ => continue,
         }
         let (position, is_declared) = match entry.source {
             ClassMemberSource::Member(node) if class::is_declaration_only(hir[node]) => continue,
@@ -448,29 +445,7 @@ fn classify_heritage_shape(kind: ShapeKind<'_>) -> HeritageShape {
         ShapeKind::ClassConstructor(class) => HeritageShape::ClassConstructor(class),
         ShapeKind::Class(class) => HeritageShape::Class(class),
         ShapeKind::Object => HeritageShape::ObjectType,
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => HeritageShape::NoLayout,
+        _ => HeritageShape::NoLayout,
     }
 }
 
@@ -484,10 +459,7 @@ fn find_base_class(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> O
     };
     match classify_heritage_shape(shape.kind) {
         HeritageShape::ClassConstructor(base) if base != derived => Some(base),
-        HeritageShape::ClassConstructor(_)
-        | HeritageShape::Class(_)
-        | HeritageShape::ObjectType
-        | HeritageShape::NoLayout => None,
+        _ => None,
     }
 }
 
@@ -632,18 +604,11 @@ fn compute_static_fields(
     for entry in shape.members.iter().filter(|entry| entry.is_static) {
         match entry.kind {
             ObjectMemberKind::Field => {}
-            ObjectMemberKind::Method
-            | ObjectMemberKind::Getter
-            | ObjectMemberKind::Setter
-            | ObjectMemberKind::GetterAndSetter => continue,
+            _ => continue,
         }
         let node = match entry.source {
             ClassMemberSource::Member(node) if !class::is_declaration_only(hir[node]) => node,
-            ClassMemberSource::Member(_)
-            | ClassMemberSource::ParameterProperty(_)
-            | ClassMemberSource::ThisStore(_)
-            | ClassMemberSource::PrototypeStore(_)
-            | ClassMemberSource::StaticStore(_) => continue,
+            _ => continue,
         };
         if class::has_private_static_storage(hir, node) {
             continue;
@@ -753,17 +718,7 @@ fn record_heritage_flows(
 fn can_be_constructor_function(node: &hir::Func) -> bool {
     let is_ordinary_function = match node.kind {
         FnKind::Decl | FnKind::Expr => true,
-        FnKind::Arrow
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::Constructor
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => false,
+        _ => false,
     };
     is_ordinary_function
         && hir::has_body(node)

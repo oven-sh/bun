@@ -226,10 +226,7 @@ fn find_plain_source(
             }
             Shape::Value | Shape::AsToday => VariableSource::ModuleExports,
         },
-        CommonJsVariable::Require
-        | CommonJsVariable::Module
-        | CommonJsVariable::Filename
-        | CommonJsVariable::Dirname => VariableSource::ModuleValue(builtin_of(variable)),
+        _ => VariableSource::ModuleValue(builtin_of(variable)),
     }
 }
 
@@ -556,14 +553,7 @@ pub(super) fn initialize_path_variables(lowering: &mut FunctionLowering<'_, '_, 
     for variable in [CommonJsVariable::Filename, CommonJsVariable::Dirname] {
         match find_source(lowering.file, variable) {
             VariableSource::ModuleVariable => {}
-            VariableSource::WrapperParameter
-            | VariableSource::MappedWrapperParameter
-            | VariableSource::ModuleValue(_)
-            | VariableSource::ModuleExports
-            | VariableSource::FirstExports
-            | VariableSource::NoObject
-            | VariableSource::ImportMetaMember(_)
-            | VariableSource::FreeName => continue,
+            _ => continue,
         }
         let meta = emit_import_meta(lowering);
         let key = text_key(lowering.file, import_meta_member_name(variable));

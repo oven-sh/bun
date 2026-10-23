@@ -1,0 +1,16 @@
+# A cast stays inside the cast type: an object that may be an instance of two classes, neither of which extends the other, is named as the cast type names it, and a proof about another part of the source does not cover it. Of a class and its subclass the result lists the subclass
+# RUN: cast
+# CHECK: t0 as t1 = null|Array<number>
+# CHECK-NEXT: t0 as t2 = Object
+# CHECK-NEXT: t0 as t3 = Array<string>
+# CHECK-NEXT: t0 as t4 = Array<number, proven, Double>
+# CHECK: t1 as t0 = null|Array<number, proven, Double>|Object
+# CHECK: t2 as t1 = Array<number>
+# CHECK: t4 as t1 = Array<number, proven, Double>
+# CHECK: t6 as t7 = Buffer
+# CHECK: t7 as t6 = Buffer
+# CHECK: t8 as t1 = Array<number, proven, Double>
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=null|string|Array<number, proven, Double>|Object}, {type=undefined|null|Array<number>}, {type=Object}, {type=Array<string>}, {type=Array<number, proven, Double>}, {type=Map|Object}, {type=Buffer}, {type=Uint8Array}, {type=Array<number, proven, Double>|Map}] results=[{type=undefined}]

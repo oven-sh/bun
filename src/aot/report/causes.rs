@@ -61,12 +61,7 @@ impl Cause {
 pub(super) fn is_property_access(kind: AccessKind) -> bool {
     match kind {
         AccessKind::Call | AccessKind::Construct => false,
-        AccessKind::Unknown
-        | AccessKind::Read
-        | AccessKind::Store
-        | AccessKind::Define
-        | AccessKind::Has
-        | AccessKind::Delete => true,
+        _ => true,
     }
 }
 

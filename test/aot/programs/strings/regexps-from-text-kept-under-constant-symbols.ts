@@ -2,7 +2,6 @@
 // KNOWN hints1 ^(?:alpha+|beta+)$
 // KNOWN hints1 ^<(?:[aA][bB]|[cC][dD])>
 // KNOWN hints1 na+med-(?:x|y)
-// KNOWN hints1 ^me+mo(?:one|two)$
 // KNOWN hints1 ^pa+ssed(?:alpha+|beta+)$
 const kWords = Symbol("words")
 const kSpell = Symbol("spell")

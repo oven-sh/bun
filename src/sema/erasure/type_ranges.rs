@@ -353,13 +353,8 @@ impl Finder<'_, '_> {
             MemberKind::CallSignature
             | MemberKind::ConstructSignature
             | MemberKind::IndexSignature => true,
-            MemberKind::Method
-            | MemberKind::Getter
-            | MemberKind::Setter
-            | MemberKind::Constructor => {
-                (member.func.some()).is_some_and(|function| !has_body(&self.file[function]))
-            }
             MemberKind::Property | MemberKind::StaticBlock => false,
+            _ => (member.func.some()).is_some_and(|function| !has_body(&self.file[function])),
         };
         if has_no_code || member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT) {
             self.add(member.start, member.loc.end);

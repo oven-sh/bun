@@ -24,7 +24,6 @@ use bun_standalone_graph::{
 use bun_sys::Fd;
 use bun_trim::TrimPlan;
 
-use super::failure::log_payload_reference;
 use super::{
     BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest, configuration,
     reports, trimming,
@@ -151,19 +150,6 @@ fn write_product(
     let written = write_executable(&mut executable_request).map_err(CompileFailure::Graph)?;
     if let CompileResult::Err(error) = written.result {
         return Err(CompileFailure::Executable(error));
-    }
-    if let Some(error) = written
-        .details
-        .as_ref()
-        .and_then(|it| it.payload_reference_error)
-    {
-        let (directory, path) = executable_location(settings.root_dir, outfile);
-        let _ = bun_sys::unlinkat(directory, &ZBox::from_bytes(path));
-        log_payload_reference(request.log, error);
-        return Err(CompileFailure::Build {
-            refused_entry_points: None,
-            files_checked: 0,
-        });
     }
     if options.obfuscates {
         let (directory, path) = executable_location(settings.root_dir, outfile);

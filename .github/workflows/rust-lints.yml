@@ -149,7 +149,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
-          ninja-targets: codegen WebKit clone-zstd clone-lolhtml clone-rust-argon2
+          ninja-targets: codegen engine-test-programs clone-zstd clone-lolhtml clone-rust-argon2
 
       - name: Locate the engine's files
         run: bun scripts/build/aot-paths.ts >> "$GITHUB_ENV"
@@ -159,21 +159,13 @@ jobs:
 
       - name: cargo test
         # ir_tests.rs skips the engine's half of every test when TESTAOT is
-        # unset. Here a WebKit tarball without testaot has to fail the job.
+        # unset. Here a build without testaot has to fail the job.
         # The skipped test of bun_sema_standalone fails without this branch too.
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: |
           test -x "$TESTAOT"
-          cargo test -p bun_aot -p bun_aot_standalone -p bun_builtin_sources -p bun_bundler -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler -- --skip realpath_under_the_marked_root_stays_under_it
-
-      - name: bun-aot links, and testaot reads what it writes
-        env:
-          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
-        run: |
-          cargo build -p bun_aot_standalone
-          target/debug/bun-aot compile test/aot/ir/commands/lower-entry-functions.ts --no-builtin-modules --aot-out="$RUNNER_TEMP/program.bin"
-          "$TESTAOT" print --wire "$RUNNER_TEMP/program.bin" > /dev/null
+          cargo test -p bun_aot -p bun_builtin_sources -p bun_bundler -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler -- --skip realpath_under_the_marked_root_stays_under_it
 
   mordant:
     name: mordant

@@ -1,0 +1,160 @@
+# The step over a Map or a Set answers undefined where it finds no entry, and its results stand in front of the test for an entry: they are never `never`, so the code behind a loop over a collection that is never filled stays.
+# On the edge that has an entry the results are what the collection holds
+#   const never = new Map(); for (const entry of never) print(entry)
+#   const onOnePath = new Set(); if (flag()) onOnePath.add("a"); for (const element of onOnePath) print(element.length)
+#   const elsewhere = new Map(); fill(elsewhere); for (const [key, value] of elsewhere) print(key, value)
+#   print("end")
+# The loops over the two collections that flow follows are expanded in front of the optimizer, the loop over the one that unknown code has seen by ExpandIteration
+# RUN: pipeline ExpandProvenIterations
+# CHECK-LABEL: function f0
+# CHECK: Map<never, never, proven,
+# CHECK: [[stepOfNever]]: undefined = MapNext
+# CHECK: [[hasEntry]]: boolean = ResultAt [[stepOfNever]]
+# CHECK: undefined = ResultAt [[stepOfNever]] index=2
+# CHECK-NEXT: undefined = ResultAt [[stepOfNever]] index=3
+# CHECK-NEXT: Branch [[hasEntry]]
+# CHECK: [[stepOnOnePath]]: undefined = SetNext
+# CHECK: [[element]]: undefined|"a" = ResultAt [[stepOnOnePath]] index=2
+# CHECK: String string="end"
+# CHECK: "a" = AssumeType [[element]] castType="a"
+# RUN(LATER): pipeline ExpandIteration
+# LATER-LABEL: function f0
+# LATER: calleeName="fill"
+# LATER: [[stepElsewhere]]: undefined = MapNext
+# LATER: anything {{*}}= ResultAt [[stepElsewhere]] index=2
+# LATER: String string="end"
+# RUN(FINAL): pipeline CheckPlacement
+# FINAL-LABEL: function f0
+# FINAL: String string="end"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Builtin builtin=GlobalThis @18
+    v1 = PropGet v0 key="Map" [isFreeName] @18
+    v2 = Convert v1 declared={type=builtin(Map) flags=[IsExpected]} @18
+    v3 = Construct v2 calleeName="Map" @18
+    v4 = Convert v3 declared={type=Map flags=[IsExpected]} @14
+    v5 = IteratorOpen v4 @25
+    Jump -> next b2() @25
+  b2():
+    LoopHint @25
+    v7 = IteratorResume v5 @25
+    v8 = ResultAt v7 @25
+    v9 = ResultAt v7 index=1 @25
+    Branch v8 -> taken b3(), notTaken b24() @25
+  b3():
+    v10 = Builtin builtin=GlobalThis @88
+    v11 = PropGet v10 key="Set" [isFreeName] @88
+    v12 = Convert v11 declared={type=builtin(Set) flags=[IsExpected]} @88
+    v13 = Construct v12 calleeName="Set" @88
+    v14 = Convert v13 declared={type=Set flags=[IsExpected]} @84
+    v15 = Builtin builtin=GlobalThis @99
+    v16 = PropGet v15 key="flag" [isFreeName] @99
+    v17 = Call v16 calleeName="flag" @99
+    v18 = ToBoolean v17 @99
+    Branch v18 -> taken b4(| 0), notTaken b6(| 0) @99
+  b4(v19):
+    Jump -> next b5() @99
+  b5():
+    v20 = PropGet v14 key="add" @107
+    v21 = Convert v20 declared={type=function flags=[IsExpected]} @107
+    v22 = String string="a" @121
+    v23 = Call v21, v14, v22 calleeKey="add" calleeName="add" @117
+    Jump -> next b7() @107
+  b6(v24):
+    Jump -> next b7() @99
+  b7():
+    v25 = IteratorOpen v14 @127
+    Jump -> next b8() @127
+  b8():
+    LoopHint @127
+    v27 = IteratorResume v25 @127
+    v28 = ResultAt v27 @127
+    v29 = ResultAt v27 index=1 @127
+    Branch v28 -> taken b9(), notTaken b21() @127
+  b9():
+    v30 = Builtin builtin=GlobalThis @205
+    v31 = PropGet v30 key="Map" [isFreeName] @205
+    v32 = Convert v31 declared={type=builtin(Map) flags=[IsExpected]} @205
+    v33 = Construct v32 calleeName="Map" @205
+    v34 = Convert v33 declared={type=Map flags=[IsExpected]} @201
+    v35 = Builtin builtin=GlobalThis @212
+    v36 = PropGet v35 key="fill" [isFreeName] @212
+    v37 = Call v36, -, v34 calleeName="fill" @212
+    v38 = IteratorOpen v34 @229
+    Jump -> next b10() @229
+  b10():
+    LoopHint @229
+    v40 = IteratorResume v38 @229
+    v41 = ResultAt v40 @229
+    v42 = ResultAt v40 index=1 @229
+    Branch v41 -> taken b11(), notTaken b12() @229
+  b11():
+    v43 = Builtin builtin=GlobalThis @286
+    v44 = PropGet v43 key="print" [isFreeName] @286
+    v45 = String string="end" @292
+    v46 = Call v44, -, v45 calleeName="print" @286
+    v47 = Undefined @286
+    Return v47 @286
+  b12():
+    Jump -> next b13() @229
+  b13() handler=b20():
+    v48 = IteratorOpen v42 elementCount=2 [isDestructuring] @240
+    Jump -> next b14() @240
+  b14() handler=b19():
+    v49 = IteratorResume v48 stepIndex=0 @240
+    v50 = ResultAt v49 @240
+    v51 = ResultAt v49 index=1 @240
+    Jump -> next b15() @241
+  b15() handler=b19():
+    v52 = IteratorResume v48 stepIndex=1 @240
+    v53 = ResultAt v52 @240
+    v54 = ResultAt v52 index=1 @240
+    Jump -> next b16() @246
+  b16() handler=b19():
+    Jump -> next b17() @246
+  b17() handler=b20():
+    IteratorClose v48 @240
+    Jump -> next b18() @240
+  b18() handler=b20():
+    v56 = Builtin builtin=GlobalThis @267
+    v57 = PropGet v56 key="print" [isFreeName] @267
+    v58 = Call v57, -, v51, v54 calleeName="print" @267
+    Jump -> next b10() @267
+  b19() role=IterationCleanup subject=v48 handler=b20():
+    v59 = CatchException @240
+    IteratorClose v48 completion=Throw @240
+    Rethrow v59 @240
+  b20() role=IterationCleanup subject=v38:
+    v61 = CatchException @229
+    IteratorClose v38 completion=Throw @229
+    Rethrow v61 @229
+  b21():
+    Jump -> next b22() @127
+  b22() handler=b23():
+    v63 = Builtin builtin=GlobalThis @160
+    v64 = PropGet v63 key="print" [isFreeName] @160
+    v65 = PropGet v29 key="length" @166
+    v66 = Call v64, -, v65 calleeName="print" @160
+    Jump -> next b8() @160
+  b23() role=IterationCleanup subject=v25:
+    v67 = CatchException @127
+    IteratorClose v25 completion=Throw @127
+    Rethrow v67 @127
+  b24():
+    Jump -> next b25() @25
+  b25() handler=b26():
+    v69 = Convert v9 declared={type=Array flags=[IsExpected]} @36
+    v70 = Builtin builtin=GlobalThis @52
+    v71 = PropGet v70 key="print" [isFreeName] @52
+    v72 = Call v71, -, v69 calleeName="print" @52
+    Jump -> next b2() @52
+  b26() role=IterationCleanup subject=v5:
+    v73 = CatchException @25
+    IteratorClose v5 completion=Throw @25
+    Rethrow v73 @25
+}
+entry module=m0

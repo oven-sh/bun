@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Nothing proves that a module which is required inside a function is evaluated once, so nothing proves that its constructor functions are created once.
@@ -53,12 +54,6 @@ const files = {
 };
 
 const stores = ["operationAOTPutById", "operationAOTPutByIdAndCache", "operationAOTPutByIdSloppy"];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("what a constructor function of a module that is required late stores into this stops asking the run time", async () => {
   using dir = tempDir("aot-constructor-functions-created-again", files);

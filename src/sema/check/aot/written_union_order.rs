@@ -308,13 +308,7 @@ fn push_member_types(
 ) {
     let holds_data = |member: &MemberId| match hir[*member].kind {
         MemberKind::Property | MemberKind::IndexSignature => true,
-        MemberKind::Method
-        | MemberKind::Getter
-        | MemberKind::Setter
-        | MemberKind::Constructor
-        | MemberKind::CallSignature
-        | MemberKind::ConstructSignature
-        | MemberKind::StaticBlock => false,
+        _ => false,
     };
     let types = members
         .iter()

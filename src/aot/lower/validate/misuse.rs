@@ -79,14 +79,6 @@ fn classify_import(file: &FileLowering<'_, '_, '_, '_>, symbol: SymbolId) -> Opt
         ImportBinding::Builtin(_) | ImportBinding::CapturedBuiltin { .. } => {
             Some(Code::JsonFromBunIsExported)
         }
-        ImportBinding::Local
-        | ImportBinding::Unused
-        | ImportBinding::Unbound
-        | ImportBinding::Variable(_)
-        | ImportBinding::Namespace { .. }
-        | ImportBinding::BuiltinMember { .. }
-        | ImportBinding::Synthetic(_)
-        | ImportBinding::NamespaceRead { .. }
-        | ImportBinding::Exports { .. } => None,
+        _ => None,
     }
 }

@@ -19,16 +19,7 @@ fn describe_constant(failure: Int32ProofFailure) -> &'static str {
         Int32ProofFailure::NotANumber => "it is NaN",
         Int32ProofFailure::NegativeZero => "it is -0",
         Int32ProofFailure::Fraction => "it has a fraction",
-        Int32ProofFailure::Unknown
-        | Int32ProofFailure::OutOfRange
-        | Int32ProofFailure::AnyNumber
-        | Int32ProofFailure::Untyped
-        | Int32ProofFailure::Product
-        | Int32ProofFailure::Quotient
-        | Int32ProofFailure::NegatedZero
-        | Int32ProofFailure::Remainder
-        | Int32ProofFailure::Power
-        | Int32ProofFailure::WorkLimit => INT32_RANGE,
+        _ => INT32_RANGE,
     }
 }
 
@@ -48,12 +39,7 @@ fn describe_failure(
         Int32ProofFailure::Remainder => "a remainder can be -0 or NaN",
         Int32ProofFailure::Power => "a power can be out of range or have a fraction",
         Int32ProofFailure::WorkLimit => "the expression is too large to check",
-        Int32ProofFailure::Unknown
-        | Int32ProofFailure::AnyNumber
-        | Int32ProofFailure::Untyped
-        | Int32ProofFailure::NotANumber
-        | Int32ProofFailure::NegativeZero
-        | Int32ProofFailure::Fraction => match is_any {
+        _ => match is_any {
             true => "its type is 'any'",
             false => ANY_NUMBER,
         },

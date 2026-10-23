@@ -63,13 +63,7 @@ fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
         }
         BindingKind::FunctionName => EvalBindingKind::FunctionName,
         BindingKind::SimpleCatchParameter => EvalBindingKind::SimpleCatchParameter,
-        BindingKind::NoBinding
-        | BindingKind::Var
-        | BindingKind::Let
-        | BindingKind::Parameter
-        | BindingKind::Function
-        | BindingKind::Class
-        | BindingKind::TypeScriptContainer => EvalBindingKind::Variable,
+        _ => EvalBindingKind::Variable,
     }
 }
 
@@ -87,15 +81,7 @@ fn compute_scope_depths(hir: &hir::File<'_>, bound: &Bound<'_>, innermost: Scope
 fn is_lexical_declaration(kind: BindingKind) -> bool {
     match kind {
         BindingKind::Let | BindingKind::Const | BindingKind::Class => true,
-        BindingKind::NoBinding
-        | BindingKind::Import
-        | BindingKind::TypeScriptContainer
-        | BindingKind::Var
-        | BindingKind::SimpleCatchParameter
-        | BindingKind::ClassInnerName
-        | BindingKind::Function
-        | BindingKind::FunctionName
-        | BindingKind::Parameter => false,
+        _ => false,
     }
 }
 
@@ -337,15 +323,11 @@ fn add_eval_import(
         ImportBinding::Synthetic(export) | ImportBinding::CapturedBuiltin { export, .. } => {
             builder.add_variable(lowering, binding, VariableKey::SyntheticExport(export));
         }
-        ImportBinding::Namespace { .. }
-        | ImportBinding::Exports { .. }
-        | ImportBinding::Builtin(_)
-        | ImportBinding::BuiltinMember { .. }
-        | ImportBinding::NamespaceRead { .. } => {
+        ImportBinding::Unbound | ImportBinding::Unused | ImportBinding::Local => {}
+        _ => {
             let value = module::emit_import_binding(lowering, import, name);
             builder.add_value(binding, value);
         }
-        ImportBinding::Unbound | ImportBinding::Unused | ImportBinding::Local => {}
     }
 }
 

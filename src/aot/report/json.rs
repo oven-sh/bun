@@ -42,18 +42,6 @@ impl JsonWriter {
         self.bytes.push(b']');
     }
 
-    pub(super) fn numbers(&mut self, key: &str, values: impl Iterator<Item = u64>) {
-        self.write_key(key);
-        self.bytes.push(b'[');
-        for (index, value) in values.enumerate() {
-            if index > 0 {
-                self.bytes.push(b',');
-            }
-            self.write_decimal(value);
-        }
-        self.bytes.push(b']');
-    }
-
     pub(super) fn null(&mut self, key: &str) {
         self.write_key(key);
         self.bytes.extend_from_slice(b"null");

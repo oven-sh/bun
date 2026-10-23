@@ -4,25 +4,22 @@
  * writes for Bun without asking it. AOT_SCHEMA is the engine's AOTSchema.def: `bun scripts/build/aot-paths.ts` prints it.
  */
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { schemaHashHeader, schemaRustFiles } from "../../scripts/build/aot.ts";
+import { run } from "../aot/harness/run";
 
 const schema = process.env.AOT_SCHEMA;
 const fileList = schema === undefined ? undefined : join(dirname(schema), "AOTSchemaFiles.cmake");
 
 async function generate(schemaFile: string, ...options: string[]) {
-  await using generator = Bun.spawn({
-    cmd: [bunExe(), join(dirname(schemaFile), "generator", "index.ts"), "--schema", schemaFile, ...options],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    generator.stdout.text(),
-    generator.stderr.text(),
-    generator.exited,
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    join(dirname(schemaFile), "generator", "index.ts"),
+    "--schema",
+    schemaFile,
+    ...options,
   ]);
   return { stdout, stderr, exitCode };
 }

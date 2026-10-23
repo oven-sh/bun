@@ -134,45 +134,7 @@ impl Checker<'_, '_> {
                     self.check_array_assignment_pattern(file, elements, &mut worklist);
                 }
                 ExprKind::Assign { op: None, .. } if is_unparenthesized => {}
-                ExprKind::Object(_)
-                | ExprKind::Array(_)
-                | ExprKind::Assign { .. }
-                | ExprKind::Missing
-                | ExprKind::Ident(_)
-                | ExprKind::PrivateIdentifier(_)
-                | ExprKind::This
-                | ExprKind::Super
-                | ExprKind::Null
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::Number(_)
-                | ExprKind::String(_)
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex { .. }
-                | ExprKind::Template { .. }
-                | ExprKind::TaggedTemplate(_)
-                | ExprKind::Fn(_)
-                | ExprKind::Class(_)
-                | ExprKind::Dot { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::Call(_)
-                | ExprKind::New(_)
-                | ExprKind::Unary { .. }
-                | ExprKind::Binary { .. }
-                | ExprKind::Cond { .. }
-                | ExprKind::Spread(_)
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. }
-                | ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::NonNull(_)
-                | ExprKind::Instantiation { .. }
-                | ExprKind::Jsx(_)
-                | ExprKind::ImportCall { .. }
-                | ExprKind::ImportMeta
-                | ExprKind::NewTarget(_)
-                | ExprKind::JsxText(_) => {
+                _ => {
                     self.check_reference_expression(file, e, 2364, 2779);
                 }
             }

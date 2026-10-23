@@ -152,9 +152,6 @@ fn answer_path(answer: &HostResolution) -> Option<&[u8]> {
         HostResolution::Path(path) | HostResolution::ModuleSource { path, .. } => {
             Some(path.as_slice())
         }
-        HostResolution::Unclaimed
-        | HostResolution::Module(_)
-        | HostResolution::External { .. }
-        | HostResolution::Erased => None,
+        _ => None,
     }
 }

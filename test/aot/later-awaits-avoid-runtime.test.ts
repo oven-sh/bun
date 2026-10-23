@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // The promises are counted a list of free cells at a time, and the last list is lost: a block, which is 64 KB on some targets.
@@ -57,12 +58,6 @@ const files = {
 
 const firstSuspensions = ["operationAOTSaveFrameAndAwait", "operationAOTSaveFrameAndAwaitCall"];
 const laterSuspensions = ["operationAOTAwaitWithSavedFrame", "operationAOTAwaitCallWithSavedFrame"];
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("an await after the first suspension registers its waiter without a call into the run time", async () => {
   using dir = tempDir("aot-later-awaits", files);

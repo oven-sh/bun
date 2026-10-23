@@ -47,12 +47,7 @@ impl NamedEntries {
             Reference::Layout(id) => (&mut self.layouts[id.index()], false),
             Reference::Variable(id) => (&mut self.variables[id.index()], false),
             Reference::Function(id, _) => (&mut self.functions[id.index()], false),
-            Reference::ExpectedResult(_)
-            | Reference::Module(..)
-            | Reference::ModuleFailure(_)
-            | Reference::EvalScope(_)
-            | Reference::Data(_)
-            | Reference::Builtin(_) => return,
+            _ => return,
         };
         if !replace(is_named, true) && names_others {
             self.unread.push(reference);

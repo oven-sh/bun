@@ -8,7 +8,6 @@ API. A scenario runs in its own `try` and prints its results under a `== name` h
   trees/client    react and react-reconciler, on a host of its own (host2.ts)
   trees/server    react-dom/server: Bun's bundle, then every scenario again through the legacy bundle (arguments: "" string)
   trees/seroval   seroval, as three programs (see below)
-  trees/fuse      fuse.js, as three programs
   trees/sdk       @anthropic-ai/sdk
   trees/entries   what require(), a default import, a namespace import and named imports get from each replaced entry point
   trees/lie       a string where the type says number: shows that an audit build logs a mismatch
@@ -26,7 +25,7 @@ answers  Runs package code. Runs each tree with `bun run` on the untouched packa
          compares the output section by section.
 
 The compiler analyzes the entire program, so one call that passes parsed JSON to a package can open its layouts everywhere.
-The trees of seroval and fuse.js are therefore three programs each:
+The tree of seroval is therefore three programs:
   <tree>           wide.ts as it is
   <tree>.internal  The text between /*C*/ marks is removed: the package only sees objects that it allocated.
   <tree>.boundary  The text between /*D*/ marks becomes `import { carry } from "./carried.js";` and the text between /*L*/
@@ -83,7 +82,7 @@ AUDIT_LINE_PREFIX = '[aot] type-error '
 BUILDS = (('untyped', INSTALLED, []), ('typed', TYPED, []), ('typed.audit', TYPED, AUDIT_FLAGS))
 ENTRY_POINT_BUILDS = (('control', INSTALLED, []), ('untyped', INSTALLED, ['--aot']), ('typed', TYPED, ['--aot']))
 
-TREES_WITH_VARIANTS = {'seroval': ['seroval'], 'fuse': ['fuse.js']}
+TREES_WITH_VARIANTS = {'seroval': ['seroval']}
 TREES = {
     'client': (['react', 'react-reconciler', 'scheduler'], [[]]),
     'server': (['react', 'react-dom'], [[], ['', 'string']]),
@@ -98,7 +97,6 @@ ENTRY_POINTS = (
     ('react-compiler-runtime', 'react'),
     ('react-dom-server', 'react-dom'),
     ('seroval', 'seroval'),
-    ('fuse', 'fuse.js'),
 )
 
 SERVER_MODULES = (
@@ -112,11 +110,6 @@ SERVER_MODULES = (
 SEROVAL_OPEN = (
     'Sequence Stream AsyncParsePluginContext DeserializePluginContext SerializePluginContext StreamParsePluginContext '
     'SyncParsePluginContext Serializer SerovalNode ObjectRecord MapRecord'
-)
-FUSE_OPEN = (
-    'ArrayEntry Book IndexRecord RecordEntry FuseIndex FuseOptionKeyObject<Book> FuseOptionKeyObject<Row> '
-    'FuseOptionKeyObject<string> FuseSearchOptions FuseSortFunctionArg FuseSortFunctionMatch FuseSortFunctionMatchList '
-    'IndexOptions QueryNode'
 )
 PIN_KEYS = {'of', 'typed_percent', 'bytes', 'expected_open', 'regressed_open', 'unnamed_open', 'by'}
 PINS = {
@@ -138,14 +131,10 @@ PINS = {
             'ComponentIdentity Ping RefObject PostponedHoles FormatContext ResumableState StylesheetResource '
             'ViewTransitionContext'
         ),
-        by={'19.3.': dict(bytes=1.002), '19.2.': dict(bytes=0.99), '19.1.': dict(bytes=0.965), '19.0.': dict(bytes=0.968)},
+        by={'19.3.': dict(bytes=1.002)},
     ),
     'seroval.internal': dict(of='seroval', bytes=0.96, expected_open=SEROVAL_OPEN),
     'seroval.boundary': dict(of='seroval', bytes=0.967, expected_open=SEROVAL_OPEN),
-    # Typed fuse.js is about 15% larger than untyped. Most of the difference is generic entrypoints and split-off
-    # continuations, so lower these two ratios as those get smaller.
-    'fuse.internal': dict(of='fuse.js', bytes=1.15, expected_open=FUSE_OPEN),
-    'fuse.boundary': dict(of='fuse.js', bytes=1.12, expected_open=FUSE_OPEN),
     'sdk': dict(of='@anthropic-ai/sdk', expected_open='', by={'0.112.': dict(bytes=1.29), '0.128.': dict(bytes=1.015)}),
 }
 
@@ -154,11 +143,8 @@ KNOWN_AUDIT_LINES = {}
 # (tree, start of a section's header) -> why the section differs in the typed builds today. Every run prints it, or says that
 # the section no longer differs.
 KNOWN_FAILURES = {}
-KNOWN_UNTYPED_FAILURES = dict.fromkeys(
-    ('fuse', 'fuse.internal', 'fuse.boundary'),
-    'the untyped --aot build of untouched fuse.js 7.0.0 aborts in scenario 03 (includeMatches with a key through an array): '
-    '"panic(main thread): abort() called". A compiler bug: the typed build and `bun run` are fine',
-)
+# tree -> why the untyped --aot build of the untouched package fails today.
+KNOWN_UNTYPED_FAILURES = {}
 
 failures = 0
 

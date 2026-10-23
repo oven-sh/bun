@@ -585,14 +585,6 @@ impl Dump<'_, '_> {
         let parts = self.parts(id);
         let d = depth + 1;
         match kind {
-            ExprKind::Missing
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_) => self.line(depth, label, &head),
             ExprKind::Regex {
                 pattern,
                 flags: regex_flags,
@@ -714,6 +706,7 @@ impl Dump<'_, '_> {
                 self.line(depth, label, &head);
                 self.jsx(d, "jsx", jsx);
             }
+            _ => self.line(depth, label, &head),
         }
     }
 

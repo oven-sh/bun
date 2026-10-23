@@ -88,18 +88,14 @@ impl ControlState {
                 BreakTargetKind::Loop | BreakTargetKind::Switch => Some(*statement),
                 BreakTargetKind::Label => None,
             },
-            ControlEntry::ContinueTarget { .. }
-            | ControlEntry::Handler { .. }
-            | ControlEntry::Cleanup(_) => None,
+            _ => None,
         })
     }
 
     fn innermost_continue_statement(&self) -> Option<StmtId> {
         self.entries.iter().rev().find_map(|entry| match entry {
             ControlEntry::ContinueTarget { statement, .. } => Some(*statement),
-            ControlEntry::BreakTarget { .. }
-            | ControlEntry::Handler { .. }
-            | ControlEntry::Cleanup(_) => None,
+            _ => None,
         })
     }
 }
@@ -109,14 +105,7 @@ fn get_return_rule(kind: FunctionKind) -> ReturnRule {
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
             ReturnRule::ConstructorResult
         }
-        FunctionKind::Plain
-        | FunctionKind::Arrow
-        | FunctionKind::Method
-        | FunctionKind::Getter
-        | FunctionKind::Setter
-        | FunctionKind::Initializer
-        | FunctionKind::Module
-        | FunctionKind::CommonJsModule => ReturnRule::DeclaredResult,
+        _ => ReturnRule::DeclaredResult,
     }
 }
 
@@ -201,11 +190,7 @@ pub(crate) fn allows_tail_call(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) 
         | FunctionKind::Method
         | FunctionKind::Getter
         | FunctionKind::Setter => true,
-        FunctionKind::BaseConstructor
-        | FunctionKind::DerivedConstructor
-        | FunctionKind::Initializer
-        | FunctionKind::Module
-        | FunctionKind::CommonJsModule => false,
+        _ => false,
     };
     let suspends = FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR;
     has_ordinary_return
@@ -222,9 +207,7 @@ fn is_in_for_in_body(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
         ControlEntry::ContinueTarget { statement, .. } => {
             matches!(hir[*statement].kind, StmtKind::ForIn { .. })
         }
-        ControlEntry::BreakTarget { .. }
-        | ControlEntry::Handler { .. }
-        | ControlEntry::Cleanup(_) => false,
+        _ => false,
     })
 }
 

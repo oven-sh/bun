@@ -1,4 +1,0 @@
-export function probeTag(probeStrings, ...probeValues) {
-  return probeStrings.raw;
-}
-export const probeResult = probeTag`probe ${1} text\n ${2}`;

@@ -4,6 +4,7 @@
 import { beforeAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
@@ -40,15 +41,7 @@ console.log("here", Error.stackTraceLimit);
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = {}) {
-  await using proc = Bun.spawn({
-    cmd,
-    cwd,
-    env: { ...bunEnv, ...env },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, ...env });
   return { stdout, stderr, exitCode };
 }
 const named = (name: string) => (isWindows ? name + ".exe" : name);

@@ -99,7 +99,6 @@ export function overload(changes: Partial<DumpedOverload> = {}): DumpedOverload 
     mode: "Call",
     isProvenByConstruction: false,
     isUndeclared: false,
-    textHash: "0000000000000000",
     receiver: null,
     parameters: [],
     result: {

@@ -1,7 +1,8 @@
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, featureOf, withoutFeatures } from "../bundler/compile-trim-features";
+import { run } from "./harness/run";
 import {
   accountsFor,
   build,
@@ -772,8 +773,7 @@ describe.concurrent("Bun.serve for the exports of the entry point", () => {
 
 describe.concurrent("what is done with the exports of the entry point does not depend on how the program runs", () => {
   async function said(cmd: string[], cwd: string) {
-    await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run(cmd, cwd);
     return {
       stdout: stdout.replace(/^Started (development )?server: http:\/\/localhost:\d+$/gm, "Started a server"),
       stderr,
@@ -885,8 +885,8 @@ describe.skipIf(!canTrim)("what --trim removes", () => {
       ["by-use", []],
       ["without-an-unused-feature", [featureOf("HTMLRewriter")]],
     ] as const) {
-      await using build = Bun.spawn({
-        cmd: [
+      const { stderr: buildErrors, exitCode: buildExitCode } = await run(
+        [
           bunExe(),
           "build",
           "--compile",
@@ -897,26 +897,15 @@ describe.skipIf(!canTrim)("what --trim removes", () => {
           "--outfile",
           join(folder, "main"),
         ],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+        String(dir),
+      );
       if (buildExitCode !== 0) throw new Error(buildErrors);
       const executable = await Bun.file(
         join(String(dir), folder, process.platform === "win32" ? "main.exe" : "main"),
       ).bytes();
       contents.push(new Bun.CryptoHasher("sha256").update(executable).digest("hex"));
     }
-    await using proc = Bun.spawn({
-      cmd: [join(String(dir), "by-use", "main")],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { stdout, exitCode } = await run([join(String(dir), "by-use", "main")], String(dir));
     return { stdout, exitCode, removesUnusedFeatures: contents[0] === contents[1] };
   }
 

@@ -1,0 +1,78 @@
+# main.cjs: require("./child.cjs"); module.children[i].exports()        child.cjs: require("./grandchild.cjs")        other.cjs, a second entry point: require("./apart.cjs")
+# The module objects hang together as the requests of the build say. `children` answers the module objects of what a module requires whose own module object somebody has got hold of:
+# that of child.cjs, and through it that of grandchild.cjs. The list itself is an object nobody knows, so the two are in unknown hands, and with them what the two files export.
+# In a program that names such a way the module object of every entry point is found from the global scope, under process.mainModule, by whoever reads globals by a name that the build does not see.
+# So that of other.cjs is in unknown hands too, and through it that of apart.cjs
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> unknown
+# RUN(WHY): valueflow-why escaped=f2 escaped=f4 escaped=f7
+# WHY: escaped=f2
+# WHY-NEXT: n0 escaped
+# WHY: escaped=f4
+# WHY-NEXT: n0 escaped
+# WHY: escaped=f7
+# WHY-NEXT: n0 escaped
+# RUN(APPLY): valueflow-apply
+# APPLY-NOT: name="exports" {{*}}writers=AllKnown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g4 name="exports" module=m4 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="/app/grandchild.cjs" displayPath="grandchild.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3 exportsVariable=g2
+module m3 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f5 exportsVariable=g3 requests=[{target=m4 kind=Require completes=true}]
+module m4 path="/app/apart.cjs" displayPath="apart.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f6 exportsVariable=g4
+entry module=m0
+entry module=m3
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = PropGet v2 key="children"
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = PropGet v5 key="exports"
+    v7 = Call v6, v5
+    Return
+}
+function f1 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    RecordRequire module=m2 referrer=m1
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f2 name="exportedByChild" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="grandchild" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f4 name="exportedByGrandchild" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="other" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m4 referrer=m3 [isBare]
+    Return
+}
+function f6 name="apart" module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    PutModuleVariable v0 variable=g4
+    Return
+}
+function f7 name="exportedByApart" module=m4 results=[{type=anything}] {
+  b0():
+    Return
+}

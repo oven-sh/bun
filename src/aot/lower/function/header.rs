@@ -5,7 +5,7 @@ use bun_sema::hir::{self, Flags, FnId, FnKind};
 
 use crate::builtins::id::BuiltinClass;
 use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, FunctionRelations, LimitId, SourceRange,
+    Function, FunctionFlags, FunctionKind, LimitId, SourceRange,
 };
 use crate::ir::{
     Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags, Primitives, StringId, Type,
@@ -52,7 +52,6 @@ pub(super) fn create_header(
         body: Body::default(),
         function_types: Vec::new(),
         builtin_members: Vec::new(),
-        relations: FunctionRelations::default(),
     }
 }
 
@@ -162,14 +161,6 @@ fn find_enclosing_key(
 ) -> Option<FunctionKey> {
     let bound = file.bound;
     let mut scope = match key {
-        FunctionKey::ModuleBody(_)
-        | FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
-        | FunctionKey::CheckBody(_)
-        | FunctionKey::Signature(_)
-        | FunctionKey::ClassSignature(_) => {
-            return None;
-        }
         FunctionKey::Source(source) => {
             let top = bound.fns[source.function.idx()].scope;
             bound.scopes[top.idx()].parent
@@ -181,6 +172,9 @@ fn find_enclosing_key(
         | FunctionKey::AccessorSetter { member, .. }
         | FunctionKey::PrivateNameTest { member, .. } => {
             bound.class_scope[bound.member_class(member)?.idx()]
+        }
+        _ => {
+            return None;
         }
     };
     loop {
@@ -219,11 +213,7 @@ fn compute_function_kind(file: &FileLowering<'_, '_, '_, '_>, function: FnId) ->
             FunctionKind::DerivedConstructor
         }
         FnKind::Constructor => FunctionKind::BaseConstructor,
-        FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => {
+        _ => {
             debug_assert!(false, "this kind of function has no code of its own");
             FunctionKind::Plain
         }
@@ -252,17 +242,7 @@ fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
 fn has_written_this(hir: &hir::File<'_>, function: FnId) -> bool {
     match hir.runtime_function_kind(function) {
         FnKind::Arrow | FnKind::Constructor => false,
-        FnKind::Decl
-        | FnKind::Expr
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::StaticBlock
-        | FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => hir[function].this_param.is_some(),
+        _ => hir[function].this_param.is_some(),
     }
 }
 

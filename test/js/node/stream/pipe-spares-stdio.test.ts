@@ -2,8 +2,9 @@
 // process.stderr holds at that moment. It finds that out without making either stream: one that nobody has read yet cannot be
 // the destination. A program that puts a stream of its own in the place of process.stdout sees that stream spared.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "../../../aot/harness/run";
 
 const cases: Record<string, string> = {
   "other-stream": "other: ended true\n",
@@ -31,13 +32,11 @@ const cases: Record<string, string> = {
 
 for (const [name, expected] of Object.entries(cases)) {
   test.concurrent(`pipe: ${name}`, async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "pipe-spares-stdio-fixture.js"), name],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run([
+      bunExe(),
+      join(import.meta.dir, "pipe-spares-stdio-fixture.js"),
+      name,
+    ]);
     expect({ output: stdout + stderr, exitCode }).toEqual({ output: expected, exitCode: 0 });
   });
 }

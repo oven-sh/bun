@@ -1,24 +1,10 @@
 {
- "b1": "all agree",
  "b2": "alone: the build fails",
- "b3": "all agree",
  "b4": "as bun run",
  "b5": "as bun run",
- "b6": "all agree",
  "b7": "as bun run",
- "b8": "all agree",
- "m1": "all agree",
  "m2": "alone: the build fails",
  "m3": "alone: the build fails",
- "m4": "all agree",
  "m5": "alone: the build fails",
- "m6": "all agree",
- "r1": "all agree",
- "r2": "all agree",
- "r3": "all agree",
- "r4": "all agree",
- "r5": "alone: the build fails",
- "r6": "all agree",
- "r7": "all agree",
- "r8": "all agree"
+ "r5": "alone: the build fails"
 }

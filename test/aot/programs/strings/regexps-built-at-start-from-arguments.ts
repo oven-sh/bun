@@ -2,13 +2,10 @@
 // COUNTER: RegExpsCreatedWithoutRecord = 12
 // COUNTER: RegExpPatternsParsed >= 12
 // COUNTER: RegExpMatchesInterpreted >= 12
-// KNOWN tokens 0|[1-9]\d*
-// KNOWN tokens \d*[a-zA-Z-][a-zA-Z0-9-]*
 // KNOWN tokens (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)
 // KNOWN tokens (?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)
 // KNOWN tokens (?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*))*))
 // KNOWN tokens ^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*))*))?$
-// KNOWN tokens (^|[^\d])(\d{1,16})(?:\.(\d{1,16}))?
 // UNKNOWN ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$
 // UNKNOWN (?:\+(\d*[a-zA-Z-][a-zA-Z0-9-]*))
 // UNKNOWN ^[a-z]+$

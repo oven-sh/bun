@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { run } from "../../aot/harness/run";
 import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
@@ -15,15 +16,10 @@ const theReportOfAThrownErrorNamesTheSameLineAndAnotherColumnUnderAot =
   /^ +\^\n(error: thrown in a test\n +at <anonymous> \(<dir>\/a\.test\.ts:\d+):\d+\)/m;
 
 async function runTests(cwd: string, aot: boolean, args: string[] = [], builds = true) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), ...args],
-    env: { ...bunEnv, ...(aot ? { BUN_AOT_VERBOSE: "1" } : {}) },
-    cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--debug-aot"] : []), ...args], cwd, {
+    ...bunEnv,
+    ...(aot ? { BUN_AOT_VERBOSE: "1" } : {}),
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
     stdout: stdout.replaceAll(cwd, "<dir>"),
     stderr: (aot && builds ? expectToHaveUsedImage(stderr) : stderr)

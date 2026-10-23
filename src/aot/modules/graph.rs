@@ -248,11 +248,7 @@ impl ModuleGraph {
                 importer,
                 specifier,
             } => external_key((importer, specifier)),
-            ModuleRef::File(_)
-            | ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_) => return None,
+            _ => return None,
         };
         let kinds = &self.external_kinds;
         let index = kinds.binary_search_by_key(&key, |entry| external_key(entry.0));
@@ -599,11 +595,7 @@ impl ModuleGraph {
     pub fn find_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> ExportLookup {
         let entry = match module {
             ModuleRef::File(file) => self.entry(file),
-            ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => return ExportLookup::Unknown,
+            _ => return ExportLookup::Unknown,
         };
         if !entry.interop.has_export_table() {
             return ExportLookup::Unknown;

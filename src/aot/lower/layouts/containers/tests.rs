@@ -237,13 +237,7 @@ fn whoever_requires_a_module_names_its_layout() {
     let requirer = find_fragment(&lowered, false);
     let names_layout_of_module = |key: &LayoutKey| match *key {
         LayoutKey::Container(symbol) => symbol.file == module.file,
-        LayoutKey::Class(_)
-        | LayoutKey::ConstructorFunction(_)
-        | LayoutKey::Library(_)
-        | LayoutKey::ObjectType { .. }
-        | LayoutKey::UntypedLiteral { .. }
-        | LayoutKey::TypeParameter(_)
-        | LayoutKey::Environment { .. } => false,
+        _ => false,
     };
     assert!(requirer.layout_keys.iter().any(names_layout_of_module));
     let mut defined_keys = requirer

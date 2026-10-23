@@ -28,7 +28,7 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::{Effect, FileOrigin, LeftOutBodies};
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
-use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION};
+use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION, Sym};
 use bun_sema::resolve::{CodeFailure, CodeOptions};
 use std::num::NonZeroUsize;
 
@@ -62,6 +62,7 @@ pub struct LoadedProgram<'s> {
 /// A program for which the declarations of Bun's own globals and modules (`@types/bun`) are not installed.
 pub(crate) struct WithoutBunTypes {
     pub has_configuration_file: bool,
+    pub incomplete_containers: [Option<Sym>; 2],
 }
 
 impl<'s> LoadedProgram<'s> {

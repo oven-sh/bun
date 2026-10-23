@@ -1,11 +1,13 @@
 import { expect } from "bun:test";
-import { isASAN, isDebug, tempDir } from "harness";
+import { isASAN, isDebug, isMusl, tempDir } from "harness";
 import { describe, test } from "../supported";
 import { measureLeast } from "./measure-check";
 import { shapes, type Shape } from "./shapes";
 
 const runs = 3;
 const allowedNoise = { instructions: 30_000_000, peakBytes: 64 * 1024 * 1024 };
+// The allowances were taken with glibc. A Bun that is linked with musl runs a quarter more instructions for the same work.
+const instructionsOfThisLibc = isMusl ? 4 / 3 : 1;
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions and bytes"
@@ -31,7 +33,7 @@ describe.skipIf(!!skipped)("bun check --aot cost per item", () => {
         peakBytes: cost.peakBytes - none.peakBytes,
       };
       const allowed = {
-        instructions: allowedNoise.instructions + count * shape.instructionsPerItem,
+        instructions: (allowedNoise.instructions + count * shape.instructionsPerItem) * instructionsOfThisLibc,
         peakBytes: allowedNoise.peakBytes + count * shape.bytesPerItem,
       };
       const excessive = (Object.keys(added) as (keyof typeof added)[])

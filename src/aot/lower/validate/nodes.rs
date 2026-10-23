@@ -118,20 +118,6 @@ fn is_default(constraint: &SchemaConstraint) -> bool {
 /// An arm of a primitive kind gives back the value it accepts, so it makes no difference which of several takes it.
 fn is_primitive_kind(kind: ShapeKind<'_>) -> bool {
     match kind {
-        ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol => true,
         ShapeKind::Anything(_)
         | ShapeKind::TypeVariable { .. }
         | ShapeKind::AnyObject
@@ -144,6 +130,7 @@ fn is_primitive_kind(kind: ShapeKind<'_>) -> bool {
         | ShapeKind::Object
         | ShapeKind::Union(_)
         | ShapeKind::Constrained { .. } => false,
+        _ => true,
     }
 }
 
@@ -412,9 +399,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
                     let step = Step::TupleElement(index as u32);
                     nodes.push(self.ensure_child(source, element.ty, step)?);
                 }
-                TupleElementKind::Optional
-                | TupleElementKind::Rest
-                | TupleElementKind::Variadic => return Err(self.unsupported(source)),
+                _ => return Err(self.unsupported(source)),
             }
         }
         Ok(ValidationShape::Tuple { elements: nodes })

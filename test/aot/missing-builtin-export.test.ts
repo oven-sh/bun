@@ -1,20 +1,15 @@
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
+import { bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 import { parseModuleExports } from "../../src/codegen/builtins/collect-modules";
+import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `import { name } from "node:fs"` where the built-in module has no such export is a SyntaxError when the module is linked,
 // before any code runs. Ahead-of-time compiled programs must fail the same way instead of running on with `undefined`.
 
 const modes = ["run", "run --aot", "build --compile", "build --compile --aot"] as const;
-
-async function spawned(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function inMode(mode: (typeof modes)[number], cwd: string, entry: string) {
   if (mode.startsWith("run")) return spawned([bunExe(), ...mode.split(" "), entry], cwd);

@@ -6,7 +6,6 @@
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTImageLoading.h>
-#include <JavaScriptCore/AOTObjectCensus.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/MarkedBlockCage.h>
 #include <JavaScriptCore/Options.h>
@@ -161,16 +160,6 @@ extern "C" void Bun__AOT__listRefusedChanges()
 extern "C" void Bun__AOT__setVerbose(bool isVerbose)
 {
     JSC::AOT::setVerbose(isVerbose);
-}
-
-extern "C" void Bun__AOT__dumpObjectCensusIfRequested(JSC::JSGlobalObject* globalObject)
-{
-    JSC::AOT::dumpObjectCensusIfRequested(globalObject->vm());
-}
-
-extern "C" void Bun__AOT__answerObjectCensusRequest(JSC::JSGlobalObject* globalObject)
-{
-    JSC::AOT::answerObjectCensusRequest(globalObject->vm());
 }
 
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address)

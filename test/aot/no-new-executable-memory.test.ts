@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const program = `class Point {
@@ -61,13 +62,15 @@ test.skipIf(!isLinux || process.arch !== "x64")(
   async () => {
     using dir = tempDir("aot-no-executable-memory", { "program.ts": program, "launcher.ts": launcher });
     const executable = join(String(dir), "program");
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", join(String(dir), "program.ts"), "--outfile", executable],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    const { stderr: buildErrors, exitCode: buildExitCode } = await runCommand([
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      join(String(dir), "program.ts"),
+      "--outfile",
+      executable,
+    ]);
     expect({ buildErrors, buildExitCode }).toEqual({ buildErrors: expect.any(String), buildExitCode: 0 });
 
     const run = async (cmd: string[], env: Record<string, string | undefined>) => {

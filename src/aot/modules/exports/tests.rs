@@ -233,9 +233,7 @@ fn unresolved_names_are_link_failures() {
         ModuleFailureKind::ExportAmbiguous { exporter, name } => {
             (failure.importer, true, exporter, name)
         }
-        ModuleFailureKind::Unresolved { .. }
-        | ModuleFailureKind::UnresolvedAtLoad { .. }
-        | ModuleFailureKind::ExportMayBeAbsent { .. } => {
+        _ => {
             panic!("{failure:?}")
         }
     };

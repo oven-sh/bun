@@ -710,7 +710,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...cppOutputs);
 }
 
-/** What says which types a native member may declare, and writes the check of one. */
+/** What says which types a native member may declare. */
 const declaredTypeInputs = (cfg: Ctx["cfg"]): string[] => [
   resolve(cfg.cwd, "src", "codegen", "declared-type-checks.ts"),
 ];

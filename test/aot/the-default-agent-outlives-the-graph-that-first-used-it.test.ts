@@ -2,8 +2,9 @@
 // node:http's requests use by default is made as the module loads, by the host. Made at its first use, it would belong to the graph that
 // happened to send the first request, and once that graph is disposed no request of anybody else through it would ever be answered.
 import { expect, setDefaultTimeout } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
@@ -58,8 +59,7 @@ one agent for all: true true
 `;
 
 async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd);
   return { stdout, errors: stderr.split("\n").filter(line => /^(error|panic)\b/.test(line)), exitCode };
 }
 

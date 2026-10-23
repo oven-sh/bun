@@ -185,13 +185,7 @@ impl<'a, 's> Resolver<'a, 's> {
                     mutability: Mutability::AlwaysLocked,
                 }))
             }
-            ExprState::Unvisited
-            | ExprState::InProgress
-            | ExprState::NotEvaluated
-            | ExprState::Unresolved
-            | ExprState::Held(_)
-            | ExprState::DynamicGlobal(_)
-            | ExprState::Intrinsic(_) => None,
+            _ => None,
         }
     }
 
@@ -205,11 +199,7 @@ impl<'a, 's> Resolver<'a, 's> {
     pub(super) fn is_resolved(&self, expr: ExprId) -> bool {
         match self.state(expr) {
             ExprState::Builtin(_) | ExprState::Held(_) | ExprState::Intrinsic(_) => true,
-            ExprState::Unvisited
-            | ExprState::InProgress
-            | ExprState::NotEvaluated
-            | ExprState::Unresolved
-            | ExprState::DynamicGlobal(_) => false,
+            _ => false,
         }
     }
 

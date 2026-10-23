@@ -2,6 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as runProcess } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
 const entry = `const specifier = process.argv[2];
@@ -27,12 +28,6 @@ if (specifier === "engine-code") {
 }
 console.log("finished");
 `;
-
-async function runProcess(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 describe("crashIfInterpreterIsUsed", () => {
   const dir = tempDir("interpreter-tripwire", { "main.mjs": entry });

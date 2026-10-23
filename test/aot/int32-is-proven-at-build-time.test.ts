@@ -4,6 +4,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -23,8 +24,7 @@ const tsconfig = JSON.stringify({
 const prelude = `import type { int32 } from "bun";\ndeclare const console: { log(...values: unknown[]): void };\n`;
 
 async function run(dir: string, ...cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, cwd: dir, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, dir, { ...bunEnv, NO_COLOR: "1" });
   return { stdout, stderr, exitCode };
 }
 

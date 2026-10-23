@@ -1,0 +1,98 @@
+# switch (name) { case "./first.cjs": require("./first.cjs")(); break; case "./second.cjs": require("./second.cjs")(); break; default: require(name)(operand) }   built with two entry points, main.cjs and third.cjs
+# A computed require() is a switch over the spellings that the build has resolved. The arm of a spelling gets what that module exports and nothing else, also beside a load under a name nobody knows:
+# what the variable of the module holds, which begins as undefined.
+# The arm of every other value gets what an entry point of the program exports and nothing of first.cjs or second.cjs, which would call the operand, the object of any native module, and what the loader makes of a file outside the image: data, so no callee nobody knows
+# RUN: valueflow-why values=f0:v4 values=f0:v7
+# CHECK: values=f0:v4
+# CHECK: operand 0 {{*}} 2 members: primitive0 f3
+# CHECK: values=f0:v7
+# CHECK: operand 0 {{*}} 2 members: primitive0 f4
+# RUN(OTHER): valueflow-solve calls
+# OTHER: f0 v10 -> {{*}}f6
+# OTHER-NOT: unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f7
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v8
+# UNSEEN-NEXT: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}]
+module m1 path="/app/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m2 path="/app/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g2
+module m3 path="/app/third.cjs" displayPath="third.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g3
+entry module=m0
+entry module=m3
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ImportMeta module=m0
+    v1 = PropGet v0 key="path"
+    SwitchString v1 strings=["./first.cjs", "./second.cjs"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    EvaluateModule module=m1 referrer=m0
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3
+    Jump -> next b4()
+  b2():
+    EvaluateModule module=m2 referrer=m0
+    v6 = GetModuleVariable variable=g2
+    v7 = Call v6
+    Jump -> next b4()
+  b3():
+    v8 = RequireDynamic v1 referrer=m0
+    v9 = NewClosure function=f7
+    v10 = Call v8, -, v9
+    Jump -> next b4()
+  b4():
+    Return
+}
+function f1 name="first" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="second" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f3 name="exportedByFirst" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = Call v0
+    Return
+}
+function f4 name="exportedBySecond" module=m2 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = Call v0
+    Return
+}
+function f5 name="third" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f6 name="exportedByThird" module=m3 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="operand" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

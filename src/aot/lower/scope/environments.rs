@@ -77,15 +77,7 @@ pub(super) fn is_listed_at_allocation(
         },
         BindingRef::Slot(_, slot) => match slot {
             ScopeSlot::Class(_) => false,
-            ScopeSlot::This
-            | ScopeSlot::NewTarget
-            | ScopeSlot::Callee
-            | ScopeSlot::HomeObject
-            | ScopeSlot::Arguments
-            | ScopeSlot::ArgumentsBinding
-            | ScopeSlot::CommonJs(_)
-            | ScopeSlot::WithObject
-            | ScopeSlot::EvalVariables => true,
+            _ => true,
         },
     }
 }
@@ -174,10 +166,6 @@ fn slot_position(
         ScopeSlot::Callee | ScopeSlot::Class(ClassSlot::ClassObject) => {
             DeclaredType::from_compiler(TypeTable::FUNCTION)
         }
-        ScopeSlot::HomeObject
-        | ScopeSlot::Arguments
-        | ScopeSlot::WithObject
-        | ScopeSlot::EvalVariables => DeclaredType::from_compiler(TypeTable::OBJECT),
         ScopeSlot::CommonJs(variable) => {
             if variable == CommonJsVariable::Exports
                 && let Some(position) = own_exports_position(file)
@@ -201,6 +189,7 @@ fn slot_position(
             };
             class::static_field_position(file, class, member)
         }
+        _ => DeclaredType::from_compiler(TypeTable::OBJECT),
     }
 }
 
@@ -233,27 +222,7 @@ fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> Dec
             positions::class_this_type(file, class, Some(member))
         }
         ScopeKind::File => own_exports_position(file).unwrap_or_else(DeclaredType::untyped),
-        ScopeKind::Module(_)
-        | ScopeKind::Block
-        | ScopeKind::Class(_)
-        | ScopeKind::Interface(_)
-        | ScopeKind::TypeAlias(_)
-        | ScopeKind::TypeParams
-        | ScopeKind::Enum(_)
-        | ScopeKind::TypeParamList(_)
-        | ScopeKind::Param(_)
-        | ScopeKind::ReturnType(_)
-        | ScopeKind::Extends
-        | ScopeKind::InferConstraint
-        | ScopeKind::StaticMember
-        | ScopeKind::ComputedName
-        | ScopeKind::BaseExpression
-        | ScopeKind::FunctionName(_)
-        | ScopeKind::PropertyDeclaration(..)
-        | ScopeKind::PropertyType(..)
-        | ScopeKind::With(_)
-        | ScopeKind::ClassDecorators(_)
-        | ScopeKind::ImplicitBlock(_) => DeclaredType::untyped(),
+        _ => DeclaredType::untyped(),
     }
 }
 

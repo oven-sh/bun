@@ -5,8 +5,9 @@
 // (`/// <reference types="bun-types/aot" />`, or `import { JSON } from "bun"`: docs/bundler/validate.mdx, "Types in your editor"). A build knows the
 // type argument by itself; `bun check` learns it from the installed types, as tsc does, and says TS2558 without them. The tests that state the old design are todo.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../../aot/harness/run";
 
 const options = (more: object) =>
   JSON.stringify({
@@ -75,14 +76,7 @@ const cannotFindBun =
 
 async function check(files: Record<string, string>, ...args: string[]) {
   using dir = tempDir("check-validation-by-type", files);
-  await using checked = Bun.spawn({
-    cmd: [bunExe(), "check", ...args],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "check", ...args], String(dir));
   return { stdout: stdout.trim().split("\n"), stderr, exitCode };
 }
 
@@ -177,13 +171,6 @@ test.todo("the rules of bun lint that need types see the type that is written, n
     "--rule",
     `typescript/${rule}: error`,
   ]);
-  await using linted = Bun.spawn({
-    cmd: [bunExe(), "lint", "--type-aware", ...rules, "a.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([linted.stdout.text(), linted.stderr.text(), linted.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "lint", "--type-aware", ...rules, "a.ts"], String(dir));
   expect({ said: exitCode ? stdout + stderr : "", exitCode }).toEqual({ said: "", exitCode: 0 });
 });

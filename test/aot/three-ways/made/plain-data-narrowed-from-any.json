@@ -1,27 +1,4 @@
 {
- "a_getter": "all agree",
- "a_lie_in_a_member": "all agree",
  "a_member_is_missing": "alone: THROWN: TypeError: undefined is not an object (evaluating 'undefined.length')",
- "a_null_prototype": "all agree",
- "a_predicate": "all agree",
- "a_proxy": "all agree",
- "an_array": "all agree",
- "an_instance": "all agree",
- "an_optional_one_comes_later": "all agree",
- "frozen": "all agree",
- "identity": "all agree",
- "in": "all agree",
- "in_a_weakmap_and_a_set": "all agree",
- "inherited": "all agree",
- "many_turns": "all agree",
- "more_than_the_type_names": "all agree",
- "no_object": "alone: THROWN: TypeError: null is not an object (evaluating 'null.count')",
- "read": "all agree",
- "store_seen_by_the_other_holder": "all agree",
- "the_order_of_keys": "all agree",
- "the_other_holder_adds_a_property": "all agree",
- "the_other_holder_deletes": "all agree",
- "the_other_holder_stores": "all agree",
- "twice": "all agree",
- "what_it_holds_is_shared": "all agree"
+ "no_object": "alone: THROWN: TypeError: null is not an object (evaluating 'null.count')"
 }

@@ -55,12 +55,7 @@ impl ImportSiteKind {
             | ImportSiteKind::ImportMetaRequire(call)
             | ImportSiteKind::ImportMetaResolve(call)
             | ImportSiteKind::GetBuiltinModule(call) => Some(call),
-            ImportSiteKind::JsxRuntime
-            | ImportSiteKind::JsxPackage
-            | ImportSiteKind::Import(_)
-            | ImportSiteKind::ExportFrom(_)
-            | ImportSiteKind::ExportStar(_)
-            | ImportSiteKind::ImportEquals(_) => None,
+            _ => None,
         }
     }
 }

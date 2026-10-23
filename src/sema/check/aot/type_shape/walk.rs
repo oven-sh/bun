@@ -22,11 +22,6 @@ fn shape_of_intrinsic<'c>(intrinsic: Intrinsic) -> Result<ShapeKind<'c>, GaveUp>
         | Intrinsic::NonInferrableAny => ShapeKind::Anything(AnythingReason::Any),
         Intrinsic::Unknown => ShapeKind::Anything(AnythingReason::Unknown),
         Intrinsic::Void => ShapeKind::Anything(AnythingReason::Void),
-        Intrinsic::Never
-        | Intrinsic::SilentNever
-        | Intrinsic::UnreachableNever
-        | Intrinsic::ImplicitNever
-        | Intrinsic::UniqueLiteral => ShapeKind::Never,
         Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => {
             ShapeKind::Undefined
         }
@@ -36,6 +31,7 @@ fn shape_of_intrinsic<'c>(intrinsic: Intrinsic) -> Result<ShapeKind<'c>, GaveUp>
         Intrinsic::BigInt => ShapeKind::BigInt,
         Intrinsic::Symbol => ShapeKind::Symbol,
         Intrinsic::Object => ShapeKind::AnyObject,
+        _ => ShapeKind::Never,
     })
 }
 

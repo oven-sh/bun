@@ -9,10 +9,9 @@ mod random_graphs;
 mod references;
 mod sections;
 mod strings;
-mod text;
 mod types;
 
-use super::generated::{Function, FunctionRelations};
+use super::generated::Function;
 use super::ids::{FunctionId, Id};
 use super::print::print_function;
 use super::program::Program;
@@ -42,18 +41,13 @@ impl Generator {
     }
 }
 
-// Without the relations: who prints a function this way looks at its header and its body, and the relations have tests of their own.
 pub(super) fn print_alone(function: &Function) -> String {
-    let function = Function {
-        relations: FunctionRelations::default(),
-        ..function.clone()
-    };
     let program = Program::new();
     let mut text = String::new();
     print_function(
         program.name_tables(),
         FunctionId::new(0),
-        &function,
+        function,
         &mut text,
     );
     text

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../../../aot/harness/run";
 
 const expected = [
   'history event ["one"]',
@@ -25,13 +26,11 @@ const expected = [
 test.skipIf(process.platform === "win32")("history of a readline interface and of a REPL", async () => {
   using home = tempDir("history-home", {});
   const { NODE_REPL_HISTORY: _, ...env } = bunEnv;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "history-of-interface-and-repl-fixture.js")],
-    env: { ...env, HOME: String(home), HISTORY_HOME: String(home) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), join(import.meta.dir, "history-of-interface-and-repl-fixture.js")],
+    undefined,
+    { ...env, HOME: String(home), HISTORY_HOME: String(home) },
+  );
   expect({ lines: stdout.trimEnd().split("\n"), stderr, exitCode }).toEqual({
     lines: expected,
     stderr: "",

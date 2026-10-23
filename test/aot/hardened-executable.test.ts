@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { readElfFile, stackMayBeRead, stackMayBeWritten, type ElfFile } from "./elf-file";
 import { isHardened } from "./hardened";
+import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 const isX64 = process.arch === "x64";
@@ -16,8 +17,7 @@ console.log(new Point(3, 4).length());
 `;
 
 async function run(cmd: string[], env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd, undefined, env);
   return { stdout, stderr, exitCode };
 }
 

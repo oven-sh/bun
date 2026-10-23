@@ -1,9 +1,6 @@
 use std::io::Write as _;
 
-use bun_aot::diagnostics::{InternalError, log_internal_error};
-use bun_aot::ir::generated::InternalErrorKind;
 use bun_exe_format::identity::IdentityError;
-use bun_exe_format::payload_references::PayloadReferenceError;
 use bun_options_types::compile_target::CompileTarget;
 
 use super::{CompileFailure, RequestOrigin};
@@ -67,18 +64,6 @@ impl CompileFailure {
             }
         }
     }
-}
-
-pub(super) fn log_payload_reference(log: &mut bun_ast::Log, error: PayloadReferenceError) {
-    let kind = InternalErrorKind::WritableSectionInImage;
-    let mut message = kind.message().as_bytes().to_vec();
-    let _ = write!(message, " ({}", error.name());
-    if let Some(address) = error.address() {
-        let _ = write!(message, " at {address:#x}");
-    }
-    message.push(b')');
-    let stage = kind.stage();
-    log_internal_error(log, InternalError { stage, message });
 }
 
 fn write_unavailable(origin: RequestOrigin, out: &mut Vec<u8>) {

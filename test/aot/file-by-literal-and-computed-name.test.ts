@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 // A file that one place of a program names in writing and another by a name that is computed is one module under `bun run`. A
@@ -27,12 +28,6 @@ const name = ["./lib", ".cjs"].join("");
 console.log(made("./lib.cjs").next(), made(name).next(), made("./lib.cjs") === made(name), globalThis.runs);
 `,
 };
-
-async function run(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 async function sameAsPlain(main: string, ...flags: string[]) {
   using dir = tempDir("written-and-computed", files);

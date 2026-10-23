@@ -467,13 +467,7 @@ impl Scan<'_, '_, '_> {
             | BindingKind::Const
             | BindingKind::Class
             | BindingKind::Function => true,
-            BindingKind::NoBinding
-            | BindingKind::Import
-            | BindingKind::TypeScriptContainer
-            | BindingKind::SimpleCatchParameter
-            | BindingKind::ClassInnerName
-            | BindingKind::FunctionName
-            | BindingKind::Parameter => false,
+            _ => false,
         };
         // An ES importer holds what the getter answered when the file was linked. Nobody can tell where nothing stores again.
         let is_stable = text.bound.is_stable_binding(symbol);

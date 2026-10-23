@@ -1,0 +1,28 @@
+# hidden = globalThis[name]; process[key] = 1; Object.defineProperty semantics: hidden[key] defined as a closure; delete hidden[key]; process.release
+# `globalThis[name]` answers the unknown object, and beside it the operand lists `process`. The store under a key nobody knows leaves no member of `process` locked, so the definition and the deletion work at run time:
+# a read by name finds what was defined, and undefined once the member is gone. HeapRule::store() says the same of a store
+# RUN: valueflow-why values=f0:v10
+# primitive0 is undefined
+# CHECK: result {{*}} primitive0 {{*}} f1
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ElemGet v0, v1
+    v3 = Builtin builtin=Process
+    v4 = Integer integer=1
+    ElemSet v3, v1, v4 mode=Sloppy
+    v6 = NewClosure function=f1
+    v7 = Convert v2 declared={type=object}
+    ElemDefine v7, v1, v6
+    v9 = ElemDelete v2, v1 mode=Sloppy
+    v10 = PropGet v3 key="release"
+    Return v10
+}
+function f1 name="mine" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

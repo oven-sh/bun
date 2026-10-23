@@ -1,0 +1,26 @@
+# Bun.serve({ port: 0, fetch })
+# No object with a field `app` reaches the call: the world stays closed. A server is no reason to open it
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code no
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="port" declared={type=number}}, {key="fetch" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    v2 = NewObject layout=L0
+    v3 = Integer integer=0
+    PropDefine v2, v3 key="port"
+    v5 = NewClosure function=f1
+    PropDefine v2, v5 key="fetch"
+    v7 = FinishObject v2
+    v8 = Call v1, v0, v7
+    Return
+}
+function f1 name="fetch" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

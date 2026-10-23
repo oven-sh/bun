@@ -6,6 +6,7 @@ import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
+import { run as runCommand } from "../../aot/harness/run";
 import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
@@ -157,8 +158,7 @@ describe.skipIf(!supported)("a file that is imported for its path", () => {
           expect.not.stringContaining("error"),
           0,
         ]);
-        await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const { stdout, stderr, exitCode } = await runCommand([join(String(dir), "out")]);
         expect({ flags, stdout, stderr, exitCode }).toEqual({
           flags,
           stdout: expected[entry],
@@ -724,15 +724,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
       "script.sh": "echo the shell script ran\n",
     });
     chmodSync(join(String(dir), "node_modules/.bin/tool"), 0o755);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      env: bunEnv,
-      cwd: String(dir),
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runCommand([bunExe(), ...args], String(dir));
     expect(stderr).toContain(message);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
@@ -1020,14 +1012,10 @@ test.concurrent.each([
   ["x", 'error: --aot-graph-fd: "x" is not a file descriptor\n'],
 ])("--aot-graph-fd=%s is an error", async (descriptor, message) => {
   using dir = tempDir("run-aot", { "a.ts": `console.log("ran");` });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--aot-graph-fd=" + descriptor, "a.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(
+    [bunExe(), "--aot-graph-fd=" + descriptor, "a.ts"],
+    String(dir),
+  );
   expect(stderr).toContain(message);
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);

@@ -1,5 +1,5 @@
 // Native code calls functions with a rest parameter, so each rest array is made from the arguments in the frame. 1,000 of them hold no argument, 1,000 one, 1,000 two, and all stay alive.
-// object-census.test.ts runs it with BUN_JSC_dumpAOTObjectCensusAtExit=1 and looks at their capacities. Arrays that grow afterwards hold what plain Bun's hold. The output is that of plain Bun.
+// Arrays that grow afterwards hold what plain Bun's hold. The output is that of plain Bun.
 const kept: unknown[][] = [];
 const grown: unknown[][] = [];
 const literals: number[][] = [];

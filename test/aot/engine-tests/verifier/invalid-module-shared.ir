@@ -1,0 +1,19 @@
+# two modules with a file of their own do not share a path, and no two modules share a body or an exports variable
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 3
+
+variable g0 name="exports" module=m7 declared={type=anything} initialization=Undefined
+module m0 path="main" displayPath="main" body=f0
+module m1 path="bun:ffi" displayPath="bun:ffi" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi
+module m2 path="bun:ffi" displayPath="goodSecondRuntimeModuleOfPath" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi
+module m3 path="external" displayPath="external" kind=External referrer=m0
+module m4 path="external" displayPath="goodSecondExternalModuleOfPath" kind=External referrer=m1
+module m5 path="main" displayPath="badPathOfOtherModule"
+module m6 path="badBodyOfOtherModule" displayPath="badBodyOfOtherModule" body=f0
+module m7 path="commonjs" displayPath="commonjs" kind=CommonJs body=f1 exportsVariable=g0
+module m8 path="badExportsVariableOfOtherModule" displayPath="badExportsVariableOfOtherModule" kind=CommonJs body=f2 exportsVariable=g0
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}]
+function f1 name="" kind=CommonJsModule results=[{type=anything}]
+function f2 name="" kind=CommonJsModule results=[{type=anything}]

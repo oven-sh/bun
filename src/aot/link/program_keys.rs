@@ -100,10 +100,7 @@ impl ProgramModule {
                 };
                 (file, VariableKey::InnerModuleExports(callback))
             }
-            ProgramModule::Face(_)
-            | ProgramModule::Check(_)
-            | ProgramModule::Runtime(_)
-            | ProgramModule::External { .. } => return None,
+            _ => return None,
         };
         Some(ProgramVariableKey::Declared(InProject {
             project: file.project,
@@ -157,28 +154,13 @@ impl KeyContext<'_> {
             LayoutKey::Library(ClassDeclaration::Function(function)) => {
                 (ProjectId::Runtime, LayoutKey::ConstructorFunction(function))
             }
-            LayoutKey::Class(_)
-            | LayoutKey::ConstructorFunction(_)
-            | LayoutKey::ObjectType { .. }
-            | LayoutKey::UntypedLiteral { .. }
-            | LayoutKey::Container(_)
-            | LayoutKey::TypeParameter(_)
-            | LayoutKey::Environment { .. } => (self.project, key),
+            _ => (self.project, key),
         };
         InProject { project, key }
     }
 
     pub fn variable_key(&self, key: VariableKey) -> ProgramVariableKey {
         match key {
-            VariableKey::Symbol(_)
-            | VariableKey::ModuleExports(_)
-            | VariableKey::InnerModuleExports(_)
-            | VariableKey::ClassSlot { .. }
-            | VariableKey::ModulePath { .. }
-            | VariableKey::PrivateState { .. } => ProgramVariableKey::Declared(InProject {
-                project: self.project,
-                key,
-            }),
             VariableKey::SyntheticExport(id) => {
                 let export = self.graph.synthetic_export(id);
                 ProgramVariableKey::SyntheticExport {
@@ -193,6 +175,10 @@ impl KeyContext<'_> {
                     name: export.name,
                 }
             }
+            _ => ProgramVariableKey::Declared(InProject {
+                project: self.project,
+                key,
+            }),
         }
     }
 

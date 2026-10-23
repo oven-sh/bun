@@ -1365,6 +1365,8 @@ pub mod rare {
     pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
     /// `import.meta`
     pub const IMPORT_META: u32 = 1 << 28;
+    /// `010`, `08`, `"\1"` or `"\8"`, which only sloppy code allows. Only set for text that is compiled.
+    pub const LEGACY_OCTAL: u32 = 1 << 29;
     /// The bits that the parser only sets for oxc's dialect. In another dialect a clear bit means nothing.
     pub const ONLY_IN_OXC_DIALECT: u32 = NESTED_MODULE_SYNTAX | MAY_REDECLARE | ODD_EXPORT;
 }

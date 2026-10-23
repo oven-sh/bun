@@ -144,13 +144,7 @@ fn write_item(line: &mut Vec<u8>, id: BuiltinId) -> bool {
             let word: &[u8] = match entry.kind {
                 BuiltinKind::Namespace => b"module ",
                 BuiltinKind::NativeBinding => b"native ",
-                BuiltinKind::Constructor
-                | BuiltinKind::Function
-                | BuiltinKind::Prototype
-                | BuiltinKind::Method
-                | BuiltinKind::Accessor
-                | BuiltinKind::DataProperty
-                | BuiltinKind::Constant => b"builtin ",
+                _ => b"builtin ",
             };
             line.extend_from_slice(word);
             line.extend_from_slice(table::text_of(id).as_bytes());

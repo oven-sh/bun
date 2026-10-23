@@ -17,13 +17,7 @@ impl Resolver<'_, '_> {
             .binding_stability_ignoring(symbol, &is_dead_store)
         {
             BindingStability::Stable => true,
-            BindingStability::NoBinding
-            | BindingStability::Linked
-            | BindingStability::Stored
-            | BindingStability::NotInitializedOnce
-            | BindingStability::VisibleToEval
-            | BindingStability::MappedArgument
-            | BindingStability::ContainerMember => false,
+            _ => false,
         }
     }
 
@@ -44,13 +38,7 @@ impl Resolver<'_, '_> {
                     members: members.collect::<Option<_>>()?,
                 })
             }
-            BindingInitializer::Class(_)
-            | BindingInitializer::Function(_)
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Import
-            | BindingInitializer::Opaque => None,
+            _ => None,
         }
     }
 
@@ -120,13 +108,7 @@ impl Resolver<'_, '_> {
             let path: SmallVec<[Atom; 4]> = input.hir.texts(names).collect();
             let value = match self.resolve_global_path(&path) {
                 ExprState::Builtin(value) => value,
-                ExprState::Unvisited
-                | ExprState::InProgress
-                | ExprState::NotEvaluated
-                | ExprState::Unresolved
-                | ExprState::Held(_)
-                | ExprState::DynamicGlobal(_)
-                | ExprState::Intrinsic(_) => continue,
+                _ => continue,
             };
             let is_local = self.is_stable(symbol)
                 && !input.hir[import].flags.contains(Flags::EXPORT)
@@ -179,12 +161,7 @@ impl Resolver<'_, '_> {
         let bound = self.input.bound;
         let is_plain_binding = match bound.binding_stability_ignoring(symbol, &|_| true) {
             BindingStability::Stable | BindingStability::NotInitializedOnce => true,
-            BindingStability::NoBinding
-            | BindingStability::Linked
-            | BindingStability::Stored
-            | BindingStability::VisibleToEval
-            | BindingStability::MappedArgument
-            | BindingStability::ContainerMember => false,
+            _ => false,
         };
         is_plain_binding
             && !self.exported_symbols.contains(&symbol)

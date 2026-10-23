@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { unsupported } from "./run-programs";
 
 const files = {
@@ -19,12 +20,6 @@ const files = {
     console.log(response.getHeader("content-type"), response.hasHeader("Content-Type"), response.headersSent, JSON.stringify(response.getHeaders()));
   `,
 };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 function operationsOf(map: string, name: string, module: string) {
   const lines = map.split("\n");

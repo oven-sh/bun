@@ -34,6 +34,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { units as partsOfOneTestFile } from "../test/aot/parts.mts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -1330,6 +1331,7 @@ async function runTests(): Promise<TestResult[]> {
       !/stress/i.test(t) &&
       isParallelAllowlisted(t) &&
       !needsDockerService(t) &&
+      !isPartOfOneTestFile(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
 
     const serialTests = tests.filter(t => !isParallelSafeTest(t));
@@ -2198,10 +2200,11 @@ async function spawnBunTest(
     testArgs.push(`--reporter-outfile=${junitFilePath}`);
   }
 
-  testArgs.push(absPath);
+  testArgs.push(isPartOfOneTestFile(testPath) ? join(opts.cwd, "test", "aot", "parts.test.ts") : absPath);
 
   const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    ...(isPartOfOneTestFile(testPath) && { TEST_PART: testPath }),
     ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
@@ -2503,6 +2506,11 @@ function isTestStrict(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
+/** It has the name of a test file and is none: test/aot/parts.mts. */
+function isPartOfOneTestFile(path: string): boolean {
+  return partsOfOneTestFile.includes(path.replaceAll("\\", "/").replace(/^test\//, ""));
+}
+
 function isHidden(path: string): boolean {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
@@ -2525,7 +2533,7 @@ function getTests(cwd: string): string[] {
       }
     }
   }
-  return [...getFiles(cwd, "")].sort();
+  return [...getFiles(cwd, ""), ...partsOfOneTestFile.map(path => join(path))].sort();
 }
 
 /** An entry of test/vendor.json. */

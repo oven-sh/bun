@@ -321,11 +321,7 @@ fn test_dead_zone_before_value(
             dead_zone::get_checked(lowering, symbol, name);
             true
         }
-        BindingForm::Stored
-        | BindingForm::NotAValue
-        | BindingForm::Callee { .. }
-        | BindingForm::MappedArgument { .. }
-        | BindingForm::ContainerMember { .. } => false,
+        _ => false,
     }
 }
 
@@ -340,11 +336,7 @@ fn is_plain_assignment_target(
     };
     match stores[index].kind {
         StoreKind::Assign => true,
-        StoreKind::CompoundAssign(_)
-        | StoreKind::Update(_)
-        | StoreKind::Destructure
-        | StoreKind::ForIn
-        | StoreKind::ForOf => false,
+        _ => false,
     }
 }
 
@@ -368,11 +360,7 @@ fn find_member_container(
     };
     match file.scopes.form(symbol) {
         BindingForm::ContainerMember { container } => Some(container),
-        BindingForm::NotAValue
-        | BindingForm::Import
-        | BindingForm::Callee { .. }
-        | BindingForm::MappedArgument { .. }
-        | BindingForm::Stored => None,
+        _ => None,
     }
 }
 

@@ -60,31 +60,9 @@ fn is_repeated(hir: &File<'_>, bound: &BoundBuilder, statement: StmtId) -> bool 
         let parent = match bound.parent_of_stmt(child) {
             Parent::Stmt(parent) if parent.is_some() => parent,
             Parent::FnBody(_) | Parent::File | Parent::Module(_) => return false,
-            Parent::None
-            | Parent::Expr(_)
-            | Parent::Stmt(_)
-            | Parent::VarInit(_)
-            | Parent::ParamDefault(_)
-            | Parent::PatPropDefault(_)
-            | Parent::PatElemDefault(_)
-            | Parent::Prop(_)
-            | Parent::PropKey(_)
-            | Parent::PatKey(_)
-            | Parent::MemberKey(_)
-            | Parent::MethodKey(_)
-            | Parent::MemberInit(_)
-            | Parent::EnumInit(_)
-            | Parent::Case(_)
-            | Parent::ClassExtends(_)
-            | Parent::ClassDecorator(_)
-            | Parent::MemberDecorator(_)
-            | Parent::ParamDecorator(_) => return true,
+            _ => return true,
         };
         match hir[parent].kind {
-            StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. } => return true,
             StmtKind::For { init, .. } if init != child => return true,
             StmtKind::For { .. }
             | StmtKind::Empty
@@ -115,6 +93,7 @@ fn is_repeated(hir: &File<'_>, bound: &BoundBuilder, statement: StmtId) -> bool 
             | StmtKind::ExportAsNamespace(_)
             | StmtKind::With { .. }
             | StmtKind::Directive { .. } => {}
+            _ => return true,
         }
         child = parent;
     }
@@ -396,27 +375,6 @@ pub(super) fn find_binding_initializer(
             ImportEqualsTarget::Entity(_) => BindingInitializer::EntityName(import),
             ImportEqualsTarget::Require(_) => BindingInitializer::Import,
         },
-        Decl::Param(_)
-        | Decl::Interface(_)
-        | Decl::Alias(_)
-        | Decl::EnumMember(_)
-        | Decl::TypeParam(_)
-        | Decl::ImportDefault(_)
-        | Decl::ImportNamespace(_)
-        | Decl::ImportSpec(_)
-        | Decl::ExportSpec(_)
-        | Decl::ExportStarAs(_)
-        | Decl::UmdGlobal(_)
-        | Decl::File
-        | Decl::ModuleExports(_)
-        | Decl::ExportsProperty(_)
-        | Decl::Expando(_)
-        | Decl::ObjectLiteral(_)
-        | Decl::CommonJsVariable
-        | Decl::Member(_)
-        | Decl::ParameterProperty(_)
-        | Decl::ThisProperty(_)
-        | Decl::Property(_)
-        | Decl::TypeLiteral(_) => BindingInitializer::Opaque,
+        _ => BindingInitializer::Opaque,
     }
 }

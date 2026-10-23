@@ -1,8 +1,9 @@
 import { Glob } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 
 const repository = join(import.meta.dir, "..", "..");
 const read = (path: string) => readFileSync(join(repository, path), "utf8");
@@ -101,14 +102,7 @@ test("--help uses no banned phrase", async () => {
   using dir = tempDir("plain-english", {});
   const found = await Promise.all(
     ["compile", "build", "run", "test", "check"].map(async command => {
-      await using child = Bun.spawn({
-        cmd: [bunExe(), command, "--help"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      const { stdout, stderr, exitCode } = await run([bunExe(), command, "--help"], String(dir));
       expect(stdout + stderr).toContain("--aot");
       expect(exitCode).toBe(0);
       const help = (stdout + stderr)

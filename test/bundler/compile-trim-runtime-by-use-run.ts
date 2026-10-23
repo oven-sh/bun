@@ -4,19 +4,14 @@ import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } fr
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { slot, spawned, unsupported } from "../aot/run-programs";
-import { canTrim, featureNamed, featureOf, findFeature, libraries, modulesLoadedFor, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
+import { canTrim, featureNamed, featureOf, findFeature, modulesLoadedFor, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
+import { run } from "../aot/harness/run";
 
 const bytesAt = (path: string) => readFileSync(path + (isWindows ? ".exe" : ""));
 
 function executableAt(path: string) {
   const bytes = bytesAt(path);
   return { size: bytes.length, contents: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
-}
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
 }
 
 const features: Record<string, { implements: string; program: string; prints: string }> = {
@@ -205,6 +200,8 @@ export interface ProgramOptions {
   keptToday?: boolean;
   // Known gaps. Forced out, the feature still runs: a feature that stays needs the same code, or the feature owns less than the smallest group of the link (scripts/build/trim/partition.ts).
   runsToday?: string[];
+  // One of Bun's own modules catches the error and does without the feature: the program ends like the untrimmed one and prints something else.
+  fallsBack?: string[];
   // A known bug, in a sentence. The test is red as soon as the program runs.
   failsToday?: string;
 }
@@ -217,46 +214,17 @@ const programFiles = readdirSync(programs)
 const neighbors = join(programs, "near");
 const neighborNames = readdirSync(neighbors).sort();
 
-const mostProgramsInAPart = 16;
-const mostTestsInAPart = 12;
-
-function partNumbers(kind: "" | "features-") {
-  const pattern = new RegExp(`^compile-trim-runtime-by-use-${kind}(\\d+)\\.test\\.ts$`);
-  return readdirSync(import.meta.dir)
-    .flatMap(name => pattern.exec(name)?.slice(1) ?? [])
-    .map(Number)
-    .sort((a, b) => a - b);
-}
-
 function deal(part: number, parts: number) {
   let next = 0;
-  let held = 0;
-  const mine = () => {
-    const isMine = next++ % parts === part - 1;
-    if (isMine) held++;
-    return isMine;
-  };
+  const mine = () => next++ % parts === part - 1;
   const each: typeof test.each = (table: readonly any[]) => test.each(table.filter(mine));
   const dealtTest = (name: string, body: () => Promise<void>) => {
     if (mine()) test(name, body);
   };
-  return { mine, held: () => held, test: Object.assign(dealtTest, { each }) };
+  return { mine, test: Object.assign(dealtTest, { each }) };
 }
 
 export function testDeal() {
-  test.each(["", "features-"] as const)("the files compile-trim-runtime-by-use-%s<n>.test.ts are numbered from 1 with no gap", kind => {
-    const numbers = partNumbers(kind);
-    expect(numbers).toEqual(numbers.map((_, index) => index + 1));
-  });
-
-  test(`no part holds more than ${mostProgramsInAPart} programs`, () => {
-    const parts = partNumbers("").length;
-    expect(
-      Math.ceil((programFiles.length + neighborNames.length) / parts),
-      `A test file has five minutes in CI. Add test/bundler/compile-trim-runtime-by-use-${parts + 1}.test.ts, a copy of the one before it with its number raised.`,
-    ).toBeLessThanOrEqual(mostProgramsInAPart);
-  });
-
   test("every program and option file names a feature declared in src/trim/features, with the declared spelling", () => {
     const wrong: string[] = [];
     const check = (where: string, name: string, options: ProgramOptions) => {
@@ -270,8 +238,7 @@ export function testDeal() {
   });
 }
 
-export function testFeatures(part: number) {
-  const parts = partNumbers("features-").length;
+export function testFeatures(part: number, parts: number) {
   const dealt = deal(part, parts);
 
   describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim removes what the program doesn't use", () => {
@@ -484,25 +451,16 @@ export function testFeatures(part: number) {
     test("a native library leaves none of its texts in the file when its features are removed", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      const linked = linkedLibraries.map(name => libraries.find(each => each.name === name)!);
       expect(textsOfLibrariesIn(readFileSync(bunExe()))).toEqual(linkedLibraries.flatMap(library => textsOfLibraries[library]!.map(text => `${library}: ${text}`)));
-      expect(linked.filter(library => library.hasRetainedBytes).map(library => library.name)).toEqual([]);
-      await build(folder, "hello.ts", "without", [...new Set(linked.flatMap(library => library.features))]);
+      await build(folder, "hello.ts", "without");
       expect(await run([join(folder, "without", "program")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
       if (!isWindows) expect(textsOfLibrariesIn(bytesAt(join(folder, "without", "program")))).toEqual([]);
     });
   });
-
-  test(`part ${part} of ${parts} holds no more than ${mostTestsInAPart} of these tests`, () => {
-    expect(
-      dealt.held(),
-      `A test file has five minutes in CI. Add test/bundler/compile-trim-runtime-by-use-features-${parts + 1}.test.ts, a copy of the one before it with its number raised.`,
-    ).toBeLessThanOrEqual(mostTestsInAPart);
-  });
 }
 
-export function testPrograms(part: number) {
-  const { mine } = deal(part, partNumbers("").length);
+export function testPrograms(part: number, parts: number) {
+  const { mine } = deal(part, parts);
 
   (!canTrim || unsupported ? describe.skip : describe.concurrent)("--compile --aot --trim, feature by feature", () => {
     for (const file of programFiles.filter(mine)) {
@@ -511,6 +469,7 @@ export function testPrograms(part: number) {
       const features = featuresOfProgram(name, options);
       const says = new Map(Object.entries(options.says ?? {}).map(([spelling, text]) => [findFeature(spelling), text]));
       const runsToday = new Set((options.runsToday ?? []).map(featureNamed));
+      const fallsBack = new Set((options.fallsBack ?? []).map(featureNamed));
 
       const declare = isWindows && options.posix === true ? test.skip : options.failsToday !== undefined ? test.failing : test;
       declare(
@@ -540,11 +499,18 @@ export function testPrograms(part: number) {
                 expect(failed, `${feature} says that it was removed: take it out of runsToday in ${name}.json`).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
                 continue;
               }
+              if (fallsBack.has(feature)) {
+                expect({ stderr: failed.stderr, exitCode: failed.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+                expect(failed.stdout).not.toBe(whole.stdout);
+                continue;
+              }
               const sentence = `--trim removed ${textOf(feature)} from this executable`;
               const importFailed = modulesLoadedFor([feature]).find(specifier => failed.stderr.includes(`Cannot load '${specifier}': it isn't in this executable.`) && failed.stderr.includes("ERR_MODULE_NOT_FOUND"));
               const isCaughtByTheProgram = failed.stdout.includes("ERR_FEATURE_REMOVED") || failed.stdout.includes(`${textOf(feature)} was removed by --trim because your code never uses it.`);
-              if (importFailed === undefined && !isCaughtByTheProgram && !saysFeatureWasRemoved(failed.stderr, feature)) expect(failed.stderr).toContain(says.get(feature) ?? sentence);
-              expect(isCaughtByTheProgram ? [70, 1, 0] : [70, 1]).toContain(failed.exitCode);
+              const isSaid = saysFeatureWasRemoved(failed.stderr, feature);
+              if (importFailed === undefined && !isCaughtByTheProgram && !isSaid) expect(failed.stderr).toContain(says.get(feature) ?? sentence);
+              // Where one of Bun's own modules catches the error and prints it, as Node's inspector.open() does, the program goes on.
+              expect(isCaughtByTheProgram || isSaid ? [70, 1, 0] : [70, 1]).toContain(failed.exitCode);
             }
           }),
         600_000,

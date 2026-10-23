@@ -1,7 +1,6 @@
 use bun_bundler::options::OutputFile;
 use bun_core::{StringBuilder, StringPointer};
 use bun_exe_format::macho::MachoFile;
-use bun_exe_format::payload_references::PayloadReferenceError;
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 use bun_sys::Fd;
 
@@ -9,7 +8,7 @@ use crate::StandaloneModuleGraph::{
     CompileResult, CompileTarget, Flags, RuntimeOptions, to_bytes, to_executable,
 };
 use crate::compiled_program::{CompiledProgramInput, EntryPointPathPointers, append_record};
-use crate::executable_file::{ImageRange, ImageSymbols, check_written_payload};
+use crate::executable_file::{ImageRange, ImageSymbols};
 
 pub struct GraphRequest<'a> {
     pub target: &'a CompileTarget,
@@ -40,8 +39,6 @@ pub struct ExecutableDetails {
     pub has_symbols: bool,
     /// `bun_exe_format::build_id`, for an executable that holds a compiled program.
     pub build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
-    /// `Some`: the executable is written and must not be kept.
-    pub payload_reference_error: Option<PayloadReferenceError>,
 }
 
 pub struct ExecutableOutcome {
@@ -153,17 +150,11 @@ impl InjectionAdditions<'_> {
         if self.symbols.is_some() && !self.has_symbols {
             bun_core::warn!("could not add symbols of compiled functions to this executable");
         }
-        let payload_check = if self.has_code {
-            check_written_payload(file)
-        } else {
-            Ok(())
-        };
         ExecutableDetails {
             trim_summary: self.trim_summary,
             size: bun_sys::get_file_size(file).unwrap_or(0),
             has_symbols: self.has_symbols,
             build_id: self.build_id,
-            payload_reference_error: payload_check.err(),
         }
     }
 }

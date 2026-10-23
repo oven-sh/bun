@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
+import { run } from "../../../aot/harness/run";
 
 test("a class stored in `net.Socket` is not the base of an HTTP server's connections", async () => {
-  await using child = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
       const net = require("node:net"), http = require("node:http");
       const Original = net.Socket;
       class Other extends Original {}
@@ -21,11 +21,6 @@ test("a class stored in `net.Socket` is not the base of an HTTP server's connect
         http.get({ port: server.address().port, agent: false }, res => res.resume());
       });
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  ]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true false", stderr: "", exitCode: 0 });
 });

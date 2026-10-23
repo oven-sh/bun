@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expectedShareWithAPattern, generateProgram, generateSweepProgram, numberOfSweepPrograms } from "./generate";
+import { run } from "../harness/run";
 
 const flag = (name: string, otherwise: string) => process.argv.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3) ?? otherwise;
 const bun = flag("bun", process.execPath);
@@ -23,12 +24,6 @@ const random = Number(flag("random", "0"));
 export const waysToRun = { "as built": "0", "planned again": "1", "no plan": "2" } as const;
 
 export type Outcome = { formatters: number; withAPattern: number; refused: number; comparisons: number; differences: number; said: string[] };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 export async function buildAndRun(bunUnderTest: string, name: string, program: string, env: Record<string, string | undefined> = { ...process.env, NO_COLOR: "1" }): Promise<Outcome> {
   const outcome: Outcome = { formatters: 0, withAPattern: 0, refused: 0, comparisons: 0, differences: 0, said: [] };

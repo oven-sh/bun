@@ -133,33 +133,7 @@ impl<'a> Printer<'a> {
                     record.print_fields(printer);
                 });
             }
-            ProgramList::Bytes
-            | ProgramList::Words
-            | ProgramList::Strings
-            | ProgramList::PropertyKeys
-            | ProgramList::Types
-            | ProgramList::ClassParts
-            | ProgramList::DeclaredTypes
-            | ProgramList::TemplateParts
-            | ProgramList::ValidationRules
-            | ProgramList::ValidationMembers
-            | ProgramList::ValidationNodes
-            | ProgramList::Fields
-            | ProgramList::StaticFields
-            | ProgramList::ModuleRequests
-            | ProgramList::ModuleExports
-            | ProgramList::SyntheticExports
-            | ProgramList::RequiredNames
-            | ProgramList::ColumnAdjustments
-            | ProgramList::EvalBindings
-            | ProgramList::RelationSubjects
-            | ProgramList::StoredIntos
-            | ProgramList::HandedTos
-            | ProgramList::OperandsOf
-            | ProgramList::Code
-            | ProgramList::DataNodes
-            | ProgramList::DataMembers
-            | ProgramList::HostReads => debug_assert!(list.keyword().is_none()),
+            _ => debug_assert!(list.keyword().is_none()),
         }
     }
 }

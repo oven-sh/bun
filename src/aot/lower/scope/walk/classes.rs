@@ -180,11 +180,7 @@ impl Walker<'_, '_> {
                         self.push_field_initializer(member, functions.instance_initializer);
                     }
                 }
-                MemberKind::Constructor
-                | MemberKind::StaticBlock
-                | MemberKind::CallSignature
-                | MemberKind::ConstructSignature
-                | MemberKind::IndexSignature => continue,
+                _ => continue,
             }
             let is_decorated_private_member = is_decorated && matches!(key, PropKey::Private(_));
             if is_decorated_private_member || class::is_auto_accessor(hir, member) {

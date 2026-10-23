@@ -6,7 +6,7 @@ use crate::{
     Libs, default_compiler_options, diagnostic_from_config_error, host, use_dedicated_pool,
 };
 use bun_sema::check::Program;
-use bun_sema::check::aot::FileOrigin;
+use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -112,6 +112,7 @@ pub fn load_program<'s>(
     let without_bun_types =
         (is_application && !has_bun_types_installed).then_some(WithoutBunTypes {
             has_configuration_file: !config_path.is_empty(),
+            incomplete_containers: containers_completed_by_bun_types(files),
         });
     let diagnostics = ProgramOrigins {
         files: Some(files),

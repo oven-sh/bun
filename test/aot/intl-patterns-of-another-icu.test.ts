@@ -5,6 +5,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const programs = join(import.meta.dir, "programs", "calls-fast-paths");
@@ -16,12 +17,6 @@ const names = [
   "to-locale-string-with-constant-arguments",
 ];
 const ways = { "as built": "0", "planned again": "1", "no plan": "2" };
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
-  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 for (const name of names) {
   test.todo(

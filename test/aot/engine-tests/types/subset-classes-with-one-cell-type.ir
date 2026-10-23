@@ -1,0 +1,19 @@
+# Two classes whose instances have one cell type may hold the same object, unless the sharing mode tells them apart
+# FORM: Prepared
+# RUN: subset
+# CHECK: t0 <= t1: no overlaps: no
+# CHECK: t0 <= t2: no overlaps: no
+# CHECK: t0 <= t4: yes overlaps: yes
+# CHECK: t1 <= t0: no overlaps: no
+# CHECK: t1 <= t4: yes overlaps: yes
+# CHECK: t2 <= t3: no overlaps: yes
+# CHECK: t4 <= t0: no overlaps: yes
+# RUN(DIFFERENCE): intersect
+# DIFFERENCE: t0 & t1 = never
+# DIFFERENCE: t4 & t0 = ArrayBuffer
+# DIFFERENCE-NEXT: t4 - t0 = SharedArrayBuffer
+# DIFFERENCE-NEXT: t4 & t1 = SharedArrayBuffer
+# DIFFERENCE-NEXT: t4 - t1 = ArrayBuffer
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=ArrayBuffer}, {type=SharedArrayBuffer}, {type=Uint8Array}, {type=Buffer}, {type=ArrayBuffer|SharedArrayBuffer}] results=[{type=undefined}]

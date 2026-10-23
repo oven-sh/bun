@@ -12,6 +12,7 @@ mod dead_code;
 pub mod diagnostic_class;
 pub mod diagnostic_effect;
 mod diagnostic_location;
+pub mod diagnostic_subject;
 pub(in crate::check) mod early_errors;
 mod enum_constants;
 mod inferred_from_use;
@@ -45,6 +46,7 @@ pub use builtin_types::{
 };
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
+pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_types};
 pub(crate) use kept_answers::KeptAnswers;
 pub use kept_answers::KeptFact;
 pub use left_out_bodies::LeftOutBodies;

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const says = `const base = key => require("node:path").basename(key);
@@ -51,12 +52,6 @@ say("resolve", [require.resolve(["de", "p"].join("")) === dep.own.filename, inne
   "sub/node_modules/dep/package.json": `{ "name": "dep", "version": "2.0.0", "main": "index.js" }`,
   "sub/node_modules/dep/index.js": `exports.name = "the nearer one";\nexports.parent = module.parent;\nexports.own = module;\n`,
 };
-
-async function run(cmd: string[], cwd: string, env = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 for (const main of ["computed-first.cjs", "computed-only.cjs", "handed-on.cjs", "below.cjs", "package-by-name.cjs"]) {
   test(`in place, what a CommonJS file requires by a computed name has that file's module for its parent: ${main}`, async () => {

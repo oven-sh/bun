@@ -2,17 +2,14 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 async function run(cwd: string, program: string, env: Record<string, string> = {}) {
-  await using ran = Bun.spawn({
-    cmd: [bunExe(), "run", "--debug-aot", program],
-    cwd,
-    env: { ...bunEnv, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), "run", "--debug-aot", program], cwd, {
+    ...bunEnv,
+    ...env,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   return { stdout, stderr, exitCode };
 }
 

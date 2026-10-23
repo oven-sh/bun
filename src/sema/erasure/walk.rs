@@ -60,11 +60,6 @@ fn check_labels(typed: &Label<'_>, untyped: &Label<'_>, nodes: Owners) -> Step {
 
 fn node_data(node: Subtree, owner: NodeData) -> NodeData {
     match node {
-        Subtree::Statements(_)
-        | Subtree::Function(_)
-        | Subtree::Class(_)
-        | Subtree::Import(_)
-        | Subtree::Export(_) => owner,
         Subtree::Stmt(id) => NodeData::Stmt(id),
         Subtree::Expr(id) | Subtree::AssignmentTarget(id) => NodeData::Expr(id),
         Subtree::Pattern(id) => NodeData::Pat(id),
@@ -77,6 +72,7 @@ fn node_data(node: Subtree, owner: NodeData) -> NodeData {
         Subtree::Member(id) => NodeData::Member(id),
         Subtree::ImportSpec(id) => NodeData::ImportSpec(id),
         Subtree::ExportSpec(id) => NodeData::ExportSpec(id),
+        _ => owner,
     }
 }
 

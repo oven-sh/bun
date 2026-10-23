@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
+import { run } from "../../aot/harness/run";
 
 test("`require.main === module` keeps its parentheses inside a larger expression", async () => {
   using dir = tempDir("require-main-in-an-expression", {
@@ -14,14 +15,7 @@ console.log((require.main === module) ? "yes" : "no", (require.main === module) 
 if (require.main === module) console.log("the statement as it is usually written");
 `,
   });
-  await using ran = Bun.spawn({
-    cmd: [bunExe(), "main.cjs"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "main.cjs"], String(dir));
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: `main: true.
 main: true.

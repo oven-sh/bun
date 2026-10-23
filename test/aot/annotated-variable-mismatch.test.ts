@@ -2,22 +2,16 @@
 // data-from-outside-1.test.ts and -2.test.ts run the same programs as executables.
 import { expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunExe } from "harness";
 import { join } from "path";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const folder = join(import.meta.dir, "programs", "data-from-outside");
 const programs = readdirSync(folder).filter(name => /^(annotated-variable|read-narrowed-to-never)-.*\.ts$/.test(name));
 
 async function run(...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", ...args],
-    cwd: folder,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand([bunExe(), "run", ...args], folder);
   return { stdout, stderr, exitCode };
 }
 

@@ -133,16 +133,7 @@ struct UntypedMember {
 fn is_field_name(class: NameClass) -> bool {
     match class {
         NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto => false,
-        NameClass::Ordinary
-        | NameClass::Constructor
-        | NameClass::ObjectPrototypeMember
-        | NameClass::Length
-        | NameClass::Prototype
-        | NameClass::CallOrApply
-        | NameClass::Bind
-        | NameClass::LastIndex
-        | NameClass::Then
-        | NameClass::ToJSON => true,
+        _ => true,
     }
 }
 
@@ -160,31 +151,7 @@ fn member_flags(kind: ObjectMemberKind, is_optional: bool) -> FieldFlags {
 fn is_object_shape(kind: ShapeKind<'_>) -> bool {
     match kind {
         ShapeKind::Object => true,
-        ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable { .. }
-        | ShapeKind::Never
-        | ShapeKind::Undefined
-        | ShapeKind::Null
-        | ShapeKind::Boolean
-        | ShapeKind::BooleanLiteral(_)
-        | ShapeKind::Number
-        | ShapeKind::NumberLiteral(_)
-        | ShapeKind::NumericEnumMember(_)
-        | ShapeKind::BigInt
-        | ShapeKind::BigIntLiteral { .. }
-        | ShapeKind::String
-        | ShapeKind::StringLiteral(_)
-        | ShapeKind::TemplateLiteral { .. }
-        | ShapeKind::Symbol
-        | ShapeKind::AnyObject
-        | ShapeKind::Function(_)
-        | ShapeKind::ClassConstructor(_)
-        | ShapeKind::Array { .. }
-        | ShapeKind::Tuple { .. }
-        | ShapeKind::Builtin { .. }
-        | ShapeKind::Class(_)
-        | ShapeKind::Union(_)
-        | ShapeKind::Constrained { .. } => false,
+        _ => false,
     }
 }
 
@@ -197,10 +164,7 @@ pub(super) fn can_be_field(file: &FileLowering<'_, '_, '_, '_>, key: PropertyKey
             key.text
                 .is_some_and(|text| is_field_name(strings.name_class(text)))
         }
-        PropertyKeyKind::EnginePrivateName
-        | PropertyKeyKind::PrivateName
-        | PropertyKeyKind::WellKnownSymbol
-        | PropertyKeyKind::CreatedSymbol => true,
+        _ => true,
     }
 }
 
@@ -973,9 +937,7 @@ fn sort_untyped_members(
     for (source_index, &(key, kind)) in members.iter().enumerate() {
         match kind {
             ObjectMemberKind::Field | ObjectMemberKind::Method => {}
-            ObjectMemberKind::Getter
-            | ObjectMemberKind::Setter
-            | ObjectMemberKind::GetterAndSetter => continue,
+            _ => continue,
         }
         if !can_be_field(file, key) {
             continue;

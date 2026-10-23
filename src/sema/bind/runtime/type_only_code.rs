@@ -41,18 +41,7 @@ fn compute_type_scopes(hir: &File<'_>, bound: &BoundBuilder) -> Vec<u64> {
             | ScopeKind::Extends
             | ScopeKind::InferConstraint
             | ScopeKind::PropertyType(..) => true,
-            ScopeKind::File
-            | ScopeKind::Block
-            | ScopeKind::Param(_)
-            | ScopeKind::StaticMember
-            | ScopeKind::ComputedName
-            | ScopeKind::BaseExpression
-            | ScopeKind::FunctionName(_)
-            | ScopeKind::PropertyDeclaration(..)
-            | ScopeKind::With(_)
-            | ScopeKind::FieldInitializer(_)
-            | ScopeKind::ClassDecorators(_)
-            | ScopeKind::ImplicitBlock(_) => false,
+            _ => false,
         };
         if is_type_scope || (scope.parent.is_some() && has_bit(&type_scopes, scope.parent.idx())) {
             insert_bit(&mut type_scopes, index);
@@ -76,10 +65,7 @@ fn compute_type_only_member_keys(hir: &File<'_>, bound: &BoundBuilder) -> Vec<u6
             // `push_children` lists the substitutions of a tagged template twice.
             let is_new = match node {
                 TreeNode::Expr(e) => insert_bit(&mut keys, e.idx()),
-                TreeNode::Stmt(_)
-                | TreeNode::Function(_)
-                | TreeNode::Class(_)
-                | TreeNode::Pattern(_) => true,
+                _ => true,
             };
             if is_new {
                 push_children(hir, node, &mut stack);

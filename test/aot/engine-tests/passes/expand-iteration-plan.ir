@@ -1,0 +1,374 @@
+# The type of the iterable and the type that is expected of it decide which forms an iteration is expanded for, read off the tests at the open
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDispatchCases:2
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# LOSS: MaxDispatchCases x1 f13 v0
+# STATISTIC: IterationsExpandedByClass = 11
+# STATISTIC: IterationsExpandedGenerically = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
+
+function f0 name="provenPristineArray" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="provenPristineArray"
+# CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
+# ABSENT-LABEL: function f0 name="provenPristineArray"
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+
+function f1 name="nullableArray" parameters=[{type=undefined|null|Array<number>}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="nullableArray"
+# ABSENT-LABEL: function f1 name="nullableArray"
+# CHECK: b0(v0: undefined|null|Array<number>):
+# CHECK-NEXT: [[isArray1]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray1]] -> taken [[array1]](| 0), notTaken [[rest1]](| 0)
+# CHECK: [[protocol1]]([[iterable1]]: undefined|null|Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[array1]]([[subject1]]: Array<number>):
+# CHECK-NEXT: [[isPristine1]]: boolean = IsPristine [[subject1]] builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine1]] -> taken [[pristine1]](| 0), notTaken [[changed1]]()
+# CHECK: [[rest1]]([[nullish1]]: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol1]]([[nullish1]])
+# CHECK: [[changed1]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol1]]([[subject1]])
+# CHECK: = ElemGet [[subject1]], {{*}} [keyIsIntegral]
+
+function f2 name="expectedMap" parameters=[{type=Map flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Map):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f2 name="expectedMap"
+# CHECK: b0(v0: anything ~ Map):
+# CHECK-NEXT: [[isMap2]]: {{*}} = TypeTest v0 testedType=Map
+# CHECK-NEXT: Branch [[isMap2]] -> taken [[map2]](| 0), notTaken [[rest2]](| 0)
+# CHECK: = MapNext [[subject2]],
+# CHECK: [[protocol2]]([[iterable2]]: anything ~ Map) frequency=Unlikely:
+# CHECK: [[map2]]([[subject2]]: Map):
+# CHECK-NEXT: = IsPristine [[subject2]] builtinClass=Map aspects=[Names]
+# CHECK: [[rest2]]([[other2]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol2]]([[other2]])
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f2 name="expectedMap"
+# ABSENT-NOT: testedType=Array
+# ABSENT-NOT: ElemGet
+
+function f3 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f3 name="unknown"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[isArray3]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray3]] -> taken [[array3]](| 0), notTaken [[rest3]](| 0)
+# CHECK: [[array3]]([[subject3]]: Array):
+# CHECK-NEXT: = IsPristine [[subject3]] builtinClass=Array aspects=[Names]
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f3 name="unknown"
+# ABSENT-NOT: TypeTest v0 testedType=string
+
+function f4 name="arrayOrSet" parameters=[{type=Array<number, pristine[Names]>|Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>|Set<number, pristine[Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f4 name="arrayOrSet"
+# CHECK: [[isArray4]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken [[set4]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: = SetNext [[setSubject4]],
+# CHECK-NOT: TypeTest
+# CHECK: [[array4]]([[arraySubject4]]: Array<number, pristine[Names]>):
+# CHECK-NOT: TypeTest
+# CHECK: [[set4]]([[setSubject4]]: Set<number, pristine[Names]>) frequency=Unlikely:
+# CHECK-NEXT: = CollectionTable [[setSubject4]]
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet [[arraySubject4]],
+# CHECK-NOT: TypeTest
+# ABSENT-LABEL: function f4 name="arrayOrSet"
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+
+function f5 name="stringOrObject" parameters=[{type=string|object}] results=[{type=anything}] {
+  b0(v0: string|object):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f5 name="stringOrObject"
+# ABSENT-LABEL: function f5 name="stringOrObject"
+# CHECK: b0(v0: string|object):
+# CHECK-NEXT: [[isString5]]: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[isString5]] -> taken [[string5]](| 0), notTaken [[object5]](| 0)
+# CHECK: function=[[openIterator]] [isNeverInlined]
+# CHECK: [[string5]]([[text5]]: string):
+# CHECK: [[object5]]([[rest5]]: object) frequency=Unlikely:
+# CHECK-NEXT: [[isArray5]]: boolean = TypeTest [[rest5]] testedType=Array
+# CHECK-NEXT: Branch [[isArray5]] -> taken [[array5]](| 0), notTaken
+# CHECK: [[array5]]([[subject5]]: Array)
+# CHECK-NEXT: = IsPristine [[subject5]] builtinClass=Array aspects=[Names]
+# CHECK: = Substring [[text5]],
+
+function f6 name="number" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f6 name="number"
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = CallDirect v0 function=[[openIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f6 name="number"
+# ABSENT-NOT: testedType=Array
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: ElemGet
+
+function f7 name="expectedClassIsTestedFirst" parameters=[{type=Array<number>|Map<number, number>}] results=[{type=anything}] {
+  b0(v0: Array<number>|Map<number, number> ~ Map<number, number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# Where the test for a Map fails the type leaves an array.
+# CHECK-LABEL: function f7 name="expectedClassIsTestedFirst"
+# CHECK: b0(v0: Array<number>|Map<number, number> ~ Map<number, number>):
+# CHECK-NEXT: [[isMap7]]: {{*}} = TypeTest v0 testedType=Map<number, number>
+# CHECK-NEXT: Branch [[isMap7]] -> taken [[map7]](| 0), notTaken [[array7]](| 0)
+# CHECK: [[map7]]([[mapSubject7]]: Map<number, number>):
+# CHECK-NEXT: = IsPristine [[mapSubject7]] builtinClass=Map aspects=[Names]
+# CHECK: [[array7]]([[arraySubject7]]: Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = IsPristine [[arraySubject7]] builtinClass=Array aspects=[Names]
+# ABSENT-LABEL: function f7 name="expectedClassIsTestedFirst"
+# ABSENT-NOT: testedType=Array
+
+function f8 name="layout" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f8 name="layout"
+# CHECK: b0(v0: L0
+# CHECK-NEXT: = PropGet v0 key=@@iterator
+# ABSENT-LABEL: function f8 name="layout"
+# ABSENT-NOT: testedType=Array
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: ElemGet
+
+function f9 name="uint8ArrayOrBuffer" parameters=[{type=Uint8Array<number, pristine[Names]>|Buffer<number>}] results=[{type=anything}] {
+  b0(v0: Uint8Array<number, pristine[Names]>|Buffer<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# A Buffer is a Uint8Array, so the class needs no test.
+# CHECK-LABEL: function f9 name="uint8ArrayOrBuffer"
+# CHECK-NEXT: b0(v0: {{*}}):
+# CHECK-NEXT: [[isPristine9]]: boolean = IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine9]] -> taken [[pristine9]](| 0), notTaken
+# CHECK: function=[[openIterator]] [isNeverInlined]
+# CHECK: [[pristine9]]({{*}}: guard):
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# ABSENT-LABEL: function f9 name="uint8ArrayOrBuffer"
+# ABSENT-NOT: builtinClass=Buffer
+
+function f10 name="testFailedEarlier" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Array
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    v4 = IteratorOpen v3
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b4(), notTaken b3()
+  b4():
+    Return v8
+}
+# CHECK-LABEL: function f10 name="testFailedEarlier"
+# CHECK: v1: boolean = TypeTest v0 testedType=Array
+# CHECK-NOT: testedType=Array
+# CHECK: b2(v3: anything):
+# CHECK-NOT: testedType=Array
+# CHECK: = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
+# CHECK-NOT: testedType=Array
+# ABSENT-LABEL: function f10 name="testFailedEarlier"
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: ElemGet
+
+function f11 name="testPassedEarlier" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Array
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = IteratorOpen v2
+    Jump -> next b3()
+  b2(v4):
+    Return v4
+  b3():
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b4(), notTaken b3()
+  b4():
+    Return v8
+}
+# CHECK-LABEL: function f11 name="testPassedEarlier"
+# ABSENT-LABEL: function f11 name="testPassedEarlier"
+# CHECK: v1: boolean = TypeTest v0 testedType=Array
+# CHECK-NOT: testedType=Array
+# CHECK: b1(v2: Array):
+# CHECK-NEXT: = IsPristine v2 builtinClass=Array aspects=[Names]
+# CHECK-NOT: testedType=Array
+# CHECK: = ElemGet v2,
+# CHECK-NOT: testedType=Array
+
+function f12 name="asManyClassesAsTheLimit" parameters=[{type=Map<number, number, pristine[Names]>|Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Map<number, number, pristine[Names]>|Set<number, pristine[Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f12 name="asManyClassesAsTheLimit"
+# CHECK: = MapNext
+# CHECK: = SetNext
+# ABSENT-LABEL: function f12 name="asManyClassesAsTheLimit"
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+
+function f13 name="tooManyClasses" parameters=[{type=Array<number, pristine[Names]>|Map<number, number, pristine[Names]>|Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>|Map<number, number, pristine[Names]>|Set<number, pristine[Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f13 name="tooManyClasses"
+# CHECK: [[isArray13]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray13]] -> taken {{*}}, notTaken [[notArray13]](| 0)
+# CHECK: = MapNext
+# CHECK: [[protocol13]]([[iterable13]]: {{*}}) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable13]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[notArray13]]([[mapOrSet13]]: Map<number, number, pristine[Names]>|Set<number, pristine[Names]>) frequency=Unlikely:
+# CHECK-NEXT: [[isMap13]]: boolean = TypeTest [[mapOrSet13]] testedType=Map<number, number>
+# CHECK-NEXT: Branch [[isMap13]] -> taken {{*}}, notTaken [[notMap13]](| 0)
+# CHECK: [[notMap13]]([[set13]]: Set<number, pristine[Names]>) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol13]]([[set13]])
+# ABSENT-LABEL: function f13 name="tooManyClasses"
+# ABSENT-NOT: SetNext
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

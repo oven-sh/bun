@@ -6,6 +6,7 @@ import { writeIfChanged } from "./fs.ts";
 
 /** Paths are relative to JavaScriptCore, with `/`, in ascending order by code unit. */
 export interface AotSourceLists {
+  /** Without those that are compiled for size: people keep that list. */
   librarySources: string[];
   testSources: string[];
   includeDirectories: string[];
@@ -15,6 +16,7 @@ export interface AotSourceLists {
 }
 
 export interface DeclaredAotLists {
+  sourcesCompiledForSize: string[];
   generatedSources: string[];
   generatedHeaders: string[];
   programSources: string[];
@@ -27,6 +29,7 @@ export interface DeclaredAotLists {
 export interface WrittenAotLists extends AotSourceLists, DeclaredAotLists {}
 
 const sourcesTxt = "aot/Sources.txt";
+const sourcesCompiledForSizeTxt = "aot/SourcesCompiledForSize.txt";
 const aotCMake = "aot/AOT.cmake";
 const headerExtensions = [".h", ".def", ".inc"];
 const includedAotHeader = /#\s*include\s+["<](?:JavaScriptCore\/)?(AOT[\w+]*\.(?:h|def|inc))[">]/g;
@@ -62,8 +65,13 @@ function filesUnder(root: string, directory: string, isWanted: (name: string) =>
 
 const isHeader = (name: string): boolean =>
   name.startsWith("AOT") && headerExtensions.some(extension => name.endsWith(extension));
+/** There for tests alone, and not named or placed so: what reads IR text, what runs one pass, the dumps that only test commands print. */
+const testSourcesOutsideTests =
+  /^aot\/(?:ir\/AOT(?:IRLexer|IRParser\w*|WireProgramBuilder)|pipeline\/AOTPipelineTesting|place\/AOTPlacementDump|valueflow\/AOTFlowResultsDump)\.cpp$/;
 const isTestSource = (path: string): boolean =>
-  path.startsWith("aot/tests/") || /^AOT\w*TestCommands\.cpp$/.test(basename(path));
+  path.startsWith("aot/tests/") ||
+  /^AOT\w*TestCommands\.cpp$/.test(basename(path)) ||
+  testSourcesOutsideTests.test(path);
 
 function includedAotHeadersOf(text: string): string[] {
   return [...text.matchAll(includedAotHeader)].map(match => match[1]!);
@@ -77,12 +85,13 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
   const evaluated = evaluateCMake(join(javaScriptCore, aotCMake), {
     variables: { JAVASCRIPTCORE_DIR: javaScriptCore, JavaScriptCore_DERIVED_SOURCES_DIR: derivedSources },
   });
-  const librarySources = readFileSync(join(javaScriptCore, sourcesTxt), "utf8")
-    .split(/\r?\n/)
-    .filter(line => line !== "")
-    .map(line => line.split(/\s+/)[0]!);
+  const linesOf = (list: string): string[] =>
+    readFileSync(join(javaScriptCore, list), "utf8")
+      .split(/\r?\n/)
+      .filter(line => line !== "");
   return {
-    librarySources,
+    librarySources: linesOf(sourcesTxt),
+    sourcesCompiledForSize: linesOf(sourcesCompiledForSizeTxt),
     testSources: evaluated.list("JavaScriptCore_AOT_TEST_SOURCES"),
     includeDirectories: evaluated
       .list("JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES")
@@ -92,6 +101,7 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     schemaExportedHeaders: evaluated.list("JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS").map(path => basename(path)),
     generatedSources: [
       ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES"),
+      ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES"),
       ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES"),
       ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES"),
     ],
@@ -178,7 +188,12 @@ export function computeAotSourceLists(
   declared: DeclaredAotLists,
   schemaHeaders: ReadonlyMap<string, string>,
 ): AotSourceLists {
-  const listedElsewhere = new Set([...declared.generatedSources, ...declared.programSources, ...declared.shellSources]);
+  const listedElsewhere = new Set([
+    ...declared.generatedSources,
+    ...declared.programSources,
+    ...declared.shellSources,
+    ...declared.sourcesCompiledForSize,
+  ]);
   const sources = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp")).filter(
     path => !listedElsewhere.has(path),
   );
@@ -205,7 +220,12 @@ function describeDifference(list: string, written: string[], expected: string[])
 /** A generated file may be missing: a step of the graph that is being configured writes it. */
 export function findAotSourceListProblems(javaScriptCore: string): string[] {
   const written = readWrittenAotLists(javaScriptCore);
-  const listedElsewhere = new Set([...written.generatedSources, ...written.programSources, ...written.shellSources]);
+  const listedElsewhere = new Set([
+    ...written.generatedSources,
+    ...written.programSources,
+    ...written.shellSources,
+    ...written.sourcesCompiledForSize,
+  ]);
   const present = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp"));
   const sources = present.filter(path => !listedElsewhere.has(path));
 
@@ -227,16 +247,22 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
       written.includeDirectories,
       headerDirectories(javaScriptCore, written.generatedHeaders),
     ),
-    ...[...written.programSources, ...written.shellSources]
+    ...[...written.programSources, ...written.shellSources, ...written.sourcesCompiledForSize]
       .filter(path => !present.includes(path))
       .map(path => `${path}: listed, and there is no such file`),
+    ...written.sourcesCompiledForSize
+      .filter(isTestSource)
+      .map(path => `${path}: in ${sourcesCompiledForSizeTxt}, and is a source of testaot`),
+    ...(written.sourcesCompiledForSize.every((path, index, all) => index === 0 || all[index - 1]! < path)
+      ? []
+      : [`${sourcesCompiledForSizeTxt}: not in ascending order`]),
   ];
   const librarySources = sources.filter(path => !isTestSource(path));
   if (
     problems.length === 0 &&
     readFileSync(join(javaScriptCore, sourcesTxt), "utf8") !== formatSourcesTxt(librarySources)
   ) {
-    problems.push(`${sourcesTxt}: a line is a path, a space and @no-unify`);
+    problems.push(`${sourcesTxt}: a line is a path and nothing else`);
   }
   for (const header of exported) {
     if (!existsSync(join(javaScriptCore, header))) {
@@ -267,7 +293,7 @@ export function handwrittenAotFiles(javaScriptCore: string): string[] {
 }
 
 export function formatSourcesTxt(librarySources: string[]): string {
-  return librarySources.map(path => `${path} @no-unify\n`).join("");
+  return librarySources.map(path => `${path}\n`).join("");
 }
 
 export function replaceListBody(text: string, opener: string, entries: string[]): string {

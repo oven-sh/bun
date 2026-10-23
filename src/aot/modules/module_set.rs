@@ -52,12 +52,7 @@ impl ModuleSet {
     pub(super) fn table_file(&self, module: ModuleRef) -> Option<FileId> {
         match module {
             ModuleRef::File(file) if self.interop(module).has_export_table() => Some(file),
-            ModuleRef::File(_)
-            | ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => None,
+            _ => None,
         }
     }
 
@@ -92,11 +87,7 @@ impl ModuleSet {
                 ExternalKind::UncompiledCode => true,
                 ExternalKind::HostValue => false,
             },
-            ModuleRef::File(_)
-            | ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_) => false,
+            _ => false,
         }
     }
 
@@ -179,10 +170,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
 fn scanned_modules(scan: &FileScan) -> impl Iterator<Item = ModuleRef> + '_ {
     let site_modules = scan.sites.iter().filter_map(|site| match site {
         ScannedSite::Module(module) => Some(*module),
-        ScannedSite::Unresolved
-        | ScannedSite::AllModules
-        | ScannedSite::Candidates(_)
-        | ScannedSite::Erased => None,
+        _ => None,
     });
     site_modules.chain(scan.candidates.iter().copied())
 }

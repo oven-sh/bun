@@ -154,12 +154,7 @@ impl FileUnits {
                 }
             }
             BindingInitializer::Class(class) => self.unit_of_class.get(&class),
-            BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::Namespace(_)
-            | BindingInitializer::Enum(_)
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Import
-            | BindingInitializer::Opaque => None,
+            _ => None,
         };
         unit.copied()
     }
@@ -184,11 +179,7 @@ fn module_of_view(view: View) -> ModuleRef {
 fn module_with_code(module: ModuleRef) -> ModuleRef {
     match module {
         ModuleRef::Face(file) => ModuleRef::File(file),
-        ModuleRef::File(_)
-        | ModuleRef::Inner { .. }
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => module,
+        _ => module,
     }
 }
 
@@ -474,10 +465,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 }
                 MemberKind::StaticBlock => return,
                 MemberKind::Property if member.flags.contains(Flags::STATIC) => return,
-                MemberKind::Property
-                | MemberKind::CallSignature
-                | MemberKind::ConstructSignature
-                | MemberKind::IndexSignature => false,
+                _ => false,
             };
             if has_function && !matches!(member.key, PropKey::Computed(_)) {
                 functions.push(member.func);
@@ -859,11 +847,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 }
                 Some(_) | None => Interest::EveryExport(module),
             }),
-            ImportBinding::Local
-            | ImportBinding::Unused
-            | ImportBinding::Unbound
-            | ImportBinding::Builtin(_)
-            | ImportBinding::BuiltinMember { .. } => None,
+            _ => None,
         }
     }
 
@@ -1150,11 +1134,6 @@ impl<'a, 's> FileScan<'a, 's> {
         for site in analysis.import_sites {
             let (call, is_object_followed) = match site.kind {
                 // The bindings that these create are followed where they are referred to.
-                ImportSiteKind::JsxRuntime
-                | ImportSiteKind::JsxPackage
-                | ImportSiteKind::Import(_)
-                | ImportSiteKind::ExportFrom(_)
-                | ImportSiteKind::ExportStar(_) => continue,
                 ImportSiteKind::ImportEquals(declaration) => {
                     let site = graph.import_equals_site(self.file, declaration);
                     if let Some(Site::Evaluate { target, .. }) = site {
@@ -1181,6 +1160,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     (Some(call), true)
                 }
+                _ => continue,
             };
             if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
                 continue;
@@ -1474,10 +1454,7 @@ impl<'a, 's> Walk<'a, 's> {
                 Shape::Names | Shape::Value => true,
                 Shape::EsModule | Shape::AsToday => false,
             },
-            ModuleRef::Face(_)
-            | ModuleRef::Check(_)
-            | ModuleRef::Runtime(_)
-            | ModuleRef::External { .. } => false,
+            _ => false,
         }
     }
 
@@ -1588,10 +1565,7 @@ impl<'a, 's> Walk<'a, 's> {
             BindingInitializer::Class(_)
             | BindingInitializer::Namespace(_)
             | BindingInitializer::Enum(_) => false,
-            BindingInitializer::PatternProperty { .. }
-            | BindingInitializer::EntityName(_)
-            | BindingInitializer::Import
-            | BindingInitializer::Opaque => true,
+            _ => true,
         }
     }
 
@@ -1632,12 +1606,7 @@ impl<'a, 's> Walk<'a, 's> {
                 self.reach_every_export(module);
                 return true;
             }
-            ImportBinding::Variable(_)
-            | ImportBinding::Unused
-            | ImportBinding::Unbound
-            | ImportBinding::Builtin(_)
-            | ImportBinding::CapturedBuiltin { .. }
-            | ImportBinding::BuiltinMember { .. } => return true,
+            _ => return true,
         }
         let files = self.input.files;
         let unit = self.files[file.idx()]
@@ -2058,9 +2027,7 @@ fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) 
             && !graph.exports(file).is_empty()
             && own_exports.all(|export| match export.binding {
                 ExportBinding::Variable(defined) => defined.file != file,
-                ExportBinding::Synthetic(_)
-                | ExportBinding::Namespace { .. }
-                | ExportBinding::Indirect { .. } => true,
+                _ => true,
             })
     };
     let scanned_files = (0..).map(FileId).zip(files);

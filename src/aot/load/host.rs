@@ -361,10 +361,7 @@ impl Host for LoadHost<'_> {
             ServedBy::Disk if !self.plugins.was_read(path) && !self.is_background_read(path) => {
                 self.disk.file_stamp(path)
             }
-            ServedBy::Disk
-            | ServedBy::PluginModule
-            | ServedBy::EvaluatedText
-            | ServedBy::TypedFile(_) => None,
+            _ => None,
         }
     }
 
@@ -661,10 +658,7 @@ impl CodeHost for LoadHost<'_> {
         };
         let source_kind = match served_by {
             ServedBy::EvaluatedText => SourceKind::EvaluatedText,
-            ServedBy::PluginModule
-            | ServedBy::Declarations(_)
-            | ServedBy::TypedFile(_)
-            | ServedBy::Disk => SourceKind::Program,
+            _ => SourceKind::Program,
         };
         let compile_options = CompileParseOptions {
             path,

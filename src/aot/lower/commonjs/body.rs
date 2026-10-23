@@ -58,11 +58,7 @@ fn emit_first_exports(
             }
             layouts::module_exports_layout(lowering.file, file)
         }
-        ModuleRef::Inner { .. }
-        | ModuleRef::Face(_)
-        | ModuleRef::Check(_)
-        | ModuleRef::Runtime(_)
-        | ModuleRef::External { .. } => None,
+        _ => None,
     };
     let layout = layout.unwrap_or_else(|| layouts::untyped_layout(lowering.file, &[]));
     let builder = object::begin_object(lowering, layout);
@@ -148,10 +144,7 @@ fn lower_calling_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Functio
     for variable in WRAPPER_PARAMETERS {
         values.push(match variable {
             CommonJsVariable::Exports => first_exports,
-            CommonJsVariable::Require
-            | CommonJsVariable::Module
-            | CommonJsVariable::Filename
-            | CommonJsVariable::Dirname => variables::emit_passed_value(&mut lowering, variable),
+            _ => variables::emit_passed_value(&mut lowering, variable),
         });
     }
     let arguments = EntryArguments {

@@ -79,19 +79,7 @@ impl TreeWriter<'_, '_> {
             StmtData::SFunction(function) => {
                 return self.write_function_declaration(&function.func, loc);
             }
-            StmtData::SClass(_)
-            | StmtData::SComment(_)
-            | StmtData::SEnum(_)
-            | StmtData::SExportClause(_)
-            | StmtData::SExportDefault(_)
-            | StmtData::SExportEquals(_)
-            | StmtData::SExportFrom(_)
-            | StmtData::SExportStar(_)
-            | StmtData::SImport(_)
-            | StmtData::SNamespace(_)
-            | StmtData::SWith(_)
-            | StmtData::STypeScript(_)
-            | StmtData::SLazyExport(_) => {
+            _ => {
                 return Err(UnsupportedNode::statement(statement.data.tag()));
             }
         };

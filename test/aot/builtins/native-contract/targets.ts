@@ -32,7 +32,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/^Atomics\.(waitAsync|pause)$/, "it blocks the thread"],
   [/^(fetch|postMessage)$/, "it starts a thread or opens a connection"],
   [/^%ModuleRequire%/, "it loads whatever its operand names"],
-  [/crash_handler\.rs|restartProcess|jsFunctionReportUncaughtException|Bun__setSyntheticAllocationLimitForTesting|DeclaredTypesForTesting/, "it ends the process or makes it fail"],
+  [/crash_handler\.rs|restartProcess|jsFunctionReportUncaughtException|Bun__setSyntheticAllocationLimitForTesting/, "it ends the process or makes it fail"],
   [/BunDebugger\.cpp|console\.takeHeapSnapshot|jsFunction_(start|stop|collect)\w*(Profiler|Coverage)/, "it opens the inspector, waits for it or profiles the process"],
   [/spawnThreadsForTesting|createNodeWorker|jsFunctionPostMessage|^Bun\.WebView|^Bun\.Terminal$/, "it starts a thread, a process or a terminal"],
   [/Bun__FFI__cc|^%FFI%|napi_body/, "it compiles or loads machine code"],

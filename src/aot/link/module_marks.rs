@@ -41,9 +41,7 @@ pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) 
 pub(super) fn is_filled_by_loader(graph: &ModuleGraph, face: ModuleRef) -> bool {
     match graph.interop(face).export_rule {
         SyntheticExportRule::None => false,
-        SyntheticExportRule::CommonJs
-        | SyntheticExportRule::CommonJsIgnoringAnnotation
-        | SyntheticExportRule::RuntimeModule => true,
+        _ => true,
     }
 }
 

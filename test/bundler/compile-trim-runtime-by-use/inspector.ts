@@ -14,3 +14,6 @@ session.connect();
 console.log(codeOf(() => session.connect()), codeOf(() => session.post("Missing.method")));
 session.disconnect();
 console.log(codeOf(() => inspector.waitForDebugger()));
+// The import and the names are there without the feature. This is the call that enters it: without --compile-inspector it starts nothing.
+inspector.open(0);
+console.log(inspector.url());

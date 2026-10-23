@@ -6,7 +6,7 @@ pub(crate) const REFERENCE: u8 = 0;
 pub(crate) const ABORTING_GUARD: u8 = 1;
 pub(crate) const RECOVERABLE_GUARD: u8 = 2;
 
-const TABLE_HEADER_BYTES: usize = 120;
+const TABLE_HEADER_BYTES: usize = 96;
 const TABLE_DIRECTORY_OFFSET: usize = 32;
 const ICU_HEADER_BYTES: usize = 32;
 const ICU_ENTRY_BYTES: usize = 8;
@@ -25,13 +25,6 @@ pub(crate) struct ToyIcuPackage {
     pub(crate) runs: Vec<(u32, u32, u16, u16)>,
 }
 
-pub(crate) struct ToyLibrary {
-    pub(crate) name: &'static str,
-    pub(crate) version: &'static str,
-    pub(crate) has_retained_bytes: bool,
-    pub(crate) sets: Vec<u16>,
-}
-
 pub(crate) struct ToyTable {
     pub(crate) features_hash: u64,
     pub(crate) edges: Vec<(Feature, Feature, u8, bool)>,
@@ -39,7 +32,6 @@ pub(crate) struct ToyTable {
     pub(crate) ranges: Vec<ToyRange>,
     pub(crate) icu_packages: Vec<ToyIcuPackage>,
     pub(crate) languages: Vec<(&'static str, u16)>,
-    pub(crate) libraries: Vec<ToyLibrary>,
 }
 
 #[derive(Default)]
@@ -59,7 +51,6 @@ pub(crate) fn encode_table(table: &ToyTable) -> Vec<u8> {
     let base_address = compute_base_address(table);
     let (sets, members) = encode_sets(table);
     let (packages, runs) = encode_icu_packages(table, base_address);
-    let (libraries, library_sets, text) = encode_libraries(table);
     let sections = [
         encode_edges(table),
         sets,
@@ -68,15 +59,12 @@ pub(crate) fn encode_table(table: &ToyTable) -> Vec<u8> {
         packages,
         runs,
         encode_icu_languages(table),
-        libraries,
-        library_sets,
-        text,
         Records::default(),
     ];
 
     let mut bytes = vec![0u8; TABLE_HEADER_BYTES];
     bytes[..8].copy_from_slice(b"BUNTRIM\0");
-    bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
     bytes[16..24].copy_from_slice(&table.features_hash.to_le_bytes());
     bytes[24..32].copy_from_slice(&base_address.to_le_bytes());
     for (index, section) in sections.iter().enumerate() {
@@ -185,37 +173,6 @@ fn encode_icu_languages(table: &ToyTable) -> Records {
         records.add(&record);
     }
     records
-}
-
-fn encode_libraries(table: &ToyTable) -> (Records, Records, Records) {
-    let mut libraries = Records::default();
-    let mut library_sets = Records::default();
-    let mut text = Records::default();
-    for library in &table.libraries {
-        let name_start = text.count;
-        for byte in library.name.bytes() {
-            text.add(&[byte]);
-        }
-        let version_start = text.count;
-        for byte in library.version.bytes() {
-            text.add(&[byte]);
-        }
-        let first_set = library_sets.count;
-        for set in &library.sets {
-            library_sets.add(&set.to_le_bytes());
-        }
-        let words = [
-            name_start,
-            library.name.len() as u32,
-            version_start,
-            library.version.len() as u32,
-            first_set,
-            library.sets.len() as u32,
-            u32::from(library.has_retained_bytes),
-        ];
-        libraries.add(&words.map(u32::to_le_bytes).concat());
-    }
-    (libraries, library_sets, text)
 }
 
 pub(crate) fn icu_package(items: &[(&str, usize)]) -> Vec<u8> {

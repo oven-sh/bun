@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
+import { bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
+import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
 const program = `import { cc, dlopen, FFIType } from "bun:ffi";
@@ -26,8 +27,7 @@ process.stdout.write(stdout);
 `;
 
 async function run(cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runCommand(cmd);
   return { stdout, stderr, exitCode };
 }
 

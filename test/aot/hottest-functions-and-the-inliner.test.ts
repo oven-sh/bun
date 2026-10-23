@@ -4,13 +4,8 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { run } from "./harness/run";
 import { test } from "./supported";
-
-async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 const helper = (name: string) =>
   `function ${name}(a, b) { return (a * 3 + b * 5 - (a ^ b)) * 7 + (a & b) - (a | 1) + (b >> 1); }\n`;

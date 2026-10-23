@@ -20,10 +20,6 @@ pub(in crate::lower) fn lower_typeof_operand(
             let value = expression::emit_free_name_get(lowering, name, true);
             expression::expect_resolved_path(lowering, target, value)
         }
-        Decision::GlobalPath(_)
-        | Decision::Constant(_)
-        | Decision::Data(_)
-        | Decision::DeferredData => return expression::lower_expression(lowering, operand),
         Decision::Unknown => {
             if !matches!(hir[target].kind, ExprKind::Ident(_)) {
                 return expression::lower_expression(lowering, operand);
@@ -31,6 +27,7 @@ pub(in crate::lower) fn lower_typeof_operand(
             lowering.set_position(hir[target].pos);
             scope::lower_identifier_for_typeof(lowering, target)
         }
+        _ => return expression::lower_expression(lowering, operand),
     };
     expression::convert_through_assertions(lowering, operand, value)
 }

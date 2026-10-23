@@ -1,14 +1,9 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "../harness/run";
 import { test } from "../supported";
 import { functionCount, generateProgram, sitesInFunction } from "./generate-program";
-
-async function run(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test.skipIf(isDebug || isASAN)(
   "a program with more sites than sixteen megabytes of caches hold is built and answers as plain Bun does",

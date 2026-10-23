@@ -1,0 +1,27 @@
+# handedOver(process); unknown[key] = 1; process.send
+# The program names process.send, and the store under a key nobody knows may hit it: the member counts as written, so nothing takes it for the function of the table
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=ProcessSend written-builtin=ProcessSend written-builtin=ProcessChannel
+# CHECK: used-builtin=ProcessSend
+# CHECK-NOT: not held
+# CHECK: written-builtin=ProcessSend
+# CHECK-NOT: not held
+# CHECK: written-builtin=ProcessChannel
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=DateNow
+    v5 = Call v4
+    v6 = ToString v5
+    v7 = Integer integer=1
+    ElemSet v3, v6, v7
+    v9 = PropGet v2 key="send"
+    Return v9
+}

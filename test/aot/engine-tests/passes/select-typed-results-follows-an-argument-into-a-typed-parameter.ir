@@ -1,0 +1,234 @@
+# handle(JSON.parse(text)) builds the result as the type of the parameter it lands in, whether the callee still has its check, has had it turned into a test and a branch, or has been inlined into the caller.
+# Only a parameter counts, and the one at the place of the argument
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 7
+# STATISTIC: ParsersCreated = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f9 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f14 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f16 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f18 v1 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NOT: decline
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+layout L1 name="Other" fields=[{key="z" declared={type=number}}]
+
+# handle(user: User) once its check is a test and a branch: the header still says what the parameter is expected to hold
+function f0 name="handle" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1 = TypeTest v0 testedType=undefined|null|L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = CallDirect v2 function=f1
+    ReturnCall v3
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f2
+    ReturnCall v4
+}
+
+function f1 name="typedHelper" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    Return v0
+}
+
+function f2 name="untypedHelper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+# A typed function checks what it was called with, and its parameter is only expected to hold its type
+function f3 name="checksItsParameter" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1 = Check v0 castType=undefined|null|L0 site=w0
+    Return v1
+}
+
+function f4 name="untyped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f5 name="pair" flags=[IsChecked] parameters=[{type=undefined|null|L1 site=w1 flags=[IsExpected]}, {type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L1, v1: anything ~ undefined|null|L0):
+    v2 = Check v0 castType=undefined|null|L1 site=w1
+    v3 = Check v1 castType=undefined|null|L0 site=w0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+
+function f6 name="method" kind=Method flags=[HasThis, IsChecked] thisType={type=undefined|null|L1 flags=[IsExpected]} parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L1, v1: anything ~ undefined|null|L0):
+    v2 = Check v1 castType=undefined|null|L0 site=w0
+    Return v2
+}
+
+function f7 name="checksForAnotherType" flags=[IsChecked] parameters=[{type=undefined|null|L1 site=w1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L1):
+    v1 = Check v0 castType=undefined|null|L1 site=w1
+    Return v1
+}
+
+function f8 name="intoCheckedParameter" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v2 function=f3
+    Return v3
+}
+# CHECK-LABEL: function f8 name="intoCheckedParameter"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: [[open8]]: boolean = JSONSourceOpen v0
+# CHECK-NEXT: Branch [[open8]] -> taken [[opened8]](| 0), notTaken
+# CHECK: [[done8]](v2:{{*}}):
+# CHECK-NEXT: v3:{{*}}= CallDirect v2 function=f3
+# CHECK-NEXT: Return v3
+# CHECK: [[generic8]]() frequency=Rare:
+# CHECK-NEXT: [[original8]]:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK: Jump -> next [[done8]]([[original8]])
+# CHECK: [[opened8]]([[source8]]: guard):
+# CHECK-NEXT: [[start8]]: cursor = JSONSourceStart [[source8]]
+# CHECK-NEXT: [[first8]]: cursor = JSONSkipWhitespace [[start8]]
+# CHECK-NEXT: = CallDirect [[first8]] function=[[parserOfUser]]
+
+function f9 name="intoUntypedParameter" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v2 function=f4
+    Return v3
+}
+# CHECK-LABEL: function f9 name="intoUntypedParameter"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3:{{*}}= CallDirect v2 function=f4
+
+function f10 name="intoTestedParameter" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f10 name="intoTestedParameter"
+# CHECK: = JSONSourceOpen v0
+# CHECK: (v2:{{*}}):
+# CHECK-NEXT: v3:{{*}}= CallDirect v2 function=f0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+# The failing arm takes the value as it came, and what it calls says nothing against the test
+function f11 name="intoInlinedTest" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = TypeTest v2 testedType=undefined|null|L0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = CallDirect v4 function=f1
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = CallDirect v2 function=f2
+    Return v6
+}
+# CHECK-LABEL: function f11 name="intoInlinedTest"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect v2 function=f2
+# CHECK: (v2:{{*}}):
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=undefined|null|L0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f12 name="intoSecondParameter" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v1, v2 function=f5
+    Return v3
+}
+# CHECK-LABEL: function f12 name="intoSecondParameter"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect v1, v2 function=f5
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f13 name="intoParameterBehindThis" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v1, v2 function=f6
+    Return v3
+}
+# CHECK-LABEL: function f13 name="intoParameterBehindThis"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect v1, v2 function=f6
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f14 name="asThis" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v2, v1 function=f6
+    Return v3
+}
+# CHECK-LABEL: function f14 name="asThis"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3:{{*}}= CallDirect v2, v1 function=f6
+
+# An argument is followed behind the casts of the result, and the narrower of the two types decides
+function f15 name="checkedForAWiderTypeThenHandedOn" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 castType=undefined|null|L0|L1
+    v4 = CallDirect v3 function=f3
+    Return v4
+}
+# CHECK-LABEL: function f15 name="checkedForAWiderTypeThenHandedOn"
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+function f16 name="intoParametersOfTwoUnrelatedTypes" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallDirect v2 function=f3
+    v4 = CallDirect v2 function=f7
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f16 name="intoParametersOfTwoUnrelatedTypes"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3:{{*}}= CallDirect v2 function=f3
+
+function f17 name="awaitedBodyIntoParameter" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Await v1
+    v3 = CallDirect v2 function=f3
+    Return v3
+}
+# CHECK-LABEL: function f17 name="awaitedBodyIntoParameter"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeBytes/0
+# CHECK-NEXT: [[bytes17]]:{{*}}= Await v1
+# CHECK-NEXT: = JSONSourceOpen [[bytes17]]
+# CHECK: (v2:{{*}}):
+# CHECK-NEXT: v3:{{*}}= CallDirect v2 function=f3
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+
+# The promise is handed on, not what it resolves to
+function f18 name="promiseIntoParameter" parameters=[{type=Response}] results=[{type=anything}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = CallDirect v1 function=f3
+    Return v2
+}
+# CHECK-LABEL: function f18 name="promiseIntoParameter"
+# CHECK: b0(v0: Response):
+# CHECK-NEXT: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: v2:{{*}}= CallDirect v1 function=f3
+# CHECK: function [[parserOfUser]] {{*}}role=Parser {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|null|L0}, {type=cursor}]

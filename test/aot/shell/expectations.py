@@ -4,7 +4,7 @@
 These are the positive and negative tests of the optimizations. A program under ../programs states its expectations in comment
 lines; this script reads them and checks them with `testaot` and the `jsc` shell, without building Bun.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> test/aot/shell/expectations.py [-j <jobs>] [--write-known] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> test/aot/shell/expectations.py [-j <jobs>] [--write-known] <program>... | all
 
 See toolchain.py for how to build the three tools and quick.py for how a program is named. PROGRAMS, WORK and WORDS mean the same as in quick.py.
 A program is compiled as most of a large program is: no function is among the hottest (`heat=nothing-is-hottest`), unless WORDS or an

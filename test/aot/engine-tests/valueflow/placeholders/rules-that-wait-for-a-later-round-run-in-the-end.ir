@@ -1,0 +1,29 @@
+# holder = condition ? process : handedIn; holder[globalThis.name]; handedOut(process)
+# The two switches let about half of the rules that are due in a round wait for a later one: another valid schedule, for the tests that hold one schedule against another.
+# Nothing is dropped: the call still hands `process` over. And the solve ends: the round that runs every rule once more, to see that nothing moves, is left whole.
+# OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# RUN: valueflow-why escaped-builtin=Process
+# CHECK: escaped-builtin=Process
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = PropGet v0 key="handedIn" [isFreeName]
+    v3 = PropGet v0 key="handedOut" [isFreeName]
+    v4 = Builtin builtin=Process
+    v5 = Undefined
+    v6 = Call v3, v5, v4
+    v7 = ToBoolean v1
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v2)
+  b3(v8):
+    v9 = ElemGet v8, v1
+    Return
+}

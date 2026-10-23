@@ -1,0 +1,36 @@
+# function listen(emitter) { emitter.on("message", listener); } listen(process); listen(handedOver(process))
+# `process` stands beside the unknown object among the receivers, and it has escaped, so the normal form of the set leaves it out. The receivers list it all the same: parseHandle is entered (runtimefunction 65559)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = NewClosure function=f3
+    v2 = Call v1, -, v0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="handedOver" [isFreeName]
+    v5 = Call v4, -, v0
+    v6 = Call v1, -, v5
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f2 name="listener" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="listen" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="on"
+    v2 = String string="message"
+    v3 = NewClosure function=f2
+    v4 = Call v1, v0, v2, v3
+    Return
+}

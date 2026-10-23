@@ -136,7 +136,6 @@ export default b.declarations(
     ...nativeBindings("NewRustFunction", "MarkdownObject.rs", "setMaxMarkdownBlockBytesForTesting"),
     ...nativeBindings("NewRustFunction", "SemverObject.rs", "intersectsForTesting"),
     ...nativeBindings("NewRustFunction", "collections/linear_fifo.rs", "TestingAPIs.orderedRemoveProbe"),
-    ...nativeBindings("NewRustFunction", "declared_types_testing.rs", "getClass"),
     ...nativeBindings(
       "NewRustFunction",
       "css_internals.rs",
@@ -212,7 +211,7 @@ export default b.declarations(
       "TestingAPIs.translateNtStatusToE",
       "TestingAPIs.translateUVErrorToE",
     ),
-    ...nativeBindings("NewRustFunction", "trim_testing.rs", "measureTrimProfile", "readTrimTable", "trimExecutable"),
+    ...nativeBindings("NewRustFunction", "trim_testing.rs", "readTrimTable", "trimExecutable"),
     ...nativeBindings("NewRustFunction", "virtual_machine_exports.rs", "Bun__setSyntheticAllocationLimitForTesting"),
     ...nativeBindings("Rust", "crash_handler.rs", "js_bindings.generate"),
     ...nativeBindings("Rust", "npm.rs", "PackageManifest.bindings.generate"),

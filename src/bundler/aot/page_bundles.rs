@@ -308,16 +308,7 @@ fn is_client_output(file: &OutputFile) -> bool {
         OutputKind::Chunk | OutputKind::EntryPoint | OutputKind::Asset => {
             file.side != Some(Side::Server)
         }
-        OutputKind::Sourcemap
-        | OutputKind::Bytecode
-        | OutputKind::ModuleInfo
-        | OutputKind::BuiltinBytecode
-        | OutputKind::BytecodeStringTable
-        | OutputKind::BytecodePayload
-        | OutputKind::ModuleInfoStringTable
-        | OutputKind::PrelinkedModuleGraph
-        | OutputKind::MetafileJson
-        | OutputKind::MetafileMarkdown => false,
+        _ => false,
     }
 }
 

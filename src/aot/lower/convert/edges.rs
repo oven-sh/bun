@@ -145,11 +145,6 @@ fn classify_call_result(
         FnBody::None => {}
     }
     match function.kind {
-        FnKind::CallSignature
-        | FnKind::ConstructSignature
-        | FnKind::FunctionType
-        | FnKind::ConstructorType
-        | FnKind::IndexSignature => IllTypedCause::None,
         FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
             let bound = files.bound(declaration.file);
             let is_implemented_elsewhere = match bound.fns[declaration.function.idx()].owner {
@@ -169,6 +164,7 @@ fn classify_call_result(
         FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::StaticBlock => {
             IllTypedCause::DeclarationWithoutBody
         }
+        _ => IllTypedCause::None,
     }
 }
 

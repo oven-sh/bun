@@ -1,0 +1,30 @@
+# const first = require("./data.json"); delete require("node:module")._cache["/data.json"]; const second = require("./data.json")
+# No module of the image is in the module cache, a module of data no more than a file with code. Whatever the program does to the cache, the body of the data module runs once,
+# and the variable that holds its value is stored once
+# RUN: valueflow-apply
+# CHECK: variable g0 name="_0" {{*}}flow={writers=AllKnown stores=AtMostOnce
+
+layout L0 module=m1 fields=[{key="name" declared={type=anything}}]
+variable g0 name="_0" module=m1 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/data.json" displayPath="data.json" kind=Data requireResult=DefaultExport body=f1 data=d0 exports=[{name="default" variable=g0}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="/data.json"
+    v1 = RequireModule module=m1 referrer=m0 specifier="./data.json"
+    v2 = Builtin builtin=NodeModule
+    v3 = PropGet v2 key="_cache"
+    v4 = ElemDelete v3, v0 mode=Sloppy
+    v5 = RequireModule module=m1 referrer=m0 specifier="./data.json"
+    Return v5
+}
+function f1 module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}
+data d0 root=Object{layout=L0 members=[{key="name" value=String{value="data"}}]} module=m1

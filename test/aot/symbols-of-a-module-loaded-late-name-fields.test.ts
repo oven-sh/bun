@@ -1,9 +1,10 @@
 // `await import("./app.cjs")` in the entry point, or one `require` in a function, and somebody may see each module that it reaches before its body has ended. Such a CommonJS module begins with the object
 // that `module.exports` starts as, so `const { kState } = require("./symbols.cjs")` is the symbol or undefined as far as the compiler knows. The symbols name fields all the same.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
@@ -39,12 +40,6 @@ const files = {
   "imported-late.mjs": `const { default: app } = await import("./app.cjs");\nconsole.log(app.run(100));\n`,
   "required-late.cjs": `function load() { return require("./app.cjs"); }\nconsole.log(load().run(100));\n`,
 };
-
-async function run(cmd: string[], cwd: string) {
-  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 test("the symbols of a CommonJS module name fields however the program gets to the module", async () => {
   using dir = tempDir("aot-symbols-of-a-module-loaded-late", files);

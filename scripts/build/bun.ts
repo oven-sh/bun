@@ -14,7 +14,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { cutProfilesStamp, emitCutProfileCheck } from "./aot.ts";
 import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
@@ -42,7 +41,6 @@ import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
-import { writeLibrariesFile } from "./trim/libraries.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -449,11 +447,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     lazyObjects: depLink.lazy,
     flags: ldflags,
-    implicitInputs: [
-      ...linkImplicitInputs(cfg),
-      ...shimInputs,
-      ...(cfg.trimmable ? [writeLibrariesFile(cfg, deps)] : []),
-    ],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
@@ -476,11 +470,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 }
 
 /**
- * WebKit's own executables beside a local WebKit build (deps/webkit.ts
- * jscPrograms says which, and how JSC compiles them): their sources, linked
- * with the WebKit and mimalloc objects bun links and with bun's table of
- * built-ins, which JavaScriptCore leaves to whoever links it. On request only
- * (`--target=jsc`); nothing with the prebuilt WebKit, whose tarball ships them.
+ * WebKit's own executables beside bun (deps/webkit.ts jscPrograms says which,
+ * and how JSC compiles them): their sources, or with the prebuilt WebKit their
+ * objects out of the tarball, linked with the WebKit and mimalloc bun links and
+ * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
+ * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
+ * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
+ * bun. With a tarball that has only the linked programs it is the fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -489,6 +485,7 @@ function emitJscPrograms(
   headersReady: string,
   builtinTableObjects: readonly string[],
 ): void {
+  const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
@@ -516,13 +513,15 @@ function emitJscPrograms(
     );
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
-      libs: from.flatMap(d => d.libs),
+      libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
       flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
     });
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
     // names it on unix; Windows gets the suffix-less alias.
     if (cfg.windows) n.phony(program.name, [exe]);
+    if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
   }
+  n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
 }
 
 /**
@@ -603,12 +602,6 @@ export function emitPostLink(
     ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
     ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
     ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
-    ...emitCutProfileCheck(n, cfg, {
-      exe,
-      exeName,
-      strippedExe,
-      warnOnly: binaryChecksWarnOnly(cfg),
-    }),
   ]);
 
   return { strippedExe, dsym };
@@ -645,12 +638,9 @@ function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump:
  * that relinks it) runs them, without making them inputs of anything.
  */
 export function postLinkChecks(cfg: Config, exeName: string): string[] {
-  return [
-    smokeTestStamp(cfg, exeName),
-    binaryVerifyStamp(cfg, exeName),
-    duplicateSymbolsStamp(cfg, exeName),
-    cutProfilesStamp(cfg, exeName),
-  ].filter((p): p is string => p !== undefined);
+  return [smokeTestStamp(cfg, exeName), binaryVerifyStamp(cfg, exeName), duplicateSymbolsStamp(cfg, exeName)].filter(
+    (p): p is string => p !== undefined,
+  );
 }
 
 const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");

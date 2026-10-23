@@ -209,10 +209,7 @@ pub(super) fn lower_conversion(
             let zero = builder.integer(0);
             Ok(builder.ur_shift(value, zero))
         }
-        Conversion::ToPrimitive
-        | Conversion::ToIntegerOrInfinity
-        | Conversion::ToIndex
-        | Conversion::ToBigInt => Err((site.call, Misuse::UnsupportedConversion)),
+        _ => Err((site.call, Misuse::UnsupportedConversion)),
     }
 }
 

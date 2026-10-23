@@ -1,0 +1,34 @@
+# What the run time does with a promise takes no call of the program: the functions that the table hangs on Promise (runtimefunction 65572 and 65578)
+# are entered where a function that makes a promise is reached
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65572 function=f2
+runtimefunction id=65578 function=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="later" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="emit" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="startQueue" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="nobodyCalls" results=[{type=anything}] {
+  b0():
+    Return
+}

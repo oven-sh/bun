@@ -4,6 +4,7 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
@@ -69,15 +70,10 @@ console.log(fibonacciOfTheTest(process.argv.length + 8), new RepositoryOfTheTest
 `;
 
 async function build(cwd: string, outfile: string, ...flags: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile],
+  const { stderr, exitCode } = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile],
     cwd,
-    env: bunEnv,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  );
   expect({ complaints: stderr.split("\n").filter(line => /^(warn|error)\b/.test(line)), exitCode }).toEqual({
     complaints: [],
     exitCode: 0,

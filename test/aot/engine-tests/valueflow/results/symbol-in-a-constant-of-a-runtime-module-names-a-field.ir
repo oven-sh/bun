@@ -1,0 +1,58 @@
+# In a module of the library: const kState = Symbol("state"); function mark(holder) { holder[kState] = 2 }  mark({ a: 1 })
+# In the program's own module: var kOther = Symbol("other"); function markOther(holder) { holder[kOther] = 2 }  markOther({ a: 1 })
+# A constant at the top level of a module of the library starts as undefined, as in plain Bun, whose bundler makes a `var` of it. The library reads none before its only store, so the solve takes the key of
+# `holder[kState]` for the symbol alone: the store names a field. A variable of the program that starts as undefined may be read so: the key is the symbol or "undefined". SplitUnions tests such a key,
+# so the store names a field there too, and none under "undefined"
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Holder" fields=[{key="a"
+# CHECK: {key=symbol("state")@m1:100 declared={type=int} flags=[IsAddedLate
+# CHECK: layout L1 name="Other" fields=[{key="a"
+# CHECK-NOT: key="undefined"
+# CHECK: {key=symbol("other")@m0:200 declared={type=int} flags=[IsAddedLate
+# CHECK-NOT: key="undefined"
+# CHECK: variable g0
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=number}}]
+layout L1 name="Other" fields=[{key="a" declared={type=number}}]
+variable g0 name="kState" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="kOther" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=Symbol
+    v2 = String string="other"
+    v3 = Call v1, -, v2 @200
+    PutModuleVariable v3 variable=g1
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = CallDirect v6 function=f3
+    Return v6
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="state"
+    v2 = Call v0, -, v1 @100
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = CallDirect v5 function=f2
+    Return v5
+}
+function f2 name="mark" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=2
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+function f3 name="markOther" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=2
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}

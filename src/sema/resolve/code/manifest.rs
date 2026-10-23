@@ -228,10 +228,7 @@ fn read_manifest<'h>(
         let root = build_exports_entry(arena, get_first(json, key)?);
         match root {
             ExportsEntry::Null => None,
-            ExportsEntry::Invalid
-            | ExportsEntry::Target(_)
-            | ExportsEntry::Array(_)
-            | ExportsEntry::Map(_) => Some(root),
+            _ => Some(root),
         }
     };
     let name = non_empty_string_property(json, b"name").unwrap_or_default();

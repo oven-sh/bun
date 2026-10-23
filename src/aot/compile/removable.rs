@@ -71,18 +71,11 @@ impl Primitive {
 fn is_read_without_code(builtin: BuiltinId, is_global: bool) -> bool {
     let entry = table::entry(builtin);
     match entry.kind {
-        BuiltinKind::Namespace
-        | BuiltinKind::Constructor
-        | BuiltinKind::Function
-        | BuiltinKind::Prototype
-        | BuiltinKind::Method
-        | BuiltinKind::Constant => {
-            is_global || !entry.flags.contains(BuiltinFlags::IS_LAZILY_CREATED)
-        }
         BuiltinKind::DataProperty => {
             is_global && entry.flags.contains(BuiltinFlags::IS_LAZILY_CREATED)
         }
         BuiltinKind::Accessor | BuiltinKind::NativeBinding => false,
+        _ => is_global || !entry.flags.contains(BuiltinFlags::IS_LAZILY_CREATED),
     }
 }
 
@@ -100,20 +93,7 @@ fn is_arithmetic(op: BinOp) -> bool {
         | BinOp::BitAnd
         | BinOp::BitOr
         | BinOp::BitXor => true,
-        BinOp::Lt
-        | BinOp::Le
-        | BinOp::Gt
-        | BinOp::Ge
-        | BinOp::EqEq
-        | BinOp::NotEq
-        | BinOp::EqEqEq
-        | BinOp::NotEqEq
-        | BinOp::In
-        | BinOp::Instanceof
-        | BinOp::And
-        | BinOp::Or
-        | BinOp::Nullish
-        | BinOp::Comma => false,
+        _ => false,
     }
 }
 
@@ -121,10 +101,7 @@ fn is_arithmetic(op: BinOp) -> bool {
 fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
     let is_written_name = match name_kind {
         NameKind::Identifier | NameKind::StringLiteral => true,
-        NameKind::NumericLiteral
-        | NameKind::ComputedString
-        | NameKind::ComputedNumber
-        | NameKind::Jsx => false,
+        _ => false,
     };
     match key {
         PropKey::Name(name) if is_written_name => Some(name),
@@ -226,21 +203,7 @@ impl<'a, 's> Removable<'a, 's> {
                 block, finalizer, ..
             } => self.enclosed_block(block) && self.enclosed_block(finalizer),
             StmtKind::ExportStar { type_only, .. } => type_only,
-            StmtKind::Debugger
-            | StmtKind::Return(_)
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::While { .. }
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Block(_)
-            | StmtKind::Switch { .. }
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Labeled { .. }
-            | StmtKind::ExportAssign(_)
-            | StmtKind::With { .. } => false,
+            _ => false,
         }
     }
 
@@ -329,18 +292,6 @@ impl<'a, 's> Removable<'a, 's> {
             return false;
         }
         match hir[expression].kind {
-            ExprKind::Missing
-            | ExprKind::This
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::Fn(_)
-            | ExprKind::ImportMeta
-            | ExprKind::JsxText(_) => true,
             ExprKind::Ident(_) => self.identifier(expression),
             ExprKind::Template { exprs } => hir.ids(exprs).all(|substitution| {
                 self.expression(substitution) && self.primitive(substitution) != Primitive::Unknown
@@ -385,6 +336,7 @@ impl<'a, 's> Removable<'a, 's> {
             | ExprKind::Yield { .. }
             | ExprKind::ImportCall { .. }
             | ExprKind::NewTarget(_) => false,
+            _ => true,
         }
     }
 
@@ -492,13 +444,6 @@ impl<'a, 's> Removable<'a, 's> {
             MemberKind::Property => {
                 !node.flags.contains(Flags::STATIC) || self.expression(node.init)
             }
-            MemberKind::Method
-            | MemberKind::Getter
-            | MemberKind::Setter
-            | MemberKind::Constructor => {
-                let mut parameters = hir[node.func].params.iter();
-                parameters.all(|parameter| !self.has_decorator(hir.param_modifiers(parameter)))
-            }
             MemberKind::StaticBlock => match node.func.some().map(|block| hir[block].body) {
                 Some(FnBody::Block(statements)) => hir
                     .ids(statements)
@@ -508,6 +453,10 @@ impl<'a, 's> Removable<'a, 's> {
             MemberKind::CallSignature
             | MemberKind::ConstructSignature
             | MemberKind::IndexSignature => true,
+            _ => {
+                let mut parameters = hir[node.func].params.iter();
+                parameters.all(|parameter| !self.has_decorator(hir.param_modifiers(parameter)))
+            }
         }
     }
 
@@ -518,12 +467,8 @@ impl<'a, 's> Removable<'a, 's> {
             PropKey::Computed(key) => self.literal(key).is_some(),
         };
         let copies_nothing = match node.kind {
-            PropKind::Init
-            | PropKind::Shorthand
-            | PropKind::Method
-            | PropKind::Getter
-            | PropKind::Setter => true,
             PropKind::Spread => false,
+            _ => true,
         };
         has_plain_key && copies_nothing && self.expression(node.value)
     }
@@ -562,12 +507,7 @@ impl<'a, 's> Removable<'a, 's> {
                 self.find_static_binding(name).is_some() || self.expression(operand)
             }
             UnOp::Plus | UnOp::Minus => self.has_folded_sign(operand),
-            UnOp::BitNot
-            | UnOp::Delete
-            | UnOp::PreInc
-            | UnOp::PreDec
-            | UnOp::PostInc
-            | UnOp::PostDec => false,
+            _ => false,
         }
     }
 
@@ -590,20 +530,7 @@ impl<'a, 's> Removable<'a, 's> {
                     Primitive::String | Primitive::Number | Primitive::BigInt
                 ) && kind == self.primitive(right)
             }
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor
-            | BinOp::In
-            | BinOp::Instanceof => false,
+            _ => false,
         };
         let is_guarded = matches!(op, BinOp::Or | BinOp::And)
             && self.is_guarded_free_name(right, left, op == BinOp::And);
@@ -627,9 +554,7 @@ impl<'a, 's> Removable<'a, 's> {
                 CommonJsVariable::Module | CommonJsVariable::Exports => {
                     self.analysis.module_format == ModuleFormat::CommonJs
                 }
-                CommonJsVariable::Require
-                | CommonJsVariable::Filename
-                | CommonJsVariable::Dirname => false,
+                _ => false,
             },
             Some(Binding::Free) => self.is_builtin_read(identifier),
             None => false,
@@ -752,24 +677,7 @@ impl<'a, 's> Removable<'a, 's> {
             BinOp::NotEqEq | BinOp::NotEq => is_undefined == is_yes_branch,
             BinOp::Lt | BinOp::Le => is_before_undefined && is_yes_branch != is_flipped,
             BinOp::Gt | BinOp::Ge => is_before_undefined && is_yes_branch == is_flipped,
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor
-            | BinOp::In
-            | BinOp::Instanceof
-            | BinOp::And
-            | BinOp::Or
-            | BinOp::Nullish
-            | BinOp::Comma => false,
+            _ => false,
         }
     }
 
@@ -971,43 +879,12 @@ impl<'a, 's> Removable<'a, 's> {
                 UnOp::Minus | UnOp::BitNot => match self.primitive(operand) {
                     Primitive::BigInt => Primitive::BigInt,
                     Primitive::Unknown | Primitive::Mixed => Primitive::Mixed,
-                    Primitive::Null
-                    | Primitive::Undefined
-                    | Primitive::Boolean
-                    | Primitive::Number
-                    | Primitive::String => Primitive::Number,
+                    _ => Primitive::Number,
                 },
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => Primitive::Mixed,
             },
             ExprKind::Binary { op, left, right } => self.primitive_of_binary(op, left, right),
-            ExprKind::Missing
-            | ExprKind::Ident(_)
-            | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::Regex { .. }
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_)
-            | ExprKind::Dot { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Call(_)
-            | ExprKind::New(_)
-            | ExprKind::Assign { .. }
-            | ExprKind::Spread(_)
-            | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
-            | ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_)
-            | ExprKind::Instantiation { .. }
-            | ExprKind::Jsx(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget(_) => Primitive::Unknown,
+            _ => Primitive::Unknown,
         }
     }
 
@@ -1039,18 +916,8 @@ impl<'a, 's> Removable<'a, 's> {
                 (left, right) if left.is_one_kind() && right.is_one_kind() => Primitive::Number,
                 _ => Primitive::Mixed,
             },
-            BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor => Primitive::Mixed,
             BinOp::Comma => self.primitive(right),
+            _ => Primitive::Mixed,
         }
     }
 }

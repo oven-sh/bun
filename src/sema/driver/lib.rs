@@ -24,7 +24,7 @@ use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
-use bun_sema::check::aot::DiagnosticClass;
+use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
@@ -1132,6 +1132,7 @@ pub struct Diagnostic {
     /// each, just as it's a `SourceFile` of each program.
     pub project: u32,
     pub class: DiagnosticClass,
+    pub subject: DiagnosticSubject,
     pub file: Option<FileId>,
 }
 
@@ -1361,6 +1362,7 @@ fn new_compiler_diagnostic(code: u32, args: Box<[Box<[u8]>]>) -> Diagnostic {
         related: Vec::new(),
         project: 0,
         class: DiagnosticClass::of_code(code),
+        subject: DiagnosticSubject::None,
         file: None,
     }
 }
@@ -3748,6 +3750,7 @@ fn sort_and_deduplicate_with(
         let is_same = equal_diagnostics_no_related_info(first, next);
         if is_same {
             first.class = first.class.stricter(next.class);
+            first.subject = first.subject.or(next.subject);
             first.related.append(&mut next.related);
             first.related.shared_sort_by(compare_diagnostics);
             first
@@ -4364,6 +4367,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     args: e.args,
                     message_chain: e.message_chain,
                     class: e.class,
+                    subject: e.subject,
                     file: Some(file),
                     ..global(0, &[""; 0])
                 };

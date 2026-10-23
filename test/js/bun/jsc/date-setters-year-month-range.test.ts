@@ -119,20 +119,24 @@ describe("date setters range-check year + floor(month / 12), not each argument",
     expect(new Date(946688523001).setUTCFullYear(300000, 0, -108842264)).toBe(946688523001);
   });
 
-  test("a year or a month count is exact up to the last safe integer, and NaN beyond it", () => {
+  test("a month count is split exactly up to 12 * 2^53, and is NaN beyond it", () => {
     expect(new Date(0).setUTCFullYear(2000 - 750599937895082, 2 ** 53 - 1, 1)).toBe(965088000000); // 2000-08-01
     expect(Date.UTC(2000 - 750599937895082, 2 ** 53 - 1, 1)).toBe(965088000000);
     expect(new Date(2000 - 750599937895082, 2 ** 53 - 1, 1).getTime()).toBe(localTime(2000, 7, 1));
     expect(new Date(0).setUTCFullYear(2000 + 750599937895083, -(2 ** 53 - 1), 1)).toBe(959817600000); // 2000-06-01
     expect(Date.UTC(2000 + 750599937895083, -(2 ** 53 - 1), 1)).toBe(959817600000);
-    // A double cannot split a month count beyond 2^53 exactly: 2 ** 56 months from this year is 2000-05-01.
-    expect(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1)).toBeNaN();
-    expect(Date.UTC(-6004799503158661, 2 ** 56, 1)).toBeNaN();
-    expect(new Date(-6004799503158661, 2 ** 56, 1).getTime()).toBeNaN();
-    expect(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53)).toBeNaN();
-    expect(Date.UTC(-750599937893082, 2 ** 53)).toBeNaN();
-    expect(new Date(0).setUTCMonth(-(2 ** 53))).toBeNaN();
-    expect(Date.UTC(-9007197107257351, 108086391056891980, 784353026671)).toBeNaN();
+    // A double cannot split a month count beyond 2^53 exactly: it gave 2000-01-01 for the first of these.
+    expect(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1)).toBe(957139200000); // 2000-05-01
+    expect(Date.UTC(-6004799503158661, 2 ** 56, 1)).toBe(957139200000);
+    expect(new Date(-6004799503158661, 2 ** 56, 1).getTime()).toBe(localTime(2000, 4, 1));
+    expect(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53, 1)).toBe(967766400000); // 2000-09-01
+    expect(Date.UTC(-750599937893082, 2 ** 53, 1)).toBe(967766400000);
+    // 12 * 2^53 is the last month count whose floor(month / 12) is an exact Number. Beyond it the answer is NaN.
+    expect(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53, 1)).toBe(946684800000); // 2000-01-01
+    expect(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53, 1)).toBe(946684800000);
+    expect(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1)).toBeNaN();
+    expect(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1)).toBeNaN();
+    expect(new Date(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1).getTime()).toBeNaN();
 
     // year + floor(month / 12) has to fit an int32. The day count can pull the last such year back.
     expect(new Date(0).setUTCFullYear(2 ** 31 - 1, 0, -784353015467)).toBe(-124334438400000);
@@ -142,6 +146,7 @@ describe("date setters range-check year + floor(month / 12), not each argument",
     expect(new Date(0).setUTCFullYear(-(2 ** 31), 0, 784353015833)).toBe(-86400000);
     expect(new Date(0).setUTCFullYear(-(2 ** 31) - 1, 0, 784353015833)).toBeNaN();
     // A year or a month count beyond int32 does not wrap into range.
+    expect(new Date(0).setUTCMonth(-(2 ** 53))).toBeNaN();
     expect(new Date(0).setUTCFullYear(2 ** 31 + 2000)).toBeNaN();
     expect(new Date(0).setUTCFullYear(2 ** 32 + 2000)).toBeNaN();
     expect(Date.UTC(2 ** 32 + 2000, 0, 1)).toBeNaN();

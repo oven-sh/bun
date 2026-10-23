@@ -181,11 +181,12 @@ for (let credentials of allCredentials) {
     // less than 5 MiB
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
 
-    // A case that moves 1 MiB or more in one request. It runs against the local
+    // A case that moves 1 MiB or more in one request runs against the local
     // server only. R2 is a live service. At times it holds such a request for a
-    // minute or longer, or answers it with 502, 504 or InternalError. Then each
-    // CI attempt of this file failed on one of these cases. "should be able to
-    // upload in two parts" keeps one multipart upload on the live service.
+    // minute or longer, or answers it with 502, 504 or InternalError. An attempt
+    // of this file had 56 such requests, and each of the 4 CI attempts failed on
+    // one of them. "should be able to upload in two parts" is the one case of
+    // this size that still goes to R2. It has 2 such requests.
     const itLargeTransfer = it.skipIf(credentials.service !== "s3-server");
 
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
@@ -1500,18 +1501,25 @@ for (let credentials of allCredentials) {
         it("should be able to upload in two parts", async () => {
           // The smallest multipart upload: each part but the last has at least 5 MiB.
           const partSize = 5 * 1024 * 1024;
+          const parts = [Buffer.alloc(partSize, "a"), Buffer.from("bbbb")];
+          const md5 = (data: Uint8Array) => createHash("md5").update(data).digest();
           const s3file = S3({ ...s3Options, bucket: S3Bucket }).file(randomUUID());
-          const writer = s3file.writer({ partSize });
-          writer.write(Buffer.alloc(partSize, "a"));
-          writer.write("bbbb");
-          expect(await writer.end()).toBe(partSize + 4);
           try {
+            const writer = s3file.writer({ partSize });
+            for (const part of parts) writer.write(part);
+            expect(await writer.end()).toBe(partSize + 4);
+
+            // The ETag of a multipart upload is the MD5 of the MD5 of each part, then the number of parts.
+            const etag = `"${md5(Buffer.concat(parts.map(md5))).toString("hex")}-2"`;
             const stat = await s3file.stat();
-            expect(stat.size).toBe(partSize + 4);
-            // The ETag of a multipart upload ends with the number of its parts.
-            expect(stat.etag).toMatch(/-2"?$/);
-            // The bytes on each side of the part boundary.
-            expect(await s3file.slice(partSize - 4, partSize + 4).text()).toBe("aaaabbbb");
+            expect({ size: stat.size, etag: stat.etag }).toEqual({ size: partSize + 4, etag });
+
+            const chunks: Uint8Array[] = [];
+            for await (const chunk of s3file.stream()) chunks.push(chunk);
+            const body = Buffer.concat(chunks);
+            expect(body.length).toBe(partSize + 4);
+            // A comparison of the bodies would print megabytes when it fails.
+            expect(md5(body).toString("hex")).toBe(md5(Buffer.concat(parts)).toString("hex"));
           } finally {
             await s3file.unlink();
           }

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Registry } from "../index.ts";
 import type { Manifest } from "./helpers.ts";
 import { abbreviatedAccept, jsonHeaders, pack, publishBody, request, sha1, sha512, storage } from "./helpers.ts";
@@ -528,9 +528,15 @@ describe("unpublish", () => {
     });
     expect(kept.status).toBe(400);
 
-    // The version number is used up.
-    const again = await publish({ name: "shrinking", version: "2.0.0" });
-    expect(again.status).toBe(403);
+    // The version number is used up. The answer is not the one for a version that is there.
+    expect(await publish({ name: "shrinking", version: "2.0.0" })).toMatchObject({
+      status: 400,
+      json: { error: `Cannot publish over previously published version "2.0.0".` },
+    });
+    expect(await publish({ name: "shrinking", version: "1.1.0" })).toMatchObject({
+      status: 403,
+      json: { error: "You cannot publish over the previously published versions: 1.1.0." },
+    });
     expect((await publish({ name: "shrinking", version: "2.0.1" })).status).toBe(200);
   });
 
@@ -580,6 +586,41 @@ describe("unpublish", () => {
     const soon = await publish({ name: "leaving", version: "1.0.1" });
     expect(soon.status).toBe(403);
     expect(soon.json).toEqual({ error: "leaving cannot be republished until 24 hours have passed." });
+  });
+
+  test("after 24 hours the name is free and the version number is not", async () => {
+    const { registry, publish, packument, token } = setup();
+    using _ = registry;
+    // The registry runs on the thread of the test, so this is its clock too.
+    setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      await publish({ name: "returning", version: "1.0.0" });
+      const { _rev } = await packument("returning");
+      const removed = await request(`${registry.url}returning/-rev/${_rev}`, {
+        method: "DELETE",
+        headers: jsonHeaders(token("alice")),
+      });
+      expect(removed.status).toBe(200);
+
+      // Before that, the answer is about the name, also for the version number that was used.
+      setSystemTime(new Date("2026-01-01T23:59:59.999Z"));
+      expect(await publish({ name: "returning", version: "1.0.0" })).toMatchObject({
+        status: 403,
+        json: { error: "returning cannot be republished until 24 hours have passed." },
+      });
+
+      setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
+      const usedUp = { status: 400, json: { error: `Cannot publish over previously published version "1.0.0".` } };
+      expect(await publish({ name: "returning", version: "1.0.0" })).toMatchObject(usedUp);
+      expect(await registry.packages.has("returning")).toBe(false);
+
+      expect((await publish({ name: "returning", version: "1.0.1" })).status).toBe(200);
+      // The package is new. The number of the one that was removed stays used up in it.
+      expect(await publish({ name: "returning", version: "1.0.0" })).toMatchObject(usedUp);
+      expect(Object.keys((await packument("returning")).versions)).toEqual(["1.0.1"]);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("the last version takes the package with it", async () => {

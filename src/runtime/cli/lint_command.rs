@@ -11,7 +11,7 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
-use super::script_or_command::{arguments_before, directory_of_cwd, place_of_command};
+use super::script_or_command::{arguments_before, directory_of_cwd};
 use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
@@ -91,18 +91,6 @@ pub(crate) fn read_bunfigs(
     if config_path.is_none() && above != Above::Unwanted {
         bun_bunfig::load_config_above_for_tool(tag, ctx, above, &mut read);
     }
-}
-
-/// Applies `--disallow-code-generation-from-strings` from `bun`'s own flags, which precede `command`. It also covers
-/// the plugins and the configuration files.
-fn disallow_code_generation_before(command: &[u8]) {
-    let argv = bun_core::argv().to_vec();
-    let flags = argv
-        .iter()
-        .take(place_of_command(command).unwrap_or(argv.len()));
-    super::arguments::disallow_code_generation_from_strings_as_compiled(
-        &flags.copied().collect::<Vec<_>>(),
-    );
 }
 
 /// The `-e` argument of a process that `run_script` starts.
@@ -288,7 +276,6 @@ pub(crate) fn run_and_exit(
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
-    disallow_code_generation_before(command);
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
     }

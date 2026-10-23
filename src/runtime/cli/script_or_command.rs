@@ -97,7 +97,7 @@ fn has_flag(command: &[u8], flag: &[u8]) -> bool {
 
 /// Where the first of `args` is that is neither a flag of `bun` nor the value of one: the command, or what to run.
 /// There is none with `--eval` and `--print`.
-fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
+pub(crate) fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
     let mut at = 1;
     while let Some(arg) = args.get(at).copied() {
         if !arg.starts_with(b"-") || arg == b"-" {

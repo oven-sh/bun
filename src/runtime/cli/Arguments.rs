@@ -801,18 +801,84 @@ fn disallow_code_generation_from_strings(value: &[u8]) {
     }
 }
 
+/// What `arg` gives `--disallow-code-generation-from-strings`, if it is that flag. Empty for the flag alone.
+fn value_of_disallow_code_generation_from_strings(arg: &[u8]) -> Option<&[u8]> {
+    match arg.strip_prefix(b"--disallow-code-generation-from-strings".as_slice())? {
+        b"" => Some(b""),
+        [b'=', value @ ..] => Some(value),
+        _ => None,
+    }
+}
+
+/// Whether [`parse`] reads the flags of the runtime for `cmd`. `--disallow-code-generation-from-strings` is one of them.
+pub(crate) const fn reads_runtime_flags(cmd: CommandTag) -> bool {
+    matches!(
+        cmd,
+        CommandTag::AutoCommand
+            | CommandTag::RunCommand
+            | CommandTag::TestCommand
+            | CommandTag::RunAsNodeCommand
+    )
+}
+
+/// The flags of `bun` for `cmd`, with their values: the arguments that `BUN_OPTIONS` adds, and those before the command.
+pub(crate) fn flags_of_bun(cmd: CommandTag) -> &'static [&'static bun_core::ZStr] {
+    let argv = bun_core::argv().as_slice();
+    let from_env = 1 + bun_core::bun_options_argc();
+    // The package manager and bunx refuse a flag that they do not have where it is typed. They skip one of `BUN_OPTIONS`.
+    let takes_typed = command::USES_GLOBAL_OPTIONS[cmd]
+        || matches!(
+            cmd,
+            CommandTag::CheckCommand
+                | CommandTag::LintCommand
+                | CommandTag::FormatCommand
+                | CommandTag::CreateCommand
+        );
+    let end = if takes_typed {
+        // `command::which` finds the command after the arguments that start with `-`, or after their values too. The further one.
+        let is_flag = |arg: &&&bun_core::ZStr| {
+            let arg = arg.as_bytes();
+            !arg.is_empty() && arg[0] == b'-' && !(arg.len() > 1 && arg[1] == b'e')
+        };
+        let leading = 1 + argv.iter().skip(1).take_while(is_flag).count();
+        let first_word = match leading {
+            1 => None,
+            _ => {
+                let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
+                super::script_or_command::place_of_first_word(&args)
+            }
+        };
+        leading.max(first_word.unwrap_or(leading)).max(from_env)
+    } else {
+        from_env
+    };
+    &argv[1.min(argv.len())..end.min(argv.len())]
+}
+
+/// Raises the level to what the last `--disallow-code-generation-from-strings` among `flags` gives. `--` ends `flags`.
+#[cold]
+#[inline(never)]
+pub(crate) fn disallow_code_generation_from_strings_among(flags: &[&bun_core::ZStr]) {
+    let mut given = None;
+    for arg in flags {
+        let arg = arg.as_bytes();
+        if arg == b"--" {
+            break;
+        }
+        given = value_of_disallow_code_generation_from_strings(arg).or(given);
+    }
+    if let Some(value) = given {
+        disallow_code_generation_from_strings(value);
+    }
+}
+
 /// The level a compiled executable was built with (`--compile-exec-argv`) is a floor. The parser
 /// keeps an option's last value and reads `BUN_OPTIONS` after the embedded flags, so on its own it
 /// would let the environment lower it. `embedded` is the embedded flags as the parser is given them.
 pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun_core::ZStr]) {
     for token in embedded {
-        match token
-            .as_bytes()
-            .strip_prefix(b"--disallow-code-generation-from-strings".as_slice())
-        {
-            Some(b"") => disallow_code_generation_from_strings(b""),
-            Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
-            _ => {}
+        if let Some(value) = value_of_disallow_code_generation_from_strings(token.as_bytes()) {
+            disallow_code_generation_from_strings(value);
         }
     }
 }
@@ -1053,13 +1119,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
     // runtime commands
-    if matches!(
-        cmd,
-        CommandTag::AutoCommand
-            | CommandTag::RunCommand
-            | CommandTag::TestCommand
-            | CommandTag::RunAsNodeCommand
-    ) {
+    if reads_runtime_flags(cmd) {
         {
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");

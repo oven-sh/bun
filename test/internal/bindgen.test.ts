@@ -920,6 +920,7 @@ describe("b.callable, b.jsArray, b.object and b.undefined", () => {
     expect(bindgen.describeHandle(() => {})).toBe("callback");
     expect(bindgen.describeHandle([1])).toBe("list");
     expect(bindgen.describeHandle(new (class extends Array {})())).toBe("list");
+    expect(bindgen.describeHandle(Array.prototype)).toBe("list");
     expect(bindgen.describeHandle({ x: 2 })).toBe("point 2");
     expect(bindgen.describeHandle(true)).toBe("text true");
     expect(bindgen.describeHandle(3)).toBe("text 3");
@@ -1370,10 +1371,8 @@ describe("unions", () => {
     expect(calls).toEqual([]);
   });
 
-  it("Array.prototype, which b.array refuses, is not of the array kind", () => {
-    expect(() => bindgen.describeValue(Array.prototype)).toThrow(
-      "value must be of type number, boolean, string, or array of integer",
-    );
+  it("Array.prototype, which b.array takes, is of the array kind", () => {
+    expect(bindgen.describeValue(Array.prototype)).toBe("list []");
   });
 
   it("an enumeration takes strings, and b.any what nothing before it took", () => {
@@ -1516,6 +1515,7 @@ describe("what is only a result", () => {
 describe("arrays", () => {
   it("in", () => {
     expect(bindgen.sumArray([])).toBe(0);
+    expect(bindgen.sumArray(Array.prototype)).toBe(0);
     expect(bindgen.sumArray([1, 2, 3])).toBe(6);
     expect(bindgen.sumArray(Array.from({ length: 1000 }, (_, i) => i))).toBe(499500);
     expect(() => bindgen.sumArray(new Set([4, 5]))).toThrow("numbers must be an array of integer");

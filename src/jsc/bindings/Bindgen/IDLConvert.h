@@ -284,7 +284,7 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawArray> : Bun::DefaultTr
     template<Bun::IDLConversionContext Ctx>
     static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
-        if (!JSC::isJSArray(value))
+        if (!value.inherits<JSC::JSArray>())
             return std::nullopt;
         return value;
     }
@@ -476,7 +476,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLArray<IDL>> : Bun::DefaultTryConverte
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (!JSC::isJSArray(value))
+        if (!value.inherits<JSC::JSArray>())
             return std::nullopt;
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);

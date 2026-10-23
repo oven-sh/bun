@@ -152,7 +152,7 @@ const _: () = assert!(size_of::<Mark>() == 24);
 pub enum MarkKind {
     /// Of an object literal, which is code. A block's is not, and it is the same character.
     ObjectBrace,
-    /// Where control goes one of several ways, each a `Branch`: `if`, `?:`, `switch`.
+    /// Where control goes one of several ways. Each of them has a `Branch`: `?:`, `if`-`else`.
     Decision,
     /// A `Decision` with one more branch, which has no code. Its count is what the others leave.
     DecisionWithImplicitBranch,

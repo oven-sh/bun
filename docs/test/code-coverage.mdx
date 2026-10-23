@@ -91,7 +91,7 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### LCOV Coverage Reporter
 
-The lcov reporter writes an `lcov.info` file to the coverage directory, with the function totals (`FNF`, `FNH`) of each file, how often each branch was taken (`BRDA`), and how often each line ran (`DA`).
+The lcov reporter writes an `lcov.info` file to the coverage directory. For each file it has the function totals (`FNF`, `FNH`), how often each branch was taken (`BRDA`) and how often each line ran (`DA`).
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -296,8 +296,8 @@ test:coverage:
 -------------|---------|---------|----------|-------------------
 File         | % Funcs | % Lines | % Branch | Uncovered Line #s
 -------------|---------|---------|----------|-------------------
-All files    |   85.71 |   90.48 |    77.78 |
- src/        |   85.71 |   90.48 |    77.78 |
+All files    |   85.00 |   91.53 |    77.78 |
+ src/        |   85.00 |   91.53 |    77.78 |
   utils.ts   |  100.00 |  100.00 |   100.00 |
   api.ts     |   75.00 |   85.71 |    66.67 | 15-18,25
   main.ts    |   80.00 |   88.89 |    75.00 | 42,50-52
@@ -340,7 +340,7 @@ All files  |  100.00 |  100.00 |    50.00 |
 -----------|---------|---------|----------|-------------------
 ```
 
-`greet` has four branches, and the test takes two of them: `!user` is false, and `"stranger"` is skipped. The `lcov` reporter has the count of each branch.
+`greet` has four branches, and the test takes two of them: `!user` is false, and `"stranger"` is skipped. The `lcov` reporter writes how often each branch was taken.
 
 Wherever the code can go one of several ways, each way is a branch, whether or not it has code of its own:
 
@@ -357,6 +357,8 @@ Wherever the code can go one of several ways, each way is a branch, whether or n
 | `for`...`in`, `for`...`of`                                    | The body runs                                                 |
 | `try`...`catch`                                               | An error is caught, no error is caught                        |
 
+A `for`...`in` or `for`...`of` loop has one branch. Nothing counts how often it ran out of items rather than ended with `break`.
+
 In a `switch`, a `case` counts when it matches. The exception is a `case` that has statements and falls through to the next one, because it does not end in `break`, `continue`, `return` or `throw`:
 
 - The next `case` counts those runs too.
@@ -365,16 +367,16 @@ In a `switch`, a `case` counts when it matches. The exception is a `case` that h
 Bun does not report:
 
 - A branch in the value of a `case`, such as the `&&` in `case a && b:`. The `case` itself is a branch of its `switch`.
-- The branches of a file that `bun build` made with a source map. Its lines are reported.
+- The branches of a file built with `bun build --target=bun` and a source map. Bun still reports its lines.
 
-A branch without code of its own, such as a missing `else`, has what is left of the times Bun reached the decision. In two cases that reads as taken when it was not:
+The count of a branch without code of its own, such as a missing `else`, is how often Bun reached the decision, minus the other branches. In two cases that reads as taken when it was not:
 
 - The condition throws, as in `if (check()) return;` where `check()` throws.
 - A call right before the decision throws. Bun counts code in blocks that run together, and still reports the rest of the block as run.
 
-#### Compared with other tools
+#### Compared With Other Tools
 
-Tools do not agree on what a branch is, so the same tests give a different percentage in each. Bun lists both outcomes of `&&`, `||`, `??`, `?.`, the logical assignments, default values and loop conditions, so a file has more branches than in Istanbul, which Jest and nyc use, and the percentage is often lower. Set a `branches` threshold from what Bun reports for your project, not from the number another tool gave.
+Tools do not agree on what a branch is, so the same tests give a different percentage in each. Bun lists both outcomes of `&&`, `||`, `??`, `?.`, the logical assignments, default values and loop conditions. A file therefore has more branches than in Istanbul, which Jest and nyc use. Set a `branches` threshold from what Bun reports for your project, not from the number another tool gave.
 
 ### What to Aim For
 

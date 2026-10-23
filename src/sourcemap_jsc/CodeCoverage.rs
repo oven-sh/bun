@@ -586,7 +586,7 @@ pub mod lcov {
         }
 
         // BRF: branches found
-        writeln!(writer, "BRF:{}", report.branches.len())?;
+        writeln!(writer, "BRF:{}", report.branches_found())?;
 
         // BRH: branches hit
         writeln!(writer, "BRH:{}", report.branches_hit())?;
@@ -678,6 +678,7 @@ pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
     has_executed: bool,
+    is_in_loop_header: bool,
     execution_count: usize,
 }
 
@@ -871,7 +872,7 @@ impl ByteRangeMapping {
         has_source_map: bool,
         lines: &mut LineCounts,
     ) -> Vec<(Branch, u32)> {
-        // At a function is the function's own block. JSC starts the branch's block a unit earlier.
+        // A function's own block is at its start, so JSC starts the branch's a unit earlier.
         let count_at = |offset: u32| {
             let starts_a_function = functions
                 .binary_search_by_key(&offset, |function| function.range.start)
@@ -897,7 +898,7 @@ impl ByteRangeMapping {
                     }
                     _ => continue,
                 };
-            // A `// @bun` file has none: its source map has the lines of several files at once.
+            // `None` in a `// @bun` file: its marks have lines of the bundle, not of the sources.
             let line = if has_source_map {
                 decision_mark.original_line
             } else {

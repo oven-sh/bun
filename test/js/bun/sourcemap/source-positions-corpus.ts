@@ -862,7 +862,7 @@ export const cases: Record<string, Case> = {
  1|rejected();
 `,
   },
-  // What `?.`, a logical assignment and a value that is there skip.
+  // What `?.`, a logical assignment and a value that is there skip. A `case` that does not match did not run.
   "skipped.ts": {
     functions: "8/8",
     lines: `
@@ -915,7 +915,7 @@ export const cases: Record<string, Case> = {
  2|  node = node.next;
  -|}
  1|switch (2 as number) {
- 1|  case node?.next: at();
+ 0|  case node?.next: at();
  -|}
 `,
   },

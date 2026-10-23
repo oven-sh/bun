@@ -1700,9 +1700,9 @@ pub(crate) mod __gated_printer {
         pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
         pub(crate) decision_count: u32,
-        /// Of the labelled statement that is about to be printed, if it is a branch.
+        /// The decision that the labelled statement about to be printed is a branch of, else 0.
         pub(crate) decision_of_label: u32,
-        pub(crate) is_in_case_value: bool,
+        pub(crate) is_inside_case_value: bool,
 
         pub(crate) stack_check: bun_core::StackCheck,
         pub(crate) stack_overflowed: bool,
@@ -2516,7 +2516,7 @@ pub(crate) mod __gated_printer {
             )
         }
 
-        /// Returns 0 for generated code: a branch is not after `loc`. `mark_branch` ignores 0.
+        /// Returns 0, which `mark_branch` ignores, if a branch is not after `loc`: generated code.
         #[inline]
         fn mark_decision_at_offset(
             &mut self,
@@ -2530,7 +2530,7 @@ pub(crate) mod __gated_printer {
                 return 0;
             }
             // JSC counts the value of a `case` with its clause, not each time it is compared.
-            if self.is_in_case_value {
+            if self.is_inside_case_value {
                 return 0;
             }
             if loc.is_empty() || branches.iter().any(|branch| branch.start <= loc.start) {
@@ -6324,10 +6324,10 @@ pub(crate) mod __gated_printer {
                         if let Some(val) = &c.value {
                             self.print(b"case");
                             self.print_space();
-                            let was_in_case_value =
-                                core::mem::replace(&mut self.is_in_case_value, true);
+                            let was_inside_case_value =
+                                core::mem::replace(&mut self.is_inside_case_value, true);
                             self.print_expr(*val, Level::LogicalAnd, ExprFlag::none());
-                            self.is_in_case_value = was_in_case_value;
+                            self.is_inside_case_value = was_inside_case_value;
                         } else {
                             self.print(b"default");
                         }
@@ -7321,7 +7321,7 @@ pub(crate) mod __gated_printer {
                 binary_expression_stack: Vec::new(),
                 decision_count: 0,
                 decision_of_label: 0,
-                is_in_case_value: false,
+                is_inside_case_value: false,
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,

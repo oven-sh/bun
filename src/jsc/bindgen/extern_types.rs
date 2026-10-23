@@ -2,7 +2,7 @@
 
 use core::ffi::{c_uint, c_void};
 
-use super::JsHeap;
+use super::{JsHeap, JsLocal};
 use crate::{JSGlobalObject, JSValue};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
@@ -110,6 +110,23 @@ impl ExternBytes {
     }
 }
 
+/// Arguments in the caller's frame, which holds them until the host function returns.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternVariadicArguments {
+    data: *const JSValue,
+    length: usize,
+}
+impl ExternVariadicArguments {
+    /// # Safety
+    /// The host function that passed this is the call `heap` belongs to.
+    #[inline(always)]
+    pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a>] {
+        // SAFETY: C++ never passes a null pointer, and the frame holds the values.
+        unsafe { JsLocal::slice_from_raw_parts(self.data, self.length) }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternWithValue<T: Copy> {
@@ -146,6 +163,10 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__exceptionPresenceMatches(
+        global: *mut JSGlobalObject,
+        should_have_exception: bool,
+    ) -> bool;
     pub(super) fn Bun__Bindgen__putRecordEntry(
         global: &JSGlobalObject,
         record: JSValue,
@@ -153,6 +174,15 @@ unsafe extern "C" {
         key_length: usize,
         value: JSValue,
     ) -> bool;
+    pub(super) fn Bun__Bindgen__constructorForClass(
+        global: &JSGlobalObject,
+        class_index: u32,
+    ) -> JSValue;
+    pub(super) fn Bun__Bindgen__notifyInitialized(
+        global: *mut JSGlobalObject,
+        cell: *mut c_void,
+        extra_memory_size: usize,
+    );
     pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,

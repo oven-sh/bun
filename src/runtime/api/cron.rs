@@ -1756,14 +1756,14 @@ impl CronJob {
         this_value
     }
 
-    pub(crate) fn do_ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
+    pub(crate) fn r#ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         if !self.stopped.get() {
             self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
         this_value
     }
 
-    pub(crate) fn do_unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
+    pub(crate) fn unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         this_value
     }

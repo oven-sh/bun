@@ -57,10 +57,6 @@ pub(crate) mod ssl_wrapper {
     }
 }
 
-// `tls_socket_functions.rs` is `#[path]`-included from `socket_body.rs` (where
-// the functions are actually used); a second top-level include here was only
-// there for type-check parity.
-
 pub(crate) mod udp_socket;
 
 #[path = "uws_dispatch.rs"]

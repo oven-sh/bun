@@ -92,7 +92,8 @@
 #include "ZigGlobalObject.h"
 #include "JSEnvironmentVariableMap.h"
 #include "blob.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
+#include "GeneratedBlockList.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -201,10 +202,16 @@ enum SerializationTag {
     ErrorTag = 255
 };
 
-// Releases the +1 taken by `BlockList::on_structured_clone_serialize` so the
+class CloneSerializer;
+
+extern "C" void Blob__onStructuredCloneSerialize(void* blob, CloneSerializer*);
+extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
+extern "C" void BlockList__onStructuredCloneSerialize(void* blockList, CloneSerializer*);
+extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
+// Releases the +1 taken by `BlockList__onStructuredCloneSerialize` so the
 // shared backing is freed once the SerializedScriptValue holding the raw
 // pointer is gone.
-extern "C" SYSV_ABI void BlockList__onStructuredCloneDestroy(void*);
+extern "C" void BlockList__onStructuredCloneDestroy(void*);
 
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
@@ -1401,24 +1408,31 @@ private:
             }
 
             // write bun types
-            auto _cloneable = StructuredCloneableSerialize::fromJS(value);
-            if (_cloneable) {
-                if (!startObjectInternal(obj)) // handle duplicates
+            if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(obj)) {
+                if (!startObjectInternal(blob)) // handle duplicates
                     return true;
-                auto cloneable = _cloneable.value();
-                const bool isTransferCompatible = m_forTransfer == SerializationForCrossProcessTransfer::Yes ? cloneable.isForTransfer : true;
-                const bool isStorageCompatible = m_forStorage == SerializationForStorage::Yes ? cloneable.isForStorage : true;
-                if (!isTransferCompatible || !isStorageCompatible) {
+                // TODO: a Blob backed by a file descriptor should not be stored either.
+                if (m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
                     write(ObjectTag);
                     write(TerminatorTag);
                     return true;
                 }
-                StructuredCloneableSerialize to_write = WTF::move(_cloneable.value());
-                write(to_write.tag);
-                to_write.write(this, m_lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (to_write.tag == Bun__nodenet_BlockList)
-                    m_serializedBlockListRefs.append(to_write.impl);
+                write(Bun__BlobTag);
+                Blob__onStructuredCloneSerialize(blob->wrapped(), this);
+                return true;
+            }
+
+            if (auto* blockList = dynamicDowncast<Bun::Bindgen::Generated::JSBlockList>(obj)) {
+                if (!startObjectInternal(blockList)) // handle duplicates
+                    return true;
+                if (m_forTransfer == SerializationForCrossProcessTransfer::Yes || m_forStorage == SerializationForStorage::Yes) {
+                    write(ObjectTag);
+                    write(TerminatorTag);
+                    return true;
+                }
+                write(Bun__nodenet_BlockList);
+                BlockList__onStructuredCloneSerialize(blockList->wrapped(), this);
+                m_serializedBlockListRefs.append(blockList->wrapped());
                 return true;
             }
 
@@ -2001,9 +2015,9 @@ private:
     SerializationForCrossProcessTransfer m_forTransfer;
 };
 
-SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
+extern "C" void WebCore__CloneSerializer__write(CloneSerializer* serializer, const uint8_t* data, uint32_t length)
 {
-    ctx->write(data, size);
+    serializer->write(data, length);
 }
 
 SerializationReturnCode CloneSerializer::serialize(JSValue in)
@@ -3399,6 +3413,18 @@ private:
         return toJS(m_lexicalGlobalObject, uncheckedDowncast<JSDOMGlobalObject>(m_globalObject), std::forward<T>(nativeObj));
     }
 
+    JSValue readBunType(JSC::EncodedJSValue (*deserialize)(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end))
+    {
+        JSValue deserialized = JSValue::decode(deserialize(m_lexicalGlobalObject, &m_ptr, m_end));
+        // Empty: the record was malformed, or Rust threw (the caller checks its scope first).
+        if (deserialized.isEmpty()) {
+            fail();
+            return JSValue();
+        }
+        addTerminalToObjectPool(deserialized);
+        return deserialized;
+    }
+
     JSValue readX509Certificate()
     {
         Vector<uint8_t> buffer;
@@ -3602,18 +3628,6 @@ private:
         SerializationTag tag = readTag();
         // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
         //     return JSValue();
-
-        // read bun types
-        if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
-            JSValue deserialized = JSValue::decode(value.value());
-            // Empty: the record was malformed, or the hook threw (the caller checks its scope first).
-            if (deserialized.isEmpty()) {
-                fail();
-                return JSValue();
-            }
-            addTerminalToObjectPool(deserialized);
-            return deserialized;
-        }
 
         switch (tag) {
         case UndefinedTag:
@@ -3936,6 +3950,12 @@ private:
 #endif
         case DOMExceptionTag:
             return readDOMException();
+
+        case Bun__BlobTag:
+            return readBunType(Blob__onStructuredCloneDeserialize);
+
+        case Bun__nodenet_BlockList:
+            return readBunType(BlockList__onStructuredCloneDeserialize);
 
         case Bun__X509CertificateTag:
             return readX509Certificate();

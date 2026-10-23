@@ -5,10 +5,11 @@ use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::KeepAlive;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
-    JsRef, JsResult,
+    self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell, JsRef,
+    JsResult,
 };
 use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_uws as uws;
@@ -46,10 +47,7 @@ pub(crate) struct SubscriptionCtx {
     pub(crate) original_enable_auto_pipelining: bool,
 }
 
-/// The generate-classes.ts output emits a
-/// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
-/// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
-pub(crate) use crate::generated_classes::js_RedisClient as Js;
+pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
@@ -60,7 +58,7 @@ impl SubscriptionCtx {
             .try_get()
             .expect("unreachable");
 
-        Js::subscription_callback_map_set_cached(
+        js::subscription_callback_map_set_cached(
             parent_this,
             &valkey_parent.global_object,
             callback_map,
@@ -85,7 +83,7 @@ impl JSValkeyClient {
     /// `None` while the wrapper is dead but unswept: `finalize()` has not run, socket callbacks still do.
     fn try_subscription_callback_map(&self) -> Option<&mut JSMap> {
         let parent_this = self.this_value.get().try_get()?;
-        let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
+        let value_js = js::subscription_callback_map_get_cached(parent_this).unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
         // `init()`; single JS thread.
@@ -289,12 +287,8 @@ impl JSValkeyClient {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Valkey client wrapper for JavaScript
-// `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
-// macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut RedisClient` — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `JsCell` is
+// Every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `JsCell` is
 // `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
 // `ValkeyClient::parent`) sees identical offsets.
 //
@@ -417,9 +411,6 @@ bun_event_loop::impl_timer_owner!(JSValkeyClient;
     from_reconnect_timer_ptr => reconnect_timer,
 );
 
-// `Js` (= `jsc.Codegen.JSRedisClient`) is re-exported above; `to_js`/`from_js`
-// live in that generated module.
-
 impl Drop for JSValkeyClient {
     fn drop(&mut self) {
         debug_assert!(self.client.get().socket.is_closed());
@@ -468,24 +459,24 @@ impl JSValkeyClient {
         unsafe { self.client.get_mut() }
     }
 
-    // Factory function to create a new Valkey client from JS
-    // No `#[bun_jsc::host_fn]` here — the free-fn shim it emits
-    // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
-    // wires the constructor via `RedisClientImpl::constructor` (see
-    // generated_classes.rs), which passes the freshly-allocated wrapper cell
-    // as `js_this`. `callframe.this()` is *not* the wrapper here — using it
-    // would mis-target the cached `subscriptionCallbackMap` slot in
-    // `SubscriptionCtx::init`.
-    pub(crate) fn constructor(
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-        js_this: JSValue,
-    ) -> JsResult<*mut JSValkeyClient> {
-        Self::create(
-            &global_object.js_thread_of_caller(callframe),
-            callframe.arguments(),
-            js_this,
-        )
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        url: JsLocal<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let new_client =
+            Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())?;
+        let this = new_client.this_ptr();
+        let this_value = structure.create(&cx.heap, new_client);
+
+        // Initially, we only need to hold a weak reference to the JS object.
+        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+
+        // Need to associate the subscription context, after the JS ref has been populated.
+        this._subscription_ctx.set(SubscriptionCtx::init(&this)?);
+
+        Ok(this_value)
     }
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
@@ -493,13 +484,14 @@ impl JSValkeyClient {
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
-        arguments: &[JSValue],
-    ) -> JsResult<*mut JSValkeyClient> {
+        url: JSValue,
+        options: JSValue,
+    ) -> JsResult<RefPtr<JSValkeyClient>> {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
-        let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
-            arguments[0].to_bun_string(cx.global())?
+        let url_str = if !url.is_undefined_or_null() {
+            url.to_bun_string(cx.global())?
         } else {
             let env = vm_ref.env_loader();
             match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
@@ -637,11 +629,8 @@ impl JSValkeyClient {
             }
         };
 
-        let options = if arguments.len() >= 2
-            && !arguments[1].is_undefined_or_null()
-            && arguments[1].is_object()
-        {
-            Options::from_js(cx.global(), arguments[1])?
+        let options = if options.is_object() {
+            Options::from_js(cx.global(), options)?
         } else {
             valkey::Options::default()
         };
@@ -698,8 +687,8 @@ impl JSValkeyClient {
 
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-        // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
-        Ok(JSValkeyClient::new(JSValkeyClient {
+        // `_subscription_ctx` is a placeholder: the caller sets it once the JS object exists.
+        Ok(RefPtr::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
@@ -754,26 +743,6 @@ impl JSValkeyClient {
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
             context: cx.context().id(),
         }))
-    }
-
-    pub(crate) fn create(
-        cx: &bun_jsc::JsThread<'_>,
-        arguments: &[JSValue],
-        js_this: JSValue,
-    ) -> JsResult<*mut JSValkeyClient> {
-        let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(cx, arguments)?;
-        // SAFETY: just allocated above
-        let new_client = unsafe { &*new_client_ptr };
-
-        // Initially, we only need to hold a weak reference to the JS object.
-        new_client.this_value.set(JsRef::init_weak(js_this));
-
-        // Need to associate the subscription context, after the JS ref has been populated.
-        new_client
-            ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client)?);
-
-        Ok(new_client_ptr)
     }
 
     /// Clone this client while remaining in the initial disconnected state.
@@ -923,16 +892,13 @@ impl JSValkeyClient {
         self._subscription_ctx.get().is_subscriber
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_connected(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.client.get().status == valkey::Status::Connected)
+    pub(crate) fn get_connected(&self) -> bool {
+        self.client.get().status == valkey::Status::Connected
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_buffered_amount(&self) -> usize {
         let client = self.client.get();
-        let len = client.write_buffer.len() + client.read_buffer.len();
-        JSValue::js_number(len as f64)
+        client.write_buffer.len() + client.read_buffer.len()
     }
 
     pub(crate) fn do_connect(
@@ -946,17 +912,17 @@ impl JSValkeyClient {
         if self.client.get().status == valkey::Status::Connected {
             return Ok(JSPromise::resolved_promise_value(
                 global_object,
-                Js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
+                js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
             ));
         }
 
-        if let Some(promise) = Js::connection_promise_get_cached(this_value) {
+        if let Some(promise) = js::connection_promise_get_cached(this_value) {
             return Ok(promise);
         }
 
         let promise_ptr = JSPromise::create(global_object);
         let promise = promise_ptr.to_js();
-        Js::connection_promise_set_cached(this_value, global_object, promise);
+        js::connection_promise_set_cached(this_value, global_object, promise);
 
         // If was manually closed, reset that flag
         self.client_mut().flags.is_manually_closed = false;
@@ -998,34 +964,27 @@ impl JSValkeyClient {
         Ok(promise)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn js_connect(
         &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
-        self.do_connect(global_object, callframe.this())
+        self.do_connect(cx.global(), this_value.to_js())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn js_disconnect(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _: &mut JsScope<'_>) -> JsResult<()> {
         // `disconnect()` -> `close()` can dispatch `on_close` synchronously,
         // which derefs. Hold a ref so `&self` stays live across the call.
         let _guard = self.ref_guard();
 
         match self.client.get().status {
-            valkey::Status::NeverConnected => return Ok(JSValue::UNDEFINED),
+            valkey::Status::NeverConnected => return Ok(()),
             valkey::Status::Disconnected if !self.client.get().flags.is_reconnecting => {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
             _ => {}
         }
-        self.client_mut().disconnect()?;
-        Ok(JSValue::UNDEFINED)
+        self.client_mut().disconnect()
     }
 
     /// Cancels the retry a `Disconnected` client is waiting on and runs the
@@ -1040,53 +999,40 @@ impl JSValkeyClient {
         self.client_mut().on_close()
     }
 
-    // `onconnect`/`onclose` are declared with `this: true` in
-    // valkey.classes.ts, so the codegen thunk passes the JS wrapper cell as
-    // `this_value` (between `&self` and `global`). No `host_fn` attribute —
-    // the extern "C" shim lives in generated_classes.rs. Setter now returns
-    // `()` — `IntoHostSetterReturn for ()` ⇒ `true` at the ABI, identical to
-    // the old `-> bool { true }`.
-    //
     // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
     // connection's events arrive in (and nothing, outside a graph).
-    pub(crate) fn get_on_connect(
-        _this: &Self,
-        this_value: JSValue,
-        _global: &JSGlobalObject,
-    ) -> JSValue {
-        Js::onconnect_get_cached(this_value)
+    pub(crate) fn get_onconnect(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::onconnect_get_cached(this_value.to_js())
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub(crate) fn set_on_connect(
-        _this: &Self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
+    pub(crate) fn set_onconnect(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
-        Js::onconnect_set_cached(
-            this_value,
+        let global = cx.global();
+        js::onconnect_set_cached(
+            this_value.to_js(),
             global,
-            value.with_graph_context_if_needed(global),
+            value.to_js().with_graph_context_if_needed(global),
         );
     }
-    pub(crate) fn get_on_close(
-        _this: &Self,
-        this_value: JSValue,
-        _global: &JSGlobalObject,
-    ) -> JSValue {
-        Js::onclose_get_cached(this_value)
+    pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::onclose_get_cached(this_value.to_js())
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub(crate) fn set_on_close(
-        _this: &Self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
+    pub(crate) fn set_onclose(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
-        Js::onclose_set_cached(
-            this_value,
+        let global = cx.global();
+        js::onclose_set_cached(
+            this_value.to_js(),
             global,
-            value.with_graph_context_if_needed(global),
+            value.to_js().with_graph_context_if_needed(global),
         );
     }
 
@@ -1269,9 +1215,9 @@ impl JSValkeyClient {
                     let error = global_object.take_exception(err);
                     let client = self.client_mut();
                     client.flags.connection_promise_returns_client = false;
-                    let rejected = match Js::connection_promise_get_cached(this_value) {
+                    let rejected = match js::connection_promise_get_cached(this_value) {
                         Some(promise) => {
-                            Js::connection_promise_set_cached(
+                            js::connection_promise_set_cached(
                                 this_value,
                                 &global_object,
                                 JSValue::ZERO,
@@ -1293,9 +1239,9 @@ impl JSValkeyClient {
                     };
                 }
             };
-            Js::hello_set_cached(this_value, &global_object, hello_value);
+            js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
-            if let Some(on_connect) = Js::onconnect_get_cached(this_value)
+            if let Some(on_connect) = js::onconnect_get_cached(this_value)
                 .filter(|handler| handler.without_async_context().is_callable())
             {
                 let js_value = this_value;
@@ -1303,8 +1249,8 @@ impl JSValkeyClient {
                 global_object.queue_microtask(on_connect, &[js_value, hello_value]);
             }
 
-            if let Some(promise) = Js::connection_promise_get_cached(this_value) {
-                Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
+            if let Some(promise) = js::connection_promise_get_cached(this_value) {
+                js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
                 // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
                 // safe deref. Cached slot held a valid JSPromise.
                 let js_promise = JSPromise::opaque_mut(promise.as_promise().unwrap());
@@ -1433,8 +1379,8 @@ impl JSValkeyClient {
         let _exit = self.vm().enter_event_loop_scope();
 
         if !this_jsvalue.is_undefined() {
-            if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
-                Js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
+            if let Some(promise) = js::connection_promise_get_cached(this_jsvalue) {
+                js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
                 // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
                 // safe deref. Cached slot held a valid JSPromise.
                 JSPromise::opaque_mut(promise.as_promise().unwrap())
@@ -1443,7 +1389,7 @@ impl JSValkeyClient {
         }
 
         // Call onClose callback if it exists
-        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue)
+        if let Some(on_close) = js::onclose_get_cached(this_jsvalue)
             .filter(|handler| handler.without_async_context().is_callable())
         {
             on_close.call(&global_object, this_jsvalue, &[error_value])?;
@@ -1632,10 +1578,8 @@ impl JSValkeyClient {
     pub(crate) fn memory_cost(&self) -> usize {
         // TODO(markovejnovic): This is most-likely wrong because I didn't know better.
         let client = self.client.get();
-        let mut memory_cost: usize = core::mem::size_of::<JSValkeyClient>();
-
         // Add size of all internal buffers
-        memory_cost += client.write_buffer.byte_list.capacity() as usize;
+        let mut memory_cost = client.write_buffer.byte_list.capacity() as usize;
         memory_cost += client.read_buffer.byte_list.capacity() as usize;
 
         // Add queue sizes

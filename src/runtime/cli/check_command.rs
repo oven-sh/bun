@@ -638,6 +638,7 @@ pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) 
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
+/// `shows_progress` is true for the command, which also prints `log`. Otherwise `log` is data for the caller.
 fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
     let TypeChecked {
         cwd,
@@ -695,33 +696,42 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         }
         log.add_msg(bun_ast::Msg {
             kind,
-            data: log_data_of(reported),
+            data: log_data_of(reported, shows_progress),
             metadata: format::metadata_of(reported),
-            notes: reported.related.iter().map(log_data_of).collect(),
+            notes: (reported.related.iter())
+                .map(|it| log_data_of(it, shows_progress))
+                .collect(),
             ..Default::default()
         });
     }
     for file in &report.incomplete {
         let path = bun_sema_driver::host::to_native(&file.path);
+        let path = match shows_progress {
+            true => format::escaped(path),
+            false => path.into(),
+        };
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!("{}", BStr::new(&file.message(path))),
+            format_args!("{}", BStr::new(&file.message(&path))),
         );
     }
     report.is_ok()
 }
 
 /// The message, like `TS2322: Type 'string' is not assignable to type 'number'.`, with its
-/// location.
-fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
+/// location. If `is_printed`, the message is what `format::write_message` writes, not what `tsc` prints.
+fn log_data_of(reported: &Diagnostic, is_printed: bool) -> bun_ast::Data {
     use std::borrow::Cow;
     let mut text = Vec::with_capacity(reported.text.len() + 8);
     if reported.code != 0 {
         use std::io::Write;
         let _ = write!(text, "TS{}: ", reported.code);
     }
-    text.extend_from_slice(&reported.text);
+    match is_printed {
+        true => format::write_message(&mut text, reported),
+        false => text.extend_from_slice(&reported.text),
+    }
     let line_text = || {
         let index = reported.line.checked_sub(reported.source_line)?;
         let line = reported.source.get(index as usize)?;

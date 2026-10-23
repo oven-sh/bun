@@ -1210,6 +1210,84 @@ describe("fs.promises.watch", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("an abort settles next() on the same tick and in the same order as in Node", async () => {
+    // A child process: a test callback can run with the event loop not entered, and then the promise reactions
+    // run before abort() returns (#43356).
+    // The fixture watches a file that no test writes to, so next() gets no event. The file exists since this
+    // module was loaded: on macOS, a path that was created just before can report its own creation.
+    const filepath = path.join(testDir, "abort.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fs-promises-watch-abort-fixture.ts"), filepath],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // What Node v26.12.0 prints for the fixture. Its fsPromises.watch() delegates to a second generator (one tick),
+    // and an abort listener that it adds at the first next() wakes that generator.
+    const ticks = {
+      "next() waits, then abort()": "rejected on tick 3",
+      "next() and abort() in the same turn": "rejected on tick 3",
+      "abort(), then the first next()": "rejected on tick 2",
+      "abort(), then the second next()": "fulfilled on tick 1",
+      "watch() with an aborted signal": "rejected on tick 2",
+      "watch() with an aborted signal, the second next()": "fulfilled on tick 1",
+      "an earlier listener stops the propagation of the abort event": "rejected on tick 3",
+      "the stack of the AbortError names the file that called next()": "true",
+    };
+    const races = {
+      "once() is called first, abort() comes in the same turn": "once() fulfilled",
+      "once() is called first, abort() comes later": "once() fulfilled",
+      "next() is called first, abort() comes in the same turn": "once() fulfilled",
+      "next() is called first, abort() comes later": "once() fulfilled",
+    };
+    const order = {
+      "watch(), once(), next(), once(), and abort() comes in the same turn":
+        "once() after watch(), once() after next(), next() rejected with AbortError",
+      "watch(), once(), next(), once(), and abort() comes later":
+        "once() after watch(), once() after next(), next() rejected with AbortError",
+      "two watchers, next() of the second is called first, and abort() comes later":
+        "the second watcher rejected with AbortError, the first watcher rejected with AbortError",
+      "abort(), then two next() calls in one turn": "first next() rejected with AbortError, second next() is done",
+      "watch() with an aborted signal, then two next() calls in one turn":
+        "first next() rejected with AbortError, second next() is done",
+      "watch(), once(), for await, and abort() comes later": "once() after watch(), for await rejected with AbortError",
+    };
+    // Except on macOS and Windows, Node has a JS watcher for `recursive`. Its abort listener rejects a next()
+    // that waits, so that next() settles on the tick of once() and the order of the two listeners decides.
+    const recursiveIsNative = isMacOS || isWindows;
+    const recursiveTicks = {
+      ...ticks,
+      "next() waits, then abort()": "rejected on tick 2",
+      "next() and abort() in the same turn": "rejected on tick 2",
+      "an earlier listener stops the propagation of the abort event": "rejected on tick 2",
+    };
+    const recursiveRaces = {
+      ...races,
+      "once() is called first, abort() comes in the same turn": "next() rejected with AbortError",
+      "next() is called first, abort() comes in the same turn": "next() rejected with AbortError",
+      "next() is called first, abort() comes later": "next() rejected with AbortError",
+    };
+    const recursiveOrder = {
+      ...order,
+      "watch(), once(), next(), once(), and abort() comes in the same turn":
+        "next() rejected with AbortError, once() after watch(), once() after next()",
+      "watch(), once(), next(), once(), and abort() comes later":
+        "once() after watch(), next() rejected with AbortError, once() after next()",
+    };
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ticks,
+      "ticks with recursive: true": recursiveIsNative ? ticks : recursiveTicks,
+      races,
+      "races with recursive: true": recursiveIsNative ? races : recursiveRaces,
+      order,
+      "order with recursive: true": recursiveIsNative ? order : recursiveOrder,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("should work with symlink -> symlink -> dir", async () => {
     const filepath = path.join(testDir, "sym-symlink-indirect");
     const dest = path.join(testDir, "sym-symlink-dest");

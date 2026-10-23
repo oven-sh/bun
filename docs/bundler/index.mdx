@@ -1402,7 +1402,7 @@ This works for **pure barrel files** — files where every named export is a re-
 
 The bundler always loads `export *` re-exports (it never defers them) to avoid circular resolution issues. It defers only named re-exports (`export { X } from './x'`) that no importer uses.
 
-**Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field.
+**Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field. `ignoreDCEAnnotations` (`--ignore-dce-annotations`) turns automatic mode off: the bundler then loads every re-export of such a barrel.
 
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect } from "bun:test";
 import { isASAN, isDebug, isWindows } from "harness";
+import { readFileSync } from "node:fs";
 import { BundlerTestInput, BundlerTestRunOptions, itBundled as itBundledBase } from "./expectBundled";
 
 // `bun build --compile --bytecode --format=esm` embeds a pre-resolved module graph that JSC's loader consumes instead
@@ -30,6 +31,56 @@ function eachMode(run: (mode: LoaderMode) => BundlerTestRunOptions): BundlerTest
     const options = run(mode);
     return { ...options, bunArgs: launcher, env: { ...options.env, ...env } };
   });
+}
+
+// What an executable's pre-resolved module graph holds for its requests: how many each module has, and the request
+// index each import entry packs into its upper 16 bits (`PrelinkedModuleGraph::KindBits`). null without a graph.
+function prelinkedRequests(outfile: string) {
+  const file = readFileSync(outfile);
+  const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
+  expect(trailer).toBeGreaterThan(0);
+  // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
+  const offsets = trailer - 32;
+  const base = offsets - Number(file.readBigUInt64LE(offsets));
+  const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
+  const flags = file.readUInt32LE(offsets + 28);
+  if (!(flags & (1 << 11))) return null; // Flags::HAS_PRELINKED_MODULE_GRAPH
+  const u32 = (at: number) => file.readUInt32LE(base + at);
+  // Records chained after the module table, in `Flags` bit order, up to the graph's `StringPointer`.
+  let at = modules.offset + modules.length;
+  if (flags & (1 << 5)) at += (modules.length / 52) * 4; // source hashes
+  if (flags & (1 << 6)) at += 4 + u32(at) * 12; // builtin bytecode
+  if (flags & (1 << 7)) at += 8; // bytecode string table
+  if (flags & (1 << 8)) at += 4; // startup module count
+  if (flags & (1 << 9)) at += 8; // module_info string table
+  const graph = u32(at);
+  const header = (word: number) => u32(graph + word * 4);
+  // "PLMG"; anything else means the layout above is stale.
+  expect(header(0)).toBe(0x474d4c50);
+  const [moduleCount, importCount, modulesOffset, importsOffset] = [header(3), header(5), header(8), header(10)];
+  return {
+    requestCounts: Array.from({ length: moduleCount }, (_, i) => u32(graph + modulesOffset + i * 40 + 12)),
+    importRequests: Array.from({ length: importCount }, (_, i) => u32(graph + importsOffset + i * 24 + 8) >>> 16),
+  };
+}
+
+// `requests` distinct external specifiers, "p0000" up: side-effect imports, then one named import. Byte writes into
+// one Buffer keep this fast on debug builds, and itBundled writes a Buffer as is (a string goes through dedent()).
+function requestLimitEntry(requests: number) {
+  const hex = Buffer.from("0123456789abcdef");
+  const line = 'import "p0000";\n';
+  const digits = line.indexOf("0000");
+  const last = requests - 1;
+  const source = Buffer.alloc(last * line.length, line);
+  for (let i = 0; i < last; i++) {
+    const at = i * line.length + digits;
+    source[at] = hex[i >> 12];
+    source[at + 1] = hex[(i >> 8) & 15];
+    source[at + 2] = hex[(i >> 4) & 15];
+    source[at + 3] = hex[i & 15];
+  }
+  const tail = `import { last } from "p${last.toString(16).padStart(4, "0")}";\nconsole.log(last);\n`;
+  return Buffer.concat([source, Buffer.from(tail)]);
 }
 
 type PerVariant<T> = T | ((splitting: boolean) => T);
@@ -894,4 +945,21 @@ describe.concurrent("bundler", () => {
     files: { "/entry.ts": `console.log("entry");` },
     run: eachMode(() => ({ stdout: "banner awaited\nentry\nfooter awaited", stderr: "" })),
   });
+
+  // An entry has 16 bits for its request index, and JSC refuses a graph module with more than 65535 requests. A chunk
+  // at the limit gets a graph whose last request has index 65534. One more request and the chunk gets no graph.
+  for (const requests of [65535, 65536]) {
+    itBundled(`compile/prelinked/RequestLimit${requests}`, {
+      compile: true,
+      bytecode: true,
+      format: "esm",
+      packages: "external",
+      files: { "/entry.js": requestLimitEntry(requests) },
+      onAfterBundle(api) {
+        expect(prelinkedRequests(api.outfile)).toEqual(
+          requests === 65535 ? { requestCounts: [65535], importRequests: [65534] } : null,
+        );
+      },
+    });
+  }
 });

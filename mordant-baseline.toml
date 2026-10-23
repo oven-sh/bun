@@ -5,7 +5,6 @@
 
 [bun_bundler]
 "bound_checked_only_in_debug:src/bundler/Chunk.rs" = 3
-"bound_checked_only_in_debug:src/bundler/prelinked_module_graph.rs" = 1
 "defaulted_failure:src/bundler/bundle_v2.rs" = 1
 "freed_while_borrowed:src/bundler/ThreadPool.rs" = 1
 "generic_body_not_generic:src/bundler/Chunk.rs" = 3

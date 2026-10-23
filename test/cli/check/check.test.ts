@@ -18248,6 +18248,49 @@ export type V2<A = (b: B) => b is B, B = 1> = [A, B];
       expect(exitCode).toBe(1);
     });
 
+    test("a binding element with a default doesn't keep the name of an unresolved type", async () => {
+      using dir = project({
+        "a.ts": `import type { Missing } from "missing";
+declare const table: Record<"x" | "y", string>;
+type P1 = Omit<Missing, "a"> & { variant?: "x" | "y" };
+type WithoutRef<Props> = Props extends any ? ("ref" extends keyof Props ? Omit<Props, "ref"> : Props) : Props;
+type C1<T> = T extends any ? T : never;
+type C2<T> = T extends string ? T : T;
+type C3<T> = "ref" extends keyof T ? 1 : T;
+type C4<T> = T extends any ? Omit<T, "ref"> : never;
+export function f(a: WithoutRef<P1>, b: WithoutRef<Missing>, c: C1<Missing>, d: C2<Missing>, e: C3<Missing>, g: C4<Missing>, h: C1<P1>) {
+  table[a]; table[b]; table[c]; table[d]; table[e]; table[g]; table[h];
+  const { variant = "x" } = a; table[variant];
+  const { variant: v2 = "x" } = b; table[v2];
+}
+declare function wrap<P>(f: (props: WithoutRef<P>, ref: number) => void): void;
+wrap<P1>(function ({ variant = "x", other, ...props }, ref) { table[variant]; table[other]; table[props]; });
+wrap<Missing>(function ({ variant = "x", other, ...props }, ref) { table[variant]; table[other]; table[props]; });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,30): error TS2307: Cannot find module 'missing' or its corresponding type declarations.
+        a.ts(10,9): error TS2538: Type 'Omit<P1, "ref">' cannot be used as an index type.
+        a.ts(10,19): error TS2538: Type 'Omit<Missing, "ref">' cannot be used as an index type.
+        a.ts(10,23): error TS7053: Element implicitly has an 'any' type because expression of type 'Missing' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(10,33): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(10,43): error TS7053: Element implicitly has an 'any' type because expression of type '1' can't be used to index type 'Record<"x" | "y", string>'.
+          Property '1' does not exist on type 'Record<"x" | "y", string>'.
+        a.ts(10,59): error TS2538: Type 'Omit<Missing, "ref">' cannot be used as an index type.
+        a.ts(10,69): error TS2538: Type 'P1' cannot be used as an index type.
+        a.ts(11,32): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(12,36): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(15,63): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(15,79): error TS7053: Element implicitly has an 'any' type because expression of type 'Missing' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(15,99): error TS2538: Type '{ [x: string]: Missing; [x: number]: Missing; [x: symbol]: Missing; }' cannot be used as an index type.
+        a.ts(16,68): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(16,84): error TS7053: Element implicitly has an 'any' type because expression of type 'Missing' can't be used to index type 'Record<"x" | "y", string>'.
+        a.ts(16,104): error TS2538: Type '{ [x: string]: Missing; [x: number]: Missing; [x: symbol]: Missing; }' cannot be used as an index type."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

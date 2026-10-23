@@ -2870,7 +2870,12 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if self.is_any(ty) {
-            return ty;
+            // `TypeFlagsIncludesError`: a union doesn't keep the name of an unresolved type.
+            return if self.is_error_type(ty) {
+                TypeId::ERROR
+            } else {
+                ty
+            };
         }
         // `widenTypeInferredFromInitializer` of the union of both: a default that is one of the
         // existing literals isn't widened.

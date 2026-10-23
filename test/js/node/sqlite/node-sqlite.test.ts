@@ -3037,13 +3037,14 @@ test.concurrent("bun:sqlite still initializes correctly when node:sqlite opens a
 test.concurrent("worker-owned unclosed database is checkpointed on worker exit", async () => {
   using dir = tempDir("node-sqlite-worker-exit", {
     "worker.mjs": `import { DatabaseSync } from 'node:sqlite';
+      import { parentPort } from 'node:worker_threads';
       const db = new DatabaseSync('exit.db');
       db.exec('PRAGMA journal_mode = WAL');
       db.exec('CREATE TABLE t (x INTEGER)');
       const stmt = db.prepare('INSERT INTO t VALUES (?)');
       stmt.run(99);
       // stmt and db intentionally not closed; worker exits naturally.
-      postMessage('done');`,
+      parentPort.postMessage('done');`,
     "main.mjs": `import { Worker } from 'node:worker_threads';
       import { existsSync, statSync } from 'node:fs';
       const w = new Worker('./worker.mjs');

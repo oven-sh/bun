@@ -5741,8 +5741,9 @@ describe("db.function()", () => {
     const worker = new Worker(
       `
         const { Database } = require("bun:sqlite");
+        const { parentPort } = require("node:worker_threads");
         const db = new Database(":memory:");
-        const forever = () => { postMessage("inside"); for (;;); };
+        const forever = () => { parentPort.postMessage("inside"); for (;;); };
         ${src}
       `,
       { eval: true },

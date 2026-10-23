@@ -457,16 +457,18 @@ export const objectEcho = b.fn({ args: { value: b.object }, returns: b.object, c
 export const TestAbsence = b.union({ missing: b.undefined, nothing: b.null, number: b.f64 });
 export const absenceEcho = b.fn({ args: { value: TestAbsence }, returns: TestAbsence });
 
-export const TestLenientOptions = b.dictionary({ size: b.f64.otherAsNull, callback: b.callable.otherAsNull });
+export const TestOtherAsNullOptions = b.dictionary(
+  { size: b.f64.otherAsNull, callback: b.callable.otherAsNull, strict: b.f64.optional },
+  { allowArray: true },
+);
 /** Which of its arguments, and of the members of `options`, are of their types. */
-export const presentOnes = b.fn({
+export const presentArguments = b.fn({
   args: {
     number: b.f64.otherAsNull,
     text: b.string.utf8.otherAsNull,
     callback: b.callable.otherAsNull,
-    point: TestPoint.otherAsNull,
     counter: TestCounter.otherAsNull,
-    options: TestLenientOptions.otherAsNull,
+    options: TestOtherAsNullOptions.otherAsNull,
   },
   returns: b.array(b.string),
 });

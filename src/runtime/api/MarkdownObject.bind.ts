@@ -67,7 +67,7 @@ export const RenderCallbacks = b.dictionary(
     "strikethrough",
     "text",
   ]),
-  ignoresNonObjects,
+  { allowArray: true },
 );
 
 /** The `type` of the elements of each tag. A boolean is ignored. */
@@ -103,7 +103,7 @@ export const ComponentOverrides = b.dictionary(
     "u",
     "br",
   ]),
-  ignoresNonObjects,
+  { allowArray: true },
 );
 
 const js = { capability: "js", throws: true } as const;
@@ -113,14 +113,14 @@ export const markdown = b.namespace({
   ansi: { args: { input, theme: AnsiTheme.default({}) }, returns: b.string.utf8, expected, length: 2, ...js },
   /** The callbacks run while `input` is read. */
   render: {
-    args: { input: b.any, callbacks: RenderCallbacks.default({}), options: MarkdownOptions.default({}) },
+    args: { input: b.any, callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.default({}) },
     returns: b.string.utf8,
     length: 3,
     ...js,
   },
   /** As `render`. */
   react: {
-    args: { input: b.any, components: ComponentOverrides.default({}), options: ReactOptions.default({}) },
+    args: { input: b.any, components: ComponentOverrides.otherAsNull, options: ReactOptions.default({}) },
     returns: b.any,
     length: 3,
     ...js,

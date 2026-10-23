@@ -444,18 +444,26 @@ extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${origin.stem}_${names
 }
 
 function cppSourceForEnum(type: EnumerationType): string {
-  const pairs = type.spellings
-    .flatMap((spellings, index) => spellings.map(spelling => [spelling, type.variants[index]] as const))
-    .sort(([a], [b]) => (a < b ? -1 : 1));
-  const pair = `std::pair<WTF::ComparableASCIILiteral, ${type.cpp}>`;
+  // The length rules out most spellings, so few are compared.
+  const byLength = new Map<number, string[]>();
+  type.spellings.forEach((spellings, index) => {
+    for (const spelling of spellings) {
+      const compared = byLength.get(spelling.length) ?? [];
+      byLength.set(spelling.length, compared);
+      compared.push(
+        `        if (string == ${asciiLiteral(spelling)})\n            return ${type.cpp}::${type.variants[index]};`,
+      );
+    }
+  });
   return `
 template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type.cpp}>(const WTF::String& string)
 {
-    static constexpr WTF::SortedArrayMap mapping { std::to_array<${pair}>({
-${pairs.map(([spelling, variant]) => `        { ${asciiLiteral(spelling)}, ${type.cpp}::${variant} },`).join("\n")}
-    }) };
-    if (auto* value = mapping.tryGet(string)) [[likely]]
-        return *value;
+    switch (string.length()) {
+${[...byLength]
+  .sort(([a], [b]) => a - b)
+  .map(([length, compared]) => `    case ${length}:\n${compared.join("\n")}\n        break;`)
+  .join("\n")}
+    }
     return std::nullopt;
 }
 
@@ -1295,7 +1303,6 @@ export function cppSource(file: SchemaFile): string {
   if (file.types.some(type => type instanceof ClassType)) systemHeaders.unshift("JavaScriptCore/HeapAnalyzer.h");
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
   if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
-  if (file.types.some(type => type instanceof EnumerationType)) systemHeaders.push("wtf/SortedArrayMap.h");
   return `${banner(file.origin)}#include "root.h"
 #include "Generated${file.origin.namespace}.h"
 #include "ZigGlobalObject.h"

@@ -394,6 +394,18 @@ test("pbkdf2 reports its arguments as Node does", () => {
       message: 'The "callback" argument must be of type function. Received type number (5)',
     }),
   );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, 5)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received type number (5)',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received undefined',
+    }),
+  );
   for (const [name, args] of [
     ["password", [5, "s"]],
     ["salt", ["p", 5]],

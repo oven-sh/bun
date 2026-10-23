@@ -54,7 +54,7 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 `b.module` says where the file's functions are; an export named
 `requiredAndOptionalArg` is `required_and_optional_arg` there. A `rustPath` key on
 a function gives its full path instead. The arguments after the last that is not written
-`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.ifPassed` or `.default()` are the ones
+`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.otherAsNull`, `.ifPassed` or `.default()` are the ones
 TypeScript lets a caller leave out. The function's `.length` is the number of the others,
 unless `length` sets it.
 
@@ -65,7 +65,7 @@ be of type string or an instance of Buffer, TypedArray, or DataView. Received nu
 must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same. A string in the
 place of the list is the whole message: Node's C++ writes its own out that way, and so do the Bun APIs
 that have a message of their own. A dictionary named in `expected` reports what is not an object as the
-argument, and not under the dictionary's name.
+argument, and not under the dictionary's name. A range has its own errors, so it is not named in `expected`.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
@@ -256,7 +256,7 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
-- `.otherAsNull`: every value the type does not take means absent; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. An object is what a dictionary takes, which still reports its members. It is not for an integer type, which reports a number it does not take.
+- `.otherAsNull`: every value of a [kind](#unions-and-kinds) the type does not take means absent; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. A dictionary still reports its members, and an array its elements. It is not for a type that throws for some values of a kind it takes: an integer (`b.f64.otherAsNull` takes every number), an enumeration, a dictionary without `allowArray`. A union writes `ignored: b.any` as its last alternative.
 - `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. It also goes on a type that takes `undefined`, like `b.any`. It is only for an argument, and not for one of an overload.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
@@ -317,7 +317,7 @@ JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
-The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above.
+The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above but `.default()`.
 
 ### Dictionaries
 
@@ -383,7 +383,8 @@ in play apart:
 
 A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
-`.validateInteger`, `.otherAsNull`, `b.any`, `b.bytes`, `b.object`, a dictionary.
+`.validateInteger`, `b.any`, `b.bytes`, `b.object`, a dictionary. So does an argument written `.falsyAsNull`,
+`.emptyStringAsNull` or `.otherAsNull`.
 
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to

@@ -10,9 +10,9 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestLenientOptions,
-    TestNames, TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOuter,
-    TestPoint, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestNonFinal,
+    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
+    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
+    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestNonFinal,
     js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
@@ -946,25 +946,23 @@ pub(crate) fn absence_echo(value: TestAbsence) -> TestAbsence {
     value
 }
 
-pub(crate) fn present_ones(
+pub(crate) fn present_arguments(
     number: Option<f64>,
     text: Option<&[u8]>,
     callback: Option<JsLocal<'_, Callable>>,
-    point: Option<TestPoint>,
     counter: Option<&TestCounter>,
-    options: Option<TestLenientOptions<'_>>,
+    options: Option<TestOtherAsNullOptions<'_>>,
 ) -> Vec<bun_core::String> {
     let members = options.map(|options| (options.size, options.callback));
-    let (size, member) = members.unwrap_or((None, None));
+    let (size, callback_member) = members.unwrap_or((None, None));
     [
         ("number", number.is_some()),
         ("text", text.is_some()),
         ("callback", callback.is_some()),
-        ("point", point.map(|point| point.x).is_some()),
         ("counter", counter.is_some()),
         ("options", members.is_some()),
         ("options.size", size.is_some()),
-        ("options.callback", member.is_some()),
+        ("options.callback", callback_member.is_some()),
     ]
     .into_iter()
     .filter(|(_, is_present)| *is_present)

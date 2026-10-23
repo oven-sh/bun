@@ -199,13 +199,13 @@ export abstract class Type {
   get emptyStringAsNull(): OptionalType {
     return new OptionalType(this, "emptyStringAsNull");
   }
+  /** Every value of a kind it does not take means absent. */
+  get otherAsNull(): OptionalType {
+    return new OptionalType(this, "otherAsNull");
+  }
   /** Absent only if the call has no such argument: `undefined` is converted like any other value. Only for an argument. */
   get ifPassed(): OptionalType {
     return new OptionalType(this, "ifPassed");
-  }
-  /** Every value it does not take means absent. */
-  get otherAsNull(): OptionalType {
-    return new OptionalType(this, "otherAsNull");
   }
   /** Also the argument itself: `(T, JsLocal<'a>)`. Only for an argument. */
   get withValue(): WithValueType {
@@ -237,11 +237,15 @@ export abstract class Type {
   get refuses(): string | null {
     return null;
   }
-  /** A C++ condition that is true of the values it takes. Only for a type whose kinds tell, or that takes every object. */
+  /** It throws for some values of a kind it takes, like `1.5` or an unknown string, so the kind does not tell whether it takes one. */
+  get narrowsItsKinds(): boolean {
+    return false;
+  }
+  /** A C++ condition that is true of the values `.otherAsNull` converts. */
   cppTakes(value: string): string {
     if (refusesNonObjects(this)) return `${value}.isObject()`;
     const kinds = this.valueKinds;
-    assert(kinds !== "any" && !this.refuses, `${this.tsType}: only converting a value tells whether it takes it`);
+    assert(kinds !== "any");
     const ofValue = kinds.flatMap(kind => (typeof kind === "object" ? [] : (kindTests[kind].ofValue?.(value) ?? [])));
     const ofCell = kinds
       .flatMap(kind => (typeof kind === "object" ? `cell->inherits<${kind.cpp}>()` : (kindTests[kind].ofCell ?? [])))
@@ -256,8 +260,8 @@ export abstract class Type {
   get passesValue(): boolean {
     return false;
   }
-  /** Why it is not an element, a member, an alternative or a result, if it is only for an argument. */
-  get onlyArgument(): string | null {
+  /** What a schema that makes it an element, a member, an alternative or a result is told, if it is only for an argument. */
+  get refusalOutsideArgument(): string | null {
     return this.passesValue ? "b.bytes and .withValue are only for an argument" : null;
   }
   /** As an argument it stays in the frame of the thunk, and the body borrows it: `&T`. */
@@ -432,6 +436,9 @@ interface IntegerInfo {
 }
 
 export class IntegerType extends PrimitiveType {
+  get narrowsItsKinds(): boolean {
+    return true;
+  }
   readonly info: IntegerInfo;
   readonly #conversion: "Strict" | "Loose" | `${string}::${string}`;
   readonly #allowBigInt: boolean;
@@ -752,7 +759,7 @@ export class LocalStringResultType extends ResultType {
 }
 
 export class OwnedStringType extends StringType {
-  get onlyArgument(): string {
+  get refusalOutsideArgument(): string {
     return ".owned is only for an argument: everywhere else the string is already by value";
   }
   get borrowedByBody(): boolean {
@@ -1293,8 +1300,8 @@ export class PromisePtrType extends Type {
   get idlType(): string {
     return "Bun::Bindgen::IDLPromisePtr";
   }
-  get onlyArgument(): string {
-    return "the context of a promise reaction is only an argument";
+  get refusalOutsideArgument(): string {
+    return "the context of a promise reaction is an argument, alone or with .withValue";
   }
   get conversionThrows(): boolean {
     return false;
@@ -1340,16 +1347,18 @@ export class OptionalType extends Type {
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
     assert(!(inner instanceof WithValueType), "put .withValue last");
-    assert(inner.passesValue || !inner.onlyArgument, inner.onlyArgument ?? "");
+    if (!inner.passesValue) refuseOutsideArgument(inner);
+    if (modifier === "otherAsNull") {
+      const byKind = ".otherAsNull goes by the kind of a value";
+      assert(!(inner instanceof UnionType), "a union takes the rest as its last alternative: ignored: b.any");
+      assert(inner.valueKinds !== "any" || refusesNonObjects(inner), `${byKind}: this type takes every kind`);
+      assert(!inner.narrowsItsKinds, `${byKind}: this type throws for some values of a kind it takes`);
+    }
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
     if (modifier !== "ifPassed") {
       if (inner instanceof AnyType)
         assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
       else assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
-    }
-    if (modifier === "otherAsNull") {
-      assert(!(inner instanceof IntegerType), "an integer type reports a number it does not take: b.f64.otherAsNull");
-      assert(inner.valueKinds !== "any" || inner.refuses, `${inner.tsType} takes every value`);
     }
     assert(
       !(inner instanceof BytesType) || inner.canBe(modifier),
@@ -1380,8 +1389,12 @@ export class OptionalType extends Type {
   get isOptional(): boolean {
     return true;
   }
-  get onlyArgument(): string | null {
-    return this.modifier === "ifPassed" ? ".ifPassed is only for an argument" : super.onlyArgument;
+  get refusalOutsideArgument(): string | null {
+    return this.modifier === "ifPassed" ? ".ifPassed is only for an argument" : super.refusalOutsideArgument;
+  }
+  /** `.otherAsNull` of a string resolves a rope, and of a dictionary reads its members. */
+  get conversionThrows(): boolean {
+    return this.modifier === "otherAsNull" || this.inner.conversionThrows;
   }
   get valueKinds(): ValueKinds {
     if (this.inner.valueKinds === "any" || !["optional", "nullable", "ifPassed"].includes(this.modifier)) return "any";
@@ -1473,6 +1486,7 @@ export class WithValueType extends Type {
   readonly inner: Type;
   constructor(inner: Type) {
     super();
+    assert(!(inner instanceof WithValueType), "already .withValue");
     assert(!inner.passesValue, ".withValue: b.bytes already passes the argument");
     assert(!inner.returnsValueUnchanged, ".withValue: the type is the argument itself");
     assert(!isIfPassed(inner), ".ifPassed has no argument to give when it is absent");
@@ -1573,6 +1587,9 @@ export class DefaultType extends Type {
   get isOptional(): boolean {
     return true;
   }
+  get refusalOutsideArgument(): string | null {
+    return this.inner.refusalOutsideArgument;
+  }
   get conversionThrows(): boolean {
     return this.inner.conversionThrows;
   }
@@ -1632,7 +1649,7 @@ export class ArrayType extends Type {
     super();
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
-    assert(!element.onlyArgument, element.onlyArgument ?? "");
+    refuseOutsideArgument(element);
     assert(
       !element.borrowsCell,
       "an instance that Rust takes as &T cannot be in an array or a dictionary: only an argument's slot in the frame keeps it alive",
@@ -1761,6 +1778,9 @@ export type EnumerationValues =
   readonly (string | readonly string[])[] | Readonly<Record<string, string | readonly string[]>>;
 
 export class EnumerationType extends NamedType {
+  get narrowsItsKinds(): boolean {
+    return true;
+  }
   /** `spellings[i]` all parse to variant `i`; the first is the canonical one. */
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
@@ -1842,6 +1862,7 @@ export class Member {
     assert(!cppKeywords.has(this.fieldName), `${this.fieldName} is a C++ keyword: name the field with rustName`);
     this.type = options.type;
     assert(options.expected === undefined || options.expected.length > 0, `expected: ${name} expects nothing`);
+    if (options.expected !== undefined) refuseExpectedOfRange(name, options.type);
     this.expected = options.expected;
   }
   get name(): string {
@@ -1886,7 +1907,7 @@ export class DictionaryType extends NamedType {
       "fields",
     );
     for (const { name, type } of this.members) {
-      assert(!type.onlyArgument, `${name}: ${type.onlyArgument}`);
+      refuseOutsideArgument(type, name);
       assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
     }
     assert(
@@ -1912,6 +1933,9 @@ export class DictionaryType extends NamedType {
   }
   get fromJS(): boolean {
     return !!this.options.fromJS;
+  }
+  get narrowsItsKinds(): boolean {
+    return !this.allowArray;
   }
   get allowArray(): boolean {
     return !!this.options.allowArray;
@@ -2014,9 +2038,12 @@ export class UnionType extends NamedType {
     );
     for (const { name, type } of this.alternatives) {
       assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
-      assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
+      assert(
+        !(type instanceof OptionalType),
+        `${name}: add ${type instanceof OptionalType && type.modifier === "otherAsNull" ? "ignored: b.any" : "b.null"} as an alternative`,
+      );
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
-      assert(!type.onlyArgument, `${name}: ${type.onlyArgument}`);
+      refuseOutsideArgument(type, name);
       assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
@@ -2134,10 +2161,6 @@ export interface FunctionOptions extends SignatureOptions {
 /** What `b.value` takes. */
 export type ValueOptions = Pick<SignatureOptions, "capability" | "throws" | "rustPath"> & { returns: Type };
 
-/** A range, absent or not: its converter takes the name and no context. */
-const reportsItsOwnName = (type: Type) =>
-  (type instanceof OptionalType || type instanceof DefaultType ? type.inner : type) instanceof RangeType;
-
 export class Signature {
   readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
@@ -2158,7 +2181,7 @@ export class Signature {
     }));
     for (const [name, types] of Object.entries(expected)) {
       assert(name in args, `expected: ${name} is not an argument`);
-      assert(!reportsItsOwnName(args[name]), `expected: ${name} is a range, which reports what Node does`);
+      refuseExpectedOfRange(name, args[name]);
       assert(types.length > 0, `expected: ${name} expects nothing`);
     }
     this.returns = options.returns ?? new UnitType("undefined");
@@ -2201,7 +2224,7 @@ export class Signature {
       "b.nativePromiseContext takes the pointer out of the cell: if a later argument throws, nothing releases it",
     );
     assert(!(this.returns instanceof DefaultType), "a result has no default");
-    assert(!this.returns.onlyArgument, this.returns.onlyArgument ?? "");
+    refuseOutsideArgument(this.returns);
     assert(!this.rejects || this.returns.holdsJSValue, "rejects: the result is a promise");
     assert(
       !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
@@ -2225,6 +2248,19 @@ function resultTypeIn(type: Type): ResultType | undefined {
     const found = resultTypeIn(dependency);
     if (found) return found;
   }
+}
+
+function refuseOutsideArgument(type: Type, name?: string): void {
+  const refusal = type.refusalOutsideArgument;
+  assert(!refusal, name ? `${name}: ${refusal}` : (refusal ?? ""));
+}
+
+/** The converter of a range takes the name and no context. */
+function refuseExpectedOfRange(name: string, type: Type): void {
+  let bare = type;
+  while (bare instanceof OptionalType || bare instanceof DefaultType || bare instanceof WithValueType)
+    bare = bare.inner;
+  assert(!(bare instanceof RangeType), `expected: ${name} is a range, which has its own errors`);
 }
 
 function refuseResultType(name: string, type: Type): void {

@@ -930,8 +930,15 @@ pub(crate) fn pbkdf2<'a>(
     iterations: u32,
     keylen: u32,
     digest: &[u8],
-    callback: JsLocal<'a, Callable>,
+    callback: Option<JsLocal<'a, Callable>>,
 ) -> JsResult<()> {
+    let Some(callback) = callback else {
+        return Err(cx.global().throw_invalid_argument_type_value(
+            b"callback",
+            b"function",
+            JSValue::UNDEFINED,
+        ));
+    };
     let algorithm = pbkdf2::algorithm_from_digest(cx.global(), digest)?;
 
     let password = isolate_for_job(cx, password)?;
@@ -1130,9 +1137,9 @@ fn argon2_exceeds_allocation_limit(memory: u32, tag_length: u32) -> bool {
     (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit
 }
 
-/// `index` is one of `kArgon2Types` of `crypto.ts`.
-fn argon2_variant(index: u8) -> rust_argon2::Variant {
-    match index {
+/// `variant` is a value of `kArgon2Types` of `crypto.ts`.
+fn argon2_variant(variant: u8) -> rust_argon2::Variant {
+    match variant {
         0 => rust_argon2::Variant::Argon2d,
         1 => rust_argon2::Variant::Argon2i,
         _ => rust_argon2::Variant::Argon2id,

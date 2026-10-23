@@ -200,7 +200,7 @@ pub(crate) fn html<'a>(
 pub(crate) fn render<'a>(
     cx: &mut JsScope<'a>,
     input: JsLocal<'a>,
-    callbacks: &RenderCallbacks<'a>,
+    callbacks: Option<RenderCallbacks<'a>>,
     options: &MarkdownOptions,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
@@ -230,7 +230,9 @@ pub(crate) fn render<'a>(
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    js_renderer.extract_callbacks(callbacks);
+    if let Some(callbacks) = callbacks {
+        js_renderer.extract_callbacks(&callbacks);
+    }
 
     // Run parser with the JS callback renderer
     if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
@@ -247,7 +249,7 @@ pub(crate) fn render<'a>(
 pub(crate) fn react<'a>(
     cx: &mut JsScope<'a>,
     input: JsLocal<'a>,
-    components: &ComponentOverrides<'a>,
+    components: Option<ComponentOverrides<'a>>,
     options: &ReactOptions,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
@@ -283,7 +285,7 @@ unsafe extern "C" {
 fn render_ast(
     global_this: &JSGlobalObject,
     input_value: JSValue,
-    components: &ComponentOverrides<'_>,
+    components: Option<ComponentOverrides<'_>>,
     options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
@@ -315,7 +317,9 @@ fn render_ast(
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    renderer.extract_components(components);
+    if let Some(components) = components {
+        renderer.extract_components(&components);
+    }
 
     if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));

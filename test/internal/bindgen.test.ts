@@ -121,8 +121,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     [b.i32.withValue, "b.bytes and .withValue are only for an argument"],
     [b.i32.ifPassed, ".ifPassed is only for an argument"],
     [b.string.owned, ".owned is only for an argument"],
-    [b.promisePtr("T"), "the context of a promise reaction is only an argument"],
-    [b.nativePromiseContext("T"), "the context of a promise reaction is only an argument"],
+    [b.promisePtr("T"), "the context of a promise reaction is an argument, alone or with .withValue"],
+    [b.nativePromiseContext("T"), "the context of a promise reaction is an argument, alone or with .withValue"],
   ] as const) {
     expect(() => b.array(type)).toThrow(reason);
     expect(() => b.dictionary({ member: type })).toThrow(`member: ${reason}`);
@@ -132,7 +132,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.union({ alternative: type, nothing: b.null })).toThrow("alternative: ");
   }
   expect(() => b.string.owned.optional).toThrow(".owned is only for an argument");
-  expect(() => b.promisePtr("T").nullable).toThrow("the context of a promise reaction is only an argument");
+  expect(() => b.promisePtr("T").nullable).toThrow("alone or with .withValue");
+  expect(() => b.dictionary({ text: b.string.owned.default("") })).toThrow("text: .owned is only for an argument");
+  expect(() => b.i32.withValue.withValue).toThrow("already .withValue");
   expect(() => b.string.owned.owned).toThrow("already .owned");
   expect(() => b.string.owned.local).toThrow(".local follows b.string");
   expect(() => b.i32.withValue.optional).toThrow("put .withValue last");
@@ -144,9 +146,16 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   expect(() => b.f64.loose.allowDate).toThrow(".allowDate follows b.f64");
   expect(() => b.f64.allowDate.loose).toThrow(".loose follows b.f64");
-  expect(() => b.any.otherAsNull).toThrow("b.any already accepts undefined and null");
-  expect(() => b.string.loose.otherAsNull).toThrow("any takes every value");
-  expect(() => b.i32.otherAsNull).toThrow("an integer type reports a number it does not take");
+  for (const type of [b.any, b.string.loose, b.bytes({ from: ["buffer"] }), b.u8.validateInteger(0, 4)]) {
+    expect(() => type.otherAsNull).toThrow(".otherAsNull goes by the kind of a value: this type takes every kind");
+  }
+  for (const type of [b.i32, b.enumeration(["a"]), b.dictionary({ x: b.f64 })]) {
+    expect(() => type.otherAsNull).toThrow("this type throws for some values of a kind it takes");
+  }
+  expect(() => b.union({ number: b.f64, text: b.string }).otherAsNull).toThrow(
+    "a union takes the rest as its last alternative: ignored: b.any",
+  );
+  expect(() => b.union({ number: b.f64.otherAsNull })).toThrow("number: add ignored: b.any as an alternative");
   expect(() => b.fn({ args: { context: b.nativePromiseContext("T"), value: b.i32 }, export: "Bun__reaction" })).toThrow(
     "b.nativePromiseContext takes the pointer out of the cell",
   );
@@ -154,9 +163,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     ".ifPassed is not for overloads",
   );
   expect(() => b.fn({ returns: b.i32, rejects: true })).toThrow("rejects: the result is a promise");
-  expect(() => b.fn({ args: { size: b.u8.validateInteger(0, 4) }, expected: { size: ["number"] } })).toThrow(
-    "expected: size is a range",
-  );
+  const range = b.u8.validateInteger(0, 4);
+  for (const size of [range, range.optional, range.default(0), range.optional.withValue, b.u8.enforceRange(0, 4)]) {
+    expect(() => b.fn({ args: { size }, expected: { size: ["number"] }, capability: "heap" })).toThrow(
+      "expected: size is a range, which has its own errors",
+    );
+  }
+  expect(() => b.dictionary({ size: { type: range, expected: ["number"] } })).toThrow("expected: size is a range");
   const point = b.dictionary({ x: b.f64 });
   for (const later of [b.jsArray, b.callable, b.bufferSource, b.array(b.f64)]) {
     expect(() => b.union({ point, later, text: b.string })).toThrow("later is never chosen");
@@ -805,26 +818,25 @@ describe("functions", () => {
     expect(bindgen.isPassed(1, undefined)).toBe(true);
   });
 
-  it(".otherAsNull is absent for every value the type does not take", () => {
-    const { presentOnes } = bindgen;
-    expect(presentOnes()).toEqual([]);
-    expect(presentOnes(1.5, "", () => {}, { x: 1 }, new bindgen.TestCounter(1), {})).toEqual([
+  it(".otherAsNull is absent for every value of a kind the type does not take", () => {
+    const { presentArguments } = bindgen;
+    expect(presentArguments()).toEqual([]);
+    expect(presentArguments(1.5, "", () => {}, new bindgen.TestCounter(1), {})).toEqual([
       "number",
       "text",
       "callback",
-      "point",
       "counter",
       "options",
     ]);
-    expect(presentOnes("1", 1, {}, 1, {}, 1)).toEqual([]);
-    expect(presentOnes(null, Symbol(), null, "x", null, null)).toEqual([]);
-    expect(presentOnes(NaN, new String("s"), new Proxy(() => {}, {}))).toEqual(["number", "text", "callback"]);
-    const options = (value: unknown) => presentOnes(0, 0, 0, 0, 0, value).slice(1);
+    expect(presentArguments("1", 1, {}, {}, 1)).toEqual([]);
+    expect(presentArguments(null, Symbol(), null, null, null)).toEqual([]);
+    expect(presentArguments(NaN, new String("s"), new Proxy(() => {}, {}))).toEqual(["number", "text", "callback"]);
+    const options = (value: unknown) => presentArguments(0, 0, 0, 0, value).slice(1);
     expect(options({ size: 1, callback() {} })).toEqual(["options", "options.size", "options.callback"]);
     expect(options({ size: "1", callback: {} })).toEqual(["options"]);
-    // An object is a dictionary, whose own members still report what is wrong with them.
-    expect(() => presentOnes(0, 0, 0, {})).toThrow("TestPoint.x is required");
-    expect(presentOnes.length).toBe(0);
+    expect(options([])).toEqual(["options"]);
+    expect(() => options({ strict: "1" })).toThrow("TestOtherAsNullOptions.strict must be a number");
+    expect(presentArguments.length).toBe(0);
   });
 
   it(".withValue also gives the argument", () => {
@@ -862,7 +874,7 @@ describe("functions", () => {
   });
 });
 
-describe("a dictionary of a node:* function", () => {
+describe("how a dictionary reports its members", () => {
   it(".validateInteger can be absent", () => {
     expect(bindgen.nodeOptionsSize({})).toBe(undefined);
     expect(bindgen.nodeOptionsSize({ size: undefined })).toBe(undefined);

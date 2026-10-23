@@ -1181,7 +1181,7 @@ mod _async_tasks {
         const HAVE_ABORT_SIGNAL: bool = true;
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            args::WriteFile::from_js_with_default_flag(ctx, arguments, FileSystemFlags::A)
+            args::WriteFile::from_js_for(ctx, arguments, args::WriteFileKind::Append)
                 .map(args::AppendFile)
         }
         #[inline]
@@ -4306,6 +4306,12 @@ pub(crate) mod args {
         pub(crate) dirfd: FD,
         pub(crate) signal: Option<AbortSignalRef>,
     }
+    /// The `node:fs` function that `WriteFile::from_js_for` parses for. Node gives the two a different default flag and a different place for the `mode` check.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum WriteFileKind {
+        Write,
+        Append,
+    }
     impl Drop for WriteFile<'_> {
         fn drop(&mut self) {
             // Release the AbortSignal ref taken in `from_js`.
@@ -4319,12 +4325,12 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
-            Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
+            Self::from_js_for(ctx, arguments, WriteFileKind::Write)
         }
-        pub(crate) fn from_js_with_default_flag(
+        pub(crate) fn from_js_for(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
-            default_flag: FileSystemFlags,
+            kind: WriteFileKind,
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
@@ -4337,7 +4343,10 @@ pub(crate) mod args {
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
-            let mut flag = default_flag;
+            let mut flag = match kind {
+                WriteFileKind::Write => FileSystemFlags::W,
+                WriteFileKind::Append => FileSystemFlags::A,
+            };
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s {
@@ -4375,7 +4384,7 @@ pub(crate) mod args {
                         }
                     }
                     // Node's appendFile parses the mode before writeFile checks flush: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L3081
-                    let is_append = default_flag == FileSystemFlags::A;
+                    let is_append = kind == WriteFileKind::Append;
                     if is_append && let Some(mode_) = mode_value {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }

@@ -214,6 +214,7 @@ pub enum PollTag {
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
+    FdPipe,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell

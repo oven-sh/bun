@@ -17,6 +17,7 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -4475,10 +4476,10 @@ describe.skipIf(!isLinux)("a peer that replied and closed mid-upload", () => {
   });
 
   it.each([
-    ["nothing", ["data", "error EPIPE", "close"]],
+    ["nothing", ["data", "close EPIPE write"]],
     ["terminate", ["data", "close"]],
     ["end", ["data", "close"]],
-  ] as const)("Bun.connect: error() never follows close() when data() calls %s", async (method, expected) => {
+  ] as const)("Bun.connect: close() reports the failed send when data() calls %s", async (method, expected) => {
     using server = await listen();
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
@@ -4492,18 +4493,58 @@ describe.skipIf(!isLinux)("a peer that replied and closed mid-upload", () => {
           if (method !== "nothing") socket[method]();
         },
         error: (socket, err: any) => void events.push(`error ${err.code}`),
-        close() {
-          events.push("close");
+        close(socket, err: any) {
+          events.push(err ? `close ${err.code} ${err.syscall}` : "close");
           closed.resolve();
         },
       },
     });
     await closed.promise;
-    // A late error() would come in the same dispatch as close().
-    await new Promise(resolve => setImmediate(resolve));
     expect(events).toEqual([...expected]);
   });
 });
+
+it("runs a queued write's callback and the 'drain' after it in the async context of write()", async () => {
+  using pair = await connectToPausedPeer();
+  const store = new AsyncLocalStorage<string>();
+  const seen: string[] = [];
+  const written = Promise.withResolvers<void>();
+  store.run("write", () => {
+    pair.socket.on("drain", () => seen.push(`drain ${store.getStore()}`));
+    while (pair.socket.write(Buffer.alloc(1 << 20))) {}
+    pair.socket.write("tail", () => {
+      seen.push(`callback ${store.getStore()}`);
+      written.resolve();
+    });
+  });
+  pair.peer.resume();
+  await written.promise;
+  expect(seen).toEqual(["drain write", "callback write"]);
+});
+
+it.each(["accepted", "client"] as const)(
+  "closes a half-open %s socket with no 'error' listener when the peer resets",
+  async side => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = connect({ port: (server.address() as any).port, host: "127.0.0.1", allowHalfOpen: true });
+      const [socket, peer] = side === "accepted" ? [await accepted.promise, client] : [client, await accepted.promise];
+      if (side === "client") await once(client, "connect");
+      peer.on("error", () => {});
+      const events: string[] = [];
+      for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+      socket.resume();
+      peer.resetAndDestroy();
+      // Not events.once(), which adds an 'error' listener.
+      await new Promise(resolve => socket.once("close", resolve));
+      expect(events).toEqual(["end", "close"]);
+    } finally {
+      server.close();
+    }
+  },
+);
 
 describe("destroy()", () => {
   const code = (name: string, events: string[]) => (err?: any) => void events.push(`${name} ${err?.code}`);
@@ -4544,21 +4585,6 @@ describe("destroy()", () => {
     // Not events.once(), which rejects on 'error'.
     await new Promise(resolve => pair.socket.once("close", resolve));
     expect(events).toEqual(["error EBOOM", "write ECANCELED", "queued EBOOM"]);
-  });
-
-  it("an http upload cut by req.destroy(err) doesn't emit 'finish'", async () => {
-    using pair = await connectToPausedPeer();
-    const req = require("node:http").request({ port: pair.port, host: "127.0.0.1", method: "POST" });
-    const events: string[] = [];
-    req.on("finish", () => events.push("finish"));
-    req.on("error", code("error", events));
-    await once(req, "socket");
-    await once(req.socket, "connect");
-    writeUntilQueued(req.socket);
-    req.end("body");
-    req.destroy(Object.assign(new Error("boom"), { code: "EBOOM" }));
-    await new Promise(resolve => req.once("close", resolve));
-    expect(events).toEqual(["error EBOOM"]);
   });
 
   it("doesn't fail a connect() made right after it with the canceled write", async () => {

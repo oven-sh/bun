@@ -14,6 +14,7 @@ const {
   secureProtocolToVersionRange,
   normalizePemKeyOption,
   processPfxOptions,
+  readSecureContextOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
@@ -36,6 +37,7 @@ const {
   kSecureConnectDone,
   kSNIContexts,
   kStandaloneWrap,
+  kTLSHandle,
   kUpgradeClientTLS,
   kVerifyError,
 } = require("internal/net/symbols");
@@ -48,9 +50,11 @@ const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACerti
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
-const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
-const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
-const setTLSDefaultCA = $newCppFunction("NodeTLS.cpp", "setDefaultCA", 1);
+const getTLSDefaultCiphers = $bindgen("node_tls_binding.bind.ts", "getDefaultCiphers");
+const setTLSDefaultCiphers = $bindgen("node_tls_binding.bind.ts", "setDefaultCiphers");
+const getTLSDefaultCA = $bindgen("node_tls_binding.bind.ts", "getDefaultCA");
+const setTLSDefaultCA = $bindgen("node_tls_binding.bind.ts", "setDefaultCA");
+const getDefaultCACertificateTypes = $bindgen("node_tls_binding.bind.ts", "getDefaultCACertificateTypes");
 const selectServerName = $newCppFunction("NodeTLS.cpp", "selectServerName", 2);
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
@@ -542,14 +546,6 @@ var InternalSecureContext = class SecureContext {
   servername;
 
   constructor(options, cached = false) {
-    // When tls.setDefaultCACertificates() has installed an override and no
-    // explicit `ca` was given, use the override as the default CA set so the
-    // process-wide default applies on every construction path (the public
-    // createSecureContext(), the connect/TLSSocket path, addContext and
-    // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
-      options = { ...options, ca: _defaultCACertificatesOverride };
-    }
     if (options) {
       validateSecureContextOptions(options);
       const cert = options.cert;
@@ -587,8 +583,6 @@ InternalSecureContext.prototype.constructor = SecureContext;
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
-  // The setDefaultCACertificates() override is applied inside the
-  // InternalSecureContext constructor so every construction path honors it.
   // The native handle (SSL_CTX) is memoised inside `NativeSecureContext.intern`
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.
@@ -776,6 +770,14 @@ Object.defineProperty(TLSSocket.prototype, "ssl", {
   },
 });
 
+Object.defineProperty(TLSSocket.prototype, kTLSHandle, {
+  configurable: true,
+  enumerable: false,
+  get() {
+    return this._handle;
+  },
+});
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1060-L1079
 TLSSocket.prototype._tlsError = function _tlsError(err) {
   this.emit("_tlsError", err);
@@ -818,11 +820,11 @@ TLSSocket.prototype._final = function _final(callback) {
 };
 
 TLSSocket.prototype.getSession = function getSession() {
-  return this._handle?.getSession?.();
+  return this[kTLSHandle]?.getSession?.();
 };
 
 TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
-  const info = this._handle?.getEphemeralKeyInfo?.();
+  const info = this[kTLSHandle]?.getEphemeralKeyInfo?.();
   if (info == null) return info;
   // Empirically node always surfaces all three keys here (values undefined when
   // absent): a client socket on a TLS 1.3 ECDHE session observes
@@ -832,30 +834,30 @@ TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
 };
 
 TLSSocket.prototype.getCipher = function getCipher() {
-  return this._handle?.getCipher?.();
+  return this[kTLSHandle]?.getCipher?.();
 };
 
 TLSSocket.prototype.getSharedSigalgs = function getSharedSigalgs() {
-  return this._handle?.getSharedSigalgs?.();
+  return this[kTLSHandle]?.getSharedSigalgs?.();
 };
 
 TLSSocket.prototype.getProtocol = function getProtocol() {
   // Node returns the negotiated protocol string, or null once the socket is no
   // longer connected (e.g. after 'close').
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/_tls_wrap.js#L1455
-  return this._handle?.getTLSVersion?.() ?? null;
+  return this[kTLSHandle]?.getTLSVersion?.() ?? null;
 };
 
 TLSSocket.prototype.getFinished = function getFinished() {
-  return this._handle?.getTLSFinishedMessage?.() || undefined;
+  return this[kTLSHandle]?.getTLSFinishedMessage?.() || undefined;
 };
 
 TLSSocket.prototype.getPeerFinished = function getPeerFinished() {
-  return this._handle?.getTLSPeerFinishedMessage?.() || undefined;
+  return this[kTLSHandle]?.getTLSPeerFinishedMessage?.() || undefined;
 };
 
 TLSSocket.prototype.isSessionReused = function isSessionReused() {
-  return this._handle?.isSessionReused?.() ?? false;
+  return this[kTLSHandle]?.isSessionReused?.() ?? false;
 };
 
 TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
@@ -878,7 +880,7 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
     return false;
   }
 
-  const socket = this._handle;
+  const socket = this[kTLSHandle];
   // if the socket is detached we can't renegotiate, nodejs do a noop too (we should not return false or true here)
   if (!socket) return;
 
@@ -904,11 +906,11 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
 TLSSocket.prototype.disableRenegotiation = function disableRenegotiation() {
   this[krenegotiationDisabled] = true;
   // disable renegotiation on the socket
-  return this._handle?.disableRenegotiation?.();
+  return this[kTLSHandle]?.disableRenegotiation?.();
 };
 
 TLSSocket.prototype.getTLSTicket = function getTLSTicket() {
-  return this._handle?.getTLSTicket?.();
+  return this[kTLSHandle]?.getTLSTicket?.();
 };
 
 // Lets net.ts's SNI dispatch recognize a raw native SecureContext returned by
@@ -922,7 +924,7 @@ TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   // SecureContext or the same options object createSecureContext takes.
   const ctx = context?.context ? context : new InternalSecureContext(context, true);
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1679
-  if (this.isServer) this._handle?.setKeyCert?.(ctx.context);
+  if (this.isServer) this[kTLSHandle]?.setKeyCert?.(ctx.context);
 };
 
 TLSSocket.prototype.exportKeyingMaterial = function exportKeyingMaterial(length, label, context) {
@@ -936,14 +938,14 @@ TLSSocket.prototype.exportKeyingMaterial = function exportKeyingMaterial(length,
   }
 
   if (context) {
-    return this._handle?.exportKeyingMaterial?.(length, label, context);
+    return this[kTLSHandle]?.exportKeyingMaterial?.(length, label, context);
   }
-  return this._handle?.exportKeyingMaterial?.(length, label);
+  return this[kTLSHandle]?.exportKeyingMaterial?.(length, label);
 };
 
 TLSSocket.prototype.setMaxSendFragment = function setMaxSendFragment(size) {
   validateInt32(size, "size");
-  return this._handle?.setMaxSendFragment?.(size) || false;
+  return this[kTLSHandle]?.setMaxSendFragment?.(size) || false;
 };
 
 TLSSocket.prototype.enableTrace = function enableTrace() {
@@ -957,17 +959,17 @@ TLSSocket.prototype.setServername = function setServername(name) {
   }
   this[kservername] = name;
   this.servername = name;
-  this._handle?.setServername?.(name);
+  this[kTLSHandle]?.setServername?.(name);
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
-  return this._handle?.setSession?.(session);
+  return this[kTLSHandle]?.setSession?.(session);
 };
 
 TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {
-  const handle = this._handle;
+  const handle = this[kTLSHandle];
   if (handle) {
     // The native parameter means "abbreviated" - the inverse of Node's
     // `detailed`. Detailed requests get the whole chain with
@@ -982,8 +984,9 @@ TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {
 };
 
 TLSSocket.prototype.getCertificate = function getCertificate() {
-  if (!this._handle) return null;
-  const cert = this._handle.getCertificate?.();
+  const handle = this[kTLSHandle];
+  if (!handle) return null;
+  const cert = handle.getCertificate?.();
   if (cert) {
     // It's not a peer cert, but the formatting is identical.
     return translatePeerCertificate(cert);
@@ -998,7 +1001,7 @@ TLSSocket.prototype.getPeerX509Certificate = function getPeerX509Certificate() {
   // always undefined for certificates parsed outside a TLS connection).
   const cert = this.getPeerCertificate(true);
   if (!cert || !cert.raw) {
-    return this._handle?.getPeerX509Certificate?.();
+    return this[kTLSHandle]?.getPeerX509Certificate?.();
   }
   const { X509Certificate } = require("node:crypto");
   const seen = new Map();
@@ -1026,7 +1029,7 @@ TLSSocket.prototype.getPeerX509Certificate = function getPeerX509Certificate() {
 };
 
 TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
-  return this._handle?.getX509Certificate?.();
+  return this[kTLSHandle]?.getX509Certificate?.();
 };
 
 TLSSocket.prototype[buntls] = function (port, host) {
@@ -1184,20 +1187,18 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      options = readSecureContextOptions(options);
       // A falsy value counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
-      options = {
-        ...options,
-        pfx: options.pfx || undefined,
-        passphrase: options.passphrase || undefined,
-        clientCertEngine: options.clientCertEngine || undefined,
-        minVersion: options.minVersion || undefined,
-        maxVersion: options.maxVersion || undefined,
-        secureProtocol: options.secureProtocol || undefined,
-        ciphers: options.ciphers || undefined,
-        sessionTimeout: options.sessionTimeout || undefined,
-        ticketKeys: options.ticketKeys || undefined,
-        servername: options.servername || undefined,
-      };
+      options.pfx ||= undefined;
+      options.passphrase ||= undefined;
+      options.clientCertEngine ||= undefined;
+      options.minVersion ||= undefined;
+      options.maxVersion ||= undefined;
+      options.secureProtocol ||= undefined;
+      options.ciphers ||= undefined;
+      options.sessionTimeout ||= undefined;
+      options.ticketKeys ||= undefined;
+      options.servername ||= undefined;
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
 
@@ -1218,13 +1219,11 @@ function Server(options, secureConnectionListener): void {
       next.key = key;
 
       let ca = options.ca || undefined;
-      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
       // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
       const pfxExtraCAs = options._pfxExtraCACerts;
       if (pfxExtraCAs?.length) {
+        // They extend tls.setDefaultCACertificates()'s list, which a `ca` of only them would replace.
+        ca ??= getTLSDefaultCA();
         ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
       }
       if (ca) {
@@ -1607,33 +1606,17 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
-const getUseOpensslCA = $bindgen("node_tls_binding.bind.ts", "getUseOpensslCA");
-const getUseSystemCA = $bindgen("node_tls_binding.bind.ts", "getUseSystemCA");
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
-  if (!getUseOpensslCA()) {
-    const bundled = cacheBundledRootCertificates();
-    for (let i = 0; i < bundled.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
-    }
-
-    // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
-    if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
-      const system = cacheSystemCACertificates();
-      for (let i = 0; i < system.length; ++i) {
-        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
-      }
-    }
-  }
-
-  if (process.env.NODE_EXTRA_CA_CERTS) {
-    const extra = cacheExtraCACertificates();
-    for (let i = 0; i < extra.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, extra[i]);
+  const types = getDefaultCACertificateTypes();
+  for (let i = 0; i < types.length; ++i) {
+    const certs = getCACertificates(types[i]);
+    for (let j = 0; j < certs.length; ++j) {
+      ArrayPrototypePush.$call(defaultCACertificates, certs[j]);
     }
   }
 
@@ -1653,22 +1636,13 @@ function cacheExtraCACertificates(): string[] {
   return extraCACertificates;
 }
 
-// Runtime override for the "default" CA certificate set, installed by
-// tls.setDefaultCACertificates(). undefined = no override (use the real
-// bundled/system default). Only affects type "default"/implicit — "bundled",
-// "system" and "extra" are unchanged.
-// https://github.com/nodejs/node/blob/main/lib/internal/tls/secure-context.js
-let _defaultCACertificatesOverride: Array<string> | undefined;
-
 type CACertInput = string | NodeJS.ArrayBufferView;
 // tls.setDefaultCACertificates(certs)
 // https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202
 // Node validates `certs` as an Array (its ERR_INVALID_ARG_TYPE renders the
 // 'Array' name as "an instance of Array"; Bun's validateArray renders the same
 // name as "of type Array", so build the error directly to match Node here),
-// then hands the certs to the native root store. Bun has no equivalent native
-// store override, so keep a JS-side override that getCACertificates('default')
-// and createSecureContext() read, and a native copy for fetch and WebSocket.
+// then hands the certs to the native root store.
 function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (!$isArray(certs)) {
     let received: string;
@@ -1694,7 +1668,6 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
-  _defaultCACertificatesOverride = normalized;
   setTLSDefaultCA(normalized);
 }
 
@@ -1703,10 +1676,7 @@ function getCACertificates(type = "default") {
 
   switch (type) {
     case "default":
-      if (_defaultCACertificatesOverride !== undefined) {
-        return _defaultCACertificatesOverride.slice();
-      }
-      return cacheDefaultCACertificates();
+      return getTLSDefaultCA() ?? cacheDefaultCACertificates();
     case "bundled":
       return cacheBundledRootCertificates();
     case "system":

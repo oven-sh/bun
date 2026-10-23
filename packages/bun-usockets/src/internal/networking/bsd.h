@@ -233,7 +233,9 @@ int bsd_send_is_transient_error();
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int* error);
+/* Binds without listening: node:cluster's primary binds the path its workers listen on. */
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t pathlen, int* error);
 
 /* Creates an UDP socket bound to the hostname and port */
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);

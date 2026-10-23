@@ -187,10 +187,9 @@ pub struct SqlRuntimeHooks {
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx>,
-    /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
+    /// Parses a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
-    /// or null when the value contained no TLS config / threw (caller checks
-    /// `global.has_exception()`).
+    /// or null when it threw.
     pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
     /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
     pub ssl_config_free: unsafe fn(*mut c_void),
@@ -378,9 +377,7 @@ pub mod api {
     pub mod server_config {
         use super::*;
 
-        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
-        /// the default-constructed config — callers that pass
-        /// `tls: true` get an SSLConfig with no overrides.
+        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` is a connection without TLS.
         #[derive(Default)]
         pub struct SSLConfig(Option<NonNull<c_void>>);
 
@@ -447,35 +444,25 @@ pub mod api {
                 (!bracketed && !bun_core::ip_address::is_ip_host(bare)).then_some(name)
             }
 
-            pub(crate) fn from_js(
-                global: &JSGlobalObject,
-                value: JSValue,
-            ) -> JsResult<Option<Self>> {
+            pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
                 // SAFETY: hook contract — may run JS getters / throw.
-                let p = unsafe { (hooks().ssl_config_from_js)(global, value) };
-                if global.has_exception() {
-                    debug_assert!(p.is_null());
-                    return Err(JsError::Thrown);
+                let config = unsafe { (hooks().ssl_config_from_js)(global, value) };
+                match NonNull::new(config) {
+                    Some(config) => Ok(Self(Some(config))),
+                    None => Err(JsError::Thrown),
                 }
-                Ok(NonNull::new(p).map(|p| Self(Some(p))))
             }
 
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
             /// `#[repr(C)]` `us_bun_socket_context_options_t` for client mode
             /// (request_cert=1, reject_unauthorized=0; SQL re-verifies hostname
-            /// itself). Returns `Default` for the empty/`tls:true` config.
+            /// itself).
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
-            ) -> bun_uws::us_bun_socket_context_options_t {
-                match self.0 {
-                    None => bun_uws::us_bun_socket_context_options_t {
-                        request_cert: 1,
-                        reject_unauthorized: 0,
-                        ..Default::default()
-                    },
-                    // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
-                }
+            ) -> Option<bun_uws::us_bun_socket_context_options_t> {
+                let config = self.0?;
+                // SAFETY: live boxed SSLConfig.
+                Some(unsafe { (hooks().ssl_config_as_usockets_client)(config.as_ptr()) })
             }
         }
     }

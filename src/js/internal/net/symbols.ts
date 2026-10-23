@@ -17,6 +17,8 @@ export default {
   kSNIError: Symbol("kSNIError"),
   // tls.Server's addContext() map of hostname to SecureContext. https.Server adds the entries to its own listener.
   kSNIContexts: Symbol("kSNIContexts"),
+  // tls.TLSSocket.prototype getter: the native object with the connection's TLS members. It's `_handle`, except on an https.Server's sockets.
+  kTLSHandle: Symbol("kTLSHandle"),
   kVerifyError: Symbol("kVerifyError"),
   // net.Socket.prototype method behind the client-side `new tls.TLSSocket(socket)`.
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),

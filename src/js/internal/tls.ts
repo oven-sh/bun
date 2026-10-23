@@ -63,25 +63,11 @@ function isValidTLSArray(obj: unknown) {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L74-L87
 const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArray, or DataView";
 
-// BoringSSL TLS1_x_VERSION constants (from openssl/tls1.h). The native TLS
-// config applies these via SSL_CTX_set_min/max_proto_version.
-const TLS1_VERSION = 0x0301;
-const TLS1_1_VERSION = 0x0302;
-const TLS1_2_VERSION = 0x0303;
-const TLS1_3_VERSION = 0x0304;
+const protocolVersionCode = $bindgen("SSLConfig.bind.ts", "protocolVersionCode");
+
+// The code SSL_CTX_set_min/max_proto_version takes, 0 if `v` names no version.
 function tlsStringToProtocolVersion(v) {
-  switch (v) {
-    case "TLSv1":
-      return TLS1_VERSION;
-    case "TLSv1.1":
-      return TLS1_1_VERSION;
-    case "TLSv1.2":
-      return TLS1_2_VERSION;
-    case "TLSv1.3":
-      return TLS1_3_VERSION;
-    default:
-      return 0;
-  }
+  return typeof v === "string" ? protocolVersionCode(v) : 0;
 }
 
 // Matches Node: SSLv2/SSLv3 methods are disabled, anything unrecognized is an
@@ -131,28 +117,29 @@ function validateSecureProtocol(secureProtocol, minVersion, maxVersion) {
 // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L120
 function secureProtocolToVersionRange(secureProtocol) {
   if (typeof secureProtocol !== "string") return null;
+  let name;
   if (
     secureProtocol === "TLSv1_method" ||
     secureProtocol === "TLSv1_client_method" ||
     secureProtocol === "TLSv1_server_method"
   )
-    return [TLS1_VERSION, TLS1_VERSION];
-  if (
+    name = "TLSv1";
+  else if (
     secureProtocol === "TLSv1_1_method" ||
     secureProtocol === "TLSv1_1_client_method" ||
     secureProtocol === "TLSv1_1_server_method"
   )
-    return [TLS1_1_VERSION, TLS1_1_VERSION];
-  if (
+    name = "TLSv1.1";
+  else if (
     secureProtocol === "TLSv1_2_method" ||
     secureProtocol === "TLSv1_2_client_method" ||
     secureProtocol === "TLSv1_2_server_method"
   )
-    return [TLS1_2_VERSION, TLS1_2_VERSION];
-  return null;
+    name = "TLSv1.2";
+  else return null;
+  const version = protocolVersionCode(name);
+  return [version, version];
 }
-
-const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
 const SUPPORTED_ECDH_GROUPS = new Set([
   "P-256",
@@ -243,9 +230,9 @@ function validateSecureContextOptions(options) {
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   }
-  if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
+  if (minVersion != null && tlsStringToProtocolVersion(minVersion) === 0)
     throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(minVersion), "minimum");
-  if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
+  if (maxVersion != null && tlsStringToProtocolVersion(maxVersion) === 0)
     throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(maxVersion), "maximum");
   if (ticketKeys !== undefined && ticketKeys !== null) {
     validateBuffer(ticketKeys, "options.ticketKeys");
@@ -271,6 +258,47 @@ function validateSecureContextOptions(options) {
       throw $ERR_OUT_OF_RANGE("options.sessionTimeout", ">= 0 && <= 2147483647", sessionTimeout);
     }
   }
+}
+
+// Reads each option by name, as Node does, so an inherited one, a getter and a non-enumerable one count. A spread would drop them.
+function readSecureContextOptions(options) {
+  return {
+    __proto__: null,
+    pfx: options.pfx,
+    key: options.key,
+    passphrase: options.passphrase,
+    cert: options.cert,
+    clientCertEngine: options.clientCertEngine,
+    ca: options.ca,
+    minVersion: options.minVersion,
+    maxVersion: options.maxVersion,
+    secureProtocol: options.secureProtocol,
+    crl: options.crl,
+    sigalgs: options.sigalgs,
+    ciphers: options.ciphers,
+    ecdhCurve: options.ecdhCurve,
+    dhparam: options.dhparam,
+    honorCipherOrder: options.honorCipherOrder,
+    secureOptions: options.secureOptions,
+    sessionTimeout: options.sessionTimeout,
+    ticketKeys: options.ticketKeys,
+    privateKeyIdentifier: options.privateKeyIdentifier,
+    privateKeyEngine: options.privateKeyEngine,
+    allowPartialTrustChain: options.allowPartialTrustChain,
+    // Not in Node: what else the native parser takes.
+    servername: options.servername,
+    serverName: options.serverName,
+    keyFile: options.keyFile,
+    certFile: options.certFile,
+    caFile: options.caFile,
+    dhParamsFile: options.dhParamsFile,
+    lowMemoryMode: options.lowMemoryMode,
+    ALPNProtocols: options.ALPNProtocols,
+    requestCert: options.requestCert,
+    rejectUnauthorized: options.rejectUnauthorized,
+    clientRenegotiationLimit: options.clientRenegotiationLimit,
+    clientRenegotiationWindow: options.clientRenegotiationWindow,
+  };
 }
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
@@ -487,6 +515,7 @@ export {
   nodeClientTlsToNative,
   normalizePemKeyOption,
   processPfxOptions,
+  readSecureContextOptions,
   secureProtocolToVersionRange,
   stripTls13CipherNames,
   throwOnInvalidTLSArray,

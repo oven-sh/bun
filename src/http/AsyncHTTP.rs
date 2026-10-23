@@ -472,8 +472,7 @@ impl<'a> AsyncHTTP<'a> {
             this.client.flags.disable_timeout = val;
         }
         if let Some(val) = options.idle_timeout_seconds {
-            this.client.idle_timeout_seconds =
-                Some(crate::normalize_idle_timeout_seconds(val.into()));
+            this.client.idle_timeout_seconds = Some(val);
         }
         if let Some(val) = options.verbose {
             this.client.verbose = val;

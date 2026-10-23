@@ -1001,7 +1001,6 @@ private:
         /* on_writable */         &onWritable,
         /* on_close */            &onClose,
         /* on_timeout */          &onTimeout,
-        /* on_long_timeout */     nullptr,
         /* on_end */              &onEnd,
         /* on_connect_error */    nullptr,
         /* on_connecting_error */ nullptr,

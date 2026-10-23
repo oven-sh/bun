@@ -210,17 +210,7 @@ public:
         us_wakeup_loop((us_loop_t *) this);
     }
 
-    /* Actively block and run this loop */
-    void run() {
-        us_loop_run((us_loop_t *) this);
-    }
-
 };
-
-/* Can be called from any thread to run the thread local loop */
-inline void run() {
-    Loop::get()->run();
-}
 
 }
 

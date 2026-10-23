@@ -110,9 +110,6 @@ typedef struct {
     bool resetIdleTimeoutOnSend;
     /* A good default, esp. for newcomers */
     bool sendPingsAutomatically;
-    /* Maximum socket lifetime in seconds before forced closure (defaults to
-     * disabled) */
-    unsigned short maxLifetime;
     bool autoPong;
     bool skipUTF8Validation;
 

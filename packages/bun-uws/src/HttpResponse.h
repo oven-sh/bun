@@ -546,9 +546,6 @@ private:
             httpContextData->upgradedWebSocket = webSocket;
         }
 
-        /* Arm maxLifetime timeout */
-        us_socket_long_timeout((us_socket_t *) webSocket, webSocketContextData->maxLifetime);
-
         /* Arm idleTimeout */
         us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
 

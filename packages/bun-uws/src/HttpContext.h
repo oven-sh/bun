@@ -148,11 +148,7 @@ private:
             if (httpResponseData->filteredOpen) {
                 return;
             }
-            /* The app-level flag reflects the default entry; a per-serverName
-             * entry adds its own client-certificate policy for its name. */
-            bool rejectUnauthorized = httpContextData->flags.rejectUnauthorized ||
-                us_socket_server_name_reject_unauthorized(s);
-            if(rejectUnauthorized) {
+            if (us_socket_rejects_unauthorized(s)) {
                 if(!success || verify_error.error != 0) {
                     // we failed to handshake, close the socket
                     us_socket_close(s, 0, nullptr);
@@ -224,6 +220,11 @@ private:
          * which accounts for the TLS ciphertext spill, so they are accurate
          * for both transports. */
         s->flags.allow_half_open = 1;
+
+        /* onHandshake arms the idle timeout. */
+        if constexpr (SSL) {
+            us_socket_timeout(s, httpContextData->handshakeTimeout);
+        }
 
         /* Call filter: accepted (both transports)... */
         ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredAccept = true;
@@ -326,7 +327,7 @@ private:
     template <bool IsNodeHttp>
     static bool isShutDownByOwner(us_socket_t *s) {
         if constexpr (SSL && IsNodeHttp) {
-            if (us_socket_ssl_send_rejected(s) && !(SSL_get_shutdown((const ssl_st *) us_socket_get_native_handle(s)) & SSL_SENT_SHUTDOWN)) {
+            if (us_socket_rejected_send_error(s) && !(SSL_get_shutdown((const ssl_st *) us_socket_get_native_handle(s)) & SSL_SENT_SHUTDOWN)) {
                 return false;
             }
         }
@@ -1140,6 +1141,16 @@ private:
         // Node.js by default closes the connection but they emit the timeout event before that
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
+        /* Call filter: handshakeTimeout ran out. node:https reports it before the close. */
+        if (SSL && !httpResponseData->filteredOpen) {
+            for (auto &f : getSocketContextDataS(s)->filterHandlers) {
+                f((HttpResponse<SSL> *) s, 0);
+            }
+            if (us_socket_is_closed(s)) {
+                return s;
+            }
+        }
+
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
@@ -1159,7 +1170,6 @@ private:
         /* on_writable */     &onWritable<IsNodeHttp>,
         /* on_close */        &onClose<IsNodeHttp>,
         /* on_timeout */      &onTimeout,
-        /* on_long_timeout */ nullptr,
         /* on_end */          &onEnd<IsNodeHttp>,
         /* on_connect_error */nullptr,
         /* on_connecting_error */ nullptr,
@@ -1169,12 +1179,9 @@ private:
 public:
     /* Construct a new HttpContext using specified loop. SSL_CTX is built and
      * owned by TemplatedApp; we only learn about it at listen() time. */
-    static HttpContext *create(Loop *loop, bool requestCert = false, bool rejectUnauthorized = false) {
+    static HttpContext *create(Loop *loop) {
         HttpContext *httpContext = new HttpContext;
         us_socket_group_init(&httpContext->group, (us_loop_t *) loop, &httpVTable<false>, httpContext);
-        if (requestCert && rejectUnauthorized) {
-            httpContext->data.flags.rejectUnauthorized = true;
-        }
         return httpContext;
     }
 

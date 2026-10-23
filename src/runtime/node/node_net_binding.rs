@@ -1,44 +1,13 @@
-//
-//
-
-use core::cell::Cell;
-
-use bun_io::KeepAlive;
 use bun_jsc::bindgen::JsScope;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult};
-use bun_uws as uws;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
+use crate::socket::{Listener, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
 pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue {
-    // Only `socket`, `ref_count`, `protos`, `handlers` are
-    // specified; the rest take their struct defaults.
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
-        let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
-            socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
-            ref_count: bun_ptr::RefCount::init(),
-            protos: JsCell::new(None),
-            handlers: JsCell::new(None),
-            local_binding: JsCell::new(None),
-            // — defaults —
-            owned_ssl_ctx: JsCell::new(None),
-            // node:net/node:tls own server-identity (`checkServerIdentity`)
-            // policy in JS, so a hostname mismatch is never enforced natively.
-            flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
-            this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
-            ref_pollref_on_connect: Cell::new(true),
-            connection: JsCell::new(None),
-            server_name: JsCell::new(None),
-            buffered_data_for_node_net: Default::default(),
-            closing: Cell::new(uws::NewSocketHandler::DETACHED),
-            bytes_written: Cell::new(0),
-            bytes_read: Cell::new(0),
-            native_callback: JsCell::new(NativeCallbacks::None),
-            twin: JsCell::new(None),
-            verify_error: JsCell::new(None),
-            latest_session: core::cell::Cell::new(None),
-        });
+        let socket = NewSocket::<SSL>::new(None);
+        // node:net and node:tls check the server's identity in JS (`checkServerIdentity`).
+        socket.flags.set(SocketFlags::DEFERS_SERVER_IDENTITY);
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
         let value = socket.to_js(global);
         socket.this_value.set(jsc::JsRef::init_weak(value));

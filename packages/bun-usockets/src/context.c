@@ -18,6 +18,7 @@
 #include "internal/internal.h"
 #include "libusockets.h"
 #include <errno.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #ifndef _WIN32
@@ -160,20 +161,12 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
     us_socket_group_close_all_ex(group, 1);
 }
 
-unsigned short us_socket_group_timestamp(struct us_socket_group_t *group) {
-    return group->timestamp;
-}
-
 __attribute__((always_inline)) struct us_loop_t *us_socket_group_loop(struct us_socket_group_t *group) {
     return group->loop;
 }
 
 __attribute__((always_inline)) void *us_socket_group_ext(struct us_socket_group_t *group) {
     return group->ext;
-}
-
-struct us_socket_group_t *us_socket_group_next(struct us_socket_group_t *group) {
-    return group->next;
 }
 
 /* ── Link / unlink ──────────────────────────────────────────────────────── */
@@ -270,6 +263,16 @@ void us_internal_socket_group_unlink_connecting_socket(struct us_socket_group_t 
     us_internal_group_maybe_unlink(group);
 }
 
+/* ── Init ───────────────────────────────────────────────────────────────── */
+
+void us_internal_socket_init(struct us_socket_t *s, struct us_socket_group_t *group, unsigned char kind, int allow_half_open) {
+    memset((char *) s + offsetof(struct us_socket_t, timeout), 0, sizeof(struct us_socket_t) - offsetof(struct us_socket_t, timeout));
+    s->timeout = LIBUS_NO_TIMEOUT;
+    s->flags.allow_half_open = allow_half_open != 0;
+    s->kind = kind;
+    s->group = group;
+}
+
 /* ── Adopt ──────────────────────────────────────────────────────────────── */
 
 struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_group_t *group,
@@ -317,14 +320,14 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             c->connecting_head = new_s;
             c->group = group;
             c->kind = kind;
+            c->timeout = LIBUS_NO_TIMEOUT;
             us_internal_socket_group_unlink_connecting_socket(old_group, c);
             us_internal_socket_group_link_connecting_socket(group, c);
         }
     }
     new_s->group = group;
     new_s->kind = kind;
-    new_s->timeout = 255;
-    new_s->long_timeout = 255;
+    new_s->timeout = LIBUS_NO_TIMEOUT;
 
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
@@ -345,27 +348,8 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
                                            struct us_socket_group_t *group,
                                            unsigned char kind, struct ssl_ctx_st *ssl_ctx,
                                            int options, int socket_ext_size) {
-    struct us_socket_t *s = &ls->s;
-    s->group = group;
-    s->kind = 0; /* listener itself never dispatches */
-    s->ssl = NULL;
-    s->timeout = 255;
-    s->long_timeout = 255;
-    s->flags.low_prio_state = 0;
-    s->flags.is_paused = 0;
-    s->flags.is_ipc = 0;
-    s->flags.is_closed = 0;
-    s->flags.adopted = 0;
-    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-    s->unclassified_send_failures = 0;
-    s->read_eof = 0;
-    s->hangup_closes_unsent = 0;
-    s->send_rejected = 0;
-    s->connect_returned_zero = 0;
-    s->next = 0;
-    s->prev = 0;
-    s->connect_state = NULL;
-    s->connect_next = NULL;
+    /* The listener itself never dispatches, so it has no kind. */
+    us_internal_socket_init(&ls->s, group, 0, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
 
     ls->accept_group = group;
     ls->accept_kind = kind;
@@ -454,7 +438,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, options, error);
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -501,10 +485,6 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
 }
 
-__attribute__((always_inline)) void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
-    return ls + 1;
-}
-
 struct us_listen_socket_t *us_socket_group_head_listen_socket(struct us_socket_group_t *group) {
     return group->head_listen_sockets;
 }
@@ -513,47 +493,11 @@ struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) 
     return ls->next;
 }
 
-LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) {
-    return us_poll_fd(&ls->s.p);
-}
-
-int us_listen_socket_port(struct us_listen_socket_t *ls) {
-    return us_socket_local_port(&ls->s);
-}
-
-struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) {
-    return ls->accept_group;
-}
-
 void us_listen_socket_set_shared(struct us_listen_socket_t *ls) {
     ls->shared = 1;
 }
 
 /* ── Connect ────────────────────────────────────────────────────────────── */
-
-static inline void us_internal_init_connect_socket(struct us_socket_t *s,
-                                                   struct us_socket_group_t *group,
-                                                   unsigned char kind, int options) {
-    s->group = group;
-    s->kind = kind;
-    s->ssl = NULL;
-    s->timeout = 255;
-    s->long_timeout = 255;
-    s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-    s->flags.is_paused = 0;
-    s->flags.is_ipc = 0;
-    s->flags.is_closed = 0;
-    s->flags.adopted = 0;
-    s->flags.last_write_failed = 0;
-    s->unclassified_send_failures = 0;
-    s->read_eof = 0;
-    s->hangup_closes_unsent = 0;
-    s->send_rejected = 0;
-    s->connect_returned_zero = 0;
-    s->connect_state = NULL;
-    s->connect_next = NULL;
-}
 
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
@@ -562,8 +506,6 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
-
-    bsd_socket_nodelay(connect_socket_fd, 1);
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
@@ -576,7 +518,7 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
     }
 
     struct us_socket_t *socket = (struct us_socket_t *) p;
-    us_internal_init_connect_socket(socket, group, kind, options);
+    us_internal_socket_init(socket, group, kind, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
 
     /* Fast path has no us_connecting_socket_t to stash ssl_ctx on, so attach
      * the SSL state now; on_open will see s->ssl != NULL and route through the
@@ -661,8 +603,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->loop = loop;
     c->ssl_ctx = ssl_ctx;
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
-    c->timeout = 255;
-    c->long_timeout = 255;
+    c->timeout = LIBUS_NO_TIMEOUT;
     c->pending_resolve_callback = 1;
     c->addrinfo_req = ai_req;
     c->port = port;
@@ -699,7 +640,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     }
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
-    us_internal_init_connect_socket(connect_socket, group, kind, options);
+    us_internal_socket_init(connect_socket, group, kind, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->connect_returned_zero = connected;
 
     if (ssl_ctx) {
@@ -723,7 +664,6 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
             c->last_candidate_error = LIBUS_ERR;
             continue;
         }
-        bsd_socket_nodelay(connect_socket_fd, 1);
         struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
@@ -734,10 +674,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
             continue;
         }
         ++opened;
-        us_internal_init_connect_socket(s, group, c->kind, c->options);
+        us_internal_socket_init(s, group, c->kind, c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         s->timeout = c->timeout;
-        s->timeout_laps = 0;
-        s->long_timeout = c->long_timeout;
 
         us_internal_socket_group_link_socket(group, s);
 
@@ -753,7 +691,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
 /* Every address failed. Without an error here, us_connecting_socket_close reports a caller abort
  * (ECANCELED) and keeps the DNS cache entry for the dead host. */
 static void us_internal_connecting_socket_exhausted(struct us_connecting_socket_t *c) {
-    c->error = c->last_candidate_error ? c->last_candidate_error : ECONNREFUSED;
+    c->error = c->last_candidate_error ? c->last_candidate_error : LIBUS_ECONNREFUSED;
     us_connecting_socket_close(c);
 }
 
@@ -815,9 +753,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     /* The probe only says the socket is not connected
                      * (WSAENOTCONN); SO_ERROR has why the connect failed. */
                     int so_error = us_socket_get_error(s);
-                    if (so_error > 0) {
-                        error = so_error;
-                    }
+                    error = so_error > 0 ? so_error : LIBUS_ECONNREFUSED;
                     break;
                 }
             }
@@ -876,13 +812,6 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
 }
 
 /* ── Misc ───────────────────────────────────────────────────────────────── */
-
-struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s) {
-    if (s->ssl) {
-        return us_internal_ssl_verify_error(s);
-    }
-    return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
-}
 
 const char *us_socket_sni_servername(struct us_socket_t *s) {
     if (s->ssl) {

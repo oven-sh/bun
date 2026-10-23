@@ -264,7 +264,6 @@ pub enum HandleType {
 pub type uv_handle_type = HandleType;
 pub const UV_TTY: HandleType = HandleType::Tty;
 pub const UV_NAMED_PIPE: HandleType = HandleType::NamedPipe;
-pub const UV_UNKNOWN_HANDLE: HandleType = HandleType::Unknown;
 
 /// Safe `uv_guess_handle` wrapper. The FFI symbol returns `c_int` (see
 /// [`uv_guess_handle_raw`]); range-check before producing a [`HandleType`] so an
@@ -737,11 +736,6 @@ pub unsafe trait UvStream: UvHandle {
     #[inline]
     fn as_stream(&mut self) -> *mut uv_stream_t {
         (self as *mut Self).cast()
-    }
-    #[inline]
-    fn get_write_queue_size(&self) -> usize {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_stream_get_write_queue_size((self as *const Self).cast()) }
     }
     #[inline]
     fn read_start(&mut self, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) -> ReturnCode {
@@ -2358,8 +2352,6 @@ pub mod O {
     pub const RDONLY: i32 = 0x0000;
     pub const RDWR: i32 = 0x0002;
     pub const SEQUENTIAL: i32 = 0x0020;
-    pub const SHORT_LIVED: i32 = 0x1000;
-    pub const TEMPORARY: i32 = 0x0040;
     pub const TRUNC: i32 = 0x0200;
     pub const WRONLY: i32 = 0x0001;
     pub(crate) const DIRECT: i32 = 0x0200_0000;
@@ -2367,7 +2359,6 @@ pub mod O {
     pub(crate) const SYNC: i32 = 0x0800_0000;
     // No-ops on Windows.
     pub const DIRECTORY: i32 = 0;
-    pub const EXLOCK: i32 = 0x1000_0000;
     pub const NOATIME: i32 = 0;
     pub const NOCTTY: i32 = 0;
     pub(crate) const NOFOLLOW: i32 = 0;
@@ -2483,10 +2474,6 @@ pub mod O {
 // ──────────────────────────────────────────────────────────────────────────
 // Error constants (uv-errno.h, Windows values).
 // ──────────────────────────────────────────────────────────────────────────
-pub const UV__EOF: c_int = -4095;
-pub const UV__UNKNOWN: c_int = -4094;
-pub const UV__ECHARSET: c_int = -4080;
-
 pub const UV_E2BIG: c_int = -4093;
 pub const UV_EACCES: c_int = -4092;
 pub const UV_EADDRINUSE: c_int = -4091;
@@ -2588,22 +2575,17 @@ pub const UV_DIRENT_BLOCK: c_int = 7;
 // Misc flag constants.
 pub const UV_READABLE: c_int = 1;
 pub const UV_WRITABLE: c_int = 2;
-pub const UV_DISCONNECT: c_int = 4;
-pub const UV_PRIORITIZED: c_int = 8;
 pub(crate) const UV_PIPE_NO_TRUNCATE: c_uint = 1;
 pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
 pub const UV_RENAME: c_int = 1;
 pub const UV_CHANGE: c_int = 2;
-pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
-pub const UV_FS_EVENT_STAT: c_int = 2;
 pub const UV_FS_EVENT_RECURSIVE: c_int = 4;
 
 // Stdio / process flags.
 pub const UV_IGNORE: c_uint = 0;
 pub const UV_CREATE_PIPE: c_uint = 1;
 pub const UV_INHERIT_FD: c_uint = 2;
-pub const UV_INHERIT_STREAM: c_uint = 4;
 pub const UV_READABLE_PIPE: c_uint = 16;
 pub const UV_WRITABLE_PIPE: c_uint = 32;
 pub const UV_NONBLOCK_PIPE: c_uint = 64;
@@ -2615,8 +2597,6 @@ pub const UV_PROCESS_SETGID: c_uint = 2;
 pub const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS: c_uint = 4;
 pub const UV_PROCESS_DETACHED: c_uint = 8;
 pub const UV_PROCESS_WINDOWS_HIDE: c_uint = 16;
-pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_uint = 32;
-pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_uint = 64;
 
 pub const SIGHUP: c_int = 1;
 pub const SIGQUIT: c_int = 3;
@@ -2671,7 +2651,6 @@ unsafe extern "C" {
     pub fn uv_cancel(req: *mut uv_req_t) -> c_int;
 
     // stream
-    pub fn uv_stream_get_write_queue_size(stream: *const uv_stream_t) -> usize;
     pub fn uv_listen(stream: *mut uv_stream_t, backlog: c_int, cb: uv_connection_cb) -> ReturnCode;
     pub fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode;
     pub fn uv_read_start(

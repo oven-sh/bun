@@ -26,7 +26,6 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
-extern "C" void* Bun__ServerNameAnswer__fromJS(JSC::EncodedJSValue result, int* abortHandshake);
 
 namespace Bun {
 
@@ -1133,31 +1132,6 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
     }
 
     return JSValue::encode(JSC::jsNull());
-}
-
-// SNICallback: returns the SSL_CTX to serve `hostname` with on this handshake. Same contract as us_dispatch_server_name in Listener.rs.
-extern "C" void* Bun__NodeHTTP__onServerName(us_socket_t* us_socket, const char* hostname, int* abortHandshake)
-{
-    auto* serverSocket = getNodeHTTPServerSocket<true>(us_socket);
-    if (!serverSocket) {
-        return nullptr;
-    }
-    auto* globalObject = defaultGlobalObject(serverSocket->globalObject());
-    auto& vm = JSC::getVM(globalObject);
-    JSValue callback = serverSocket->getDirect(vm, Identifier::fromString(vm, "onservername"_s));
-    if (!callback || !callback.isCallable()) {
-        return nullptr;
-    }
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    MarkedArgumentBuffer args;
-    args.append(jsString(vm, WTF::String::fromLatin1(hostname)));
-    args.append(serverSocket);
-    JSValue result = AsyncContextFrame::call(globalObject, callback, jsUndefined(), args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        result = exception->value();
-    }
-    return Bun__ServerNameAnswer__fromJS(JSValue::encode(result), abortHandshake);
 }
 
 // At the end of a TLS handshake: the socket attached at accept. Empty if the handshake failed or nothing is attached.

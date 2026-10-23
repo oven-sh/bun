@@ -6883,7 +6883,7 @@ declare module "bun" {
      *
      * Reads and writes don't restart the timer. To reset the timeout, call this function again. `0` cancels it.
      *
-     * Bun checks socket timeouts about every 4 seconds, so the handler can run up to 4 seconds early.
+     * Bun checks socket timeouts every 4 seconds, so the handler can run up to 8 seconds late. It never runs early.
      */
     timeout(seconds: number): void;
 
@@ -7339,14 +7339,16 @@ declare module "bun" {
      * handler, this is called only after the handshake completes.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
+    /**
+     * Called once the socket has closed. `error` is set when the connection
+     * failed: a read reported a reset (`syscall: "read"`), or the peer was gone
+     * before the data queued by `end(data)` was sent (`syscall: "write"`).
+     */
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     /**
-     * Called when a handler throws, when an established TLS session fails
-     * (a record that does not decrypt, a fatal alert from the peer), and when
-     * sending the data queued by `end(data)` fails because the peer is gone
-     * (`EPIPE` or `ECONNRESET`). After a TLS failure or a failed send the
-     * socket closes, with or without this handler. A reset that a read reports
-     * goes to `close(socket, error)` instead.
+     * Called when a handler throws, and when an established TLS session fails
+     * (a record that does not decrypt, a fatal alert from the peer). After a TLS
+     * failure the socket closes, with or without this handler.
      */
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
@@ -9163,11 +9165,8 @@ declare module "bun" {
       | {
           /**
            * Seconds an idle connection stays in the pool before it is closed.
-           * The socket timer is coarse: it moves in 4 second steps up to four
-           * minutes, and in whole minutes beyond that. Bun rounds the value up
-           * to the timer, so a connection is never closed before `idleTimeout`,
-           * and it can stay open for up to two steps longer. The longest is
-           * 238 minutes (14280), and a larger value means that.
+           * Bun checks socket timers every 4 seconds, so a connection is never
+           * closed before `idleTimeout` and can stay open up to 8 seconds longer.
            *
            * @default 300
            */

@@ -49,7 +49,7 @@ export type NativeCreateConnection<ConnectionHandle> = (
   password: string,
   database: string,
   sslmode: SSLMode,
-  tls: Bun.TLSOptions | true | null, // true: an empty TLSOptions
+  tls: Bun.TLSOptions | null,
   query: string,
   path: string,
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
@@ -444,7 +444,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     password,
     database || "",
     sslMode,
-    (tls || null) as Bun.TLSOptions | true | null,
+    (tls || null) as Bun.TLSOptions | null,
     query || "",
     path || "",
     onConnected,

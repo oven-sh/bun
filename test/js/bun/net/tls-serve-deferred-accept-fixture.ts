@@ -4,10 +4,10 @@
 // With a deferred accept (Linux, FreeBSD) the accept path dispatches a readable event for the new
 // socket itself, and over the budget that dispatch is what parks the socket. This server accepts
 // 12 connections that each hold the head of a TLS record in one loop iteration: 5 are read, 7 are
-// over the budget. Then it runs the timeout sweep by hand for the 3 ticks that a connection has
+// over the budget. Then it runs the timeout sweep by hand for the 4 ticks that a connection has
 // to send its request. The 5 sockets that were read are linked, so their timeout comes due and
 // the server closes them. The 7 must be in the queue, untouched: the server closes them only
-// after the queue released them and 3 more ticks passed.
+// after the queue released them and 4 more ticks passed.
 //
 // The clients run in a child process, so that they can connect while this loop is blocked.
 //
@@ -21,8 +21,8 @@ import { join } from "node:path";
 const N = 12;
 // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
 const BUDGET = 5;
-// The 10 s that a connection has to send its request, in sweep ticks.
-const TIMEOUT_TICKS = 3;
+// The 10 s that a connection has to send its request, in sweep ticks: ceil(10 / 4) + 1.
+const TIMEOUT_TICKS = 4;
 // Well inside the test's own timeout, so a step that stalls ends in an error.
 const STEP_DEADLINE_MS = 20_000;
 // A handshake record that announces 512 more bytes.
@@ -80,7 +80,7 @@ async function server() {
   }
   await iterations(1);
   sweepSocketTimers(TIMEOUT_TICKS);
-  // These iterations empty the queue: every socket it held is read and linked, with its 3 ticks left.
+  // These iterations empty the queue: every socket it held is read and linked, with its 4 ticks left.
   await iterations(Math.ceil((N - BUDGET) / BUDGET) + 2);
   if (!ask) throw new Error("the control connection did not open");
   const closedWhileParked = await ask();

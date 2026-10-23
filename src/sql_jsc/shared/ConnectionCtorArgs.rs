@@ -77,21 +77,15 @@ impl ConnectionCtorArgs {
         let mut tls_config = SSLConfig::default();
         let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != SSLMode::Disable {
-            tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-                SSLConfig::default()
-            } else if tls_object.is_object() {
-                match SSLConfig::from_js(global_object, tls_object) {
-                    Ok(opt) => opt.unwrap_or_default(),
-                    Err(_) => return Ok(None),
-                }
-            } else {
+            // `true` arrives as an object that names the server.
+            if !tls_object.is_object() {
                 return Err(global_object
                     .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
-            };
-
-            if global_object.has_exception() {
-                return Ok(None);
             }
+            tls_config = match SSLConfig::from_js(global_object, tls_object) {
+                Ok(config) => config,
+                Err(_) => return Ok(None),
+            };
 
             // We always request the cert so we can verify it and manually
             // abort if the hostname doesn't match. Built here (not at STARTTLS
@@ -99,9 +93,9 @@ impl ConnectionCtorArgs {
             // `SSLContextCache` shares one `SSL_CTX*` per distinct config
             // across pooled connections and reconnects.
             let mut err = uws::create_bun_socket_error_t::none;
-            secure = vm
-                .ssl_ctx_cache()
-                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
+            secure = tls_config
+                .as_usockets_for_client_verification()
+                .and_then(|opts| vm.ssl_ctx_cache().get_or_create_opts(&opts, &mut err));
             if secure.is_none() {
                 drop(tls_config);
                 return Err(

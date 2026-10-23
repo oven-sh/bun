@@ -12,8 +12,8 @@ export const SecureContext = b.class({
     _external: { getter: b.any, capability: "heap" },
     addCACert: { args: { cert: b.any }, capability: "js", throws: true },
     getTicketKeys: { returns: b.bufferSource, capability: "heap", throws: true },
-    /** Refuses a shared context before it looks at `keys`, so the type check is in the body. */
-    setTicketKeys: { args: { keys: b.any }, returns: b.bool, capability: "js", throws: true },
+    /** `node:tls` has checked the type and the length, with Node's messages. */
+    setTicketKeys: { args: { keys: b.bytes({ from: ["buffer"] }) }, capability: "heap", throws: true },
   },
   static: {
     /** Owns its `SSL_CTX`, so `addCACert` affects nothing else. */

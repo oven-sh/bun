@@ -6,7 +6,6 @@ use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
 use crate::response::Response;
-use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::{uws_app_ws_package_context, uws_ws};
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, SslCtx,
@@ -108,24 +107,10 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
     }
 
-    pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
-        // SAFETY: FFI call; uws_create_app returns null on failure.
-        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
-        if app.is_null() {
-            None
-        } else {
-            Some(app.cast::<Self>())
-        }
-    }
-
-    /// A TLS app that serves `ctx`, which already carries its verify mode. `None` for an app without TLS.
-    pub fn create_with_ssl_ctx(ctx: &OwnedSslCtx, reject_unauthorized: bool) -> Option<*mut Self> {
-        if !SSL {
-            return None;
-        }
-        let app =
-            c::uws_create_app_with_ssl_ctx(SslCtx::opaque_ref(ctx.as_ptr()), reject_unauthorized);
-        Some(app.cast::<Self>())
+    /// `ctx` is what every accepted socket starts from, verify mode included. `Some` exactly when `SSL`.
+    pub fn create(ctx: Option<&OwnedSslCtx>) -> *mut Self {
+        debug_assert_eq!(SSL, ctx.is_some());
+        c::uws_create_app(ctx.map(|ctx| SslCtx::opaque_ref(ctx.as_ptr()))).cast::<Self>()
     }
 
     /// # Safety
@@ -159,6 +144,12 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn set_max_headers_count(&mut self, max_headers_count: u32) {
         c::uws_app_set_max_headers_count(Self::SSL_FLAG, self.as_raw(), max_headers_count)
+    }
+
+    /// Seconds from accept until a connection's TLS handshake has to be done. The filter gets `0` when they run out, then the socket closes.
+    pub fn set_handshake_timeout(&mut self, seconds: u32) {
+        debug_assert!(SSL);
+        c::uws_app_set_handshake_timeout(self.as_raw(), seconds)
     }
 
     pub fn clear_routes(&mut self) {
@@ -370,26 +361,23 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    pub fn add_server_name_with_options(
+    /// With `own_client_auth`, a connection that names `hostname_pattern` adds `ctx`'s verify mode to the app's.
+    pub fn add_server_name(
         &mut self,
         hostname_pattern: &core::ffi::CStr,
-        opts: &BunSocketContextOptions,
-        apply_client_cert_policy: bool,
-    ) -> Result<(), AddServerNameError> {
-        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        let rc = unsafe {
-            c::uws_add_server_name_with_options(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+        ctx: &OwnedSslCtx,
+        own_client_auth: bool,
+    ) {
+        debug_assert!(SSL);
+        // SAFETY: `hostname_pattern` is NUL-terminated and C++ copies it.
+        unsafe {
+            c::uws_add_server_name(
+                self.as_raw(),
                 hostname_pattern.as_ptr(),
-                *opts,
-                i32::from(apply_client_cert_policy),
+                SslCtx::opaque_ref(ctx.as_ptr()),
+                own_client_auth,
             )
-        };
-        if rc != 0 {
-            return Err(AddServerNameError::FailedToAddServerName);
         }
-        Ok(())
     }
 
     /// Register a connection filter: `handler` is invoked with the raw
@@ -496,12 +484,6 @@ impl<const SSL: bool> ListenSocket<SSL> {
     }
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum AddServerNameError {
-    FailedToAddServerName,
-}
-bun_core::impl_tag_error!(AddServerNameError);
-
 bun_opaque::opaque_ffi! { pub struct uws_app_s; }
 pub(crate) type uws_app_t = uws_app_s;
 
@@ -533,12 +515,8 @@ pub mod c {
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
             user_data: *mut c_void,
         );
-        pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
-        // safe: C++ up-refs `ssl_ctx` before it stores the pointer.
-        pub(crate) safe fn uws_create_app_with_ssl_ctx(
-            ssl_ctx: &SslCtx,
-            reject_unauthorized: bool,
-        ) -> *mut uws_app_t;
+        // safe: C++ up-refs `ssl_ctx` before it stores the pointer. Never null.
+        pub(crate) safe fn uws_create_app(ssl_ctx: Option<&SslCtx>) -> *mut uws_app_t;
         pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
         pub(crate) safe fn uws_app_set_flags(
             ssl: i32,
@@ -558,6 +536,7 @@ pub mod c {
             app: &mut uws_app_t,
             max_headers_count: u32,
         );
+        pub(crate) safe fn uws_app_set_handshake_timeout(app: &mut uws_app_t, seconds: u32);
         pub(crate) fn uws_app_get(
             ssl: i32,
             app: *mut uws_app_t,
@@ -663,13 +642,12 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> SendStatus;
-        pub(crate) fn uws_add_server_name_with_options(
-            ssl: i32,
-            app: *mut uws_app_t,
+        pub(crate) fn uws_add_server_name(
+            app: &mut uws_app_t,
             hostname_pattern: *const c_char,
-            options: BunSocketContextOptions,
-            apply_client_cert_policy: c_int,
-        ) -> i32;
+            ssl_ctx: &SslCtx,
+            own_client_auth: bool,
+        );
         pub(crate) safe fn uws_filter(
             ssl: i32,
             app: &mut uws_app_t,

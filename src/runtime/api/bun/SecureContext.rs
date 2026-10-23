@@ -14,8 +14,9 @@
 //! in JS.
 
 use crate::crypto::boringssl_jsc::err_to_js;
+use crate::socket::SSLConfig;
+use crate::socket::ssl_config::ParsedTls;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
-use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
@@ -56,13 +57,9 @@ impl SecureContext {
     }
 
     fn config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<SSLConfig> {
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let mut config =
-            SSLConfig::from_js(vm, global, options, true)?.unwrap_or_else(SSLConfig::zero);
-        crate::socket::apply_empty_default_ca(vm, &mut config);
-        Ok(config)
+        Ok(ParsedTls::from_js(vm, global, options, true)?.or_defaults(vm, true))
     }
 
     /// `SecureContext.parsePkcs12(pfx, passphrase)` - parses a PKCS#12 blob
@@ -328,33 +325,29 @@ impl SecureContext {
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.
-    pub(crate) fn add_ca_cert(&self, cx: &mut JsScope<'_>, cert: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn add_ca_cert<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        cert: JsLocal<'a>,
+    ) -> bindgen::Result<'a, ()> {
+        let ctx = self.own_ctx(&cx.heap)?;
         let global = cx.global();
-        if self.shared {
-            return Err(global.throw(format_args!(
-                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
-            )));
-        }
         let pem = cert.to_js().to_utf8(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
-            );
+            return Err(global
+                .throw_invalid_arguments(format_args!("addCACert requires a certificate"))
+                .into());
         }
         // The C side wants a NUL-terminated PEM document.
         let mut owned = bytes.to_vec();
         owned.push(0);
-        // SAFETY: `self.ctx` is the live SSL_CTX this object owns a reference
+        // SAFETY: `ctx` is the live SSL_CTX this object owns a reference
         // to, and `owned` is a NUL-terminated buffer valid for the call.
-        let ok = unsafe {
-            c::us_ssl_ctx_add_ca_cert(
-                self.ctx.as_ptr(),
-                owned.as_ptr().cast::<core::ffi::c_char>(),
-            )
-        };
+        let ok =
+            unsafe { c::us_ssl_ctx_add_ca_cert(ctx, owned.as_ptr().cast::<core::ffi::c_char>()) };
         if ok == 0 {
-            return Err(global.throw(format_args!("Invalid CA certificate")));
+            return Err(global.throw(format_args!("Invalid CA certificate")).into());
         }
         // Its trust set changed, so it stops sharing sessions with same-option contexts.
         let mut folded = [0u8; 32];
@@ -363,15 +356,21 @@ impl SecureContext {
         hasher.update(bytes);
         hasher.r#final(&mut folded);
         self.digest.set(folded);
-        // SAFETY: `self.ctx` is live; the call copies the 32 bytes.
+        // SAFETY: `ctx` is live; the call copies the 32 bytes.
         unsafe {
-            boringssl::SSL_CTX_set_session_id_context(
-                self.ctx.as_ptr(),
-                folded.as_ptr(),
-                folded.len(),
-            );
+            boringssl::SSL_CTX_set_session_id_context(ctx, folded.as_ptr(), folded.len());
         }
         Ok(())
+    }
+
+    /// The `SSL_CTX` for a member that changes it. A digest-interned one also serves other consumers, so it's refused.
+    fn own_ctx<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, *mut boringssl::SSL_CTX> {
+        if self.shared {
+            return Err(heap.error(format_args!(
+                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
+            )));
+        }
+        Ok(self.ctx.as_ptr())
     }
 
     /// `secureContext.context.getTicketKeys()`, for `tls.Server#getTicketKeys()`.
@@ -396,32 +395,16 @@ impl SecureContext {
     }
 
     /// `secureContext.context.setTicketKeys(keys)`, for `tls.Server#setTicketKeys()` and the `ticketKeys` option.
-    pub(crate) fn set_ticket_keys(
+    pub(crate) fn set_ticket_keys<'a>(
         &self,
-        cx: &mut JsScope<'_>,
-        keys: JsLocal<'_>,
-    ) -> JsResult<bool> {
-        let global = cx.global();
-        if self.shared {
-            return Err(global.throw(format_args!(
-                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
-            )));
-        }
-        let keys = keys.to_js().as_array_buffer(global);
-        let Some(keys) = keys.as_ref().map(|keys| keys.byte_slice()) else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "setTicketKeys requires a Buffer, TypedArray, or DataView"
-            )));
-        };
-        if keys.len() != TICKET_KEYS_LEN {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Session ticket keys must be a 48-byte buffer"
-            )));
-        }
+        heap: &JsHeap<'a>,
+        keys: &[u8],
+    ) -> bindgen::Result<'a, ()> {
+        self.own_ctx(heap)?;
         if !self.apply_ticket_keys(keys) {
-            return Err(global.throw(format_args!("Failed to set the session ticket keys")));
+            return Err(heap.error(format_args!("Failed to set the session ticket keys")));
         }
-        Ok(true)
+        Ok(())
     }
 
     fn apply_ticket_keys(&self, keys: &[u8]) -> bool {

@@ -6,7 +6,6 @@
 //! Symbols that already have a Rust `#[export_name]` / `#[no_mangle]` elsewhere
 //! are intentionally **not** re-declared here to avoid duplicate-symbol link
 //! errors:
-//!   - `Bun__getTLSDefaultCiphers` / `Bun__setTLSDefaultCiphers`
 //!   - `Bun__Process__getStdinFdType`
 //!       → `src/jsc/rare_data.rs`
 //!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
@@ -241,10 +240,13 @@ mod sql_hooks {
         cache.get_or_create_opts(opts, err)
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
-        use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
-            Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
-            Ok(None) => core::ptr::null_mut(),
+        use crate::socket::ssl_config::ParsedTls;
+        let vm = global.bun_vm_ref();
+        match ParsedTls::from_js(vm, global, value, false) {
+            // `sslmode` already asked for TLS, so `tls: {}` is `tls: true`.
+            Ok(parsed) => {
+                bun_core::heap::into_raw(Box::new(parsed.or_defaults(vm, false))).cast::<c_void>()
+            }
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
                 core::ptr::null_mut()

@@ -1,5 +1,4 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { NodeHTTPResponse } from "../server/NodeHTTPResponse.bind.ts";
 import { DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket } from "../server/server.bind.ts";
 
@@ -21,14 +20,29 @@ export const BunServer = b.union({
 });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
+/** `lenientHttpFlags`: bit 0 is llhttp's LENIENT_HEADERS, bit 1 its LENIENT_TRANSFER_ENCODING. */
+const appFlags = { requireHostHeader: b.bool.loose, lenientHttpFlags: b.u8, httpAllowHalfOpen: b.bool } as const;
+/** What an `http.Server` can change while it listens. */
+export const setServerAppFlags = b.fn({ args: { server: BunServer, ...appFlags } });
+/** 0 means the option is not set. */
+export const setServerMaxHeadersCount = b.fn({ args: { server: BunServer, maxHeadersCount: b.u32 } });
+/** `onClientError(socketHandle, errorCode, rawPacket)`, `onConnection(socketHandle, secured)`. */
+export const setServerCustomOptions = b.fn({
+  args: {
+    server: BunServer,
+    ...appFlags,
+    maxHeaderSize: b.f64.loose,
+    onClientError: b.callable,
+    onConnection: b.callable,
+  },
+  capability: "js",
+});
+
 export const BunTLSServer = b.union({ https: HTTPSServer, debugHttps: DebugHTTPSServer });
-/** `https.Server#setSecureContext()` while listening. Accepted sockets keep their context. */
-export const setSecureContext = b.fn({ args: { server: BunTLSServer, context: SecureContext } });
-/** Calls `onservername(hostname, handle)` of each connection's handle during its handshake, for `SNICallback`. */
-export const dispatchServerNames = b.fn({ args: { server: BunTLSServer } });
-/** `https.Server#addContext()` while listening. */
-export const addServerName = b.fn({
-  args: { server: BunTLSServer, hostname: b.string.utf8, context: SecureContext },
+/** What an `https.Server`'s listener takes from its `tls.Server`: seconds (0 for none), and `(hostname, socketHandle)` that runs `SNICallback`. */
+export const setTLSServerOptions = b.fn({
+  args: { server: BunTLSServer, handshakeTimeout: b.u32, onServerName: b.callable.optional },
+  capability: "js",
 });
 
 /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */

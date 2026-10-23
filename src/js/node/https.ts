@@ -16,8 +16,8 @@ const {
   tlsSymbol,
 } = require("internal/http");
 const { kSNIContexts } = require("internal/net/symbols");
-const setListenerSecureContext = $bindgen("node_http_binding.bind.ts", "setSecureContext");
-const addServerName = $bindgen("node_http_binding.bind.ts", "addServerName");
+const setListenerSecureContext = $bindgen("Listener.bind.ts", "setSecureContext");
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
 

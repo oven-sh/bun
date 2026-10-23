@@ -1176,6 +1176,7 @@ int bsd_send_is_transient_error() {
 #endif
 }
 
+/* A `backlog` of 0 only binds. */
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do
@@ -1185,6 +1186,9 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     if (result == -1) {
         *error = LIBUS_ERR;
         return -1;
+    }
+    if (backlog == 0) {
+        return 0;
     }
 
     do
@@ -1243,10 +1247,8 @@ static int bsd_set_reuse(LIBUS_SOCKET_DESCRIPTOR listenFd, int options) {
         result = bsd_set_reuseport(listenFd);
         if (result != 0) {
             if (errno == ENOTSUP) {
-                if ((options & LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE) == 0) {
-                    errno = 0;
-                    return 0;
-                }
+                errno = 0;
+                return 0;
             }
 
             return result;
@@ -1469,40 +1471,19 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     /* Fall back to the next address when this host can't bind a family (IPv6 disabled). A named host doesn't fall
      * back on EADDRINUSE, or "localhost" would bind 127.0.0.1 while another server owns the port on ::1. */
-    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
-    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
-        if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
+    static const int families[] = { AF_INET6, AF_INET };
+    for (int i = 0; i < 2; i++) {
+        for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+            if (a->ai_family != families[i]) {
+                continue;
+            }
+            LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
             if (listenFd == LIBUS_SOCKET_ERROR) {
                 continue;
             }
 
-            listenAddr = a;
             *error = 0;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
-                freeaddrinfo(result);
-                return listenFd;
-            }
-
-            bsd_close_socket(listenFd);
-            if (host && *error == LIBUS_EADDRINUSE) {
-                freeaddrinfo(result);
-                return LIBUS_SOCKET_ERROR;
-            }
-        }
-    }
-
-    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
-        if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
-            if (listenFd == LIBUS_SOCKET_ERROR) {
-                continue;
-            }
-
-            listenAddr = a;
-            *error = 0;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, a, port, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -1673,16 +1654,14 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
     return 0;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
-    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-
-    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error);
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(struct sockaddr_un* server_address, size_t addrlen, int backlog, int* error) {
+    LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512, error)) {
+    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, backlog, error)) {
         #if defined(_WIN32)
           int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
         #endif
@@ -1698,7 +1677,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options, int* error) {
+static LIBUS_SOCKET_DESCRIPTOR bsd_bind_socket_unix(const char *path, size_t len, int backlog, int* error) {
     int dirfd_workaround_for_unix_path_len = -1;
     struct sockaddr_un server_address;
     size_t addrlen = 0;
@@ -1706,7 +1685,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
         /* The path could not be expressed as a sockaddr_un (the basename
          * exceeds sun_path even with the dirfd workaround); surface the errno
          * so the caller can report something better than a codeless failure. */
-        if (error && errno) *error = errno;
+        if (errno) *error = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1714,13 +1693,13 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
-            errno = ENAMETOOLONG;
+            *error = errno = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen, error);
+    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(&server_address, addrlen, backlog, error);
 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {
@@ -1736,6 +1715,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 #endif
 
     return listenFd;
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int* error) {
+    return bsd_bind_socket_unix(path, len, 512, error);
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t len, int* error) {
+    return bsd_bind_socket_unix(path, len, 0, error);
 }
 
 

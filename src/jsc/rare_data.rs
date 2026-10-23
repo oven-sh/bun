@@ -3,9 +3,9 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::JSGlobalObject;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
@@ -271,8 +271,7 @@ pub struct RareData {
     pub node_quic_callbacks: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
 
-    /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
-    /// [`Self::tls_default_ciphers`] strips it.
+    /// The TLS 1.2 list assigned to `tls.DEFAULT_CIPHERS`.
     pub(crate) tls_default_ciphers: Option<Box<[u8]>>,
 
     /// PEM blocks given to `tls.setDefaultCACertificates`, for clients built natively.
@@ -815,21 +814,11 @@ impl RareData {
     }
 
     pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0); the trailing NUL is stripped from the returned slice's
-        // length. Callers needing a C string can still take `.as_ptr()` — the
-        // NUL byte remains in storage one-past-the-end.
-        self.tls_default_ciphers
-            .as_deref()
-            .map(|s| &s[..s.len() - 1])
+        self.tls_default_ciphers.as_deref()
     }
 
     pub(crate) fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
-        // Old value (if any) drops here via Box<[u8]> Drop.
-        let mut owned = Vec::with_capacity(ciphers.len() + 1);
-        owned.extend_from_slice(ciphers);
-        owned.push(0);
-        self.tls_default_ciphers = Some(owned.into_boxed_slice());
+        self.tls_default_ciphers = Some(ciphers.into());
         self.drop_client_tls_defaults();
     }
 
@@ -838,8 +827,8 @@ impl RareData {
     }
 
     /// An empty list trusts nothing, as in Node.
-    pub(crate) fn set_tls_default_ca(&mut self, certs: Vec<Box<[u8]>>) {
-        self.tls_default_ca = Some(certs.into_boxed_slice());
+    pub(crate) fn set_tls_default_ca(&mut self, certs: Box<[Box<[u8]>]>) {
+        self.tls_default_ca = Some(certs);
         self.drop_client_tls_defaults();
     }
 
@@ -1096,73 +1085,31 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TLS default ciphers JS bindings
+// `node_tls_binding.bind.ts`
 // ──────────────────────────────────────────────────────────────────────────
 
-#[crate::host_fn(export = "Bun__setTLSDefaultCiphers")]
-fn set_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let ciphers = if !args.is_empty() {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    if !ciphers.is_string() {
-        return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
-    }
-    let utf8 = ciphers.to_utf8(global_this)?;
-    // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
-    // is the audited single-JS-thread `&mut` escape hatch.
-    global_this
-        .bun_vm()
-        .as_mut()
-        .rare_data()
-        .set_tls_default_ciphers(utf8.slice());
-    Ok(JSValue::UNDEFINED)
+pub fn get_default_ciphers() -> &'static [u8] {
+    VirtualMachine::get()
+        .tls_default_ciphers()
+        .unwrap_or_else(|| uws::get_default_ciphers().as_bytes())
 }
 
-#[crate::host_fn(export = "Bun__setTLSDefaultCA")]
-fn set_tls_default_ca_from_js(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let list = if !args.is_empty() {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    if !list.is_array() {
-        return Err(global_this.throw_invalid_argument_type_value(b"certs", b"array", list));
-    }
-    let mut certs = Vec::new();
-    let mut iter = list.array_iterator(global_this)?;
-    while let Some(cert) = iter.next()? {
-        certs.push(Box::<[u8]>::from(cert.to_utf8(global_this)?.slice()));
-    }
-    global_this
-        .bun_vm()
+pub fn set_default_ciphers(ciphers: &[u8]) {
+    VirtualMachine::get()
         .as_mut()
         .rare_data()
-        .set_tls_default_ca(certs);
-    Ok(JSValue::UNDEFINED)
+        .set_tls_default_ciphers(ciphers);
 }
 
-#[crate::host_fn(export = "Bun__getTLSDefaultCiphers")]
-fn get_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    // `bun_vm()` is the safe BACKREF accessor; see above.
-    let rare = global_this.bun_vm().as_mut().rare_data();
-    let bytes = match rare.tls_default_ciphers() {
-        Some(c) => c,
-        None => uws::get_default_ciphers().as_bytes(),
-    };
-    crate::bun_string_jsc::create_utf8_for_js(global_this, bytes)
+pub fn get_default_ca() -> Option<&'static [Box<[u8]>]> {
+    VirtualMachine::get().tls_default_ca()
+}
+
+pub fn set_default_ca(certs: Vec<bun_core::Utf8Bytes<'static>>) {
+    VirtualMachine::get()
+        .as_mut()
+        .rare_data()
+        .set_tls_default_ca(certs.iter().map(|cert| cert.slice().into()).collect());
 }
 
 // ──────────────────────────────────────────────────────────────────────────

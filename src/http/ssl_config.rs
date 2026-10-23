@@ -1,6 +1,4 @@
-//! MOVE-IN: ssl_config (MOVE_DOWN bun_runtime::socket::SSLConfig → bun_http)
-//! JSC-dependent constructors (from_js / from_generated / read_from_blob /
-//! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
+//! Parsing a `tls` object needs JSC, so that half is `bun_runtime::socket::ssl_config`.
 
 use core::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,7 +47,6 @@ pub struct SSLConfig {
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
     pub requires_custom_request_ctx: bool,
-    pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
@@ -92,8 +89,71 @@ impl core::ops::Deref for SharedPtr {
     }
 }
 
+/// The TLS options a caller gave. `VirtualMachine::tls_config` fills in the rest, and is the only way to an [`SSLConfig`].
+pub struct Builder {
+    config: SSLConfig,
+    pub reject_unauthorized: Option<bool>,
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        Self {
+            config: SSLConfig::ZERO,
+            reject_unauthorized: None,
+        }
+    }
+}
+
+impl core::ops::Deref for Builder {
+    type Target = SSLConfig;
+    #[inline]
+    fn deref(&self) -> &SSLConfig {
+        &self.config
+    }
+}
+
+impl core::ops::DerefMut for Builder {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut SSLConfig {
+        &mut self.config
+    }
+}
+
+impl Builder {
+    /// No `ciphers` means `default_ciphers`, and neither `ca` nor `caFile` means `default_ca`, as in Node's `configSecureContext`.
+    pub fn build(
+        self,
+        reject_unauthorized: bool,
+        default_ciphers: Option<&[u8]>,
+        default_ca: Option<&[Box<[u8]>]>,
+    ) -> SSLConfig {
+        let mut config = self.config;
+        config.reject_unauthorized = i32::from(reject_unauthorized);
+        if config.ssl_ciphers.is_null()
+            && let Some(ciphers) = default_ciphers
+        {
+            config.ssl_ciphers = bun_core::dupe_z(ciphers);
+            config.requires_custom_request_ctx = true;
+            // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
+            if ciphers.is_empty() {
+                config.ssl_min_version = config
+                    .ssl_min_version
+                    .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
+            }
+        }
+        if config.ca.is_none()
+            && config.ca_file_name.is_null()
+            && let Some(certs) = default_ca
+        {
+            config.ca = Some(certs.iter().map(|cert| bun_core::dupe_z(cert)).collect());
+            config.requires_custom_request_ctx = true;
+        }
+        config
+    }
+}
+
 impl SSLConfig {
-    pub(crate) const ZERO: SSLConfig = SSLConfig {
+    const ZERO: SSLConfig = SSLConfig {
         server_name: core::ptr::null(),
         key_file_name: core::ptr::null(),
         cert_file_name: core::ptr::null(),
@@ -118,33 +178,9 @@ impl SSLConfig {
         client_renegotiation_limit: 0,
         client_renegotiation_window: 0,
         requires_custom_request_ctx: false,
-        is_using_default_ciphers: true,
         low_memory_mode: false,
         cached_hash: AtomicU64::new(0),
     };
-
-    #[inline]
-    pub fn zero() -> Self {
-        Self::default()
-    }
-
-    /// What `tls.setDefaultCACertificates` was given, for a client config without `ca`. It then needs a context of its own.
-    pub fn set_default_ca(&mut self, certs: &[Box<[u8]>]) {
-        self.ca = Some(certs.iter().map(|cert| bun_core::dupe_z(cert)).collect());
-        self.requires_custom_request_ctx = true;
-    }
-
-    /// What was assigned to `tls.DEFAULT_CIPHERS`, for a config without `ciphers`. It then needs a context of its own, like one with `ciphers`.
-    pub fn set_default_ciphers(&mut self, ciphers: &[u8]) {
-        self.ssl_ciphers = bun_core::dupe_z(ciphers);
-        self.requires_custom_request_ctx = true;
-        // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
-        if ciphers.is_empty() {
-            self.ssl_min_version = self
-                .ssl_min_version
-                .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
-        }
-    }
 
     /// Borrow `server_name` as a `&CStr` (None if null). Convenience accessor
     /// for callers that previously pattern-matched `Option<CString>`.
@@ -176,6 +212,12 @@ impl SSLConfig {
         } else {
             Some(cstr_bytes(self.protos))
         }
+    }
+
+    /// The `ca` certificates. `None` means the built-in store, and an empty list trusts nothing.
+    pub fn ca_bytes(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        let ca = self.ca.as_ref()?;
+        Some(ca.iter().map(|cert| cstr_bytes(*cert)))
     }
 
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
@@ -339,9 +381,6 @@ impl SSLConfig {
         if self.requires_custom_request_ctx != other.requires_custom_request_ctx {
             return false;
         }
-        if self.is_using_default_ciphers != other.is_using_default_ciphers {
-            return false;
-        }
         if self.low_memory_mode != other.low_memory_mode {
             return false;
         }
@@ -402,7 +441,6 @@ impl SSLConfig {
         hasher.update(&self.client_renegotiation_limit.to_ne_bytes());
         hasher.update(&self.client_renegotiation_window.to_ne_bytes());
         hasher.update(&[u8::from(self.requires_custom_request_ctx)]);
-        hasher.update(&[u8::from(self.is_using_default_ciphers)]);
         hasher.update(&[u8::from(self.low_memory_mode)]);
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
@@ -468,12 +506,6 @@ impl SSLConfig {
     }
 }
 
-impl Default for SSLConfig {
-    fn default() -> Self {
-        Self::ZERO
-    }
-}
-
 impl Clone for SSLConfig {
     fn clone(&self) -> Self {
         Self {
@@ -501,7 +533,6 @@ impl Clone for SSLConfig {
             client_renegotiation_limit: self.client_renegotiation_limit,
             client_renegotiation_window: self.client_renegotiation_window,
             requires_custom_request_ctx: self.requires_custom_request_ctx,
-            is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
             cached_hash: AtomicU64::new(0),
         }

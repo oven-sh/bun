@@ -327,40 +327,12 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
-/// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
-/// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
 #[inline]
 pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
-}
-
-/// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
-/// phase is unrelated to when a socket arms its timer, so a timer armed for N
-/// ticks can fire up to one period (4s short wheel, 60s long wheel) before
-/// the requested duration (#39952). Pad by one period so it never fires
-/// early, and clamp so the padded value stays at the long wheel's 239 min
-/// maximum. 0 = disabled.
-#[inline]
-pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
-    if raw == 0 {
-        return 0;
-    }
-    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
-    const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
-    const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
-    /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
-    const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
-    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
-    const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
-    let raw = raw.min(MAX_RAW_SECONDS);
-    (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
-        (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
-    } else {
-        raw + SHORT_WHEEL_PERIOD_SECONDS
-    }) as c_uint
 }
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
@@ -500,8 +472,8 @@ pub struct HTTPClientResult<'a> {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     pub body_size: BodySize,
     pub certificate_info: Option<CertificateInfo>,
-    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
-    pub connect_errno: i32,
+    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`.
+    pub connect_errno: Option<bun_errno::SystemErrno>,
     /// The proxy's reply to CONNECT when `fail` is `ProxyConnectFailed`. Kept
     /// apart from `metadata`, which is only ever the origin's response head.
     /// Boxed: it is large and rare, and every result is moved and dropped
@@ -673,13 +645,6 @@ impl<'a> ThreadlocalAsyncHTTP<'a> {
     }
 }
 
-/// `socket: anytype` in `set_timeout` — minimal trait for what the body calls.
-trait SocketTimeout {
-    /// Seconds-granularity idle timer. Values >240s are routed onto uSockets'
-    /// minute-granularity long-timeout wheel; ≤240s use the short-tick timer.
-    fn set_timeout(&self, seconds: core::ffi::c_uint);
-}
-
 // lowercase hash header names so that we can be sure
 pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
     // Uses the std Wyhash algorithm; safe —
@@ -805,8 +770,7 @@ pub struct HTTPClient<'a> {
     pub flags: Flags,
 
     /// Per-request override of the global [`IDLE_TIMEOUT_SECONDS`], set from
-    /// `fetch(url, { timeout: <ms> })`. Already normalised (see
-    /// [`normalize_idle_timeout_seconds`]). `None` = use the global default.
+    /// `fetch(url, { timeout: <ms> })`. `None` = use the global default.
     pub(crate) idle_timeout_seconds: Option<c_uint>,
 
     pub(crate) state: InternalState<'a>,
@@ -1188,12 +1152,6 @@ pub fn configure_http_client_with_alpn(
 
 // ── EntryList column accessors ──────────────────────────────────────────
 use bun_http_types::ETag::HeaderEntryColumns;
-
-impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
-    fn set_timeout(&self, seconds: c_uint) {
-        uws::NewSocketHandler::<SSL>::set_timeout(self, seconds)
-    }
-}
 
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
 /// HTTP-thread-only, so the `&'static mut` is the unique live borrow at every
@@ -2317,7 +2275,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn record_socket_open_errno(&mut self) {
         #[cfg(not(windows))]
         {
-            self.state.connect_errno = bun_sys::last_errno();
+            self.state.connect_errno = uws::SocketGroup::errno(bun_sys::last_errno());
         }
     }
 
@@ -2340,18 +2298,7 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::DNSResolveFailed);
             return;
         }
-        // Windows: only a WSA code names a cause. Below that range is the CRT's
-        // `ECONNREFUSED` uSockets stores when every address of a name failed,
-        // a different number in `SystemErrno`; and WSAENOTCONN is its recv()
-        // probe finding the socket unconnected after SO_ERROR was consumed.
-        const WSA_FIRST: i32 = 10000;
-        const WSAENOTCONN: i32 = 10057;
-        self.state.connect_errno =
-            if cfg!(windows) && (connect_errno < WSA_FIRST || connect_errno == WSAENOTCONN) {
-                0
-            } else {
-                connect_errno
-            };
+        self.state.connect_errno = uws::SocketGroup::errno(connect_errno);
         self.fail(crate::Error::ConnectionRefused);
     }
 
@@ -4188,8 +4135,7 @@ impl<'a> HTTPClient<'a> {
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):
     /// the per-request `fetch({ timeout })` override when present, otherwise
-    /// the global `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default. Both are already
-    /// normalised (see [`normalize_idle_timeout_seconds`]).
+    /// the global `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
     #[inline]
     pub(crate) fn effective_idle_timeout_seconds(&self) -> c_uint {
         if self.flags.disable_timeout {
@@ -4199,11 +4145,7 @@ impl<'a> HTTPClient<'a> {
             .unwrap_or_else(idle_timeout_seconds)
     }
 
-    pub(crate) fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
-        // Values are pre-normalised (global: `HTTPThread::on_start`;
-        // per-request: `AsyncHTTP::init`) so this is a plain pass-through.
-        // `socket.set_timeout` picks the short-tick timer for values ≤ 240s
-        // and the minute-granularity long timer above that.
+    pub(crate) fn set_timeout<const IS_SSL: bool>(&self, socket: &HttpSocket<IS_SSL>) {
         socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 

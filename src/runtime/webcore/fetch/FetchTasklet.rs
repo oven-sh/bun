@@ -1671,10 +1671,7 @@ impl FetchTasklet {
     }
 
     fn connect_errno_name(&self) -> Option<&'static str> {
-        if self.result.connect_errno == 0 {
-            return None;
-        }
-        bun_sys::SystemErrno::init(i64::from(self.result.connect_errno)).map(Into::into)
+        self.result.connect_errno.map(Into::into)
     }
 
     /// `ERR_PROXY_TUNNEL` with the `status`, `statusText` and `headers` of the

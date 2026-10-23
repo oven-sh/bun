@@ -427,12 +427,15 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     }
   });
 
-  test.each(["ENETUNREACH", "EHOSTUNREACH"])("connect → %s is not reported as ECONNREFUSED", async errno => {
-    fault.set({ syscall: "connect", action: "errno", errno, repeat: 1 });
-    const client = net.connect({ port: 1, host: "127.0.0.1" });
-    const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
-    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: errno, syscall: "connect" });
-  });
+  test.each(["ENETUNREACH", "EHOSTUNREACH", "EPERM", "ENOBUFS", "EMFILE"])(
+    "connect → %s keeps its code",
+    async errno => {
+      fault.set({ syscall: "connect", action: "errno", errno, repeat: 1 });
+      const client = net.connect({ port: 1, host: "127.0.0.1" });
+      const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: errno, syscall: "connect" });
+    },
+  );
 
   test("fd targeting: rule on the server fd does not affect the client", async () => {
     using p = await connectedPair();

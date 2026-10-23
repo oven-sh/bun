@@ -5648,3 +5648,110 @@ describe("a send that the kernel rejects", () => {
     await new Promise(resolve => server.close(resolve));
   });
 });
+
+describe("reads each option the way Node does", () => {
+  const keys = (file: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", file));
+  const agent1 = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") }; // issued by ca1
+  const agent3 = { key: keys("agent3-key.pem"), cert: keys("agent3-cert.pem") }; // issued by ca2
+  const ca1 = keys("ca1-cert.pem");
+  const ca2 = keys("ca2-cert.pem");
+  const clientCertificates = { requestCert: true, rejectUnauthorized: true };
+  const aes128 = "ECDHE-RSA-AES128-GCM-SHA256";
+  const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+
+  // option, its value, the server's other options, the client's options
+  const cases: [string, unknown, Record<string, unknown>, tls.ConnectionOptions][] = [
+    ["key", agent1.key, { cert: agent1.cert }, {}],
+    ["cert", agent1.cert, { key: agent1.key }, {}],
+    ["ca", ca2, { ...agent1, ...clientCertificates }, agent3],
+    ["crl", keys("ca2-crl-agent3.pem"), { ...agent1, ...clientCertificates, ca: ca2 }, agent3],
+    ["secureOptions", crypto.constants.SSL_OP_NO_TLSv1_2, agent1, { maxVersion: "TLSv1.2" }],
+    ["ecdhCurve", "P-384", agent1, {}],
+    ["sigalgs", "ecdsa_secp256r1_sha256", agent1, {}],
+    ["honorCipherOrder", false, { ...agent1, ciphers: `${aes256}:${aes128}` }, { maxVersion: "TLSv1.2", ciphers: `${aes128}:${aes256}` }], // prettier-ignore
+    ["minVersion", "TLSv1.3", agent1, { maxVersion: "TLSv1.2" }],
+    ["maxVersion", "TLSv1.2", agent1, {}],
+    ["secureProtocol", "TLSv1_2_method", agent1, {}],
+    ["ciphers", aes256, agent1, { maxVersion: "TLSv1.2" }],
+    ["passphrase", "password", { key: passKey, cert }, { ca: cert, checkServerIdentity: () => undefined }],
+    ["pfx", keys("agent1.pfx"), { passphrase: "sample" }, {}],
+    ["ticketKeys", Buffer.alloc(48, 7), agent1, {}],
+    ["sessionTimeout", -1, agent1, {}],
+    ["dhparam", "auto", agent1, {}],
+    ["clientCertEngine", "engine", agent1, {}],
+    ["privateKeyIdentifier", "id", { cert: agent1.cert, privateKeyEngine: "engine" }, {}],
+    ["privateKeyEngine", "engine", { cert: agent1.cert, privateKeyIdentifier: "id" }, {}],
+  ];
+
+  const shapes: Record<string, (base: object, name: string, value: unknown) => object> = {
+    absent: base => ({ ...base }),
+    own: (base, name, value) => ({ ...base, [name]: value }),
+    inherited: (base, name, value) => Object.assign(Object.create({ [name]: value }), base),
+    "a class getter": (base, name, value) => {
+      class Options {}
+      Object.defineProperty(Options.prototype, name, { get: () => value });
+      return Object.assign(new Options(), base);
+    },
+    "non-enumerable": (base, name, value) => Object.defineProperty({ ...base }, name, { value, enumerable: false }),
+  };
+
+  const servers: Record<string, (options: object, base: Record<string, unknown>) => Server> = {
+    "tls.createServer()": options => createServer(options),
+    "server.setSecureContext()": (options, { requestCert, rejectUnauthorized }) => {
+      const server = createServer({ ...COMMON_CERT, requestCert, rejectUnauthorized } as tls.TlsOptions);
+      server.setSecureContext(options);
+      return server;
+    },
+  };
+
+  // What a verifying client sees of a server with `options`.
+  async function outcome(api: string, options: object, base: Record<string, unknown>, client: tls.ConnectionOptions) {
+    let server: Server;
+    try {
+      server = servers[api](options, base);
+    } catch (error) {
+      return `throws ${(error as NodeJS.ErrnoException).code}`;
+    }
+    try {
+      server.on("tlsClientError", () => {});
+      server.on("secureConnection", socket => socket.on("error", () => {}).end("served"));
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect({ port, host: "127.0.0.1", servername: "agent1", ca: ca1, ...client });
+      let negotiated = "";
+      let received = "";
+      socket.on("secureConnect", () => {
+        negotiated = `${socket.getProtocol()} ${socket.getCipher().name} ${socket.getEphemeralKeyInfo().name}`;
+      });
+      socket.on("data", chunk => (received += chunk));
+      socket.on("error", () => {});
+      await new Promise(resolve => socket.on("close", resolve));
+      // A TLS 1.3 server refuses a client certificate after the client's own handshake is done.
+      if (received !== "served") return "refused";
+      return `${negotiated} ${server.getTicketKeys().toString("hex", 0, 4)}`.replace(/ (?!07070707)[0-9a-f]{8}$/, "");
+    } finally {
+      server.close();
+    }
+  }
+
+  const outcomes = (api: string, shape: string) =>
+    Promise.all(
+      cases.map(async ([name, value, base, client]) => [
+        name,
+        await outcome(api, shapes[shape](base, name, value), base, client),
+      ]),
+    ).then(Object.fromEntries);
+
+  describe.each(Object.keys(servers))("%s", api => {
+    let controls: Promise<Record<string, string>[]> | undefined;
+
+    it.each(["inherited", "a class getter", "non-enumerable"])("an option that is %s counts", async shape => {
+      controls ??= Promise.all([outcomes(api, "absent"), outcomes(api, "own")]);
+      const [[absent, own], shaped] = await Promise.all([controls, outcomes(api, shape)]);
+      // Every option changes what the client sees.
+      for (const [name] of cases) expect([name, own[name]]).not.toEqual([name, absent[name]]);
+      expect(shaped).toEqual(own);
+    });
+  });
+});

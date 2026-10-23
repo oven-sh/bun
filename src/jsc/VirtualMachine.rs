@@ -4328,15 +4328,31 @@ impl VirtualMachine {
     }
 
     /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
-    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+    pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
         self.rare_data
             .as_deref()
             .and_then(RareData::tls_default_ciphers)
     }
 
     /// Returns the `tls.setDefaultCACertificates()` list, or `None` if it was never called.
-    pub fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
+    pub(crate) fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
         self.rare_data.as_deref().and_then(RareData::tls_default_ca)
+    }
+
+    /// Fills what `given` leaves out from `NODE_TLS_REJECT_UNAUTHORIZED` (clients only), `tls.DEFAULT_CIPHERS` and `tls.setDefaultCACertificates()`.
+    pub fn tls_config(
+        &self,
+        given: bun_http::ssl_config::Builder,
+        is_server: bool,
+    ) -> bun_http::ssl_config::SSLConfig {
+        let reject_unauthorized = given
+            .reject_unauthorized
+            .unwrap_or_else(|| is_server || self.get_tls_reject_unauthorized());
+        given.build(
+            reject_unauthorized,
+            self.tls_default_ciphers(),
+            self.tls_default_ca(),
+        )
     }
 
     /// Returns true if `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` overrides what a client with no TLS options uses.

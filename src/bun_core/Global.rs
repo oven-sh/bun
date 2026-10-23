@@ -862,17 +862,18 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
-/// True if the default certificate store leaves out the bundled and the system's roots (`--use-openssl-ca`).
-#[unsafe(no_mangle)]
-pub static Bun__Node__UseOpenSSLCA: AtomicBool = AtomicBool::new(false);
+/// `--use-openssl-ca`
+static USE_OPENSSL_CA: AtomicBool = AtomicBool::new(false);
+/// `--use-system-ca`
+static USE_SYSTEM_CA: AtomicBool = AtomicBool::new(false);
 
-/// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
-/// when it builds the default certificate store.
-#[unsafe(no_mangle)]
-pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
+/// Read when asked, not at startup: a compiled executable parses no flags.
+fn use_system_ca() -> bool {
+    USE_SYSTEM_CA.load(Ordering::Relaxed)
+        || crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false)
+}
 
-/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
-/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
+/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if they conflict.
 pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
     let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
     let passed = flags.map(has_flag);
@@ -883,16 +884,42 @@ pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
         );
         exit(1);
     }
-    let system_ca_from_env = crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
-    if passed[1] && system_ca_from_env {
+    USE_SYSTEM_CA.store(passed[0], Ordering::Relaxed);
+    USE_OPENSSL_CA.store(passed[1], Ordering::Relaxed);
+    if passed[1] && use_system_ca() {
         crate::pretty_errorln!(
             "<r><red>error<r>: either --use-openssl-ca or --use-system-ca can be used, not both"
         );
         exit(1);
     }
-    let from_env = count == 0 && system_ca_from_env;
-    Bun__Node__UseOpenSSLCA.store(passed[1], Ordering::Relaxed);
-    Bun__Node__UseSystemCA.store(passed[0] || from_env, Ordering::Relaxed);
+}
+
+/// The roots in the default certificate store, besides `NODE_EXTRA_CA_CERTS` and OpenSSL's default paths.
+#[repr(C)]
+struct DefaultCASources {
+    bundled: bool,
+    system: bool,
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__defaultCASources() -> DefaultCASources {
+    let openssl_only = USE_OPENSSL_CA.load(Ordering::Relaxed);
+    DefaultCASources {
+        bundled: !openssl_only,
+        system: !openssl_only && use_system_ca(),
+    }
+}
+
+/// The `tls.getCACertificates()` types that make up `"default"`. OpenSSL's default paths have no type, as in Node.
+pub fn default_ca_certificate_types() -> impl Iterator<Item = &'static str> {
+    let sources = Bun__defaultCASources();
+    [
+        (sources.bundled, "bundled"),
+        (sources.system, "system"),
+        (true, "extra"),
+    ]
+    .into_iter()
+    .filter_map(|(used, name)| used.then_some(name))
 }
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are

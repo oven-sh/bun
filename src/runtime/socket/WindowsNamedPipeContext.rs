@@ -93,13 +93,13 @@ pub(crate) enum SocketType {
 /// already holds a live `&mut WindowsNamedPipe` to the same field and touches
 /// it again after the callback returns. Forming a second `&mut` here would
 /// retag the field and invalidate the caller's reference (Stacked Borrows).
-/// The handler only needs the raw address to stuff into `InternalSocket::Pipe`.
+/// The handler only needs the raw address to stuff into `InternalSocket::Transport`.
 #[inline]
 fn socket_from_named_pipe<const SSL: bool>(
     pipe: *mut WindowsNamedPipe,
 ) -> uws::NewSocketHandler<SSL> {
     uws::NewSocketHandler {
-        socket: uws::InternalSocket::Pipe(pipe.cast()),
+        socket: uws::InternalSocket::Transport(pipe),
     }
 }
 
@@ -195,32 +195,6 @@ impl WindowsNamedPipeContext {
         ));
     }
 
-    fn on_session(this: *mut Self, session: &[u8]) {
-        // Only the TLS wrapper parks sessions; the TCP arm can never get here.
-        // SAFETY: see `on_open`.
-        if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            crate::dispatch::fold(TLSSocket::on_session(s, session));
-        }
-    }
-
-    fn server_identity(
-        this: *mut Self,
-        ssl: &mut bun_boringssl_sys::SSL,
-    ) -> bun_boringssl::ServerIdentity {
-        // SAFETY: see `on_open`.
-        match unsafe { (*this).socket } {
-            SocketType::Tls(s) => s.server_identity(ssl),
-            _ => bun_boringssl::ServerIdentity::Unchecked,
-        }
-    }
-
-    fn on_keylog(this: *mut Self, line: &[u8]) {
-        // SAFETY: see `on_open`.
-        if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            crate::dispatch::fold(TLSSocket::on_keylog(s, line));
-        }
-    }
-
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
         let (socket, pipe) = unsafe { ((*this).socket, ptr::addr_of_mut!((*this).named_pipe)) };
@@ -261,7 +235,7 @@ impl WindowsNamedPipeContext {
                 s.handle_error(js_err)
             });
         } else {
-            Self::fail_connect(this, err.errno as i32);
+            Self::fail_connect(this, SystemErrno::from_raw(err.errno));
         }
     }
 
@@ -271,7 +245,7 @@ impl WindowsNamedPipeContext {
     /// `create()`'s +1 now and forget the socket, so that neither the pipe's
     /// `on_close` (which still fires on the async failure path) nor `Drop`
     /// touches it again.
-    fn fail_connect(this: *mut Self, errno: i32) {
+    fn fail_connect(this: *mut Self, errno: SystemErrno) {
         // SAFETY: see `on_open`. Cleared before `connectError` runs JS, which may
         // connect the same socket again through a new context.
         let socket = unsafe {
@@ -280,7 +254,7 @@ impl WindowsNamedPipeContext {
             socket
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
-            let failed = NewSocket::handle_connect_error(s, errno, 0);
+            let failed = NewSocket::handle_connect_error(s, errno);
             // Release the +1 ref taken in `create()`.
             s.get().deref();
             failed
@@ -339,7 +313,7 @@ impl WindowsNamedPipeContext {
     /// errdefer shared by `open`/`connect`: fail the wrapped JS socket, then
     /// release the only ref `create()` handed us.
     fn fail_and_release(this: *mut Self) {
-        Self::fail_connect(this, SystemErrno::ENOENT as i32);
+        Self::fail_connect(this, SystemErrno::ENOENT);
         // SAFETY: `this` was just returned from `create()` (refcount==1);
         // release the only ref on the errdefer path.
         unsafe { Self::deref(this) };
@@ -381,9 +355,6 @@ impl WindowsNamedPipeContext {
             on_error: |p, e| Self::on_error(p.cast::<Self>(), &e),
             on_timeout: |p| Self::on_timeout(p.cast::<Self>()),
             on_close: |p| Self::on_close(p.cast::<Self>()),
-            on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
-            on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
-            server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
         };
         let named_pipe = {
             let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());

@@ -27,11 +27,6 @@ using namespace JSC;
 using namespace WebCore;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
-extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
-extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
-extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
-extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
-extern "C" EncodedJSValue Server__setMaxHeadersCount(JSC::JSGlobalObject*, EncodedJSValue, uint32_t);
 
 // Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
 static constexpr uint32_t kDispatchConnClose = 1 << 0;
@@ -875,105 +870,10 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         nodeHttpResponsePtr);
 }
 
-// Node's static_cast<uint64_t>(double) is undefined for these: NaN or below 1 selects the default limit (0), 2^64 or more selects none.
-static uint64_t maxHTTPHeaderSizeFromNumber(double value)
-{
-    if (!(value >= 1)) return 0;
-    if (value >= 18446744073709551616.0) return UINT64_MAX;
-    return static_cast<uint64_t>(value);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 8);
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    JSValue requireHostHeader = callFrame->uncheckedArgument(1);
-    JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
-    JSValue maxHeaderSize = callFrame->uncheckedArgument(4);
-    JSValue callback = callFrame->uncheckedArgument(5);
-    JSValue onConnectionCallback = callFrame->argument(6);
-    JSValue httpAllowHalfOpen = callFrame->argument(7);
-
-    double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHTTPHeaderSizeFromNumber(maxHeaderSizeNumber));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (onConnectionCallback.isCallable()) {
-        Server__setOnConnection(globalObject, JSValue::encode(serverValue), JSValue::encode(onConnectionCallback));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    return JSValue::encode(jsUndefined());
-}
-
-// Pushes only the parser/handler flags. Unlike setServerCustomOptions this rebinds no
-// callbacks, so it is safe to call on a listening server (server.httpAllowHalfOpen is
-// assignable at any time, like Node's).
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 5);
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    JSValue requireHostHeader = callFrame->uncheckedArgument(1);
-    JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
-    JSValue httpAllowHalfOpen = callFrame->argument(4);
-
-    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsUndefined());
-}
-
-// Also called on a listening server. 0 means the option is not set.
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 2);
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    uint32_t maxHeadersCount = callFrame->uncheckedArgument(1).toUInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setMaxHeadersCount(globalObject, JSValue::encode(serverValue), maxHeadersCount);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsUndefined());
-}
-
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
     VM& vm = globalObject->vm();
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerCustomOptions"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setServerCustomOptions"_s, jsHTTPSetCustomOptions, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerAppFlags"_s)),
-        JSC::JSFunction::create(vm, globalObject, 5, "setServerAppFlags"_s, jsHTTPSetAppFlags, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerMaxHeadersCount"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
         0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);

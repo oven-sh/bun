@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 
 use bun_core::Fd;
 
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
+use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx};
 
 bun_core::declare_scope!(uws, visible);
 
@@ -82,10 +82,6 @@ impl us_socket_t {
     pub fn resume(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_resume({:p})", self);
         c::us_socket_resume(self);
-    }
-
-    pub(crate) fn drain_reads(&mut self) {
-        c::us_socket_drain_reads(self);
     }
 
     pub fn close(&mut self, code: CloseCode) {
@@ -189,10 +185,6 @@ impl us_socket_t {
         c::us_socket_timeout(self, seconds);
     }
 
-    pub(crate) fn set_long_timeout(&mut self, minutes: u32) {
-        c::us_socket_long_timeout(self, minutes);
-    }
-
     pub(crate) fn set_nodelay(&mut self, enabled: bool) {
         c::us_socket_nodelay(self, enabled as c_int);
     }
@@ -217,13 +209,6 @@ impl us_socket_t {
     /// null = fall through to the default context); `error` aborts instead.
     pub(crate) fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
-    }
-
-    /// Install a socket-level SNI resolver on an already-adopted server-side
-    /// TLS socket (there is no listen socket to hang it off). Must run before
-    /// the handshake is driven.
-    pub fn on_server_name(&mut self) {
-        c::us_socket_on_server_name(self);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -312,12 +297,6 @@ impl us_socket_t {
         c::us_socket_start_tls_handshake(self);
     }
 
-    /// Refuse a bad server chain during the handshake, before the client
-    /// certificate goes out. No-op on a server socket or after the handshake.
-    pub fn set_inline_reject(&mut self) {
-        c::us_socket_set_inline_reject(self);
-    }
-
     /// Drop the handshake flight that is held across the handshake callback.
     pub fn release_held_flight(&mut self) {
         c::us_socket_release_held_flight(self);
@@ -393,28 +372,6 @@ impl us_socket_t {
         rc
     }
 
-    pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
-        let rc = unsafe {
-            // SAFETY: both slices valid for their respective lengths
-            c::us_socket_write2(
-                self,
-                first.as_ptr(),
-                first.len(),
-                second.as_ptr(),
-                second.len(),
-            )
-        };
-        bun_core::scoped_log!(
-            uws,
-            "us_socket_write2({:p}, {}, {}) = {}",
-            self,
-            first.len(),
-            second.len(),
-            rc
-        );
-        rc
-    }
-
     /// Vectored raw write — all chunks reach the fd in one writev (sequential
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
@@ -474,10 +431,6 @@ impl us_socket_t {
         }
     }
 
-    pub(crate) fn get_verify_error(&self) -> us_bun_verify_error_t {
-        c::us_socket_verify_error(self)
-    }
-
     pub(crate) fn get_error(&self) -> i32 {
         c::us_socket_get_error(self)
     }
@@ -486,8 +439,12 @@ impl us_socket_t {
         c::us_socket_is_established(self) > 0
     }
 
-    pub(crate) fn ssl_send_rejected(&self) -> bool {
-        c::us_socket_ssl_send_rejected(self) > 0
+    pub(crate) fn reject_send(&mut self, error: i32) {
+        c::us_internal_socket_reject_send(self, error);
+    }
+
+    pub(crate) fn rejected_send_error(&self) -> i32 {
+        c::us_socket_rejected_send_error(self)
     }
 
     pub(crate) fn ssl_spill_pending(&self) -> bool {
@@ -533,7 +490,6 @@ mod c {
             length: *mut i32,
         );
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
-        pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
         pub(super) safe fn us_socket_set_tos(s: &mut us_socket_t, tos: c_int) -> c_int;
         pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;
@@ -542,7 +498,6 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -563,13 +518,6 @@ mod c {
             length: i32,
             fd: i32,
         ) -> i32;
-        pub(super) fn us_socket_write2(
-            s: *mut us_socket_t,
-            header: *const u8,
-            len: usize,
-            payload: *const u8,
-            len2: usize,
-        ) -> i32;
         pub(super) fn us_socket_raw_writev(
             s: *mut us_socket_t,
             iov: *const super::UsIoVec,
@@ -581,7 +529,6 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
-        pub(super) safe fn us_socket_drain_reads(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,
@@ -606,10 +553,10 @@ mod c {
             size: c_int,
             out: &mut c_int,
         ) -> c_int;
-        pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
-        pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_internal_socket_reject_send(s: &mut us_socket_t, error: c_int);
+        pub(super) safe fn us_socket_rejected_send_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_ssl_spill_pending(s: &us_socket_t) -> c_uint;
 
@@ -633,7 +580,6 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
-        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }

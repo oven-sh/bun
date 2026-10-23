@@ -25,8 +25,8 @@ const BUDGET = 5;
 const N = 4 * BUDGET;
 // MAX_LOW_PRIO_TICKS in packages/bun-usockets/src/loop.c.
 const MAX_PARKED_TICKS = 30;
-// The timeout wheel has 240 slots.
-const WHEEL = 240;
+// A timeout of 1 to 4 seconds is due at the second sweep after it's armed.
+const SHORTEST_TIMEOUT_TICKS = 2;
 // Well inside the test's own timeout, so a stalled step still prints the summary.
 const STEP_DEADLINE_MS = 20_000;
 // A handshake record that announces 512 more bytes.
@@ -37,10 +37,9 @@ const iteration = () => getEventLoopStats().iteration;
 // Each entry counts the `timeout` handlers that ran at one point of a step.
 const summary = {
   opened: 0,
-  // One-tick timeouts: [while 15 sockets were parked, after the queue let them go], for each of
-  // enough rounds that the stamps of the parked sockets pass the end of the wheel.
-  oneTick: [] as string[],
-  // No timeout armed: [while parked, in a full turn of the wheel after].
+  // The shortest timeout: [while 15 sockets were parked, one sweep early after the queue let them go, when due].
+  shortest: [] as number[],
+  // No timeout armed: [while parked, after].
   unarmed: [] as number[],
   // The sockets stay parked: [before their 30th tick in the queue, after it].
   parkedTooLong: [] as number[],
@@ -133,22 +132,20 @@ try {
   // One more turn and every record head is in the server's receive queue.
   await afterIterations(2);
 
-  const oneTick = new Set<string>();
-  for (let swept = 0; swept < WHEEL + 2 * MAX_PARKED_TICKS; swept += 21) {
-    await park(1);
-    sweepSocketTimers(20);
-    const whileParked = takeTimeouts();
-    await release();
-    sweepSocketTimers(1);
-    oneTick.add(`${whileParked},${takeTimeouts()}`);
-  }
-  summary.oneTick = [...oneTick];
+  await park(1);
+  sweepSocketTimers(20);
+  summary.shortest.push(takeTimeouts());
+  await release();
+  sweepSocketTimers(SHORTEST_TIMEOUT_TICKS - 1);
+  summary.shortest.push(takeTimeouts());
+  sweepSocketTimers(1);
+  summary.shortest.push(takeTimeouts());
 
   await park(0);
   sweepSocketTimers(20);
   summary.unarmed.push(takeTimeouts());
   await release();
-  sweepSocketTimers(WHEEL);
+  sweepSocketTimers(20);
   summary.unarmed.push(takeTimeouts());
 
   await park(1);

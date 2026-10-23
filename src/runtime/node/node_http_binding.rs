@@ -2,12 +2,11 @@
 //! `getBunServerOpenCount`, and the `ws` package's native server
 //! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
-use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::node_http_binding::{
     BunServer, BunTLSServer, DeflateParams, UpgradeResponse,
 };
@@ -34,54 +33,86 @@ pub(crate) fn get_bun_server_all_closed_promise(
     Ok(server.get_all_closed_promise(global))
 }
 
-/// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.
-pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
-    macro_rules! open_count {
-        ($server:expr) => {
-            f64::from($server.pending_requests.get())
-                + f64::from($server.active_sockets_count())
-                + f64::from($server.active_connection_count.get())
-        };
-    }
-    match server {
-        BunServer::Http(server) => open_count!(server),
-        BunServer::Https(server) => open_count!(server),
-        BunServer::DebugHttp(server) => open_count!(server),
-        BunServer::DebugHttps(server) => open_count!(server),
-    }
-}
-
-/// `None` once the server has stopped listening.
-fn tls_listen_socket(server: BunTLSServer<'_>) -> Option<&mut bun_uws_sys::ListenSocket> {
-    let listener = match server {
-        BunTLSServer::Https(server) => server.listener.get()?.cast::<bun_uws_sys::ListenSocket>(),
-        BunTLSServer::DebugHttps(server) => {
-            server.listener.get()?.cast::<bun_uws_sys::ListenSocket>()
+macro_rules! with_server {
+    ($server:expr, |$s:ident| $body:expr) => {
+        match $server {
+            BunServer::Http($s) => $body,
+            BunServer::Https($s) => $body,
+            BunServer::DebugHttp($s) => $body,
+            BunServer::DebugHttps($s) => $body,
         }
     };
-    Some(bun_opaque::opaque_deref_mut(listener))
 }
 
-pub(crate) fn set_secure_context(server: BunTLSServer<'_>, context: &SecureContext) {
-    if let Some(listener) = tls_listen_socket(server) {
-        listener.set_default_ssl_ctx(&context.ctx);
-    }
+/// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.
+pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
+    with_server!(server, |server| f64::from(server.pending_requests.get())
+        + f64::from(server.active_sockets_count())
+        + f64::from(server.active_connection_count.get()))
 }
 
-pub(crate) fn dispatch_server_names(server: BunTLSServer<'_>) {
-    if let Some(listener) = tls_listen_socket(server) {
-        listener.on_server_name(crate::socket::listener::us_dispatch_server_name);
-    }
+pub(crate) fn set_server_app_flags(
+    server: BunServer<'_>,
+    require_host_header: bool,
+    lenient_http_flags: u8,
+    http_allow_half_open: bool,
+) {
+    with_server!(server, |server| server.set_node_http_flags(
+        require_host_header,
+        lenient_http_flags,
+        http_allow_half_open
+    ))
 }
 
-pub(crate) fn add_server_name(server: BunTLSServer<'_>, hostname: &[u8], context: &SecureContext) {
-    // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
-    if bun_core::strings::contains_char(hostname, 0) {
-        return;
+pub(crate) fn set_server_max_headers_count(server: BunServer<'_>, max_headers_count: u32) {
+    with_server!(server, |server| server
+        .set_max_headers_count(max_headers_count))
+}
+
+pub(crate) fn set_server_custom_options<'a>(
+    cx: &mut JsScope<'a>,
+    server: BunServer<'a>,
+    require_host_header: bool,
+    lenient_http_flags: u8,
+    http_allow_half_open: bool,
+    max_header_size: f64,
+    on_client_error: JsLocal<'a, Callable>,
+    on_connection: JsLocal<'a, Callable>,
+) {
+    // Node's static_cast<uint64_t>(double) is undefined for these: NaN or below 1 selects the default limit (0), 2^64 or more selects none.
+    let max_header_size = if max_header_size >= 1.0 {
+        max_header_size as u64
+    } else {
+        0
+    };
+    with_server!(server, |server| {
+        server.set_node_http_flags(
+            require_host_header,
+            lenient_http_flags,
+            http_allow_half_open,
+        );
+        server.set_max_http_header_size(max_header_size);
+        server.set_on_client_error(cx.global(), on_client_error.to_js());
+        server.set_on_connection(cx.global(), on_connection.to_js());
+    })
+}
+
+pub(crate) fn set_tls_server_options<'a>(
+    cx: &mut JsScope<'a>,
+    server: BunTLSServer<'a>,
+    handshake_timeout: u32,
+    on_server_name: Option<JsLocal<'a, Callable>>,
+) {
+    let on_server_name = on_server_name.map_or(JSValue::ZERO, |callback| callback.to_js());
+    macro_rules! apply {
+        ($server:expr) => {{
+            $server.set_handshake_timeout(handshake_timeout);
+            $server.set_on_server_name(cx.global(), on_server_name);
+        }};
     }
-    if let Some(listener) = tls_listen_socket(server) {
-        let hostname = bun_core::ZBox::from_bytes(hostname);
-        listener.add_server_name(hostname.as_zstr().as_cstr(), context.ctx.as_ptr());
+    match server {
+        BunTLSServer::Https(server) => apply!(server),
+        BunTLSServer::DebugHttps(server) => apply!(server),
     }
 }
 

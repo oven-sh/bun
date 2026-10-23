@@ -127,6 +127,32 @@ test.concurrent("an empty default list also applies to an empty ca next to other
   expect(result).toEqual({ fetch: "DEPTH_ZERO_SELF_SIGNED_CERT", ws: "REFUSED" });
 });
 
+test.concurrent.each([
+  ["other", refused.fetch, "REFUSED"],
+  ["good", "OK", "OK"],
+])(
+  "an empty ca next to other options uses the default list, not the built-in store (%s)",
+  async (list, verdict, ws) => {
+    const result = await run(
+      `
+    tls.setDefaultCACertificates([${list}]);
+    const opts = { tls: { ca: [], serverName: "localhost" } };
+    const viaTls = () => {
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = tls.connect({ port: server.port, host: "127.0.0.1", servername: "localhost", ca: [] });
+      socket.on("secureConnect", () => { socket.destroy(); resolve("OK"); });
+      socket.on("error", e => resolve(e.code));
+      return promise;
+    };
+    console.log(JSON.stringify({ fetch: await viaFetch(opts), ws: await viaWs(opts), tls: await viaTls() }));
+  `,
+      // The built-in store trusts the server only in the row whose list doesn't.
+      list === "other" ? { SSL_CERT_FILE: "good" } : undefined,
+    );
+    expect(result).toEqual({ fetch: verdict, ws, tls: verdict });
+  },
+);
+
 test.concurrent("sets error.cause.code on a certificate failure", async () => {
   const result = await run(`
     const error = await fetch(server.url).catch(e => e);

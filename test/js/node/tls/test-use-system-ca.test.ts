@@ -383,6 +383,63 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   });
 });
 
+// The system loader reads every file in $SSL_CERT_DIR. The default store's hash directory only opens <hash>.<n> names,
+// so a connection trusts ca1.pem only if the system's roots are in the default store.
+describe.skipIf(!isLinux).concurrent("tls.getCACertificates('default') lists what the default store holds", () => {
+  const keys = join(import.meta.dir, "../test/fixtures/keys");
+  const script = `
+    if (process.env.ASSIGN) process.env.NODE_USE_SYSTEM_CA = process.env.ASSIGN;
+    const tls = require("tls"), fs = require("fs");
+    const ca = fs.readFileSync(${JSON.stringify(join(keys, "ca1-cert.pem"))}, "utf8");
+    const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
+    server.listen(0, () => {
+      const done = trusted => {
+        console.log(JSON.stringify({ listed: tls.getCACertificates("default").includes(ca), trusted }));
+        process.exit(0);
+      };
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined }, () => done(true));
+      socket.on("error", () => done(false));
+    });`;
+
+  test.each([
+    ["nothing", [], {}, "", false],
+    ["NODE_USE_SYSTEM_CA=1", [], { NODE_USE_SYSTEM_CA: "1" }, "", true],
+    ["NODE_USE_SYSTEM_CA=true", [], { NODE_USE_SYSTEM_CA: "true" }, "", true],
+    ["--use-system-ca", ["--use-system-ca"], {}, "", true],
+    ["--use-bundled-ca and NODE_USE_SYSTEM_CA=1", ["--use-bundled-ca"], { NODE_USE_SYSTEM_CA: "1" }, "", true],
+    ["--use-bundled-ca and NODE_USE_SYSTEM_CA=true", ["--use-bundled-ca"], { NODE_USE_SYSTEM_CA: "true" }, "", true],
+    ["NODE_USE_SYSTEM_CA=1 in .env", [], {}, "NODE_USE_SYSTEM_CA=1", false],
+    ["NODE_USE_SYSTEM_CA assigned at run time", [], { ASSIGN: "1" }, "", false],
+    ["NODE_USE_SYSTEM_CA=1 cleared at run time", [], { NODE_USE_SYSTEM_CA: "1", ASSIGN: "0" }, "", true],
+  ] as const)("%s", async (_name, flags, env, dotenv, expected) => {
+    using dir = tempDir("default-ca-sources", {
+      "certs/ca1.pem": readFileSync(join(keys, "ca1-cert.pem"), "utf8"),
+      "run.js": script,
+      ".env": dotenv,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...flags, "run.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: join(String(dir), "certs"),
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ listed: expected, trusted: expected }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("--use-openssl-ca", () => {
   test("native verification excludes bundled roots unless explicitly selected", async () => {
     const root = rootCertificates.find(pem => new X509Certificate(pem).subject.includes("DigiCert Global Root G2"));
@@ -501,6 +558,25 @@ describe.concurrent("--use-openssl-ca", () => {
       stderr: "error: either --use-openssl-ca or --use-system-ca can be used, not both\n",
       exitCode: 1,
     });
+  });
+
+  test("doesn't list the certificates of $SSL_CERT_FILE, as in Node", async () => {
+    const ca = readFileSync(join(import.meta.dir, "../test/fixtures/keys/ca1-cert.pem"), "utf8");
+    using dir = tempDir("openssl-cert-file", { "ca.pem": ca });
+    await using proc = spawn({
+      cmd: [bunExe(), "--use-openssl-ca", "-p", `require("node:tls").getCACertificates("default").length`],
+      env: {
+        ...bunEnv,
+        NODE_EXTRA_CA_CERTS: undefined,
+        NODE_USE_SYSTEM_CA: undefined,
+        SSL_CERT_FILE: join(String(dir), "ca.pem"),
+        SSL_CERT_DIR: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
   });
 
   test("keeps NODE_EXTRA_CA_CERTS additive", async () => {

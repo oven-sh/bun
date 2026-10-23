@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "fs";
+import { closeSync, existsSync, openSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
@@ -183,6 +183,71 @@ describe("net.createServer listen", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it.skipIf(isWindows)("a listen() error has the properties Node gives it", async () => {
+    using dir = tempDir("net-listen-error", { "file.txt": "" });
+    async function listenError(...args: unknown[]) {
+      const [err] = await once(createServer().listen(...(args as [])), "error");
+      return { message: err.message, ...err };
+    }
+    const { UV_EACCES, UV_EADDRINUSE, UV_EADDRNOTAVAIL, UV_EINVAL } = (process as any).binding("uv");
+    const missing = join(String(dir), "missing", "a.sock");
+    const tooLong = join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
+    const busy = join(String(dir), "a.sock");
+    await using occupant = createServer();
+    await once(occupant.listen(busy), "listening");
+    const fd = openSync(join(String(dir), "file.txt"), "r");
+    try {
+      expect({
+        missing: await listenError(missing),
+        tooLong: await listenError(tooLong),
+        busy: await listenError(busy),
+        notASocket: await listenError({ fd }),
+        notLocal: await listenError(0, "192.0.2.1"),
+      }).toEqual({
+        missing: {
+          message: `listen EACCES: permission denied ${missing}`,
+          code: "EACCES",
+          errno: UV_EACCES,
+          syscall: "listen",
+          address: missing,
+          port: -1,
+        },
+        tooLong: {
+          message: `listen EINVAL: invalid argument ${tooLong}`,
+          code: "EINVAL",
+          errno: UV_EINVAL,
+          syscall: "listen",
+          address: tooLong,
+          port: -1,
+        },
+        busy: {
+          message: `listen EADDRINUSE: address already in use ${busy}`,
+          code: "EADDRINUSE",
+          errno: UV_EADDRINUSE,
+          syscall: "listen",
+          address: busy,
+          port: -1,
+        },
+        notASocket: {
+          message: "listen EINVAL: invalid argument",
+          code: "EINVAL",
+          errno: UV_EINVAL,
+          syscall: "listen",
+          address: null,
+        },
+        notLocal: {
+          message: "listen EADDRNOTAVAIL: address not available 192.0.2.1",
+          code: "EADDRNOTAVAIL",
+          errno: UV_EADDRNOTAVAIL,
+          syscall: "listen",
+          address: "192.0.2.1",
+        },
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
 
   // Metro calls listen(port, host, undefined, cb).
   it.each([

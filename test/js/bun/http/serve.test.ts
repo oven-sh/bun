@@ -353,6 +353,9 @@ describe.todoIf(isBroken && isIntelMacOS)(
             },
             async server => {
               const count = 1000;
+              const batchSize = 64;
+              let completed = 0;
+              const wrongDigests: string[] = [];
               async function callback() {
                 const response = await fetch(server.url, {
                   body: blob,
@@ -366,23 +369,20 @@ describe.todoIf(isBroken && isIntelMacOS)(
                 }
 
                 const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
+                if (digest !== expected) wrongDigests.push(digest);
 
-                expect(digest).toBe(expected);
-                Bun.gc(false);
+                // Collect while the rest of the batch is in flight. CI sets BUN_GARBAGE_COLLECTOR_LEVEL,
+                // which makes every expect() collect too, so the digests are checked once at the end.
+                if (++completed % 4 === 0) Bun.gc(false);
               }
-              {
-                let remaining = count;
-
-                const batchSize = 64;
-                while (remaining > 0) {
-                  const promises = new Array(count);
-                  for (let i = 0; i < batchSize && remaining > 0; i++) {
-                    promises[i] = callback();
-                  }
-                  await Promise.all(promises);
-                  remaining -= batchSize;
+              for (let remaining = count; remaining > 0; remaining -= batchSize) {
+                const batch: Promise<void>[] = [];
+                for (let i = 0; i < Math.min(batchSize, remaining); i++) {
+                  batch.push(callback());
                 }
+                await Promise.all(batch);
               }
+              expect({ completed, wrongDigests }).toEqual({ completed: count, wrongDigests: [] });
 
               Bun.gc(true);
               dumpStats();
@@ -2755,18 +2755,25 @@ it("request body and signal life cycle", async () => {
       },
     });
 
-    for (let j = 0; j < 10; j++) {
-      const batchSize = 64;
+    const batches = 10;
+    const batchSize = 64;
+    let responses = 0;
+    const unexpectedStatuses: number[] = [];
+    for (let j = 0; j < batches; j++) {
       const requests: Promise<Response>[] = [];
       for (let i = 0; i < batchSize; i++) {
         requests.push(fetch(server.url.origin));
       }
-      await Promise.all(requests);
+      // Never read the bodies. The responses get collected while the server is still streaming.
+      for (const response of await Promise.all(requests)) {
+        responses++;
+        if (response.status !== 200) unexpectedStatuses.push(response.status);
+      }
       Bun.gc(true);
     }
 
     await Bun.sleep(10);
-    expect().pass();
+    expect({ responses, unexpectedStatuses }).toEqual({ responses: batches * batchSize, unexpectedStatuses: [] });
   }
 }, 30_000);
 
@@ -3433,25 +3440,27 @@ it.concurrent.each([
   15_000,
 );
 
+// uSockets sweeps for timed-out sockets every 4 seconds (LIBUS_TIMEOUT_GRANULARITY) and rounds timeouts
+// up to whole sweeps. idleTimeout 1..4 closes an idle connection at the next sweep, 5..8 at the one after.
+// The three timeout tests below wait for the server to close an unanswered request instead of sleeping.
 it.concurrent(
   "should allow use of custom timeout",
   async () => {
+    const stalledRequestAborted = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
-      idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
-      async fetch(req) {
-        const url = new URL(req.url);
+      idleTimeout: 1,
+      fetch(req) {
+        const stall = new URL(req.url).pathname === "/timeout";
+        if (stall) req.signal.addEventListener("abort", () => stalledRequestAborted.resolve(), { once: true });
         return new Response(
           new ReadableStream({
             async pull(controller) {
               controller.enqueue("Hello,");
-              if (url.pathname === "/timeout") {
-                await Bun.sleep(10000);
-              } else {
-                await Bun.sleep(10);
-              }
+              // Never writes again, so only the idle timeout can close it.
+              if (stall) return stalledRequestAborted.promise;
+              await Bun.sleep(10);
               controller.enqueue(" World!");
-
               controller.close();
             },
           }),
@@ -3459,16 +3468,15 @@ it.concurrent(
         );
       },
     });
-    async function testTimeout(pathname: string, success: boolean) {
-      const res = await fetch(new URL(pathname, server.url.origin));
-      expect(res.status).toBe(200);
-      if (success) {
-        await expect(res.text()).resolves.toBe("Hello, World!");
-      } else {
-        await expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
-      }
-    }
-    await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
+
+    const stalled = await fetch(new URL("/timeout", server.url));
+    expect(stalled.status).toBe(200);
+    await expect(stalled.text()).rejects.toMatchObject({ code: "ECONNRESET" });
+    await stalledRequestAborted.promise;
+
+    // A sweep just ran, so this request has 4 seconds to finish before the next one.
+    const ok = await fetch(new URL("/ok", server.url));
+    expect({ status: ok.status, body: await ok.text() }).toEqual({ status: 200, body: "Hello, World!" });
   },
   15_000,
 );
@@ -3476,33 +3484,37 @@ it.concurrent(
 it.concurrent(
   "should reset timeout after writes",
   async () => {
-    // the default is 10s so we send 15
-    // this test should take 15s at most
-    const CHUNKS = 15;
-    const payload = Buffer.from(`data: ${Date.now()}\n\n`);
+    const payload = Buffer.from("data: tick\n\n");
+    let chunksWritten = 0;
+    let streamAborted = false;
+    const streamStarted = Promise.withResolvers<void>();
+    const stopStreaming = Promise.withResolvers<void>();
     using server = Bun.serve({
+      // Needs two sweeps. A one-sweep timeout fires at the next sweep even if a write just reset it.
       idleTimeout: 5,
       port: 0,
-      fetch(request, server) {
-        let controller!: ReadableStreamDefaultController;
-        let count = CHUNKS;
-        let interval = setInterval(() => {
-          controller.enqueue(payload);
-          count--;
-          if (count == 0) {
-            clearInterval(interval);
-            interval = null as any;
-            controller.close();
-            return;
-          }
-        }, 1000);
+      fetch(req) {
+        if (new URL(req.url).pathname === "/canary") {
+          // Never answered, so the idle timeout closes it.
+          return new Promise<Response>(() => {});
+        }
+        req.signal.addEventListener("abort", () => (streamAborted = true), { once: true });
+        let interval: ReturnType<typeof setInterval>;
         return new Response(
           new ReadableStream({
-            start(_controller) {
-              controller = _controller;
+            start(controller) {
+              streamStarted.resolve();
+              interval = setInterval(() => {
+                controller.enqueue(payload);
+                chunksWritten++;
+              }, 100);
+              stopStreaming.promise.then(() => {
+                clearInterval(interval);
+                if (!streamAborted) controller.close();
+              });
             },
-            cancel(controller) {
-              if (interval) clearInterval(interval);
+            cancel() {
+              clearInterval(interval);
             },
           }),
           {
@@ -3514,17 +3526,23 @@ it.concurrent(
         );
       },
     });
-    let received = 0;
-    const response = await fetch(server.url);
-    const stream = response.body!.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await stream.read();
-      received += value?.length || 0;
-      if (done) break;
-    }
 
-    expect(received).toBe(CHUNKS * payload.byteLength);
+    const streaming = fetch(server.url);
+    await streamStarted.promise;
+    // The canary's timeout starts after the stream's. Once the canary is closed, the stream has
+    // outlived a sweep that would have closed it without the resets.
+    const canaryError = await fetch(new URL("/canary", server.url)).catch(e => e);
+    stopStreaming.resolve();
+    expect(canaryError).toMatchObject({ code: "ECONNRESET" });
+    expect(streamAborted).toBe(false);
+
+    const response = await streaming;
+    const body = await response.text();
+    expect({ status: response.status, chunksReceived: body.length / payload.byteLength }).toEqual({
+      status: 200,
+      chunksReceived: chunksWritten,
+    });
+    expect(chunksWritten).toBeGreaterThan(0);
   },
   20_000,
 );
@@ -3548,20 +3566,37 @@ it.concurrent("allow requestIP after async operation", async () => {
 it.concurrent(
   "allow custom timeout per request",
   async () => {
+    const longRequestArmed = Promise.withResolvers<void>();
+    const releaseLongRequest = Promise.withResolvers<void>();
+    let longRequestAborted = false;
     using server = Bun.serve({
       idleTimeout: 1,
       port: 0,
       async fetch(req, server) {
+        if (new URL(req.url).pathname === "/canary") {
+          // Never answered, so the server-wide idleTimeout closes it at the next sweep.
+          return new Promise<Response>(() => {});
+        }
         server.timeout(req, 60);
-        await Bun.sleep(10000); //uWS precision is not great
-
+        req.signal.addEventListener("abort", () => (longRequestAborted = true), { once: true });
+        longRequestArmed.resolve();
+        await releaseLongRequest.promise;
         return new Response("Hello, World!");
       },
     });
     expect(server.timeout).toBeFunction();
-    const res = await fetch(new URL("/long-timeout", server.url.origin));
-    expect(res.status).toBe(200);
-    await expect(res.text()).resolves.toBe("Hello, World!");
+
+    const longRequest = fetch(new URL("/long-timeout", server.url));
+    await longRequestArmed.promise;
+    // The canary's timeout starts after the long request raised its own. Once the canary is closed,
+    // the long request has outlived a sweep that the server-wide idleTimeout would have closed it at.
+    const canaryError = await fetch(new URL("/canary", server.url)).catch(e => e);
+    releaseLongRequest.resolve();
+    expect(canaryError).toMatchObject({ code: "ECONNRESET" });
+    expect(longRequestAborted).toBe(false);
+
+    const res = await longRequest;
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "Hello, World!" });
   },
   20_000,
 );
@@ -3764,7 +3799,7 @@ it.concurrent("#20283", async () => {
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
 // `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
 // A port that uses CString::new(...).expect(...) would panic and crash the process instead.
-it("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
+it.concurrent("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
   const script = `
     try {
       const server = Bun.serve({
@@ -3802,7 +3837,7 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
 // A "[...]" hostname has its brackets stripped before it is handed to the socket layer.
 // That copy used to live in a fixed 1024-byte buffer, so a longer bracketed hostname
 // aborted the process instead of failing to listen like any other bogus hostname.
-it("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
+it.concurrent("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
   const script = `
     const hostname = "[" + Buffer.alloc(1100, "a").toString() + "]";
     let server;
@@ -3833,7 +3868,7 @@ it("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of
   });
 });
 
-it("development error log prints the request pathname verbatim", async () => {
+it.concurrent("development error log prints the request pathname verbatim", async () => {
   const script = `
     const net = require("node:net");
     const server = Bun.serve({
@@ -3870,8 +3905,10 @@ it("development error log prints the request pathname verbatim", async () => {
 // handler tears the connection down from inside the request-body data callback, the
 // parser must stop consuming the rest of the TCP segment instead of routing a request
 // that was pipelined behind the body onto the already-closed socket.
-it("does not dispatch a pipelined request after the connection is destroyed inside the body data callback", async () => {
-  const script = `
+it.concurrent(
+  "does not dispatch a pipelined request after the connection is destroyed inside the body data callback",
+  async () => {
+    const script = `
 const http = require("node:http");
 const net = require("node:net");
 
@@ -3913,21 +3950,22 @@ server.listen(0, "127.0.0.1", () => {
 });
 `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  // "/second" arrived in the same TCP segment as the POST body, after the handler had
-  // already torn the connection down. It must never reach the request listener.
-  expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    // "/second" arrived in the same TCP segment as the POST body, after the handler had
+    // already torn the connection down. It must never reach the request listener.
+    expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("only serves /bun:info to loopback clients in development mode", async () => {
   using server = Bun.serve({
@@ -4143,7 +4181,7 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
   }
 });
 
-describe("request body backpressure", () => {
+describe.concurrent("request body backpressure", () => {
   // Raw-socket PUT client: connect, send the request head, then pump `total`
   // bytes of `fill`, pausing on `drain`. Resolves once the client's `sent`
   // counter has plateaued for 12×25 ms (backpressure engaged) or it finished
@@ -4568,7 +4606,7 @@ it("type: direct controller.write() Promise resolves on drain and resumes pull",
 // A handler that proxies an upstream response body to a slow client must
 // pause the upstream socket instead of buffering the rate difference:
 // ByteStream (fetch response) → HttpResponse sink with backpressure.
-it.each(["chunked", "content-length"] as const)(
+it.concurrent.each(["chunked", "content-length"] as const)(
   "bounds memory when proxying a %s fetch response body to a stalled client",
   async encoding => {
     const fixture = `
@@ -4622,7 +4660,7 @@ it.each(["chunked", "content-length"] as const)(
     // client stalls; with it, in-flight bytes are bounded by the socket buffers.
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   },
-  10_000,
+  15_000,
 );
 
 // Same as the test above but the pull does *not* await flush(true) — it keeps

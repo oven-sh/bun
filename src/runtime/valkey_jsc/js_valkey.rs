@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::socket::{SSLConfig, SSLConfigFromJs};
+use crate::socket::ssl_config::ParsedTls;
 use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};
 use bun_event_loop::EventLoopTimer as Timer;
@@ -1991,13 +1991,15 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
-                if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
-                {
-                    this.tls = valkey::TLS::Custom(Box::new(ssl_config));
-                } else {
-                    return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
+                match ParsedTls::from_js(global_object.bun_vm(), global_object, tls, false)? {
+                    ParsedTls::Config(ssl_config) => {
+                        this.tls = valkey::TLS::Custom(Box::new(ssl_config));
+                    }
+                    ParsedTls::Empty => {
+                        return Err(
+                            global_object.throw_invalid_argument_type("tls", "tls", "object")
+                        );
+                    }
                 }
             } else {
                 return Err(global_object.throw_invalid_argument_type(

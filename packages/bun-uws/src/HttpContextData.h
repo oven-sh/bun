@@ -30,7 +30,6 @@ struct Http2Context;
 
 struct HttpFlags {
     bool isParsingHttp: 1 = false;
-    bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
     bool useStrictMethodValidation: 1 = false;
@@ -60,8 +59,6 @@ private:
     /* readError: 0, or the error of the failed read (a peer RST). peerEnded: the peer sent its FIN first. */
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
 
-    MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
-
     struct RouterData {
         HttpResponse<SSL> *httpResponse;
         HttpRequest *httpRequest;
@@ -86,6 +83,8 @@ private:
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
     uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
+    /* Seconds from accept until the TLS handshake has to be done. */
+    unsigned int handshakeTimeout = 10;
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via

@@ -1,28 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
-  "NodeHTTP.cpp",
-  "createNodeHTTPInternalBinding",
-) as {
-  setServerCustomOptions: (
-    server: any,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    maxHeaderSize: number,
-    onClientError: (socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
-    onConnection?: (socketHandle: any, secured: boolean) => undefined,
-  ) => void;
-  setServerAppFlags: (
-    server: any,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    httpAllowHalfOpen: boolean,
-  ) => void;
-  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
-  drainMicrotasks: () => void;
-};
+const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
 const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
@@ -582,9 +560,6 @@ export {
   redactInvalidProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,
-  setServerAppFlags,
-  setServerCustomOptions,
-  setServerMaxHeadersCount,
   tlsSymbol,
   utcDate,
 };

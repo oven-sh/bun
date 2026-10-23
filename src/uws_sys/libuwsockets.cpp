@@ -54,7 +54,6 @@ static auto makeBehavior(const uws_socket_behavior_t &behavior, void *upgradeCon
       .closeOnBackpressureLimit = behavior.closeOnBackpressureLimit,
       .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
       .sendPingsAutomatically = behavior.sendPingsAutomatically,
-      .maxLifetime = behavior.maxLifetime,
       .autoPong = behavior.autoPong,
       .skipUTF8Validation = behavior.skipUTF8Validation,
   };
@@ -118,22 +117,14 @@ extern "C"
     ((uWS::Loop *) loop)->flushPendingWrites();
   }
 
-  uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
+  uws_app_t *uws_create_app(struct ssl_ctx_st *ssl_ctx)
   {
-    uWS::SocketContextOptions socket_context_options;
-    memcpy(&socket_context_options, &options,
-           sizeof(uWS::SocketContextOptions));
-    if (ssl)
+    if (ssl_ctx)
     {
-      return (uws_app_t *)uWS::SSLApp::create(socket_context_options);
+      return (uws_app_t *)uWS::SSLApp::create(ssl_ctx);
     }
 
-    return (uws_app_t *)uWS::App::create(socket_context_options);
-  }
-
-  uws_app_t *uws_create_app_with_ssl_ctx(struct ssl_ctx_st *ssl_ctx, bool reject_unauthorized)
-  {
-    return (uws_app_t *)uWS::SSLApp::create(ssl_ctx, reject_unauthorized);
+    return (uws_app_t *)uWS::App::create(nullptr);
   }
 
   void uws_app_clear_routes(int ssl, uws_app_t *app)
@@ -443,20 +434,6 @@ extern "C"
     }
   }
 
-  void uws_app_run(int ssl, uws_app_t *app)
-  {
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->run();
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->run();
-    }
-  }
-
   void uws_app_close(int ssl, uws_app_t *app)
   {
     if (ssl)
@@ -577,6 +554,9 @@ extern "C"
       uwsApp->setMaxHeadersCount(max_headers_count);
     }
   }
+  void uws_app_set_handshake_timeout(uws_app_t *app, unsigned int seconds) {
+    ((uWS::SSLApp *)app)->setHandshakeTimeout(seconds);
+  }
   void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -628,26 +608,9 @@ extern "C"
                                              stringViewFromC(message, message_length),
                                              (uWS::OpCode)(unsigned char)opcode, compress);
   }
-  int uws_add_server_name_with_options(
-      int ssl, uws_app_t *app, const char *hostname_pattern,
-      struct us_bun_socket_context_options_t options,
-      int apply_client_cert_policy)
+  void uws_add_server_name(uws_app_t *app, const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, bool own_client_auth)
   {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(uWS::SocketContextOptions));
-    bool success = false;
-
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->addServerName(hostname_pattern, sco, &success, apply_client_cert_policy != 0);
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->addServerName(hostname_pattern, sco, &success, apply_client_cert_policy != 0);
-    }
-    return !success;
+    ((uWS::SSLApp *)app)->addServerName(hostname_pattern, ssl_ctx, own_client_auth);
   }
 
   void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,

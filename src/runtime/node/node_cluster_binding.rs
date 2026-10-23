@@ -419,10 +419,6 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             atype = 4;
         }
 
-        fn last_neg_errno() -> JSValue {
-            JSValue::js_number_from_int32(-bun_core::ffi::errno())
-        }
-
         fn close_fd(fd: c_int) {
             let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
         }
@@ -440,42 +436,22 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             let path_view = address.to_js_string_view(global)?;
             let path_slice = path_view.to_utf8();
             let path_bytes = path_slice.slice();
-            // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
-            let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
-            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
-            if path_bytes.len() >= sun.sun_path.len() {
-                return Ok(JSValue::js_number_from_int32(-(libc::ENAMETOOLONG)));
+            let mut err: c_int = 0;
+            // SAFETY: `path_bytes` is readable for its length, and `err` is a live local.
+            let fd = unsafe {
+                bun_uws::socket_transfer::bsd_create_bound_socket_unix(
+                    path_bytes.as_ptr().cast(),
+                    path_bytes.len(),
+                    &mut err,
+                )
+            };
+            if fd < 0 {
+                return Ok(JSValue::js_number_from_int32(-err));
             }
-            let is_abstract = cfg!(target_os = "linux") && path_bytes.first() == Some(&0);
-            if !is_abstract && bun_core::strings::contains_char(path_bytes, 0) {
-                return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
-            }
-            for (i, b) in path_bytes.iter().enumerate() {
-                sun.sun_path[i] = *b as _;
-            }
-            // SAFETY: socket/bind FFI with a NUL-safe sockaddr built above;
-            unsafe {
-                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-                if fd < 0 {
-                    return Ok(last_neg_errno());
-                }
-                set_cloexec_nonblock(fd);
-                // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
-                let len = if path_bytes.first() == Some(&0) {
-                    core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
-                } else {
-                    core::mem::size_of::<libc::sockaddr_un>()
-                } as libc::socklen_t;
-                if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
-                    let e = last_neg_errno();
-                    close_fd(fd);
-                    return Ok(e);
-                }
-                let obj = JSValue::create_empty_object(global, 2);
-                obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
-                obj.put(global, b"port", JSValue::js_number_from_int32(-1));
-                return Ok(obj);
-            }
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
+            obj.put(global, b"port", JSValue::js_number_from_int32(-1));
+            return Ok(obj);
         }
 
         let family: c_int = if atype == 6 {

@@ -48,26 +48,12 @@ static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// CA selection initialized by bun_core::Global::set_ca_store_from_flags.
-extern "C" bool Bun__Node__UseOpenSSLCA;
-extern "C" bool Bun__Node__UseSystemCA;
-
-// Helper function to check if system CA should be used
-// Checks both CLI flag (--use-system-ca) and environment variable (NODE_USE_SYSTEM_CA=1)
-static bool us_should_use_system_ca() {
-  if (Bun__Node__UseOpenSSLCA) {
-    return false;
-  }
-
-  // Check CLI flag first
-  if (Bun__Node__UseSystemCA) {
-    return true;
-  }
-  
-  // Check environment variable
-  const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
-  return use_system_ca && strcmp(use_system_ca, "1") == 0;
-}
+// bun_core::Global decides from --use-*-ca and NODE_USE_SYSTEM_CA. tls.getCACertificates("default") lists the same sources.
+struct us_default_ca_sources_t {
+  bool bundled;
+  bool system;
+};
+extern "C" us_default_ca_sources_t Bun__defaultCASources();
 
 // Platform-specific system certificate loading implementations are separated:
 // - macOS: root_certs_darwin.cpp (Security framework with dynamic loading)
@@ -212,7 +198,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     }
 
     std::unordered_set<std::string_view> bundled;
-    if (!Bun__Node__UseOpenSSLCA) {
+    if (Bun__defaultCASources().bundled) {
       const uint8_t *const *bundled_certs;
       const size_t *bundled_lens;
       size_t bundled_count = us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
@@ -304,8 +290,9 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
   X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+  us_default_ca_sources_t sources = Bun__defaultCASources();
 
-  if (!Bun__Node__UseOpenSSLCA) {
+  if (sources.bundled) {
     X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
     if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
       X509_STORE_free(store);
@@ -341,7 +328,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (us_should_use_system_ca()) {
+  if (sources.system) {
     const us_system_certs_t &system = us_get_root_system_certs();
     if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store, system.lazy)) {
       X509_STORE_free(store);

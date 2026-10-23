@@ -13,10 +13,11 @@ use bun_sys::Fd;
 use bun_uws as uws;
 
 use super::Listener as SocketListener;
+use super::SSLConfig;
 use super::SocketMode;
 use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers};
 use super::listener::ListenerType;
-use super::{SSLConfig, SSLConfigFromJs};
+use super::ssl_config::ParsedTls;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
@@ -150,6 +151,14 @@ impl Handlers {
     }
     pub(crate) fn on_alpn_callback(&self) -> JSValue {
         self.cell.on_alpn_callback()
+    }
+    pub(crate) fn on_write_complete(&self) -> JSValue {
+        self.cell.on_write_complete()
+    }
+
+    /// The context of the script that gave these handlers.
+    pub(crate) fn context(&self) -> bun_jsc::ContextId {
+        self.context
     }
 
     /// Drops the `open` callback for every holder of this `Handlers` — a client
@@ -366,6 +375,7 @@ impl Handlers {
         let on_keylog = validated_callback!(on_keylog, "onKeylog");
         let on_server_name = validated_callback!(on_server_name, "onServerName");
         let on_alpn_callback = validated_callback!(on_alpn_callback, "onALPNCallback");
+        let on_write_complete = validated_callback!(on_write_complete, "onWriteComplete");
 
         if on_data.is_empty() && on_writable.is_empty() {
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -387,6 +397,7 @@ impl Handlers {
             on_keylog,
             on_server_name,
             on_alpn_callback,
+            on_write_complete,
         ])
     }
 
@@ -455,6 +466,8 @@ pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
+    pub(crate) fd_is_write_only: bool,
+    pub(crate) local_binding: Option<(Box<[u8]>, u16)>,
     pub(crate) ssl: Option<SSLConfig>,
     pub(crate) handlers: Rc<Handlers>,
     pub(crate) default_data: JSValue,
@@ -498,20 +511,17 @@ impl SocketConfig {
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
-                SocketOptionsTLS::None => None,
-                SocketOptionsTLS::Boolean(b) => {
-                    if *b {
-                        Some(super::tls_true_defaults(vm, mode.is_server()))
-                    } else {
-                        None
-                    }
+                SocketOptionsTLS::None | SocketOptionsTLS::Boolean(false) => None,
+                SocketOptionsTLS::Boolean(true) => {
+                    Some(vm.tls_config(Default::default(), mode.is_server()))
                 }
                 SocketOptionsTLS::Object(ssl) => {
-                    match SSLConfig::from_generated(vm, global, ssl, mode.is_server()) {
-                        // `None` means the object sets no option. A client that passed one still asked for TLS.
-                        Ok(None) if !mode.is_server() => Some(super::tls_true_defaults(vm, false)),
-                        Ok(configured) => configured,
-                        Err(err) => return Err(err),
+                    let parsed = ParsedTls::from_generated(vm, global, ssl, mode.is_server())?;
+                    // `Bun.listen({ tls: {} })` is plaintext. A client that passed an object asked for TLS.
+                    if mode.is_server() {
+                        parsed.or_none()
+                    } else {
+                        Some(parsed.or_defaults(vm, false))
                     }
                 }
             };
@@ -520,13 +530,15 @@ impl SocketConfig {
                 port: None,
                 fd: generated.fd.map(|v| {
                     #[cfg(windows)]
-                    {
-                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    if mode.is_server() || generated.fd_is_raw_socket {
+                        return Fd::from_system(v as u32 as usize as *mut core::ffi::c_void);
                     }
-                    #[cfg(not(windows))]
-                    {
-                        Fd::from_uv(v)
-                    }
+                    Fd::from_uv(v)
+                }),
+                fd_is_write_only: generated.fd_is_write_only,
+                local_binding: generated.local_address.map(|address| {
+                    let port = generated.local_port.unwrap_or(0.0).clamp(0.0, 65535.0) as u16;
+                    (address.into_utf8().into_vec().into_boxed_slice(), port)
                 }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,

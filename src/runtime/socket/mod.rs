@@ -26,6 +26,9 @@ pub(crate) mod pending_writes;
 #[path = "UpgradedDuplex.rs"]
 pub(crate) mod upgraded_duplex;
 
+#[path = "FdPipe.rs"]
+pub(crate) mod fd_pipe;
+
 #[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub(crate) mod windows_named_pipe;
@@ -72,10 +75,7 @@ pub(crate) mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub(crate) mod ssl_config;
-pub(crate) use ssl_config::{
-    SSLConfig, SSLConfigFromJs, apply_empty_default_ca, http_client_defaults,
-    resolve_reject_unauthorized, tls_true_defaults,
-};
+pub(crate) use ssl_config::{SSLConfig, http_client_defaults, resolve_reject_unauthorized};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real
@@ -85,10 +85,9 @@ pub(crate) use ssl_config::{
 pub(crate) use handlers::{Handlers, SocketConfig};
 pub(crate) use listener::Listener;
 pub(crate) use socket_address::SocketAddress;
-pub(crate) use socket_body::DuplexUpgradeContext;
 pub(crate) use socket_body::{
-    Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
-    server_ctx_rejects_unauthorized, server_ctx_requests_cert,
+    DeferredWriteCompletion, Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode,
+    TCPSocket, TLSSocket, server_ctx_rejects_unauthorized, server_ctx_requests_cert,
 };
 
 #[cfg(windows)]

@@ -240,7 +240,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     await client.closed;
     expect({ received: received().toString(), events: client.events, codes: client.errors.map(e => e.code) }).toEqual(
       peerWroteFirst
-        ? { received: "late", events: ["end", "error", "close(hadError=true)"], codes: ["ECONNRESET"] }
+        ? { received: "late", events: ["end", "error", "close(hadError=true)"], codes: ["EPIPE"] }
         : { received: "", events: ["error", "close(hadError=true)"], codes: ["EPIPE"] },
     );
   });
@@ -368,7 +368,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     peer.destroy();
     expect({ events: seen.events, codes: seen.errors.map(error => error.code) }).toEqual({
       events: ["end", "error", "close(hadError=true)"],
-      codes: ["ECONNRESET"],
+      codes: ["EPIPE"],
     });
   });
 
@@ -494,7 +494,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
           connectError: (_socket, error) => closed.reject(error),
         },
       });
-      expect(await closed.promise).toMatchObject({ code: "ECONNRESET" });
+      expect(await closed.promise).toMatchObject({ code: "EPIPE" });
       expect(writes).toEqual([-1, -1]);
       (await accepted)[0].destroy();
     });

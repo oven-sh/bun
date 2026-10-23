@@ -833,12 +833,12 @@ void us_quic_global_init(void) {
 #endif
 }
 
-static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
+static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_alpn_select_cb(ssl, us_quic_alpn_select, NULL);
     SSL_CTX_set_early_data_enabled(ssl, 0);
-    us_ssl_ctx_set_sni_policy(ssl, options->request_cert, options->reject_unauthorized);
+    us_ssl_ctx_set_own_session_id_context(ssl);
 }
 
 us_quic_socket_context_t *us_create_quic_socket_context(
@@ -848,7 +848,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
-    us_quic_prepare_ssl_ctx(ssl, &options);
+    us_quic_prepare_ssl_ctx(ssl);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
@@ -912,7 +912,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return -1;
-    us_quic_prepare_ssl_ctx(ssl, &options);
+    us_quic_prepare_ssl_ctx(ssl);
     SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
         SSL_CTX_get_verify_callback(ssl));
     if (!ctx->sni) ctx->sni = sni_new();

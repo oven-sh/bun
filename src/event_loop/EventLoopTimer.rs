@@ -188,7 +188,6 @@ pub enum Tag {
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
-    UpgradedDuplex,
     DNSResolver,
     DnsSdConnection,
     WindowsNamedPipe,

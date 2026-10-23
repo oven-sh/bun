@@ -192,11 +192,11 @@ describe("Bun.serve http2 lifecycle", () => {
   test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
     await using fx = await startFixture({ tls: false, idleTimeout: 4 });
     const session = await connectH2(fx.port, false);
-    // 30 s is set first, then 1 s; both sleep 6 s. Max-wins keeps the
-    // connection; last-wins, min-wins or a no-op would all close it at the 4 s tick.
-    const a = request(session, { ":path": "/t?s=30&ms=6000" });
+    // 30 s is set first, then 1 s; both sleep 9 s. Max-wins keeps the
+    // connection; last-wins, min-wins or a no-op would all close it within 8 s.
+    const a = request(session, { ":path": "/t?s=30&ms=9000" });
     await new Promise<void>(r => setTimeout(r, 100));
-    const b = request(session, { ":path": "/t?s=1&ms=6000" });
+    const b = request(session, { ":path": "/t?s=1&ms=9000" });
     const [ra, rb] = await Promise.all([a, b]);
     expect([ra.body.toString(), rb.body.toString()]).toEqual(["t30", "t1"]);
     session.close();

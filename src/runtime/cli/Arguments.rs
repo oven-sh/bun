@@ -767,16 +767,6 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-use bun_core::Global::{Bun__Node__UseOpenSSLCA, Bun__Node__UseSystemCA};
-
-pub(crate) fn get_use_openssl_ca() -> bool {
-    Bun__Node__UseOpenSSLCA.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-pub(crate) fn get_use_system_ca() -> bool {
-    Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed)
-}
-
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing

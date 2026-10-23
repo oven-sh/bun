@@ -118,6 +118,14 @@ describe.concurrent("socket", () => {
     },
   );
 
+  it.skipIf(isWindows)("adopts a file descriptor given as a BigInt", async () => {
+    const [server, client] = createSocketPair();
+    const closed = Promise.withResolvers<void>();
+    await Bun.connect({ fd: BigInt(server), socket: { data() {}, close: () => closed.resolve() } } as any);
+    closeSync(client);
+    await closed.promise;
+  });
+
   it("should coerce '0' to 0", async () => {
     const listener = Bun.listen({
       // @ts-expect-error
@@ -387,7 +395,7 @@ describe.concurrent("socket", () => {
   }, 60_000);
 
   // Runs in a child because the sweeps also advance every other socket's timeout on the thread.
-  it("socket.timeout() above 240 seconds fires once, when it's due", async () => {
+  it("socket.timeout() fires once and never early, for any number of seconds", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -403,11 +411,11 @@ describe.concurrent("socket", () => {
         });
         using client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
         const socket = await accepted.promise;
-        // One sweep is 4 seconds.
-        for (const seconds of [240, 244, 300, 960, 964, 86400]) {
+        // A sweep runs every 4 seconds. The first one can come right after the call, so it doesn't count.
+        for (const seconds of ["accepted", 1, 4, 5, 240, 241, 300, 960, 964, 86400]) {
           timeouts = 0;
-          socket.timeout(seconds);
-          sweepSocketTimers(seconds / 4 - 1);
+          if (seconds !== "accepted") socket.timeout(seconds);
+          sweepSocketTimers(Math.ceil((seconds === "accepted" ? 120 : seconds) / 4));
           const early = timeouts;
           sweepSocketTimers(1);
           const due = timeouts;
@@ -421,8 +429,12 @@ describe.concurrent("socket", () => {
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual([
+      "accepted 0 1 1",
+      "1 0 1 1",
+      "4 0 1 1",
+      "5 0 1 1",
       "240 0 1 1",
-      "244 0 1 1",
+      "241 0 1 1",
       "300 0 1 1",
       "960 0 1 1",
       "964 0 1 1",
@@ -1887,7 +1899,7 @@ it.each([
 });
 
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
-// it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.
+// it. The owner has let go by then: only the deadline (10 s, checked every 4 s) ends the wait for such a peer.
 it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", async () => {
   const step = Buffer.alloc(1024 * 1024, "a");
   const probeStep = Buffer.alloc(64 * 1024, "p");
@@ -2007,7 +2019,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     const waitedFrom = performance.now();
     const closedAfterMs = (await Promise.all(closed)).map((at, i) => Math.round(at - endedAt[i]));
     // Its own deadline: the other closes end early where their peers' kernel buffers took everything.
-    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 16_000) await Bun.sleep(100);
+    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 20_000) await Bun.sleep(100);
     const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
     const batches = socketFaultInjection.available();
     const missing = (peer: number) => reported[peer] - peers[peer].data.received;
@@ -2023,10 +2035,10 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         after,
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
-        // 10 s on a 4 s tick is 8 to 12 s after the end().
+        // A timeout is never early and a sweep runs every 4 s, so 10 s is 12 to 16 s after the end().
         atTheDeadline: [SILENT, DRIPPING, LATE].map(peer => {
           const ms = closedAfterMs[peer - 1];
-          return ms > 7_000 && ms < 16_000;
+          return ms > 10_000 && ms < 20_000;
         }),
         missing: missing(UNANSWERING),
       },
@@ -7240,8 +7252,8 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           },
         });
         await ended.promise;
-        // One sweep is 4 seconds, and an accepted socket starts with a 120 second timeout.
-        sweepSocketTimers(30);
+        // An accepted socket starts with a 120 second timeout. One sweep is 4 seconds, and the first doesn't count.
+        sweepSocketTimers(31);
         await closed.promise;
         `,
         ],
@@ -7289,8 +7301,9 @@ describe.concurrent("end(data) larger than the send buffer", () => {
             socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
           });
           await queued.promise;
-          // One sweep is 4 seconds. An accepted socket starts with a 120 second timeout, and a TLS close waits 10 more for unsent records.
-          sweepSocketTimers(33);
+          // An accepted socket starts with a 120 second timeout, and a TLS close waits 10 more for unsent records.
+          // One sweep is 4 seconds, and a timeout's first sweep doesn't count.
+          sweepSocketTimers(31 + 4);
           console.log("done");
           `,
         ],

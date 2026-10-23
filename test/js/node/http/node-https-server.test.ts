@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir, tls as validCert } from "harness";
 import { spawn } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream, readFileSync } from "node:fs";
 import http from "node:http";
@@ -830,6 +831,54 @@ describe("req.socket of an https.Server", () => {
     });
   });
 
+  test.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "answers every tls.TLSSocket member like a tls.Server's socket on %s",
+    async version => {
+      // Buffers differ between two connections, so only their presence is compared.
+      const summarize = (value: unknown): unknown =>
+        Buffer.isBuffer(value)
+          ? `Buffer ${value.length > 0}`
+          : value instanceof X509Certificate
+            ? value.subject
+            : value && typeof value === "object" && "subject" in value
+              ? (value as tls.PeerCertificate).subject.CN
+              : value;
+      function members(socket: tls.TLSSocket) {
+        const answers: Record<string, unknown> = {};
+        for (const name of Object.getOwnPropertyNames(tls.TLSSocket.prototype).sort()) {
+          if (/^(get|is)[A-Z]/.test(name)) answers[name] = summarize(socket[name]());
+        }
+        answers.exportKeyingMaterial = summarize(socket.exportKeyingMaterial(16, "label"));
+        answers.setMaxSendFragment = [511, 512, 16384, 16385].map(size => socket.setMaxSendFragment(size));
+        answers.disableRenegotiation = socket.disableRenegotiation();
+        for (const name of ["servername", "alpnProtocol", "authorized", "authorizationError", "encrypted"]) {
+          answers[name] = socket[name];
+        }
+        return JSON.stringify(answers);
+      }
+      const head = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
+      await using overHttps = https.createServer(options, (req, res) => res.end(members(req.socket as tls.TLSSocket)));
+      await using overTls = tls.createServer(options, socket => socket.once("data", () => socket.end(head + members(socket)))); // prettier-ignore
+      overTls.listen(0, "127.0.0.1");
+      await once(overTls, "listening");
+      const range = { minVersion: version, maxVersion: version };
+      const [fromHttps, fromTls] = await Promise.all([
+        get(await listen(overHttps), range),
+        get((overTls.address() as AddressInfo).port, range),
+      ]);
+      expect(fromHttps).toEqual(fromTls);
+      expect(fromHttps).toMatchObject({
+        getProtocol: version,
+        getSession: "Buffer true",
+        getPeerCertificate: "agent3",
+        setMaxSendFragment: [false, true, true, false],
+        servername: "agent1",
+        authorized: true,
+      });
+      expect(fromHttps.getSharedSigalgs).toBeArray();
+    },
+  );
+
   test("returns an empty certificate without a client certificate, and null once closed", async () => {
     const closed = Promise.withResolvers<tls.TLSSocket>();
     await using server = https.createServer({ ...options, rejectUnauthorized: false }, (req, res) => {
@@ -1320,6 +1369,56 @@ describe.concurrent("an https connection before its TLS handshake", () => {
       stalled.destroy();
       server.close();
     }
+  });
+
+  // Runs in a child because the sweeps also advance every other socket's timeout on the thread.
+  test.skipIf(!process.versions.bun)("is closed after handshakeTimeout, 120 seconds by default", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        import { once } from "node:events";
+        import https from "node:https";
+        import net from "node:net";
+        const { key, cert } = JSON.parse(process.env.CERT);
+        for (const handshakeTimeout of [undefined, 1, 30_000, 400_000]) {
+          const events = [];
+          const server = https.createServer({ key, cert, handshakeTimeout });
+          server.on("clientError", (err, socket) => {
+            events.push("clientError " + err.code + " " + socket.destroyed + " " + socket._secureEstablished);
+            socket.destroy();
+          });
+          server.on("tlsClientError", (err, socket) => events.push("tlsClientError " + err.code + " " + socket.destroyed));
+          server.listen(0, "127.0.0.1");
+          const accepted = once(server, "connection");
+          await once(server, "listening");
+          const client = net.connect(server.address().port, "127.0.0.1");
+          // The close finds an unread byte, so the client may see a reset.
+          client.on("error", () => {});
+          const closed = new Promise(resolve => client.on("close", resolve));
+          client.resume();
+          // With a byte to read, TCP_DEFER_ACCEPT doesn't delay the accept.
+          client.write(Buffer.from([0x16]));
+          await accepted;
+          // A sweep runs every 4 seconds. The first one can come right after the accept, so it doesn't count.
+          sweepSocketTimers(Math.ceil((handshakeTimeout ?? 120_000) / 4000));
+          const early = events.length;
+          sweepSocketTimers(1);
+          await closed;
+          console.log(handshakeTimeout, early, events.join(", "));
+          server.close();
+        }
+        `,
+      ],
+      env: { ...bunEnv, CERT: JSON.stringify(validCert) },
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const events = "clientError ERR_TLS_HANDSHAKE_TIMEOUT false false, tlsClientError ERR_TLS_HANDSHAKE_TIMEOUT true";
+    expect(stdout.trim().split("\n")).toEqual([undefined, 1, 30_000, 400_000].map(ms => `${ms} 0 ${events}`));
+    expect(exitCode).toBe(0);
   });
 
   test("server.timeout replaces a longer timeout from a 'connection' listener after the handshake", async () => {

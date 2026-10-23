@@ -614,12 +614,6 @@ impl ProxyTunnel {
                 on_handshake,
                 on_close,
                 write: write_encrypted,
-                // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
-                // opting out keeps its SSL off the parked queues entirely.
-                on_session: None,
-                on_keylog: None,
-                server_identity: Some(server_identity),
-                on_server_name: None,
                 ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {
@@ -634,6 +628,7 @@ impl ProxyTunnel {
                 return;
             }
         };
+        wrapper.set_server_identity_check(server_identity);
         // The inner connection's form of the `set_inline_reject` call in `HTTPClient::configure_tls`.
         if this.flags.reject_unauthorized {
             wrapper.set_inline_reject();

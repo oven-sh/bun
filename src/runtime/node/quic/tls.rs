@@ -10,9 +10,8 @@ pub(super) struct TlsConfig {
     pub servername: Option<Vec<u8>>,
     pub certs_pem: Vec<Vec<u8>>,
     pub keys_pem: Vec<Vec<u8>>,
-    pub ca_pem: Vec<Vec<u8>>,
-    /// True if there's neither a `ca` option nor a `tls.setDefaultCACertificates()` list.
-    pub default_ca_store: bool,
+    /// `None` is the default CA store.
+    pub ca_pem: Option<Vec<Vec<u8>>>,
     pub crl_pem: Vec<Vec<u8>>,
     pub verify_peer_strict: bool,
     pub verify_hostname: bool,
@@ -91,17 +90,25 @@ impl TlsConfig {
         tls: JSValue,
         is_server: bool,
     ) -> JsResult<Self> {
-        let default_ca = global.bun_vm().tls_default_ca();
+        let mut given = bun_http::ssl_config::Builder::default();
+        if tls.is_object()
+            && let Some(v) = tls.get(global, "ca")?
+        {
+            let ca_pem = collect_pem(global, v)?;
+            if !ca_pem.is_empty() {
+                given.ca = Some(ca_pem.iter().map(|pem| bun_core::dupe_z(pem)).collect());
+            }
+        }
+        let trust = global.bun_vm().tls_config(given, is_server);
         let mut config = TlsConfig {
             is_server,
             alpn: Vec::new(),
             servername: None,
             certs_pem: Vec::new(),
             keys_pem: Vec::new(),
-            ca_pem: default_ca
-                .map(|certs| certs.iter().map(|cert| cert.to_vec()).collect())
-                .unwrap_or_default(),
-            default_ca_store: default_ca.is_none(),
+            ca_pem: trust
+                .ca_bytes()
+                .map(|certs| certs.map(<[u8]>::to_vec).collect()),
             crl_pem: Vec::new(),
             verify_peer_strict: false,
             verify_hostname: false,
@@ -134,13 +141,6 @@ impl TlsConfig {
         }
         if let Some(v) = tls.get(global, "keys")? {
             config.keys_pem = collect_pem(global, v)?;
-        }
-        if let Some(v) = tls.get(global, "ca")? {
-            let ca_pem = collect_pem(global, v)?;
-            if !ca_pem.is_empty() {
-                config.ca_pem = ca_pem;
-                config.default_ca_store = false;
-            }
         }
         if let Some(v) = tls.get(global, "crl")? {
             config.crl_pem = collect_pem(global, v)?;
@@ -462,7 +462,7 @@ impl TlsContext {
                     return Err("invalid TLS groups list");
                 }
             }
-            if config.default_ca_store {
+            if config.ca_pem.is_none() {
                 // `load_crl_store` writes to the context's store, and every context shares the default one.
                 let store = if config.crl_pem.is_empty() {
                     us_get_shared_default_ca_store()
@@ -490,7 +490,7 @@ impl TlsContext {
                     load_private_key(ctx, key)?;
                 }
             }
-            for pem in &config.ca_pem {
+            for pem in config.ca_pem.iter().flatten() {
                 load_ca_store(ctx, pem)?;
             }
             for pem in &config.crl_pem {

@@ -19,7 +19,7 @@ import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 // each scenario runs in its own process. Every test also does a real fetch()
 // through the seeded entry, which is consumed by usockets via
 // Bun__addrinfo_getRequestResult and start_connections().
-async function run(body: string, timeoutMs = 10_000, execArgs: string[] = []) {
+async function run(body: string, timeoutMs = 10_000, execArgs: string[] = [], env: Record<string, string> = {}) {
   const fixture = /* js */ `
     const { dnsCacheSeed } = require("bun:internal-for-testing");
     if (typeof dnsCacheSeed !== "function") {
@@ -37,6 +37,7 @@ async function run(body: string, timeoutMs = 10_000, execArgs: string[] = []) {
       HTTPS_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
+      ...env,
     },
     stderr: "pipe",
     stdout: "pipe",
@@ -234,6 +235,50 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
       );
       expect({ out, stderr, exitCode, signal }).toEqual({
         out: { ok: true, order: [4, 4, 4, 4, 4], body: "ok via 127.0.0.6" },
+        stderr: expect.any(String),
+        exitCode: 0,
+        signal: null,
+      });
+    },
+    20_000,
+  );
+
+  test.skipIf(!isLinux || isMusl)(
+    "a timeout set while every address still hangs fires when it's due",
+    async () => {
+      const { out, stderr, exitCode, signal } = await run(
+        /* js */ `
+        ${blackholePrelude}
+        const { sweepSocketTimers } = require("bun:internal-for-testing");
+
+        const free = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const port = free.port;
+        free.stop(true);
+        blackhole("127.0.0.2", port);
+        blackhole("127.0.0.3", port);
+        const host = "he-timeout-" + port + ".test";
+        dnsCacheSeed(host, ["127.0.0.2", "127.0.0.3"]);
+
+        const failed = Promise.withResolvers();
+        let early = true;
+        const ws = new WebSocket("ws://" + host + ":" + port);
+        ws.onerror = event => failed.resolve({ early, message: event.message.split(" failed: ")[1] });
+        // The next loop iteration dials both addresses.
+        await new Promise(resolve => setImmediate(resolve));
+        // A sweep runs every 4 seconds, and the first doesn't count.
+        sweepSocketTimers(1000 / 4);
+        early = false;
+        sweepSocketTimers(1);
+        console.log(JSON.stringify(await failed.promise));
+        for (const fd of fds) libc.symbols.close(fd);
+        process.exit(0);
+      `,
+        20_000,
+        [],
+        { BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1000" },
+      );
+      expect({ out, stderr, exitCode, signal }).toEqual({
+        out: { early: false, message: "Timeout" },
         stderr: expect.any(String),
         exitCode: 0,
         signal: null,

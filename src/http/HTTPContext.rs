@@ -1565,7 +1565,7 @@ impl<const SSL: bool> Handler<SSL> {
         }
     }
 
-    pub fn on_long_timeout(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
+    pub fn on_timeout(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = tagged.client_mut() {
             return client.on_timeout::<SSL>(socket);
@@ -1576,13 +1576,6 @@ impl<const SSL: bool> Handler<SSL> {
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);
-    }
-
-    /// Short-tick (seconds-granularity) idle timer. Same handling as
-    /// [`on_long_timeout`]; `HTTPClient::set_timeout` routes to whichever
-    /// timer suits the configured duration, so both must dispatch.
-    pub fn on_timeout(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
-        Self::on_long_timeout(ptr, socket);
     }
 
     pub fn on_connect_error(ptr: *mut c_void, socket: HTTPSocket<SSL>, errno: c_int) {

@@ -70,15 +70,6 @@ interface SpawnSyncResult {
 
 const kFromNode = Symbol("kFromNode");
 
-// Pass DEBUG_CHILD_PROCESS=1 to enable debug output
-if ($debug) {
-  $debug("child_process: debug mode on");
-  globalThis.__lastId = null;
-  globalThis.__getId = () => {
-    return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
-  };
-}
-
 // Sections:
 // 1. Exported child_process functions
 // 2. child_process helpers

@@ -27,7 +27,7 @@ use core::cell::{Cell, OnceCell};
 
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
+use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SSLWrapper as SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
 use crate::websocket_client::{CloseMode, ErrorCode, remote_address_of};
@@ -228,18 +228,13 @@ impl WebSocketProxyTunnel {
                 on_handshake: Self::on_handshake,
                 on_close: Self::on_close,
                 write: Self::write_encrypted,
-                // No JS TLSSocket fronts the tunnel; opting out keeps the
-                // SSL off the parked session/keylog queues entirely.
-                on_session: None,
-                on_keylog: None,
-                server_identity: Some(Self::server_identity),
-                on_server_name: None,
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
 
         debug_assert!(this.wrapper.get().is_none(), "start() called twice");
         let wrapper = this.wrapper.get_or_init(|| wrapper);
+        wrapper.set_server_identity_check(Self::server_identity);
         // The inner connection's form of the `set_inline_reject` call in
         // `WebSocketUpgradeClient::handle_open`.
         if reject_unauthorized {

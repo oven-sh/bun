@@ -58,16 +58,12 @@ use bun_http::ssl_config::SSLConfig;
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
 
-/// Opening-handshake timeout in seconds, normalised for uSockets' timer
-/// wheel (short-timeout counter wraps at 240 ticks; `set_timeout` routes
-/// larger values onto the minute-granularity long timer). 0 disables.
+/// Opening-handshake timeout in seconds. 0 disables.
 #[inline]
 fn handshake_timeout_seconds() -> core::ffi::c_uint {
-    bun_http::normalize_idle_timeout_seconds(
-        bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
-            .get()
-            .unwrap_or(120),
-    )
+    bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
+        .get()
+        .map_or(120, |seconds| u32::try_from(seconds).unwrap_or(u32::MAX))
 }
 
 /// Max raw size of a response head. `--max-http-header-size` only counts header names, values and
@@ -1172,19 +1168,8 @@ where
         // Use ssl_config if available, otherwise use defaults
         let ssl_options: SSLConfig = match this.ssl_config.get().as_deref() {
             Some(config) => config.clone(),
-            None => {
-                let mut c = SSLConfig::default();
-                c.reject_unauthorized = 0; // We verify manually
-                c.request_cert = 1;
-                let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-                if let Some(ciphers) = vm.tls_default_ciphers() {
-                    c.set_default_ciphers(ciphers);
-                }
-                if let Some(certs) = vm.tls_default_ca() {
-                    c.set_default_ca(certs);
-                }
-                c
-            }
+            None => bun_jsc::virtual_machine::VirtualMachine::get()
+                .tls_config(Default::default(), false),
         };
 
         // Start TLS handshake
@@ -1677,17 +1662,15 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// On Windows, only WSA codes (>= 10000) are real socket errors, and WSAENOTCONN comes from
-/// uSockets' recv() probe, not from the actual failure. Both return `None`.
 fn socket_errno_name(errno: c_int) -> Option<&'static str> {
-    if errno == 0 || (cfg!(windows) && (errno < 10000 || errno == 10057)) {
-        return None;
-    }
-    bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
+    uws::SocketGroup::errno(errno).map(Into::into)
 }
 
-/// Errno name after `socket(2)` / `connect(2)` failed synchronously.
+/// Errno name after `socket(2)` / `connect(2)` failed synchronously. Winsock doesn't set `errno`.
 fn last_connect_error_code() -> BunString {
+    if cfg!(windows) {
+        return BunString::EMPTY;
+    }
     socket_errno_name(bun_core::ffi::errno()).map_or(BunString::EMPTY, BunString::static_)
 }
 
@@ -1906,7 +1889,7 @@ fn identity_name<'a>(
 
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
 // live in `bun_runtime::socket::ssl_config` (src/runtime/socket/SSLConfig.rs).
-// `SSLConfig::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
+// `ParsedTls::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
 // `bun_runtime → bun_http_jsc`, so the C-ABI export is hosted upstream where
 // `from_js` is defined. The result is bridged to `bun_http::ssl_config::SSLConfig`
 // (the type `connect()` consumes) via `into_http()` before boxing. C++ links by

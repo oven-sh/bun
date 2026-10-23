@@ -98,38 +98,11 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
-    if (seconds) {
-        unsigned int ticks = (unsigned int) (((uint64_t) seconds + 3) >> 2);
-        unsigned int laps = (ticks - 1) / 240;
-        s->timeout = ((unsigned int)s->group->timestamp + ticks) % 240;
-        s->timeout_laps = laps > UINT16_MAX ? UINT16_MAX : laps;
-    } else {
-        s->timeout = 255;
-    }
+    s->timeout = us_internal_timeout_tick(s->group, seconds);
 }
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
-    if (seconds) {
-        c->timeout = ((unsigned int)c->group->timestamp + ((seconds + 3) >> 2)) % 240;
-    } else {
-        c->timeout = 255;
-    }
-}
-
-__attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
-    if (minutes) {
-        s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
-    } else {
-        s->long_timeout = 255;
-    }
-}
-
-void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) {
-    if (minutes) {
-        c->long_timeout = ((unsigned int)c->group->long_timestamp + minutes) % 240;
-    } else {
-        c->long_timeout = 255;
-    }
+    c->timeout = us_internal_timeout_tick(c->group, seconds);
 }
 
 __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
@@ -180,8 +153,14 @@ __attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
-int us_socket_ssl_send_rejected(struct us_socket_t *s) {
-    return s->ssl_send_rejected;
+#ifdef _WIN32
+#define US_SEND_ERROR_BASE WSABASEERR
+#else
+#define US_SEND_ERROR_BASE 0
+#endif
+
+int us_socket_rejected_send_error(struct us_socket_t *s) {
+    return s->send_rejected ? US_SEND_ERROR_BASE + s->rejected_send_error : 0;
 }
 
 int us_socket_queued_input(struct us_socket_t *s) {
@@ -387,18 +366,6 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
 
-struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
-        return 0;
-    }
-
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0, 0);
-#endif
-}
-
 /* Re-arm writable for a backpressured write without resuming the read side of
  * a paused socket: us_poll_change sets absolute flags, so including READABLE
  * unconditionally would silently undo us_socket_pause mid-backpressure and
@@ -408,22 +375,40 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+void us_internal_socket_reject_send(struct us_socket_t *s, int error) {
+    /* A connect in progress reports its own failure. */
+    if (s->send_rejected || !us_socket_is_established(s)) {
+        return;
+    }
+    /* 0 to 2 are close codes. */
+    int code = error - US_SEND_ERROR_BASE;
+    s->send_rejected = 1;
+    s->rejected_send_error = code > 2 && code <= UINT8_MAX ? code : LIBUS_ECONNRESET - US_SEND_ERROR_BASE;
+    us_internal_socket_raw_shutdown(s);
+    us_internal_rearm_writable(s);
+}
+
+struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socket_t *s) {
+    /* An owner that already let go reads nothing. */
+    int unread = !s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA;
+    if (s->ssl) {
+        return us_internal_ssl_close_after_rejected_send(s, unread);
+    }
+    return unread ? s : us_internal_socket_close_raw(s, us_socket_rejected_send_error(s), NULL);
+}
+
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
  * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
- * take any failed send for backpressure. No write may close under its caller: the writable event does. */
+ * take any failed send for backpressure. */
 static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t written, size_t length) {
     if (written < 0 || (size_t) written <= length) {
         return written;
     }
-    us_internal_socket_raw_shutdown(s);
-    if (s->ssl) {
-        s->ssl_send_rejected = 1;
-    } else {
-        s->send_rejected = 1;
-    }
-    us_internal_rearm_writable(s);
 #ifdef _WIN32
+    us_internal_socket_reject_send(s, WSAECONNABORTED);
     WSASetLastError(WSAECONNABORTED);
+#else
+    us_internal_socket_reject_send(s, ECONNABORTED);
 #endif
     errno = ECONNABORTED;
     return -1;
@@ -469,24 +454,9 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     }
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
-    s->group = group;
-    s->kind = kind;
-    s->ssl = NULL;
-    s->timeout = 255;
-    s->long_timeout = 255;
-    s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
+    us_internal_socket_init(s, group, kind, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = open_paused;
     s->flags.is_ipc = ipc;
-    s->flags.is_closed = 0;
-    s->flags.adopted = 0;
-    s->flags.last_write_failed = 0;
-    s->unclassified_send_failures = 0;
-    s->read_eof = 0;
-    s->hangup_closes_unsent = 0;
-    s->send_rejected = 0;
-    s->connect_returned_zero = 0;
-    s->connect_state = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
@@ -630,8 +600,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
             us_internal_rearm_writable(s);
             return 0;
         }
-        /* Fatal send error: report the code to callers that opt in and stop
-         * polling writable - retrying can never succeed. */
+        /* Only reported: an owner that gives up on its bytes calls us_internal_socket_reject_send. */
         if (fatal_write_error) *fatal_write_error = fatal_send_error;
         return 0;
     }
@@ -804,13 +773,6 @@ int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
     return c->error_is_dns ? c->error : 0;
 }
 
-struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length) {
-    if (s->ssl) {
-        return us_internal_ssl_on_open(s, is_client, ip, ip_length);
-    }
-    return us_dispatch_open(s, is_client, ip, ip_length);
-}
-
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
 {
     // This function is manual inlining + modification of
@@ -911,20 +873,6 @@ void us_socket_pause(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
                    us_internal_socket_can_raw_write(s) ? LIBUS_SOCKET_WRITABLE : us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
-}
-
-void us_socket_drain_reads(struct us_socket_t *s) {
-#ifdef _WIN32
-    const int recv_flags = MSG_PUSH_IMMEDIATE;
-#else
-    const int recv_flags = MSG_DONTWAIT;
-#endif
-    char *buf = s->group->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
-    int length;
-    while (s && !us_socket_is_closed(s) && !s->flags.is_paused &&
-           (length = bsd_recv(us_poll_fd(&s->p), buf, LIBUS_RECV_BUFFER_LENGTH, recv_flags)) > 0) {
-        s = us_internal_socket_follow_adopted(s->ssl ? us_internal_ssl_on_data(s, buf, length) : us_dispatch_data(s, buf, length));
-    }
 }
 
 void us_socket_resume(struct us_socket_t *s) {

@@ -527,14 +527,19 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("SCHED_NONE: a worker listening on a unix path reports it from address()", async () => {
+// A path too long for sockaddr_un binds through its directory, as it does outside cluster.
+test.skipIf(isWindows).each([
+  ["a unix path", "."],
+  ["a unix path longer than sun_path", Buffer.alloc(120, "d").toString()],
+])("SCHED_NONE: a worker listening on %s reports it from address()", async (_name, subdirectory) => {
   using dir = tempDir("cluster-shared-unix-address", {
+    [`${subdirectory}/keep`]: "",
     "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const path = require("node:path");
 cluster.schedulingPolicy = cluster.SCHED_NONE;
-const SOCK = path.join(__dirname, "srv.sock");
+const SOCK = path.join(__dirname, ${JSON.stringify(subdirectory)}, "srv.sock");
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => { console.log(JSON.stringify(m)); worker.disconnect(); });

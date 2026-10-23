@@ -165,12 +165,12 @@ test.concurrent(
 
 // The loop turned a parked socket's reads off, so its peer isn't idle and its timeouts must wait. The fixture parks 15
 // of 20 Bun.listen sockets, runs the timeout sweep by hand and counts `timeout` handlers as [while parked, after release].
-// Firing on a parked socket gives oneTick "20,0", losing the timeout in the queue gives "5,0".
+// Firing on a parked socket gives shortest [20, 0, 0], losing the timeout in the queue gives [5, 0, 0].
 test.concurrent(
   "TLS low-prio queue: a parked socket's timeout fires after the queue releases it",
   async () => {
     expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
-      summary: { opened: 20, oneTick: ["5,15"], unarmed: [0, 0], parkedTooLong: [5, 15], errors: 0 },
+      summary: { opened: 20, shortest: [5, 0, 15], unarmed: [0, 0], parkedTooLong: [5, 15], errors: 0 },
       signalCode: null,
       exitCode: 0,
       stderrTail: "",
@@ -302,7 +302,7 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
   );
 });
 
-test.concurrent.skipIf(skip).each(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"])(
+test.concurrent.skipIf(skip).each(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EPERM", "ENOBUFS", "EMFILE"])(
   "Bun.connect to a hostname reports %s when that's why its last address failed",
   async errno => {
     await using proc = Bun.spawn({
@@ -410,10 +410,9 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
-// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
-// The close does not read for a paused socket: a peer that keeps sending would hold the loop.
+// What the peer sent before is still read, so the peer's FIN closes the socket.
 test.skipIf(skip).each(["reading", "paused"] as const)(
-  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more and closes",
+  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more, reads on and closes",
   async state => {
     let received = "";
     let read = "";
@@ -429,7 +428,10 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
           peerOpened.resolve();
         },
         data: (_, chunk) => void (received += chunk),
-        end: () => peerEnded.resolve(),
+        end(peer) {
+          peer.end();
+          peerEnded.resolve();
+        },
       },
     });
     try {
@@ -446,13 +448,14 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
       await peerOpened.promise;
       fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
       const writes = [socket.write("hello"), socket.write("again")];
-      const code = await closed.promise;
       await peerEnded.promise;
+      socket.resume();
+      const code = await closed.promise;
       expect({ writes, code, received, read }).toEqual({
         writes: [-1, -1],
-        code: "ECONNRESET",
+        code: "ECONNABORTED",
         received: "",
-        read: state === "paused" ? "" : expect.any(String),
+        read: "unread",
       });
     } finally {
       listener.stop(true);

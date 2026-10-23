@@ -19,9 +19,27 @@ use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, 
 use bun_core::fmt as bun_fmt;
 
 use crate::api::bun_secure_context::SecureContext;
+use crate::socket::ssl_config::ParsedTls;
 pub(crate) use crate::socket::ssl_config::SSLConfig;
-use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
+
+/// Where a server's `SSL_CTX`s come from.
+pub(crate) enum ServerTls {
+    Off,
+    /// The `tls` option. `server_names` are the entries of a `tls` array after the first, each with a `serverName`.
+    Options {
+        default: SSLConfig,
+        server_names: Vec<SSLConfig>,
+    },
+    /// The context a node:http server built in its constructor.
+    Context(bun_boringssl_sys::OwnedSslCtx),
+}
+
+impl ServerTls {
+    pub(crate) fn is_on(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
 
 pub(crate) struct ServerConfig {
     pub(crate) address: Address,
@@ -33,12 +51,7 @@ pub(crate) struct ServerConfig {
     // `&self` instead of erased to `'static`.
     pub(crate) base_uri: Box<[u8]>,
 
-    pub(crate) ssl_config: Option<SSLConfig>,
-    /// The `SSL_CTX` a node:http server built in its constructor. `ssl_config` then has no key material.
-    pub(crate) ssl_ctx: Option<bun_boringssl_sys::OwnedSslCtx>,
-    // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
-    // `deinit()` (frees the owned C strings).
-    pub(crate) sni: Option<Vec<SSLConfig>>,
+    pub(crate) tls: ServerTls,
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
@@ -85,9 +98,7 @@ impl Default for ServerConfig {
             idle_timeout: 10,
             has_idle_timeout: false,
             base_uri: Box::default(),
-            ssl_config: None,
-            ssl_ctx: None,
-            sni: None,
+            tls: ServerTls::Off,
             max_request_body_size: 1024 * 1024 * 128,
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
@@ -226,7 +237,8 @@ impl StaticRouteEntry {
 }
 
 impl ServerConfig {
-    fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
+    /// Keeps the last route of each method and path, in a deterministic order.
+    pub(crate) fn normalize_static_routes_list(&mut self) {
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
@@ -268,55 +280,6 @@ impl ServerConfig {
         // sort the cloned static routes by name for determinism
         // (descending by path: `order(b, a)`).
         index_sort::sort_slice_by(list, |a, b| strings::order(&b.path, &a.path));
-
-        Ok(())
-    }
-
-    pub(crate) fn clone_for_reloading_static_routes(
-        &mut self,
-    ) -> Result<ServerConfig, crate::Error> {
-        // The sole caller is
-        // `*config = config.clone_for_reloading_static_routes()?;`.
-        // Move every owning field into `that` and leave the Copy scalars in
-        // place on `self` (idle_timeout, development, reuse_port, http1/http3,
-        // etc. retained; resources gone), ensuring the assignment-drop of the
-        // residual `self` is a no-op.
-        let mut that = ServerConfig {
-            address: core::mem::take(&mut self.address),
-            idle_timeout: self.idle_timeout,
-            has_idle_timeout: self.has_idle_timeout,
-            base_uri: core::mem::take(&mut self.base_uri),
-            ssl_config: self.ssl_config.take(),
-            ssl_ctx: self.ssl_ctx.take(),
-            sni: self.sni.take(),
-            max_request_body_size: self.max_request_body_size,
-            development: self.development,
-            broadcast_console_log_from_browser_to_server_for_bake: self
-                .broadcast_console_log_from_browser_to_server_for_bake,
-            enable_chrome_devtools_automatic_workspace_folders: self
-                .enable_chrome_devtools_automatic_workspace_folders,
-            on_error: self.on_error,
-            on_request: self.on_request,
-            on_node_http_request: self.on_node_http_request,
-            is_node_http_server: self.is_node_http_server,
-            websocket: self.websocket.take(),
-            reuse_port: self.reuse_port,
-            id: core::mem::take(&mut self.id),
-            allow_hot: self.allow_hot,
-            ipv6_only: self.ipv6_only,
-            http3: self.http3,
-            http2: self.http2,
-            http1: self.http1,
-            had_routes_object: self.had_routes_object,
-            static_routes: core::mem::take(&mut self.static_routes),
-            negative_routes: core::mem::take(&mut self.negative_routes),
-            user_routes_to_build: core::mem::take(&mut self.user_routes_to_build),
-            bake: self.bake.take(),
-        };
-
-        that.normalize_static_routes_list()?;
-
-        Ok(that)
     }
 
     pub(crate) fn append_static_route(
@@ -578,6 +541,27 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
         }
     }
     Ok(None)
+}
+
+/// `protocol://hostname[:port]/pathname`, without the protocol's default port.
+fn format_base_uri(tls: bool, hostname: &[u8], port: u16, pathname: &[u8]) -> Box<[u8]> {
+    let (protocol, default_port) = if tls { ("https", 443) } else { ("http", 80) };
+    let (open, close) = if bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[' {
+        ("[", "]")
+    } else {
+        ("", "")
+    };
+    let mut buf: Vec<u8> = Vec::new();
+    let _ = write!(
+        &mut buf,
+        "{protocol}://{open}{}{close}",
+        bstr::BStr::new(hostname)
+    );
+    if port != default_port {
+        let _ = write!(&mut buf, ":{port}");
+    }
+    let _ = write!(&mut buf, "/{}", bstr::BStr::new(pathname));
+    buf.into_boxed_slice()
 }
 
 /// The `SSL_CTX` of `tls.secureContext`. Only node:http passes one, so no other server reads the key.
@@ -1207,56 +1191,50 @@ impl ServerConfig {
             )));
         }
 
-        if let Some(tls) = arg.get_truthy(global, "tls")? {
-            let is_node_http_server = args.is_node_http_server;
-            if tls.is_falsey() {
-                args.ssl_config = None;
-            } else if tls.js_type().is_array() {
+        let from_options = |default: SSLConfig| ServerTls::Options {
+            default,
+            server_names: Vec::new(),
+        };
+        if let Some(tls) = arg
+            .get_truthy(global, "tls")?
+            .filter(|tls| !tls.is_falsey())
+        {
+            if tls.js_type().is_array() {
                 let mut value_iter = tls.array_iterator(global)?;
-                if value_iter.len == 0 {
-                    // Empty TLS array means no TLS - this is valid
-                } else {
-                    while let Some(item) = value_iter.next()? {
-                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item, true)? else {
-                            // Backwards-compatibility; we ignored empty tls objects.
-                            continue;
-                        };
-
-                        if args.ssl_config.is_none() {
-                            args.ssl_config = Some(ssl_config);
-                        } else {
-                            if ssl_config.server_name_bytes().unwrap_or(b"").is_empty() {
-                                drop(ssl_config);
-                                return Err(global.throw_invalid_arguments(format_args!(
-                                    "SNI tls object must have a serverName",
-                                )));
-                            }
-                            if args.sni.is_none() {
-                                args.sni = Some(Vec::with_capacity((value_iter.len - 1) as usize));
-                            }
-
-                            args.sni.as_mut().unwrap().push(ssl_config);
-                        }
+                while let Some(item) = value_iter.next()? {
+                    let Some(ssl_config) = ParsedTls::from_js(vm, global, item, true)?.or_none()
+                    else {
+                        // Backwards-compatibility; we ignored empty tls objects.
+                        continue;
+                    };
+                    let ServerTls::Options { server_names, .. } = &mut args.tls else {
+                        args.tls = from_options(ssl_config);
+                        continue;
+                    };
+                    if ssl_config.server_name_bytes().unwrap_or(b"").is_empty() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "SNI tls object must have a serverName",
+                        )));
                     }
+                    server_names.push(ssl_config);
                 }
-            } else if let Some(ctx) = node_http_ssl_ctx(global, is_node_http_server, tls)? {
-                args.ssl_ctx = Some(ctx);
-                // Marks the server as TLS for every reader of `ssl_config`.
-                args.ssl_config = Some(crate::socket::tls_true_defaults(vm, true));
-            } else if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
-                args.ssl_config = Some(ssl_config);
+            } else if let Some(ctx) = node_http_ssl_ctx(global, args.is_node_http_server, tls)? {
+                args.tls = ServerTls::Context(ctx);
+            } else if let Some(ssl_config) = ParsedTls::from_js(vm, global, tls, true)?.or_none() {
+                args.tls = from_options(ssl_config);
             }
         }
 
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
-        if args.ssl_config.is_none() {
-            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg, true)? {
-                args.ssl_config = Some(ssl_config);
+        if !args.tls.is_on() {
+            if let Some(ssl_config) = ParsedTls::from_js(vm, global, arg, true)?.or_none() {
+                args.tls = from_options(ssl_config);
             }
         }
 
-        if args.http3 && args.ssl_config.is_none() {
+        // QUIC builds its own contexts from the options.
+        if args.http3 && !matches!(args.tls, ServerTls::Options { .. }) {
             return Err(
                 global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
             );
@@ -1295,63 +1273,9 @@ impl ServerConfig {
             }
 
             if base_url.protocol.is_empty() {
-                let protocol: &[u8] = if args.ssl_config.is_some() {
-                    b"https"
-                } else {
-                    b"http"
-                };
-                let hostname = base_url.hostname;
-                let needs_brackets: bool =
-                    bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
                 let pathname = strings::trim_leading_char(base_url.pathname, b'/');
-                let mut buf: Vec<u8> = Vec::new();
-                if needs_brackets {
-                    if (port == 80 && args.ssl_config.is_none())
-                        || (port == 443 && args.ssl_config.is_some())
-                    {
-                        let _ = write!(
-                            &mut buf,
-                            "{}://[{}]/{}",
-                            bstr::BStr::new(protocol),
-                            bstr::BStr::new(hostname),
-                            bstr::BStr::new(pathname)
-                        );
-                    } else {
-                        let _ = write!(
-                            &mut buf,
-                            "{}://[{}]:{}/{}",
-                            bstr::BStr::new(protocol),
-                            bstr::BStr::new(hostname),
-                            port,
-                            bstr::BStr::new(pathname)
-                        );
-                    }
-                } else {
-                    if (port == 80 && args.ssl_config.is_none())
-                        || (port == 443 && args.ssl_config.is_some())
-                    {
-                        let _ = write!(
-                            &mut buf,
-                            "{}://{}/{}",
-                            bstr::BStr::new(protocol),
-                            bstr::BStr::new(hostname),
-                            bstr::BStr::new(pathname)
-                        );
-                    } else {
-                        let _ = write!(
-                            &mut buf,
-                            "{}://{}:{}/{}",
-                            bstr::BStr::new(protocol),
-                            bstr::BStr::new(hostname),
-                            port,
-                            bstr::BStr::new(pathname)
-                        );
-                    }
-                }
-                // `base_url` (and so `hostname`/`pathname`) borrow into the
-                // original allocation; drop the borrow before reassigning.
-                drop(base_url);
-                args.base_uri = buf.into_boxed_slice();
+                args.base_uri =
+                    format_base_uri(args.tls.is_on(), base_url.hostname, port, pathname);
             }
         } else {
             let hostname: &[u8] = match &args.address {
@@ -1361,56 +1285,7 @@ impl ServerConfig {
                 } => hostname.as_bytes(),
                 Address::Tcp { hostname: None, .. } | Address::Unix(_) => b"0.0.0.0",
             };
-
-            let needs_brackets: bool =
-                bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
-
-            let protocol: &[u8] = if args.ssl_config.is_some() {
-                b"https"
-            } else {
-                b"http"
-            };
-            let mut buf: Vec<u8> = Vec::new();
-            if needs_brackets {
-                if (port == 80 && args.ssl_config.is_none())
-                    || (port == 443 && args.ssl_config.is_some())
-                {
-                    let _ = write!(
-                        &mut buf,
-                        "{}://[{}]/",
-                        bstr::BStr::new(protocol),
-                        bstr::BStr::new(hostname)
-                    );
-                } else {
-                    let _ = write!(
-                        &mut buf,
-                        "{}://[{}]:{}/",
-                        bstr::BStr::new(protocol),
-                        bstr::BStr::new(hostname),
-                        port
-                    );
-                }
-            } else {
-                if (port == 80 && args.ssl_config.is_none())
-                    || (port == 443 && args.ssl_config.is_some())
-                {
-                    let _ = write!(
-                        &mut buf,
-                        "{}://{}/",
-                        bstr::BStr::new(protocol),
-                        bstr::BStr::new(hostname)
-                    );
-                } else {
-                    let _ = write!(
-                        &mut buf,
-                        "{}://{}:{}/",
-                        bstr::BStr::new(protocol),
-                        bstr::BStr::new(hostname),
-                        port
-                    );
-                }
-            }
-            args.base_uri = buf.into_boxed_slice();
+            args.base_uri = format_base_uri(args.tls.is_on(), hostname, port, b"");
 
             if !strings::is_all_ascii(hostname) {
                 args.base_uri = Box::default();

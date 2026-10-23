@@ -107,6 +107,11 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The target is a stylesheet under the dev server, which serves it apart from
+        /// the module registry: `require()` / `import()` of it have no module to load.
+        /// Not set for `--format=internal_bake_dev` alone: there the stub is a registry entry.
+        const IS_DEV_SERVER_STYLESHEET = 1 << 19;
     }
 }
 

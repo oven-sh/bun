@@ -6049,6 +6049,9 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
+                                record
+                                    .flags
+                                    .insert(bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET);
                                 // SAFETY: `source_index < ast.len()` (validated above); read
                                 // via the raw column ptr so we don't reborrow `asts.parts()`
                                 // while `import_records` (a sibling column) is held `&mut`.
@@ -7268,6 +7271,11 @@ pub mod bv2_impl {
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
                                     import_record.path.is_disabled = true;
+                                }
+                                if entry.kind == bake_types::CacheKind::Css {
+                                    import_record.flags.insert(
+                                        bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET,
+                                    );
                                 }
                             }
                             continue 'outer;

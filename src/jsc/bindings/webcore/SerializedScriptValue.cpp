@@ -1198,10 +1198,21 @@ private:
                 if (!startObjectInternal(errorInstance)) // handle duplicates
                     return true;
                 auto& vm = m_lexicalGlobalObject->vm();
+                // A WorkerErrorReport keeps the fields it can read (node's error_serdes.js): a throw costs the field, not the clone.
+                auto fieldUnreadable = [&] {
+                    return m_context == SerializationContext::WorkerErrorReport && scope.exception() && scope.tryClearException();
+                };
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
+                bool nameUnreadable = fieldUnreadable();
                 RETURN_IF_EXCEPTION(scope, false);
-                auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                String errorTypeString;
+                if (!nameUnreadable) {
+                    errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
+                    nameUnreadable = fieldUnreadable();
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                if (nameUnreadable)
+                    errorTypeString = errorTypeName(errorInstance->errorType());
 
                 // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
                 // OWN data descriptors only (an inherited or accessor .message is
@@ -1219,6 +1230,8 @@ private:
                     RETURN_IF_EXCEPTION(scope, false);
                     if (found && d.isDataDescriptor() && d.value()) {
                         message = d.value().toWTFString(m_lexicalGlobalObject);
+                        if (fieldUnreadable())
+                            message = String();
                         RETURN_IF_EXCEPTION(scope, false);
                     }
                 }
@@ -1226,6 +1239,7 @@ private:
                 // prepareStackTrace propagates here instead of tripping the exception
                 // assertion inside JSObject::getOwnPropertyDescriptor.
                 errorInstance->materializeErrorInfoIfNeeded(vm);
+                (void)fieldUnreadable();
                 RETURN_IF_EXCEPTION(scope, false);
                 {
                     JSC::PropertyDescriptor d;
@@ -1253,6 +1267,8 @@ private:
                 }
                 {
                     JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                    if (fieldUnreadable())
+                        v = jsUndefined();
                     RETURN_IF_EXCEPTION(scope, false);
                     if (v.isString())
                         stack = v.toWTFString(m_lexicalGlobalObject);
@@ -4544,7 +4560,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Fast path optimization: for postMessage/structuredClone with pure strings and no transfers
-    const bool canUseFastPath = (context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default)
+    const bool canUseFastPath = (context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default || context == SerializationContext::WorkerErrorReport)
         && forStorage == SerializationForStorage::No
         && forTransfer == SerializationForCrossProcessTransfer::No
         && transferList.isEmpty()

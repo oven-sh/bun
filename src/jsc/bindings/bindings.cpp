@@ -1361,6 +1361,16 @@ static bool subsetPropertiesMatch(JSC::JSGlobalObject* globalObject, JSObject* r
         JSValue expectedProp = expected->get(globalObject, property);
         RETURN_IF_EXCEPTION(scope, false);
 
+        if (!receivedProp.isObject() && !expectedProp.isObject()) {
+            // Two primitives: neither is a matcher, and Bun__deepEquals would only do this.
+            bool same = JSC::sameValue(globalObject, receivedProp, expectedProp);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!same) {
+                return false;
+            }
+            continue;
+        }
+
         if constexpr (enableAsymmetricMatchers && isPartial) {
             // toMatchObject and the snapshot property matchers copy a matched asymmetric
             // matcher to the other side, so the failure diff does not flag that property.

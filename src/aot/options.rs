@@ -20,6 +20,8 @@ pub struct Options<'a> {
     pub removable: RemovableOptions,
     // --metafile
     pub lists_modules: bool,
+    // --minify-identifiers
+    pub minifies_identifiers: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -28,6 +30,8 @@ pub struct RemovableOptions {
     pub ignores_pure_annotations: bool,
     // --jsx-side-effects
     pub jsx_has_side_effects: bool,
+    // --minify-syntax
+    pub minifies_syntax: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +191,7 @@ mod tests {
             },
             removable: RemovableOptions::default(),
             lists_modules: false,
+            minifies_identifiers: false,
         }
     }
 

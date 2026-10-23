@@ -318,7 +318,7 @@ impl core::ops::Deref for ZStr {
 /// An executable compiled ahead of time does not start where the environment sets one.
 #[cfg(bun_locked_environment)]
 pub fn is_never_read(key: &[u8]) -> bool {
-    const WORDS: [&[u8]; 24] = [
+    const WORDS: [&[u8]; 25] = [
         b"BUN_AOT_TYPE_MISMATCH_LOG",
         b"BUN_AOT_TYPE_MISMATCH_LOG_FORMAT",
         b"BUN_AOT_VERBOSE",
@@ -331,6 +331,7 @@ pub fn is_never_read(key: &[u8]) -> bool {
         b"BUN_DUMP_STATE_ON_CRASH",
         b"BUN_DUMP_SYMBOLS",
         b"BUN_FEATURE_FLAG_DUMP_CODE",
+        b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING",
         b"BUN_INSPECT",
         b"BUN_INSPECT_CONNECT_TO",
         b"BUN_INSPECT_PRELOAD",

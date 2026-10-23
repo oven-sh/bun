@@ -259,6 +259,7 @@ fn with_bound_build_without_bun_modules<R>(
         },
         removable: Default::default(),
         lists_modules: false,
+        minifies_identifiers: false,
     };
     let caches = ThreadCaches::default();
     let limits = LimitValues::for_host();

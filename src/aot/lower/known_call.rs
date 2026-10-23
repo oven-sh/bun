@@ -765,6 +765,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             embeds_function_text: false,
             reports_type_mismatches: false,
             removable: Default::default(),
+            minifies_identifiers: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

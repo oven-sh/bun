@@ -293,16 +293,19 @@ impl<'a, 's> Removable<'a, 's> {
             ExprKind::Template { exprs } => hir.ids(exprs).all(|substitution| {
                 self.expression(substitution) && self.primitive(substitution) != Primitive::Unknown
             }),
-            ExprKind::Array(items) => hir.ids(items).all(|item| self.expression(item)),
+            ExprKind::Array(items) => hir
+                .ids(items)
+                .all(|item| self.expression(item) || self.is_spread_of_removable_literal(item)),
             ExprKind::Object(properties) => {
                 properties.iter().all(|property| self.property(property))
             }
             ExprKind::Class(class) => self.class(class),
             ExprKind::Dot { .. } | ExprKind::Index { .. } => self.member_read(expression),
             ExprKind::Call(call) | ExprKind::New(call) => {
+                let is_construction = matches!(hir[expression].kind, ExprKind::New(_));
                 let call = &hir[call];
-                call.is_pure
-                    && !self.options.ignores_pure_annotations
+                let is_marked = call.is_pure && !self.options.ignores_pure_annotations;
+                (is_marked || (is_construction && self.constructs_without_effects(call)))
                     && self.analysis.import_site_of_call(expression).is_none()
                     && hir.ids(call.args).all(|argument| self.expression(argument))
             }
@@ -334,6 +337,76 @@ impl<'a, 's> Removable<'a, 's> {
             | ExprKind::ImportCall { .. }
             | ExprKind::NewTarget(_) => false,
             _ => true,
+        }
+    }
+
+    // `[...[a, b]]`: under --minify-syntax the bundler's visitor puts the elements in the place of the spread.
+    fn is_spread_of_removable_literal(&self, item: ExprId) -> bool {
+        let ExprKind::Spread(spread) = self.hir[item].kind else {
+            return false;
+        };
+        let spread = self.hir.skip_type_assertions(spread);
+        self.options.minifies_syntax
+            && matches!(self.hir[spread].kind, ExprKind::Array(_))
+            && self.stack.is_safe_to_recurse()
+            && self.expression(spread)
+    }
+
+    // `minify_global_constructor` of src/ast/known_global.rs, which the bundler's visitor asks under --minify-syntax. The arguments are judged by the caller.
+    fn constructs_without_effects(&self, call: &hir::Call) -> bool {
+        let hir = self.hir;
+        let callee = hir.skip_type_assertions(call.callee);
+        if !self.options.minifies_syntax || self.find_static_binding(callee) != Some(Binding::Free)
+        {
+            return false;
+        }
+        let Some(constructor) = self.builtins.builtin_of_expression(callee) else {
+            return false;
+        };
+        let mut arguments = hir.ids(call.args);
+        let (Some(argument), None) = (arguments.next(), arguments.next()) else {
+            return call.args.is_empty()
+                && matches!(
+                    constructor,
+                    BuiltinId::Map
+                        | BuiltinId::Set
+                        | BuiltinId::WeakMap
+                        | BuiltinId::WeakSet
+                        | BuiltinId::Date
+                );
+        };
+        let argument = hir.skip_type_assertions(argument);
+        let is_nullish = matches!(
+            self.literal(argument),
+            Some(Primitive::Null | Primitive::Undefined)
+        ) || matches!(hir[argument].kind, ExprKind::Null);
+        let elements = match hir[argument].kind {
+            ExprKind::Array(elements) => Some(elements),
+            _ => None,
+        };
+        match constructor {
+            BuiltinId::Set => is_nullish || elements.is_some(),
+            BuiltinId::Map => {
+                is_nullish
+                    || elements.is_some_and(|elements| {
+                        hir.ids(elements).all(|element| {
+                            let element = hir.skip_type_assertions(element);
+                            matches!(hir[element].kind, ExprKind::Array(_))
+                        })
+                    })
+            }
+            BuiltinId::WeakMap | BuiltinId::WeakSet => {
+                is_nullish || elements.is_some_and(|elements| elements.is_empty())
+            }
+            BuiltinId::Date => matches!(
+                self.primitive(argument),
+                Primitive::Null
+                    | Primitive::Undefined
+                    | Primitive::Boolean
+                    | Primitive::Number
+                    | Primitive::String
+            ),
+            _ => false,
         }
     }
 

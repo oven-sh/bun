@@ -176,6 +176,9 @@ export interface Config {
    * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
    * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
+   * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where
+   * it cannot read its own file (`executeOnlyStart`).
+   * So far it has been built and run on Linux x64 with glibc alone.
    */
   hardened: boolean;
   /**
@@ -201,6 +204,15 @@ export interface Config {
    * Costs a few system calls and 8 KB of page tables a mapping. On with `hardened`. Off: a hardened build to compare with.
    */
   guardedPages: boolean;
+  /**
+   * An executable compiled ahead of time maps its code out of its own file, at an address drawn at random. Where it cannot
+   * open that file (it may be run but not read: mode 0111) it moves the pages that its loader mapped to such an address
+   * instead, with mremap(). Off: there it says so and exits with 1 before any compiled code runs, and the code that
+   * moves is not in the binary: nothing of Bun's calls mremap() on the way to the program's first statement. Off with
+   * `hardened`. On: a hardened build to compare with.
+   * Defines BUN_REFUSES_EXECUTE_ONLY_START for C and C++, JSC included, and `bun_refuses_execute_only_start` for Rust.
+   */
+  executeOnlyStart: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
@@ -464,6 +476,7 @@ export interface PartialConfig {
   requireMdwe?: boolean;
   lockEnvironment?: boolean;
   guardedPages?: boolean;
+  executeOnlyStart?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
@@ -1186,6 +1199,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const requireMdwe = partial.requireMdwe ?? hardened;
   const lockEnvironment = partial.lockEnvironment ?? hardened;
   const guardedPages = partial.guardedPages ?? hardened;
+  const executeOnlyStart = partial.executeOnlyStart ?? !hardened;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1217,6 +1231,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     guardedPages === hardened || webkit === "local",
     "guardedPages=" + guardedPages + " with hardened=" + hardened + " requires webkit=local",
     { hint: "The -hardened WebKit prebuilts are compiled with it, the others without" },
+  );
+  assert(
+    executeOnlyStart || (linux && abi !== "android"),
+    "executeOnlyStart=false requires os=linux and abi=gnu or musl",
+  );
+  assert(
+    executeOnlyStart !== hardened || webkit === "local",
+    "executeOnlyStart=" + executeOnlyStart + " with hardened=" + hardened + " requires webkit=local",
+    { hint: "The -hardened WebKit prebuilts are compiled without it, the others with it" },
   );
   const jit = partial.jit ?? true;
   assert(
@@ -1500,6 +1523,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     requireMdwe,
     lockEnvironment,
     guardedPages,
+    executeOnlyStart,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
@@ -1909,6 +1933,9 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.requireMdwe !== cfg.hardened) features.push("require-mdwe:off");
   if (cfg.lockEnvironment !== cfg.hardened) features.push("lock-environment:off");
   if (cfg.guardedPages !== cfg.hardened) features.push(cfg.guardedPages ? "guarded-pages" : "guarded-pages:off");
+  if (cfg.executeOnlyStart === cfg.hardened) {
+    features.push(cfg.executeOnlyStart ? "execute-only-start" : "execute-only-start:off");
+  }
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

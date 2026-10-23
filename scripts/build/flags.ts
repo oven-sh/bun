@@ -105,8 +105,8 @@ export const cpuTargetFlags: Flag[] = [
 
 /**
  * `--hardened=on`. The same list as `HARDENING` in oven-sh/WebKit's
- * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with, but for what `--guarded-pages=on` adds:
- * that list has it, and here it is a flag of its own.
+ * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with, but for what `--guarded-pages=on` and
+ * `--execute-only-start=off` add: that list has both, and here each is a flag of its own.
  */
 export const hardeningFlags = [
   "-fstack-protector-strong",
@@ -468,6 +468,11 @@ export const globalFlags: Flag[] = [
     flag: "-DENABLE_AOT_GUARDED_PAGES=1",
     when: c => c.guardedPages,
     desc: "What a compiled program maps for good lies between two pages without access, each mapping at a random address of its own",
+  },
+  {
+    flag: "-DBUN_REFUSES_EXECUTE_ONLY_START=1",
+    when: c => !c.executeOnlyStart,
+    desc: "A compiled program that cannot open its own file exits at start, and nothing moves what its loader mapped",
   },
   {
     flag: computeHardeningFlags,

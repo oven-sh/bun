@@ -73,7 +73,7 @@ console.log("dispose", describe(server[Symbol.dispose]()));
 console.log("after", describe(server.port), describe(server.url), server.pendingWebSockets);
 
 const path = `${process.env.TMPDIR ?? "/tmp"}/members-of-a-server-${process.pid}.sock`;
-{
+if (process.platform !== "win32") {
   using local = Bun.serve({ unix: path, fetch: () => new Response("local") }) as WithAddress;
   console.log("unix", describe(local.port), describe(local.hostname), describe(local.address), local.address === path);
   console.log("unix", await (await fetch("http://localhost/", { unix: path })).text());

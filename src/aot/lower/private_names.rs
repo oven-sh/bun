@@ -318,6 +318,7 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             embeds_function_text: false,
             reports_type_mismatches: false,
             removable: Default::default(),
+            minifies_identifiers: false,
         };
         let lowered = lower_program(&[("main.mjs", main), ("helpers.mjs", HELPERS)], options);
         lowered.into_iter().map(|(_, lowered)| lowered).collect()

@@ -32,12 +32,16 @@ storage.run("at the listener", () => emitter.on("x", () => console.log("emitter:
 storage.run("at the emit", () => emitter.emit("x"));
 
 const entries = [];
-const observer = new PerformanceObserver(list => entries.push(...list.getEntries().map(entry => entry.entryType + ":" + entry.name)));
+const delivered = Promise.withResolvers();
+const observer = new PerformanceObserver(list => delivered.resolve(entries.push(...list.getEntries().map(entry => entry.entryType + ":" + entry.name))));
 observer.observe({ entryTypes: ["mark", "measure"] });
 performance.mark("start");
 performance.mark("end", { detail: { note: 1 } });
 const measure = performance.measure("span", "start", "end");
-await new Promise(resolve => setTimeout(resolve, 5));
+// The interval wakes an event loop that sleeps while the delivery is queued.
+const interval = setInterval(() => {}, 1);
+await delivered.promise;
+clearInterval(interval);
 observer.disconnect();
 console.log(entries.sort().join(), measure.duration >= 0, performance.getEntriesByName("end")[0].detail.note, performance.getEntriesByType("mark").length, typeof performance.now(), performance.timeOrigin > 0);
 performance.clearMarks();

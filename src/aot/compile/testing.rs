@@ -690,6 +690,7 @@ impl TestProject {
             paths: self.paths.clone(),
             removable: RemovableOptions::default(),
             lists_modules: false,
+            minifies_identifiers: false,
         }
     }
 }

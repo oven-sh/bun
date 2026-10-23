@@ -122,6 +122,7 @@ fn lower_library_file(listed_function: RuntimeFunction, text: &str) -> LoweredFi
         embeds_function_text: false,
         reports_type_mismatches: false,
         removable: Default::default(),
+        minifies_identifiers: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");

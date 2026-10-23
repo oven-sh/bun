@@ -17,11 +17,23 @@ pub(crate) fn collect_exec_argv_requirements(exec_argv: &[u8]) -> Vec<OptionRequ
     read_exec_argv(exec_argv).requirements
 }
 
+// The engine reads the name of a check without regard to hyphens and case.
+fn names_validate(check: &[u8]) -> bool {
+    check
+        .iter()
+        .filter(|&&byte| byte != b'-')
+        .map(u8::to_ascii_lowercase)
+        .eq(*b"validate")
+}
+
 fn validates_at_run_time(options: &AotOptions) -> bool {
     options
         .option_words
         .iter()
-        .any(|word| &**word == b"validate")
+        .any(|word| match word.strip_prefix(b"check=") {
+            Some(checks) => checks.split(|&byte| byte == b',').any(names_validate),
+            None => &**word == b"validate",
+        })
 }
 
 // An embedded `--inspect` admits the inspector too, and is listed already.

@@ -457,6 +457,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   requireMdwe: "boolean",
   lockEnvironment: "boolean",
   guardedPages: "boolean",
+  executeOnlyStart: "boolean",
   socketFaultInjection: "boolean",
   codeGenerationFromStrings: "boolean",
   webAssembly: "boolean",
@@ -671,6 +672,7 @@ Options:
                           Fields: asan, lto, relr, assertions, logs, baseline,
                                   canary, valgrind, hardened, requireMdwe,
                                   lockEnvironment, guardedPages,
+                                  executeOnlyStart,
                                   webkit (prebuilt|local),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),

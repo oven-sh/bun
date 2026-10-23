@@ -253,6 +253,7 @@ fn with_host_in<R>(
         },
         removable: RemovableOptions::default(),
         lists_modules: false,
+        minifies_identifiers: false,
     };
     let provider = ScriptedProvider::default();
     let disk = create_disk(&options, NonZeroUsize::MIN);

@@ -454,6 +454,11 @@ export interface Provides {
   files?: string[];
   /** The graph follows from what the tarball holds: ninja fetches it first and reconfigures, as for the Rust plans. */
   contentsDecideGraph?: boolean;
+  /**
+   * Symbols that one of `libs` has to name: each stands for an option the tarball must have been compiled with, which
+   * nothing else in it tells. The build fails where one is missing. Only for a `prebuilt` source.
+   */
+  requireDefined?: { lib: string; symbols: string[] };
 }
 
 /**
@@ -582,7 +587,7 @@ export interface ResolvedDep {
   configureInputs: string[];
   /**
    * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
-   * objects). Ninja validations of whatever the objects go into next — the
+   * objects) and of `requireDefined`'s. Ninja validations of whatever the objects go into next — the
    * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
    * link — so they run with every build of it and gate nothing.
    */
@@ -726,6 +731,14 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     description: "check $name undefined symbols",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
+    restat: true,
+  });
+
+  // Provides.requireDefined. The stamp is only written when every symbol is
+  // there, and (restat) left alone when it already exists.
+  n.rule("dep_check_defined", {
+    command: `${cfg.jsRuntime} ${fetchCli} check-defined $name $in $out $symbols`,
+    description: "check $name was compiled as this build asks",
     restat: true,
   });
 
@@ -1071,11 +1084,28 @@ function emitPrebuilt(
   const outputs = libs.length > 0 ? libs : [stamp];
   n.phony(name, outputs);
 
+  const checks: string[] = [];
+  if (provides.requireDefined !== undefined) {
+    const { lib, symbols } = provides.requireDefined;
+    assert(provides.libs.includes(lib), `${name}: requireDefined.lib ${lib} is not one of its libs`);
+    assert(symbols.length > 0, `${name}: requireDefined.symbols is empty`);
+    const buildDir = depBuildDir(cfg, name);
+    mkdirSync(buildDir, { recursive: true });
+    checks.push(resolve(buildDir, ".defined-symbols-checked"));
+    n.build({
+      outputs: checks,
+      rule: "dep_check_defined",
+      inputs: [resolve(destDir, lib)],
+      implicitInputs: [fetchCliPath],
+      vars: { name, symbols: symbols.join(",") },
+    });
+  }
+
   return {
     name,
     libs,
     objects: [],
-    checks: [],
+    checks,
     generatedHeaders: [],
     configureInputs: provides.contentsDecideGraph ? [stamp] : [],
     includes,

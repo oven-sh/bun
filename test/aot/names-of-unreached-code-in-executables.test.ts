@@ -17,7 +17,12 @@ function ${kind}HelperQ1(): string {
 function ${kind}CalleeQ3(${kind}ParameterQ4: Record<string, unknown>): unknown {
   const ${kind}LocalQ5 = ${kind}ParameterQ4.${kind}ReadByCalleeQ6;
   ${kind}ParameterQ4.${kind}WrittenByCalleeQ7 = "${kind}CalleeTextQ8";
-  return [${kind}LocalQ5, ${kind}HelperQ1()];
+  return [
+    ${kind}LocalQ5,
+    ${kind}HelperQ1(),
+    { ${kind}KeyInCalleeQ94: 1 },
+    { ${kind}TableInCalleeQ95: { ${kind}InnerOfTableQ96: [1, 2, 3], second: "two" }, third: { a: 1, b: 2, c: 3, d: 4 } },
+  ];
 }
 function ${kind}KeptAroundQ9(bag: Record<string, unknown>): number {
   if (${condition}) {
@@ -44,7 +49,8 @@ const textsOfBranch = ["HelperTextQ2", "CalleeTextQ8", "BranchTextQ13", "Pattern
 const variablesOfBranch = ["ParameterQ4", "LocalQ5", "InBranchQ10"];
 const propertiesReadInBranch = ["ReadByCalleeQ6", "ReadInBranchQ11"];
 const propertiesAddedInBranch = ["WrittenByCalleeQ7", "WrittenInBranchQ12"];
-const propertiesOfObjectsMadeInBranch = ["FieldQ17", "MethodQ18", "LiteralKeyQ19"];
+const propertiesOfObjectsMadeInBranch = ["FieldQ17", "MethodQ18", "LiteralKeyQ19", "KeyInCalleeQ94"];
+const propertiesOfConstantObjectsInBranch = ["TableInCalleeQ95", "InnerOfTableQ96"];
 const of = (kind: string, names: string[]) => names.map(name => kind + name);
 
 const sources = {
@@ -272,6 +278,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
             ...propertiesReadInBranch,
             ...propertiesAddedInBranch,
             ...propertiesOfObjectsMadeInBranch,
+            ...propertiesOfConstantObjectsInBranch,
             "ClassQ16",
           ]),
         ),
@@ -288,6 +295,10 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "the class of such a branch, and the properties of the objects it makes",
         of("importedConstant", [...propertiesOfObjectsMadeInBranch, "ClassQ16"]),
       ],
+      gap("the constant objects of a function that has no code any more are still written", [
+        "the properties of the constant objects of a function that only such a branch calls",
+        of("importedConstant", propertiesOfConstantObjectsInBranch),
+      ]),
       gap(
         "an object that the program does make has a place for every property that the program as written adds to it",
         [

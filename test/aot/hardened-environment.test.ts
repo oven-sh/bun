@@ -134,6 +134,7 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     ["BUN_JSC_logGC", ""],
     ["MIMALLOC_VERBOSE", ""],
     ["BUN_TRACE", ""],
+    ["BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING", ""],
   ])("does not start with %s=%s", async (name, value) => {
     if (!starts) return;
     expect(await runWith({ [name]: value })).toMatchObject(refusalThatNames(name));
@@ -142,6 +143,10 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   test.each(namesNeverRead)("does not start with %s", async name => {
     if (!starts) return;
     expect(await runWith({ [name]: "1" })).toMatchObject(refusalThatNames(name));
+  });
+
+  test("is started by the tests with none of them", () => {
+    expect(Object.keys(bunEnv).filter(name => namesNeverRead.includes(name))).toEqual([]);
   });
 
   test("has a value here for every option that it takes", () => {
@@ -273,6 +278,7 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
       MIMALLOC_VERBOSE: "1",
       BUN_DEBUG_QUIET_LOGS: "1",
       BUN_BE_BUN: "1",
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
       MI_VERBOSE: "1",
     };
     const { stdout, stderr, exitCode } = await run([bunExe(), "-e", "console.log(1 + 1)"], String(directory), {

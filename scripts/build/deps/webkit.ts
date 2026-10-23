@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-a3251c8d";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-91ef8f6e";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -2029,7 +2029,13 @@ export const webkit: Dependency = {
       const { schemaInputs, builtinTableInputs } = webkitEngineSources(cfg);
       const files = [...schemaInputs, ...builtinTableInputs].map(file => relative(prebuiltDestDir(cfg), file));
       if (prebuiltHasProgramObjects(cfg)) files.push(programObjects(cfg, "jsc"), programObjects(cfg, "testaot"));
-      return { libs, includes, files, contentsDecideGraph: true };
+      // `HARDENING` in lanes.mjs has grown, and the name of a tarball does not say which list it was compiled with.
+      const symbols = [
+        ...(cfg.aot && cfg.guardedPages ? ["JSC__AOT__mapsGuardedPages"] : []),
+        ...(cfg.aot && !cfg.executeOnlyStart ? ["JSC__AOT__startsOnlyWhereItsFileCanBeRead"] : []),
+      ];
+      const requireDefined = symbols.length > 0 ? { lib: wkLib(cfg, "JavaScriptCore"), symbols } : undefined;
+      return { libs, includes, files, contentsDecideGraph: true, ...(requireDefined && { requireDefined }) };
     }
 
     // The objects go straight on the link line; consumers see the framework

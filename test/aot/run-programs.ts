@@ -505,7 +505,8 @@ async function runReference(path: string, options: ProgramOptions, setup: Setup)
     }
     const plain = await spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, { ...bunEnv, ...options.env });
     // A reference run that fails is useless: two runs that end with the same error would compare equal and prove nothing.
-    expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
+    const hasFailed = plain.signal !== null || plain.exitCode !== 0;
+    expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: hasFailed ? plain.stderr : "" }).toEqual({ signal: null, exitCode: 0, stderr: "" });
     return told(plain);
   } finally {
     rmSync(executable, { force: true });

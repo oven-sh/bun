@@ -1053,6 +1053,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     args.push(
       "--include=aot/hardened",
       "--include=aot/a-hardened-build",
+      "--include=aot/an-executable-that-cannot-read-its-own-file",
+      "--include=aot/compiled-code-mapping",
       "--include=aot/texts-that-tell-builds-apart",
       "--vendor=false",
     );

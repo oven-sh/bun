@@ -161,7 +161,23 @@ fn validating_build_requires_image_compiler() {
         requirements_of(&with_words(&[b"limit=MaxSiteCaches:0", b"validate"]), b""),
         [requirement(image_compiler, "--aot-validate")]
     );
-    assert!(requirements_of(&with_words(&[b"check=verify-each-pass"]), b"").is_empty());
+    for word in [
+        b"check=validate".as_slice(),
+        b"check=Validate",
+        b"check=verify-each-pass,validate",
+    ] {
+        assert_eq!(
+            requirements_of(&with_words(&[word]), b""),
+            [requirement(image_compiler, "--aot-validate")]
+        );
+    }
+    for word in [
+        b"check=verify-each-pass".as_slice(),
+        b"check=validate-back-end",
+        b"check=validate-references,validate-reference-guards",
+    ] {
+        assert!(requirements_of(&with_words(&[word]), b"").is_empty());
+    }
 }
 
 #[test]

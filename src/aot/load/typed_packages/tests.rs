@@ -133,6 +133,7 @@ fn load_project<R>(
         },
         removable: RemovableOptions::default(),
         lists_modules: false,
+        minifies_identifiers: false,
     };
     let caches = ThreadCaches::default();
     let mut build = Build::new(&options, &WithoutServices, &caches, LimitValues::for_host());

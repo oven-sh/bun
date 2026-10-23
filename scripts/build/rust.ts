@@ -363,6 +363,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     );
     if (cfg.hardened && !cfg.requireMdwe) rustflags.push("--cfg=bun_starts_without_mdwe");
     if (cfg.lockEnvironment) rustflags.push("--cfg=bun_locked_environment");
+    if (!cfg.executeOnlyStart) rustflags.push("--cfg=bun_refuses_execute_only_start");
   }
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
@@ -442,6 +443,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   rustflags.push("--check-cfg=cfg(bun_hardened)");
   rustflags.push("--check-cfg=cfg(bun_starts_without_mdwe)");
   rustflags.push("--check-cfg=cfg(bun_locked_environment)");
+  rustflags.push("--check-cfg=cfg(bun_refuses_execute_only_start)");
   if (cfg.debug) {
     rustflags.push("--cfg=bun_debug");
   }

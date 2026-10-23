@@ -462,8 +462,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                     // need to check for \0 so we might as well make this single pass
                     // strlen would check the end of the string
                     if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
-                        if (env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'F' && !strncmp(env + 5, "EATURE_FLAG_INTERNAL_FOR_TESTING=", 33)) [[unlikely]]
+                        if (env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'F' && !strncmp(env + 5, "EATURE_FLAG_INTERNAL_FOR_TESTING=", 33)) [[unlikely]] {
+#if defined(BUN_LOCKED_ENVIRONMENT)
+                            if (runsCompiledCode)
+                                continue;
+#endif
                             JSC::Options::verifyAOTProgram() = true;
+                        }
                         continue;
                     }
 

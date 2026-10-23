@@ -359,7 +359,9 @@ fn find_named_declaration(
     ty: CheckerTypeId,
     is_shown: bool,
 ) -> Declaration {
-    if !is_shown {
+    // A bundle holds no name of a type. The report of a mismatch shows them.
+    let options = file.inputs.options;
+    if !is_shown || (options.minifies_identifiers && !options.reports_type_mismatches) {
         return Declaration {
             name: None,
             site: file.queries.type_name_site(ty),

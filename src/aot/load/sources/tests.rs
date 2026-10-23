@@ -187,6 +187,7 @@ fn create_options<'a>(
         },
         removable: Default::default(),
         lists_modules: false,
+        minifies_identifiers: false,
     }
 }
 

@@ -258,6 +258,17 @@ mod write_execute {
     static Bun__readsEveryEnvironmentVariable: [u8; 59] =
         *b"hardened environment: every variable is read, as for tests\0";
 
+    #[cfg(not(bun_refuses_execute_only_start))]
+    #[used]
+    #[unsafe(no_mangle)]
+    pub(super) static Bun__startsWhereItsFileCannotBeRead: [u8; 76] =
+        *b"execute-only start: where its file cannot be read, the loaded code is moved\0";
+    #[cfg(bun_refuses_execute_only_start)]
+    #[used]
+    #[unsafe(no_mangle)]
+    pub(super) static Bun__startsOnlyWhereItsFileCanBeRead: [u8; 76] =
+        *b"execute-only start: where its file cannot be read, it does not start       \0";
+
     #[cfg(bun_hardened)]
     fn last_errno() -> bun_errno::SystemErrno {
         bun_errno::from_errno(bun_sys::last_errno())
@@ -496,6 +507,10 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
     ONCE.call_once(|| {
         // Keeps the linker from dropping it.
         core::hint::black_box(&raw const HOST_DESCRIPTION);
+        #[cfg(all(target_os = "linux", not(bun_refuses_execute_only_start)))]
+        core::hint::black_box(&raw const write_execute::Bun__startsWhereItsFileCannotBeRead);
+        #[cfg(all(target_os = "linux", bun_refuses_execute_only_start))]
+        core::hint::black_box(&raw const write_execute::Bun__startsOnlyWhereItsFileCanBeRead);
         #[cfg(bun_hardened)]
         if program.backing_file.is_some() {
             exit_with(
@@ -642,8 +657,12 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::MalformedTables => "the file is corrupt (bad tables)",
         ImageVerdict::StampMismatch => "the compiler that built it doesn't match the runtime in this executable. Rebuild it",
         ImageVerdict::IdentityMismatch => "it was built for a different build of Bun than the one in this executable. Rebuild it",
+        #[cfg(not(bun_refuses_execute_only_start))]
         ImageVerdict::CodeAtFixedAddress => "its code can't be placed at a random address here, and it doesn't run at a fixed one. The system refuses to map the file as executable memory and to move the loaded code with mremap (Linux 5.13 or later)",
+        #[cfg(bun_refuses_execute_only_start)]
+        ImageVerdict::CodeAtFixedAddress => "its code can't be placed at a random address here, and it doesn't run at a fixed one. The system refuses to map the file as executable memory",
         ImageVerdict::OutsideItsSegments => "its header names code or data outside the segments the executable loads them in. Something modified the executable after it was built",
+        ImageVerdict::CannotReadExecutable => "the executable's own file can't be opened for reading, and this build of Bun doesn't run without that",
     })
 }
 

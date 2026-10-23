@@ -53,6 +53,7 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
         embeds_function_text,
         reports_type_mismatches: false,
         removable: Default::default(),
+        minifies_identifiers: false,
     }
 }
 

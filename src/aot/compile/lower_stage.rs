@@ -349,6 +349,7 @@ impl Build<'_> {
             embeds_function_text: self.options.aot.embeds_function_source,
             reports_type_mismatches: self.options.aot.reports_type_mismatches,
             removable: self.options.removable,
+            minifies_identifiers: self.options.minifies_identifiers,
         }
     }
 

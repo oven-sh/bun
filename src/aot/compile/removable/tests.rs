@@ -233,6 +233,50 @@ fn annotations_can_be_ignored() {
 }
 
 #[test]
+fn minified_syntax_leaves_out_constructions_of_known_globals() {
+    let minifying = RemovableOptions {
+        minifies_syntax: true,
+        ..RemovableOptions::default()
+    };
+    let removable = [
+        "const MARK = new Map();",
+        "const MARK = new Map(null);",
+        "const MARK = new Map([[\"a\", 1], [\"b\", 2]]);",
+        "const MARK = new Map<string, number>([[\"a\", 1]] as const);",
+        "const MARK = new Set();",
+        "const MARK = new Set([\"a\", \"b\"]);",
+        "const MARK = new Set(undefined);",
+        "const MARK = new WeakMap();",
+        "const MARK = new WeakSet([]);",
+        "const MARK = new Date();",
+        "const MARK = new Date(0);",
+        "const MARK = [...[\"a\"]];",
+        "class MARK { static a = new Map([[\"a\", 1]]); }",
+    ];
+    for source in removable {
+        assert!(
+            !ask_one(source, "ts", RemovableOptions::default()),
+            "{source}"
+        );
+        assert!(ask_one(source, "ts", minifying), "{source}");
+    }
+    let kept = [
+        "function f(...a: any[]): any {} const MARK = new Map([[f(), 1]]);",
+        "const xs: any = []; const MARK = new Map(xs);",
+        "const xs: any = []; const MARK = new Map([xs]);",
+        "const xs: any = []; const MARK = new Set(xs);",
+        "const xs: any = []; const MARK = new Set([...xs]);",
+        "const o: any = {}; const MARK = new WeakSet([o]);",
+        "const o: any = {}; const MARK = new Date(o);",
+        "class Map { constructor(a?: any) { sideEffect(); } } declare function sideEffect(): void; const MARK = new Map();",
+        "const MARK = new Map([], 1 as any);",
+    ];
+    for source in kept {
+        assert!(!ask_one(source, "ts", minifying), "{source}");
+    }
+}
+
+#[test]
 fn jsx_can_have_side_effects() {
     let with_side_effects = RemovableOptions {
         jsx_has_side_effects: true,

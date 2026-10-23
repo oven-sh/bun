@@ -71,6 +71,7 @@ const ruleVars = {
   // source.ts
   dep_cargo: ["name", "manifestdir", "env", "args"],
   dep_cargo_cross: ["name", "manifestdir", "env", "args", "rust_target"],
+  dep_check_defined: ["name", "symbols"],
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],

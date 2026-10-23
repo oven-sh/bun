@@ -69,7 +69,7 @@ describe("validation of the collector's fast visits", () => {
     };
     const { stdout, stderr, exitCode } = await runProcess(withoutCoreDump([executable]), String(dir), env);
     expect(stderr).toContain("GC: named by the method table and without a mark: ");
-    expect(stderr).toContain("GC: a second visit by the method table names the same references\n");
+    expect(stderr).toContain("GC: a second visit by the method table names the same references");
     expect(stderr).toContain("AOT validation: VisitedCellsDiffer ");
     expect(stdout).not.toContain("sum");
     expect(exitCode).not.toBe(0);

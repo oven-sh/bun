@@ -4,6 +4,7 @@ import { chmodSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
 import { findImage, imageHeader } from "./cli/compiled-image";
+import { refusesExecuteOnlyStart } from "./execute-only-start";
 import { test } from "./supported";
 
 const program = `import { readFileSync } from "node:fs";
@@ -384,7 +385,8 @@ test.skipIf(!isLinux)(
 );
 
 const [kernelMajor, kernelMinor] = release().split(".").map(Number);
-const canMoveFileMappings = isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 13));
+const canMoveFileMappings =
+  isLinux && !refusesExecuteOnlyStart && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 13));
 
 async function placesOfCode(executable: string, codeOffset: number, cmd: string[]) {
   return await Promise.all(
@@ -443,7 +445,7 @@ test.skipIf(!isLinux || !isGlibc)(
   120_000,
 );
 
-test.skipIf(!isLinux)(
+test.skipIf(!isLinux || refusesExecuteOnlyStart)(
   "an executable that may be run but not read has its compiled code at another address each time",
   async () => {
     using dir = tempDir("aot-code-mapping-unreadable", { "program.ts": program });
@@ -455,6 +457,34 @@ test.skipIf(!isLinux)(
       return await expectRefusalToRunAtFixedAddress([executable]);
     const places = await placesOfCode(executable, codeOffset, [executable]);
     if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "an executable that the dynamic loader is started with runs its own code, not bytes of the loader's file",
+  async () => {
+    using dir = tempDir("aot-code-mapping-by-the-loader", { "program.ts": program });
+    const executable = await build(String(dir));
+    const file = readFileSync(executable);
+    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+    const interpreter = readElf64ProgramHeaders(executable).find(header => header.type === 3)!;
+    const end = Number(interpreter.offset + interpreter.filesz) - 1;
+    const cmd = [file.toString("latin1", Number(interpreter.offset), end), executable];
+    // glibc's loader leaves the name of the executable where the kernel put its own, so the executable finds its file.
+    const first = await run(cmd);
+    if (first.exitCode === 1) {
+      expect({ stdout: first.stdout, signalCode: first.signalCode }).toEqual({ stdout: "", signalCode: null });
+      if (refusesExecuteOnlyStart)
+        expect(first.stderr).toContain("the executable's own file can't be opened for reading");
+      else
+        expect({ canMoveFileMappings, stderr: first.stderr }).toEqual({
+          canMoveFileMappings: false,
+          stderr: expect.stringContaining("it doesn't run at a fixed one"),
+        });
+      return;
+    }
+    expectCodeAtAnotherAddressEachTime(await placesOfCode(executable, codeOffset, cmd));
   },
   120_000,
 );

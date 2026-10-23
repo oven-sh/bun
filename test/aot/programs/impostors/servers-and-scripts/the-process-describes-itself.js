@@ -11,7 +11,7 @@ console.log(Object.keys(usage).sort().join(), usage.rss > 0, process.memoryUsage
 const [seconds, nanoseconds] = process.hrtime();
 console.log(seconds >= 0, nanoseconds < 1e9, process.hrtime([seconds, nanoseconds]).length, process.hrtime.bigint() > 0n, process.uptime() < 60);
 console.log(process.stdout.write("written to stdout\n"), process.stdout.isTTY, process.stdout.fd, process.stderr.fd, typeof process.stdout.columns, process.stdout.writable);
-console.log(typeof process.umask(), typeof process.getuid(), typeof process.geteuid(), process.exitCode, typeof process.emitWarning, typeof process.binding, process.config.variables !== undefined, process.features.typescript !== null);
+console.log(typeof process.umask(), typeof process.getuid?.(), typeof process.geteuid?.(), process.exitCode, typeof process.emitWarning, typeof process.binding, process.config.variables !== undefined, process.features.typescript !== null);
 console.log(os.EOL === "\n", os.cpus().length > 0, typeof os.cpus()[0].model, os.totalmem() > os.freemem(), os.homedir().length > 0, os.tmpdir().length > 0, os.hostname().length > 0, os.type(), os.endianness(), os.loadavg().length);
 console.log(typeof os.release(), typeof os.uptime(), Object.keys(os.userInfo()).sort().join(), typeof os.networkInterfaces(), os.constants.signals.SIGTERM, os.availableParallelism() > 0, os.devNull, typeof os.version(), typeof os.machine());
 try {

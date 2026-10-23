@@ -64,8 +64,10 @@ pub(crate) fn options_from_bundler<'r>(
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
             jsx_has_side_effects: input.bundle_options.jsx.side_effects,
+            minifies_syntax: input.bundle_options.minify_syntax,
         },
         lists_modules: input.bundle_options.metafile,
+        minifies_identifiers: input.bundle_options.minify_identifiers,
     })
 }
 

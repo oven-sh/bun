@@ -68,6 +68,32 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
+// Node's check, from formatValue: `Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype === value`.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__isConstructorPrototype(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* object = value.getObject();
+    if (!object)
+        return false;
+
+    PropertyDescriptor descriptor;
+    bool hasConstructor = object->getOwnPropertyDescriptor(globalObject, vm.propertyNames->constructor, descriptor);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasConstructor)
+        return false;
+
+    JSValue constructor = descriptor.value();
+    if (!constructor || constructor.isUndefinedOrNull())
+        return false;
+
+    JSValue prototype = constructor.get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, false);
+    return prototype == value;
+}
+
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by
 // util.inspect and the REPL completer: own keys minus array indices, without materializing
 // a name (or descriptor) per element the way Object.getOwnPropertyNames() on an array would.

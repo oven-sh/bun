@@ -402,7 +402,11 @@ describe("bundler", () => {
         // 'Cannot use global name "y" with "composes"',
         // 'Cannot use global name "x" with "composes"',
       ],
-      "/file.module.css": ['The name "z" never appears in "file.module.css"'],
+      "/file.module.css": [
+        // `y` only exists inside `:global(...)`, so it is not a local name either.
+        'The name "y" never appears in "file.module.css"',
+        'The name "z" never appears in "file.module.css"',
+      ],
       "/file.css": ['The name "x" never appears in "file.css"'],
     },
     bundleWarnings: {

@@ -249,6 +249,11 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
+    /// `then` of this promise is a function or an accessor that is not a property of a `Promise.prototype`, or a Proxy hides it. The lookup runs no script.
+    pub fn has_custom_then(&self, global: &JSGlobalObject) -> bool {
+        crate::cpp::JSC__JSPromise__hasCustomThen(global, self)
+    }
+
     /// Create a new resolved promise resolving to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.

@@ -227,6 +227,8 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     // `Deref` while keeping the struct `'static` (process-lifetime VM).
     pub(crate) vm: bun_ptr::BackRef<jsc::VirtualMachine>,
     pub global_this: *const jsc::JSGlobalObject,
+    /// `AnyPromise::structure_id` of a plain promise of `global_this`, read once in [`Self::init`].
+    pub(crate) promise_structure_id: u32,
     /// Packed tagged-pointer wire-format `AnyServer` for this
     /// server (`u49` heap addr | `u15` variant tag), computed once in
     /// [`Self::init`]. The C++ `node:http` request path needs it on every
@@ -2180,6 +2182,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::RefCount::init(),
             global_this: std::ptr::from_ref(global),
+            promise_structure_id: bun_jsc::cpp::JSC__JSGlobalObject__promiseStructureID(global),
             // Set below, once the server has its final (stable) heap address.
             any_server_packed: 0,
             method_name_cache: [const { core::cell::Cell::new(JSValue::ZERO) }; N_HTTP_METHODS],
@@ -3589,6 +3592,8 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 // `NewServer` (avoids a generic-parameter cycle).
 pub(crate) trait ServerLike {
     fn global_this(&self) -> &jsc::JSGlobalObject;
+    /// See [`NewServer::promise_structure_id`].
+    fn promise_structure_id(&self) -> u32;
     fn vm(&self) -> &jsc::VirtualMachine;
     /// The context of the script that made the server: what a request starts continues it.
     fn context(&self) -> &jsc::ScriptExecutionContext;
@@ -3614,6 +3619,10 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline(always)]
     fn global_this(&self) -> &jsc::JSGlobalObject {
         Self::global_this(self)
+    }
+    #[inline(always)]
+    fn promise_structure_id(&self) -> u32 {
+        self.promise_structure_id
     }
     #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine {

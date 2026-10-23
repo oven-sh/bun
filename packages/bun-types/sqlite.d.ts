@@ -74,6 +74,13 @@ declare module "bun:sqlite" {
      * When set to `true`, a query with a missing bound parameter throws an error.
      * When set to `false` or `undefined`, the parameter is `NULL`.
      *
+     * In strict mode, running a {@link Statement} while one of its parameters
+     * has no value also throws, for example `Missing parameter "name"`. That is
+     * the case before the first call with values, after a call with an empty
+     * array, and after a call whose values were rejected. To bind `NULL`, pass
+     * `null`: `[null]`, `[1, null, 3]`. An `EXPLAIN` statement needs its values
+     * too, because the plan that SQLite reports can depend on them.
+     *
      * In both modes, the key of a named parameter can include the `$`, `:`, or
      * `@` prefix or leave it out. If an object has both keys, the key without
      * the prefix wins in strict mode, and the key with the prefix otherwise.
@@ -259,7 +266,7 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     * @param params Optional bindings for the query
+     * @param params Optional bindings for the query. `null` or `undefined` means no values. To bind `NULL` to the one parameter, pass `[null]`.
      *
      * @returns A {@link Statement} instance
      */
@@ -777,7 +784,7 @@ declare module "bun:sqlite" {
     /**
      * Execute the prepared statement and return all results as objects.
      *
-     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the values that the last bind gave it. A parameter without a value is `NULL`, or the call throws when the database is in `strict` mode.
      *
      * @example
      * ```ts
@@ -803,7 +810,7 @@ declare module "bun:sqlite" {
      *
      * If no result is returned, this returns `null`.
      *
-     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the values that the last bind gave it. A parameter without a value is `NULL`, or the call throws when the database is in `strict` mode.
      *
      * @example
      * ```ts
@@ -844,7 +851,7 @@ declare module "bun:sqlite" {
      * `Statement`, the next step of this iterator throws. Use
      * {@link Database.prepare} to get a statement with a cursor of its own.
      *
-     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the values that the last bind gave it. A parameter without a value is `NULL`, or the first `next()` of the iterator throws when the database is in `strict` mode.
      */
     iterate(...params: ParamsType): IterableIterator<ReturnType>;
     [Symbol.iterator](): IterableIterator<ReturnType>;
@@ -852,7 +859,7 @@ declare module "bun:sqlite" {
     /**
      * Execute the prepared statement.
      *
-     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the values that the last bind gave it. A parameter without a value is `NULL`, or the call throws when the database is in `strict` mode.
      * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
      *
      * @example
@@ -887,7 +894,7 @@ declare module "bun:sqlite" {
      *
      * If there are no results, returns an empty array.
      *
-     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the values that the last bind gave it. A parameter without a value is `NULL`, or the call throws when the database is in `strict` mode.
      *
      * @example
      * ```ts
@@ -928,8 +935,9 @@ declare module "bun:sqlite" {
      * `Uint8Array`, regardless of its original SQLite type.
      *
      * @param params optional values to bind to the statement. If omitted, the
-     * statement is run with the last bound values or no parameters if there are
-     * none.
+     * statement is run with the values that the last bind gave it. A parameter
+     * without a value is `NULL`, or the call throws when the database is in
+     * `strict` mode.
      *
      * @example
      * ```ts
@@ -1008,6 +1016,9 @@ declare module "bun:sqlite" {
      * Only available for read-only statements (SELECT queries). For other
      * statements, accessing this property throws an error.
      *
+     * Reading this property runs the statement with its bound values. In
+     * `strict` mode it throws when the statement has parameters and no values.
+     *
      * @example
      * ```ts
      * const stmt = db.prepare("SELECT id, name, age FROM users WHERE id = 1");
@@ -1022,6 +1033,7 @@ declare module "bun:sqlite" {
      * ```
      *
      * @throws Error if statement is not read-only (INSERT, UPDATE, DELETE, etc.)
+     * @throws Error in `strict` mode if the statement has parameters and no values
      * @since Bun v1.2.13
      */
     readonly columnTypes: Array<"INTEGER" | "FLOAT" | "TEXT" | "BLOB" | "NULL" | null>;

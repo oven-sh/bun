@@ -401,10 +401,14 @@ public:
     {
     }
 
-    void ensureNamesLoaded(JSC::VM& vm, sqlite3_stmt* stmt)
+    ALWAYS_INLINE void ensureNamesLoaded(JSC::VM& vm, sqlite3_stmt* stmt)
     {
-        if (hasLoadedNames)
-            return;
+        if (!hasLoadedNames) [[unlikely]]
+            loadNames(vm, stmt);
+    }
+
+    NEVER_INLINE void loadNames(JSC::VM& vm, sqlite3_stmt* stmt)
+    {
         hasLoadedNames = true;
 
         unsigned count = sqlite3_bind_parameter_count(stmt);
@@ -431,11 +435,23 @@ public:
         }
     }
 
+    // Under strict, a statement that has parameters starts a run only when each of them has a value. `stmt` starts without values.
+    void attach(sqlite3_stmt* stmt)
+    {
+        requiresValues = strict && sqlite3_bind_parameter_count(stmt) > 0;
+        isMissingValues = requiresValues;
+    }
+
     // Empty when no parameter has a name: the key of each one is its position.
     Vector<SQLiteParameterName> names;
     bool hasLoadedNames = false;
     // The bare key is tried first, and a parameter without a value throws.
     bool strict;
+    bool requiresValues = false;
+    // Only with `requiresValues`: a parameter has no value. Set where a bind clears the values, cleared where it has given each parameter one.
+    bool isMissingValues = false;
+    // Only with `requiresValues`: how many binds have cleared the values. A bind that script interrupted compares it.
+    uint32_t clears = 0;
 };
 
 struct SQLiteColumnSlot {
@@ -952,6 +968,8 @@ struct SQLiteBinder {
     SQLiteBindingsMap& bindings;
     bool safeIntegers;
     sqlite3* db = sqlite3_db_handle(stmt);
+    // Which clear of `bindings.clears` this bind made. 0: none.
+    uint32_t ownClear = 0;
 
     // `arguments` is the array of what script passed. Its first element decides: an array is the list of values,
     // an object of named parameters is that, and anything else makes `arguments` itself the list.
@@ -978,6 +996,10 @@ struct SQLiteBinder {
         }
 
         sqlite3_clear_bindings(stmt);
+        if (bindings.requiresValues) [[unlikely]] {
+            bindings.isMissingValues = true;
+            ownClear = ++bindings.clears;
+        }
         if (named)
             return bindNamed(named);
 
@@ -1000,16 +1022,28 @@ struct SQLiteBinder {
             if (!bindValue(i + 1, value))
                 return false;
         }
+        bindings.isMissingValues = false;
         return true;
     }
 
+    // For a strict statement that is about to run with a parameter that has no value.
+    NEVER_INLINE void throwMissingParameter()
+    {
+        bindings.ensureNamesLoaded(JSC::getVM(globalObject), stmt);
+        throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, missingParameter(0), "\""_s)));
+    }
+
 private:
-    // Script that ran during a property read can have finalized `stmt` (statement.finalize(), db.close()).
+    // Script that ran during a property read can have finalized `stmt` (statement.finalize(), db.close()), or bound it again.
     bool checkStillAlive()
     {
-        if (statement ? statement->stmt == stmt : versionDB->handle() == db) [[likely]]
+        if (statement ? statement->stmt != stmt : versionDB->handle() != db) [[unlikely]] {
+            throwException(globalObject, scope, createError(globalObject, statement ? finalizedMessage(statement) : "Database has closed"_s));
+            return false;
+        }
+        if (bindings.clears == ownClear || !ownClear) [[likely]]
             return true;
-        throwException(globalObject, scope, createError(globalObject, statement ? finalizedMessage(statement) : "Database has closed"_s));
+        throwException(globalObject, scope, createError(globalObject, "This statement was bound again while its parameters were being read. Use db.prepare() to get a statement of its own."_s));
         return false;
     }
 
@@ -1084,6 +1118,7 @@ private:
             if (!bindValue(i + 1, value))
                 return false;
         }
+        bindings.isMissingValues = false;
         return true;
     }
 
@@ -1602,6 +1637,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         sqlStatement->useBigInt64 = (internalFlags & kSafeIntegersFlag) != 0;
         sqlStatement->ownedByDatabase = (internalFlags & kOwnedByDatabaseFlag) != 0;
     }
+    sqlStatement->m_bindingNames.attach(statement);
 
     if (!bindings.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement, sqlStatement, sqlStatement->m_bindingNames, sqlStatement->useBigInt64 }.bind(bindings, true)) {
         // Nobody gets this statement. Left to the collector, it would keep the file open after db.close().
@@ -2109,6 +2145,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
     return JSValue::encode(jsUndefined());
 }
 
+static NEVER_INLINE void throwMissingParameter(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSSQLStatement* statement)
+{
+    SQLiteBinder { lexicalGlobalObject, scope, statement->version_db.get(), statement->stmt, statement, statement->m_bindingNames, statement->useBigInt64 }.throwMissingParameter();
+}
+
 // The run that starts here takes the cursor from the one before it. Null with an exception pending.
 static JSSQLStatement* resetAndBind(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue, JSC::JSValue arguments)
 {
@@ -2124,6 +2165,11 @@ static JSSQLStatement* resetAndBind(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     if (!arguments.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, castedThis->version_db.get(), stmt, castedThis, castedThis->m_bindingNames, castedThis->useBigInt64 }.bind(arguments))
         return nullptr;
+
+    if (castedThis->m_bindingNames.isMissingValues) [[unlikely]] {
+        throwMissingParameter(lexicalGlobalObject, scope, castedThis);
+        return nullptr;
+    }
 
     return castedThis;
 }
@@ -2491,6 +2537,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
     if (sqlite3_reset(stmt) != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
+        return {};
+    }
+
+    if (castedThis->m_bindingNames.isMissingValues) [[unlikely]] {
+        throwMissingParameter(lexicalGlobalObject, scope, castedThis);
         return {};
     }
 

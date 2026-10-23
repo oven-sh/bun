@@ -1920,6 +1920,53 @@ describe("SQL helpers", () => {
     expect(rows).toEqual([{ id: 1, name: "Alice" }]);
   });
 
+  test("strict mode rejects a query whose parameters got no value", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE no_value_test (a INTEGER)`;
+    const messageOf = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => "no error",
+        error => error.message,
+      );
+
+    // [text, the parameter that the error names]
+    const texts = [
+      ["SELECT ? AS v", "?1"],
+      ["SELECT ?1 AS v", "?1"],
+      ["SELECT $1 AS v", "$1"],
+      ["SELECT :a AS v", "a"],
+      ["SELECT $a AS v", "a"],
+      ["SELECT @a AS v", "a"],
+      ["INSERT INTO no_value_test VALUES (?)", "?1"],
+      ["EXPLAIN QUERY PLAN SELECT a FROM no_value_test WHERE a = ?", "?1"],
+    ];
+    for (const [text, name] of texts) {
+      const missing = `Missing parameter "${name}"`;
+      expect({
+        text,
+        objects: await messageOf(strictSql.unsafe(text)),
+        values: await messageOf(strictSql.unsafe(text).values()),
+        raw: await messageOf(strictSql.unsafe(text).raw()),
+        emptyList: await messageOf(strictSql.unsafe(text, [])),
+      }).toEqual({ text, objects: missing, values: missing, raw: missing, emptyList: missing });
+    }
+
+    // In a transaction, the statements before it are rolled back.
+    expect(
+      await messageOf(
+        strictSql.begin(async tx => {
+          await tx.unsafe("INSERT INTO no_value_test VALUES (1)");
+          await tx.unsafe("INSERT INTO no_value_test VALUES (?)");
+        }),
+      ),
+    ).toBe('Missing parameter "?1"');
+    expect(await strictSql`SELECT a FROM no_value_test`.values()).toEqual([]);
+
+    // Without strict, the parameter is NULL.
+    await using sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    expect(await sql.unsafe("SELECT ? AS v")).toEqual([{ v: null }]);
+  });
+
   test("unsafe with named parameters for UPDATE and DELETE", async () => {
     await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
     await strictSql`CREATE TABLE named_update_test (id INTEGER, name TEXT)`;

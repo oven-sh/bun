@@ -530,10 +530,11 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
         // A previous import that failed during link (e.g. unresolved binding)
         // leaves the record at New/Unlinked; in that case there is no
         // namespace to patch — drop the stale entry so the mock takes over
-        // on the next import.
+        // on the next import. A record whose body threw is dropped too: every
+        // later import of it would throw that error again.
         bool linked = true;
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
-            linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
+            linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked && !cyclic->evaluationError();
         if (linked) {
             loaded.esmNamespace = mod->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, );

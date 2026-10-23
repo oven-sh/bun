@@ -539,9 +539,20 @@ test.concurrent("a static import follows every mock.module() in beforeEach when 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(" 3 pass");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: expect.stringContaining(" 3 pass"), exitCode: 0 });
+});
+
+test("mock.module() of a module whose body threw serves the mock to the next import()", async () => {
+  using dir = tempDir("mock-module-evaluation-error", {
+    "lib.ts": `export const a = "real a";\nthrow new Error("boom");`,
+  });
+  const path = join(String(dir), "lib.ts");
+  await expect(import(path)).rejects.toThrow("boom");
+
+  mock.module(path, () => ({ a: "mock a", b: "mock b" }));
+  const mocked = await import(path);
+  expect({ a: mocked.a, b: mocked.b }).toEqual({ a: "mock a", b: "mock b" });
 });
 
 test("an import() in flight when mock.module() adds an export gets the mock and does not evaluate the module again", async () => {

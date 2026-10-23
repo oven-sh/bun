@@ -342,14 +342,6 @@ $ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
 $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
 ```
 
-### libarchive
-
-If you see an error on macOS when compiling `libarchive`, run:
-
-```bash
-$ brew install pkg-config
-```
-
 ### macOS `library not found for -lSystem`
 
 If you see this error when compiling, run:
